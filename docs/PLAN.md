@@ -11,6 +11,7 @@ _Updated 2026-10-10. Based on [RESEARCH.md](RESEARCH.md) and the owner's answers
 | Primary test target | **Windows + Chrome / Edge**. Firefox and Safari supported with reduced file management. |
 | First milestone | **Thin end-to-end slice**: import → library → basic edits → export. Then deepen each area. |
 | Edit model | **Lightroom-style controls on a darktable-style engine** (scene-referred, linear float). Advanced controls in expandable sections. |
+| darktable code | Image processing is **translated from darktable's source** (GPL-3.0) into WebGPU shaders, keeping its copyright notices. Starts in **Phase 1** (owner's decision, 2026-10-10). |
 | AI | **Local only**: open models running on the user's GPU in the browser. No cloud services. |
 | Lightroom migration | Import **ratings, flags, color labels, keywords, collections**. Edits are not migrated. |
 | Roles | Claude writes the code; the owner tests each stage on the live site and gives feedback. |
@@ -79,6 +80,9 @@ each phase below delivers usable software on the live site.
   basic filter bar, folder tree, keyboard navigation.
 - **Develop (basic):** white balance, exposure, contrast, highlights, shadows, whites, blacks,
   texture/clarity (basic), vibrance, saturation, crop/straighten/rotate, before/after, undo history.
+- **darktable processing core:** replace the Phase 0 placeholder processing with code translated from
+  darktable's modules: demosaic (RCD), highlight reconstruction, exposure, white balance, input colour
+  profile and sigmoid tone mapping. The Lightroom-style sliders drive these modules.
 - **Export:** JPEG / PNG / TIFF, resize, quality, filename template, metadata include/exclude.
 - **Sidecars:** write edits and ratings to XMP so nothing is locked into our catalog.
 
@@ -89,7 +93,8 @@ copy/paste/sync settings across many photos, **Lightroom catalog/XMP import (rat
 collections)**.
 
 ### Phase 3 — Editing depth
-Tone curve (parametric + point, RGB), HSL / color mixer, point color, color grading, sharpening
+More darktable modules behind Lightroom-style controls (color balance rgb, filmic, denoise (profiled),
+diffuse or sharpen, AMaZE and X-Trans demosaic). Tone curve (parametric + point, RGB), HSL / color mixer, point color, color grading, sharpening
 and noise reduction, lens profile corrections (lensfun), chromatic aberration, transform/upright,
 vignette and grain, dehaze, camera profiles, masking (brush, linear, radial, color/luminance range),
 heal and clone, snapshots, soft proofing.

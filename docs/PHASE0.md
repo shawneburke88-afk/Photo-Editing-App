@@ -50,8 +50,7 @@ public-domain samples:
 - **Found:** some setups cannot draw WebGPU output straight to the screen. The test container cannot, for
   example. The renderer detects this and switches to a slower "compatibility mode" that copies frames
   through the CPU. The report shows which mode was used.
-- The bilinear demosaic is spike quality. A high-quality demosaic (RCD/AMaZE-class, ported from
-  darktable/RawTherapee) is planned for Phase 3.
+- The bilinear demosaic is spike quality. Phase 1 replaces it with darktable's RCD demosaic.
 
 ### C. Folder access: works (Chromium)
 
@@ -88,6 +87,9 @@ noticeable.
   already works.
 - **Engine language:** TypeScript + WGSL for now instead of Rust (see [PLAN.md](PLAN.md#architecture)).
   This is an engineering choice and reduces no capability.
+- **No darktable code is in Phase 0.** The demosaic and tone curve here are simplified placeholders,
+  written from scratch. In Phase 1 the owner chose to replace them with code translated from darktable's
+  modules (see [PLAN.md](PLAN.md)).
 
 ## Still open / to do in Phase 1
 
