@@ -1,6 +1,6 @@
-# Project Plan — Lightroom-class Photo Editor
+# Project Plan — LightBench
 
-_Status: draft, 2026-10-10. Based on [RESEARCH.md](RESEARCH.md) and the owner's answers below._
+_Updated 2026-10-10. Based on [RESEARCH.md](RESEARCH.md) and the owner's answers below._
 
 ## Decisions made
 
@@ -11,9 +11,13 @@ _Status: draft, 2026-10-10. Based on [RESEARCH.md](RESEARCH.md) and the owner's 
 | Primary test target | **Windows + Chrome / Edge**. Firefox and Safari supported with reduced file management. |
 | First milestone | **Thin end-to-end slice**: import → library → basic edits → export. Then deepen each area. |
 | Edit model | **Lightroom-style controls on a darktable-style engine** (scene-referred, linear float). Advanced controls in expandable sections. |
+| darktable code | Image processing is **translated from darktable's source** (GPL-3.0) into WebGPU shaders, keeping its copyright notices. Starts in **Phase 1** (owner's decision, 2026-10-10). |
 | AI | **Local only**: open models running on the user's GPU in the browser. No cloud services. |
 | Lightroom migration | Import **ratings, flags, color labels, keywords, collections**. Edits are not migrated. |
 | Roles | Claude writes the code; the owner tests each stage on the live site and gives feedback. |
+| Name | **LightBench** (the owner's first choice, "DarkRoom", clashes with an existing photo app). |
+| Cameras to test first | **Nikon (NEF)** and **Sony (ARW)**. |
+| Git workflow | `main` publishes the site. Work happens on a feature branch and is merged via pull requests the owner approves. |
 
 ## Guiding principles
 
@@ -27,47 +31,76 @@ _Status: draft, 2026-10-10. Based on [RESEARCH.md](RESEARCH.md) and the owner's 
 4. **Private by design.** Photos never leave the user's computer.
 5. **Honest about uncertainty.** Spikes (small experiments) come before big commitments.
 
-## Proposed architecture
+## Architecture
 
 ```
 ┌────────────────────────── Browser (GitHub Pages) ──────────────────────────┐
-│  UI: TypeScript + React  (Library · Develop · Export · Import dialogs)     │
+│  UI: TypeScript + React  (Library · Develop · Export · Import)             │
 │        │                                                                   │
-│  Platform layer (web impl now, Tauri desktop impl later)                   │
+│  Platform layer (web implementation now, Tauri desktop later)              │
 │   • Files: File System Access API (Chrome/Edge) / OPFS fallback            │
 │   • Catalog: SQLite-WASM stored in OPFS                                    │
 │   • AI: ONNX Runtime Web (WebGPU)                                          │
 │        │                                                                   │
-│  Core engine: Rust → WebAssembly, in Web Workers                           │
-│   • RAW decode (LibRaw-wasm or rawler — decided by spike)                  │
-│   • Pipeline: wgpu / WGSL compute shaders, rgba16float, WebGL2 fallback    │
-│   • Color: scene-referred linear → sigmoid/AgX display transform, lcms2    │
+│  Engine (Web Workers + GPU)                                                │
+│   • RAW decode: LibRaw 0.22 compiled to WebAssembly                        │
+│   • Pipeline: WebGPU compute/render shaders (WGSL), rgba16float, linear    │
+│   • Colour: scene-referred linear → sigmoid display transform              │
 │   • Edit model, presets, XMP read/write, metadata                          │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The same Rust core and React UI are later packaged with **Tauri** for a desktop app, which adds
-native file access, tethering, card auto-import and native GPU performance.
+**Change from the first draft (engineering choice, no capability impact):** the draft put the engine in
+Rust compiled to WebAssembly. Phase 0 showed the browser path works without it — LibRaw is already
+available as WebAssembly and the image processing runs in WGSL shaders on the GPU. So the engine starts
+in TypeScript + WGSL, avoiding a second language and build chain while the app takes shape. The WGSL
+shaders run unchanged under Rust's `wgpu`, so a Rust core can be introduced later (for the desktop app or
+CPU-heavy algorithms) without rewriting the image pipeline.
+
+The same UI and engine are later packaged with **Tauri** for a desktop app, which adds native file
+access, tethering, card auto-import and native performance.
 
 ## Roadmap
 
 Lightroom Classic is the product of a large team over many years. Full parity is a long-term goal;
 each phase below delivers usable software on the live site.
 
-### Phase 0 — Foundations and spikes
+### Phase 0 — Foundations and spikes  _(built — awaiting results from the owner's PC, see [PHASE0.md](PHASE0.md))_
 - Repo scaffolding, build tooling, GitHub Actions → GitHub Pages deploy, `coi-serviceworker`.
-- **Spike A:** RAW decode in browser — LibRaw-wasm vs rawler-wasm: camera coverage, speed, size.
-- **Spike B:** WebGPU pipeline on a 24–60 MP image — interactive slider speed on Chrome/Edge.
+- **Spike A:** RAW decode in browser — LibRaw-wasm (chosen) vs rawler-wasm: camera coverage, speed, size.
+- **Spike B:** WebGPU pipeline on a 24 MP image — interactive slider speed on Chrome/Edge.
 - **Spike C:** File System Access API — pick a folder, persist permission, read/write sidecars.
 - **Spike D:** SQLite-WASM catalog in OPFS — 50k-photo synthetic catalog query speed.
+- All four are on the site's **System Check** page, with a copyable report.
 
 ### Phase 1 — Thin end-to-end slice (first usable version)
-- **Import:** pick a card or folder; Add-in-place or Copy to a destination; date-based folders;
-  rename template; duplicate detection; thumbnails from embedded previews.
+- **Import wizard** (Chrome/Edge):
+  1. Click **Import** and choose the card or source folder in the Windows folder picker. Subfolders are
+     included.
+  2. A grid of thumbnails appears, built from each RAW file's embedded preview and loaded
+     progressively.
+  3. Photos already imported are greyed out and unticked. LightBench recognises them by matching file
+     name, capture time and file size against the catalog and the destination folder. New photos are
+     ticked.
+  4. You tick or untick photos individually, select all or none, shift-click a range, or filter by
+     shooting date.
+  5. You choose how to import: **Copy** to a destination, or **Add** photos in place.
+     - Destination layout: **by date**, `YYYY/YYYY-MM-DD/` (owner's choice).
+     - **Optional renaming templates**, off by default: Date-Sequence, or Custom name + number.
+     - **Second backup copy**: copies each original untouched to a backup folder, for example on an
+       external drive.
+  6. Imported photos appear in the library as they are copied.
+  - Read only the embedded-preview bytes from each file, not the whole RAW, so thumbnails load fast from
+    slow cards.
+  - Measure copy speed.
+  - Verify whether a drive's top-level folder (`E:\`) can be picked in Chrome, or only `E:\DCIM`.
 - **Library:** grid and loupe views, flags (P/X/U), stars (0–5), color labels (6–9),
   basic filter bar, folder tree, keyboard navigation.
 - **Develop (basic):** white balance, exposure, contrast, highlights, shadows, whites, blacks,
   texture/clarity (basic), vibrance, saturation, crop/straighten/rotate, before/after, undo history.
+- **darktable processing core:** replace the Phase 0 placeholder processing with code translated from
+  darktable's modules: demosaic (RCD), highlight reconstruction, exposure, white balance, input colour
+  profile and sigmoid tone mapping. The Lightroom-style sliders drive these modules.
 - **Export:** JPEG / PNG / TIFF, resize, quality, filename template, metadata include/exclude.
 - **Sidecars:** write edits and ratings to XMP so nothing is locked into our catalog.
 
@@ -78,7 +111,8 @@ copy/paste/sync settings across many photos, **Lightroom catalog/XMP import (rat
 collections)**.
 
 ### Phase 3 — Editing depth
-Tone curve (parametric + point, RGB), HSL / color mixer, point color, color grading, sharpening
+More darktable modules behind Lightroom-style controls (color balance rgb, filmic, denoise (profiled),
+diffuse or sharpen, AMaZE and X-Trans demosaic). Tone curve (parametric + point, RGB), HSL / color mixer, point color, color grading, sharpening
 and noise reduction, lens profile corrections (lensfun), chromatic aberration, transform/upright,
 vignette and grain, dehaze, camera profiles, masking (brush, linear, radial, color/luminance range),
 heal and clone, snapshots, soft proofing.
@@ -109,6 +143,4 @@ Capabilities that would be **reduced** vs Lightroom Classic. Each requires the o
 | T5 | Lightroom edit migration | Edits not imported | Adobe processing is proprietary; results would not match | Accepted |
 
 ## Open questions
-- Repo visibility: GitHub Pages on a free account requires a **public** repo (also expected for GPL).
-- App name.
-- Cameras / RAW formats the owner shoots (determines which decoder must be tested first).
+- None blocking. Phase 1 starts once the owner's System Check report is in.
