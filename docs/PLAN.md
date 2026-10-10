@@ -74,8 +74,26 @@ each phase below delivers usable software on the live site.
 - All four are on the site's **System Check** page, with a copyable report.
 
 ### Phase 1 — Thin end-to-end slice (first usable version)
-- **Import:** pick a card or folder; Add-in-place or Copy to a destination; date-based folders;
-  rename template; duplicate detection; thumbnails from embedded previews.
+- **Import wizard** (Chrome/Edge):
+  1. Click **Import** and choose the card or source folder in the Windows folder picker. Subfolders are
+     included.
+  2. A grid of thumbnails appears, built from each RAW file's embedded preview and loaded
+     progressively.
+  3. Photos already imported are greyed out and unticked. LightBench recognises them by matching file
+     name, capture time and file size against the catalog and the destination folder. New photos are
+     ticked.
+  4. You tick or untick photos individually, select all or none, shift-click a range, or filter by
+     shooting date.
+  5. You choose how to import: **Copy** to a destination, or **Add** photos in place.
+     - Destination layout: **by date**, `YYYY/YYYY-MM-DD/` (owner's choice).
+     - **Optional renaming templates**, off by default: Date-Sequence, or Custom name + number.
+     - **Second backup copy**: copies each original untouched to a backup folder, for example on an
+       external drive.
+  6. Imported photos appear in the library as they are copied.
+  - Read only the embedded-preview bytes from each file, not the whole RAW, so thumbnails load fast from
+    slow cards.
+  - Measure copy speed.
+  - Verify whether a drive's top-level folder (`E:\`) can be picked in Chrome, or only `E:\DCIM`.
 - **Library:** grid and loupe views, flags (P/X/U), stars (0–5), color labels (6–9),
   basic filter bar, folder tree, keyboard navigation.
 - **Develop (basic):** white balance, exposure, contrast, highlights, shadows, whites, blacks,
