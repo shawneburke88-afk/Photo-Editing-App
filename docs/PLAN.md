@@ -179,8 +179,10 @@ Owner's requests (2026-10-11), to be built on the AI masks:
   model reads the image once, then outlines what is under the cursor in milliseconds); a click makes it a mask.
 - **Model downloads**: on first use, as darktable does; a small default model per tool with an optional
   higher-quality download (owner: "let the user choose").
-- Model research runs now, alongside Phase 2: [research/AI_MODELS.md](research/AI_MODELS.md) (licences checked at
-  the source, browser speed, mask quality). darktable 5.6 ships SAM 2.1 (Hiera small) and SegNext for masks
+- Model research (done 2026-10-11): [research/AI_MODELS.md](research/AI_MODELS.md). Defaults proposed: SAM 2.1 Tiny
+  (hover/click), BiRefNet-lite (subject), MediaPipe Selfie Multiclass (people), YuNet (faces), Depth Anything V2 Small;
+  SAM 3 excluded by its licence; no pretrained tone model has usable training data, so AI Auto is built on masks.
+  The owner picks models before Phase 4. darktable 5.6 ships SAM 2.1 (Hiera small) and SegNext for masks
   (`data/ai_models.json`).
 
 ### Phase 5 — Output and advanced
@@ -196,6 +198,15 @@ faster native processing. Same UI and engine as the website.
 - **Release notes in the app:** new features, bug fixes, and "what moved" notes when a control moves or is renamed.
 - **Rollback:** the previous website version stays one click away.
 - **Compatible edits:** older and newer versions can read each other's saved edits.
+
+### Later — Mobile (to explore)
+Owner's direction (2026-10-11): a mobile version later, for **iPhone, iPad and Android phones**. What it is for (culling and light edits, or full editing) is not decided yet; until then, keep code mobile-friendly (no desktop-only assumptions in the engine, touch-capable controls).
+Known constraints to plan for (to verify when this starts):
+- Phone browsers can't open folders like desktop Chrome, so photos would come through the phone's photo picker into app storage; a Tauri 2 mobile app would get proper library access.
+- Memory: editing at screen resolution and tiled full-size export, because phones cap memory per app or tab.
+- GPU: WebGPU is in Chrome on Android and in Safari since iOS 26 (device support to check); phones throttle when hot.
+- AI: small default models only.
+- Interface: touch layout (bigger controls, swipe culling, bottom panel).
 
 ## Owner tests pending
 
