@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 import { LibRaw } from '@colorhythm/libraw-wasm'
 import wasmUrl from '@colorhythm/libraw-wasm/libraw.wasm?url'
+import { whiteLevel } from './white-level'
 import type { DecodeRequest, DecodeResponse, DecodeResult, EmbeddedPreview, SensorData } from './types'
 
 const ready = LibRaw.initialize(fetch(wasmUrl))
@@ -155,12 +156,7 @@ function extractSensor(lr: LibRaw): SensorData | string {
   const xyzToCam: number[] = []
   for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) xyzToCam.push(lr.getCamXyz(i, j))
 
-  // LibRaw's default "adjust maximum" rule (adjust_maximum_thr = 0.75): if the brightest value in the
-  // file is above 75 % of the nominal maximum, treat it as the real clipping point.
-  let dataMax = 0
-  for (let i = 0; i < data.length; i++) if (data[i] > dataMax) dataMax = data[i]
-  const nominal = lr.getColorMaximum()
-  const white = dataMax > 0.75 * nominal ? dataMax : nominal
+  const white = whiteLevel(data, width, lr.getColorMaximum(), [0, 1, 2, 3].map((i) => lr.getLinearMax(i)))
 
   return { width, height, data, cfa, black, white, wb, camToRgb, xyzToCam }
 }
