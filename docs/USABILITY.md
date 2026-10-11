@@ -34,6 +34,13 @@ Both studies agree on these points. The numbers in brackets are lesson numbers i
 14. **Lightroom migration as a feature,** including finding tools by their Lightroom names. [OS 13]
 15. **Simplicity alone doesn't keep serious users.** RapidRAW is criticised for image quality. LightBench's advantage is darktable's engine, so reveal its depth gradually; don't dilute it. [OS caution]
 
+## What darktable's own code offers here (from the catalogue)
+
+- **The quick access panel is darktable's "Basic" panel.** It does no processing of its own; it shows sliders borrowed from the real modules in one list (`src/libs/modulegroups.c`). LightBench's Basic panel works the same way: Lightroom-named sliders that drive darktable modules.
+- **"Basic adjustments" (`basicadj`) is deprecated** in favour of the quick access panel, because one module mixed operations that belong at different points of the pipeline. Its RawTherapee-derived auto exposure is still a reference for Auto.
+- **darktable already imports Lightroom XMP** (`src/develop/lightroom.c`): exposure, crop, HSL, tone curve, split toning, clarity, grain, vignette and spots. This is a ready reference for Phase 2 migration.
+- **Built-in module-group layouts**, including "workflow: beginner", and presets that apply automatically by camera, lens or ISO. These are darktable's answer to "defaults that look finished".
+
 ## Design rules for LightBench
 
 ### Develop panel layout
