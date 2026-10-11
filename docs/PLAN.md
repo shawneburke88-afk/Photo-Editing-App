@@ -137,6 +137,17 @@ print module, slideshow, web gallery, book module, plugin system.
 Native file management, tethered capture, card auto-import, watched folders, larger memory,
 faster native processing. Same UI and engine as the website.
 
+## Owner tests pending
+
+Tests the owner will run later. They are deferred because there is no SD card reader for the laptop.
+
+| Test | Why it matters |
+|---|---|
+| Import from a real SD card (D5200), both **Copy** and **Add** | Confirms the full card workflow in Edge |
+| Can Edge pick the card's top level (`E:\`), or only `E:\DCIM`? | Decides the import window's guidance text |
+| Thumbnail speed and copy speed from the card | Shows whether reading only the preview bytes is urgent |
+| Backup copy to a second drive | Confirms the backup option on real hardware |
+
 ## Tradeoff register
 
 Capabilities that would be **reduced** vs Lightroom Classic. Each requires the owner's sign-off.
