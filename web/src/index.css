@@ -424,3 +424,26 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .strip-tags .flag { position: static; font-size: 0.7rem; }
 .strip-tags .label { width: 8px; height: 8px; }
 .strip-stars { color: var(--accent); text-shadow: 0 1px 2px #000; }
+
+/* Keywords */
+.check.sub { margin-left: 24px; }
+.keywords { padding: 4px 0 8px; border-top: 1px solid var(--line); }
+.keywords .panel-title { margin: 10px 0 6px; }
+.kw-chips { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.kw-chip { display: inline-flex; align-items: center; gap: 2px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 1px 4px 1px 9px; font-size: 0.8rem; }
+.kw-chip.partial { border-style: dashed; opacity: 0.8; }
+.kw-chip .kw-name { background: none; border: 0; color: inherit; font: inherit; padding: 0; cursor: default; }
+.kw-chip button.kw-name { cursor: pointer; }
+.kw-x { background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; padding: 0 4px; line-height: 1; }
+.kw-x:hover { color: var(--text); }
+.kw-input { position: relative; }
+.kw-input input { width: 100%; box-sizing: border-box; }
+.kw-suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 20; list-style: none; margin: 2px 0 0; padding: 4px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.4); }
+.kw-suggest button { display: flex; justify-content: space-between; gap: 8px; width: 100%; background: none; border: 0; color: var(--text); font: inherit; font-size: 0.85rem; text-align: left; padding: 4px 10px; cursor: pointer; }
+.kw-suggest button.on, .kw-suggest button:hover { background: var(--panel-2); }
+.keyword-list { margin-top: 6px; }
+.kw-row .kw-delete { visibility: hidden; margin-left: auto; background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; padding: 0 4px; }
+.kw-row:hover .kw-delete { visibility: visible; }
+.kw-row .kw-delete:hover { color: var(--bad); }
+.kw-row .kw-delete + .count { margin-left: 4px; }
+.kw-filter { display: inline-flex; align-items: center; gap: 4px; background: var(--panel-2); border: 1px solid var(--accent); border-radius: 999px; padding: 1px 4px 1px 10px; }

@@ -5,10 +5,13 @@ import wasmUrl from '@colorhythm/libraw-wasm/libraw.wasm?url'
 import type { PhotoMeta } from '../catalog/types'
 import { readJpegExif } from '../engine/meta/exif'
 import { exposeRpc } from '../lib/rpc'
+import { extractJpegXmp } from '../sidecar/xmp-packet'
 
 export interface ProbeResult {
   meta: PhotoMeta
   thumb: Uint8Array<ArrayBuffer> | null
+  /** XMP embedded in a JPEG (ratings, labels, keywords written by Lightroom, Bridge or the camera). */
+  xmp?: string
 }
 
 const THUMB_SIZE = 512
@@ -127,7 +130,7 @@ async function probeJpeg(file: File): Promise<ProbeResult> {
     height: exif?.height || bmp.height,
     orientation: exif?.orientation ?? 0,
   }
-  return { meta, thumb: await makeThumb(bmp, 0) }
+  return { meta, thumb: await makeThumb(bmp, 0), xmp: extractJpegXmp(head) ?? undefined }
 }
 
 async function probe(file: File): Promise<ProbeResult> {

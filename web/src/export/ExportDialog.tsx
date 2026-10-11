@@ -303,6 +303,16 @@ export function ExportDialog({ ids, onClose }: Props) {
               <input type="checkbox" checked={s.metadata.develop} onChange={(e) => set({ metadata: { ...s.metadata, develop: e.target.checked } })} />
               LightBench edit settings (a record of how the photo was edited)
             </label>
+            <label className="check">
+              <input type="checkbox" checked={s.metadata.keywords !== false} onChange={(e) => set({ metadata: { ...s.metadata, keywords: e.target.checked } })} />
+              Keywords
+            </label>
+            {s.metadata.keywords !== false && (
+              <label className="check sub" title="Writes full paths like Places|Canada|Ottawa (lr:hierarchicalSubject) as well as each word">
+                <input type="checkbox" checked={!!s.metadata.keywordHierarchy} onChange={(e) => set({ metadata: { ...s.metadata, keywordHierarchy: e.target.checked } })} />
+                Include the keyword hierarchy
+              </label>
+            )}
             <p className="muted small">Location (GPS) is never included yet: LightBench doesn’t store it.</p>
           </fieldset>
 

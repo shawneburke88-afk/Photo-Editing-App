@@ -15,9 +15,11 @@ import { IndexProgress } from './IndexProgress'
 import { useIndexStatus } from './useIndexStatus'
 import { indexer } from './indexer'
 import { InfoPanel } from './InfoPanel'
+import { KeywordEditor, type KeywordCount } from './KeywordEditor'
+import { KeywordList } from './KeywordList'
 import { Loupe } from './Loupe'
 
-type Filters = Pick<PhotoQuery, 'text' | 'minRating' | 'flag' | 'color' | 'sort'>
+type Filters = Pick<PhotoQuery, 'text' | 'minRating' | 'flag' | 'color' | 'sort' | 'keyword'>
 
 const SUBFOLDERS_KEY = 'library:subfolders'
 
@@ -59,6 +61,9 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   const [importing, setImporting] = useState(false)
   const [culling, setCulling] = useState<{ rows: PhotoRow[]; start: number } | null>(null)
   const [subfolders, setSubfolders] = useState(loadSubfolders)
+  const [allKeywords, setAllKeywords] = useState<KeywordCount[]>([])
+  const [targetKeywords, setTargetKeywords] = useState<KeywordCount[]>([])
+  const keywordInput = useRef<HTMLInputElement>(null)
   const [folderError, setFolderError] = useState('')
   const indexing = useIndexStatus()
   const [version, setVersion] = useState(0)
@@ -78,10 +83,10 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
 
   // Photos added in the background by Open folder appear as they are read.
   useEffect(() => {
-    let added = indexer.status.added
+    let changes = indexer.status.changes
     return indexer.subscribe(() => {
-      if (indexer.status.added === added) return
-      added = indexer.status.added
+      if (indexer.status.changes === changes) return
+      changes = indexer.status.changes
       refresh()
     })
   }, [refresh])
@@ -193,6 +198,50 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   /** Applies a rating/flag/label to the selection (or the focused photo). */
   const apply = useCallback((field: CullField, value: number) => applyTo(targets(), field, value), [applyTo, targets])
 
+  // Keywords: the library's list (left panel, suggestions) and those on the photos being edited.
+  useEffect(() => {
+    if (status !== 'ready') return
+    let live = true
+    void catalog.listKeywords().then((k) => live && setAllKeywords(k))
+    return () => {
+      live = false
+    }
+  }, [catalog, status, version, externalVersion])
+
+  const targetKey = targets().join(',')
+  useEffect(() => {
+    if (status !== 'ready') return
+    let live = true
+    void catalog.keywordsOf(targetKey ? targetKey.split(',').map(Number) : []).then((k) => live && setTargetKeywords(k))
+    return () => {
+      live = false
+    }
+  }, [catalog, status, targetKey, version])
+
+  async function addKeywords(paths: string[]) {
+    const ids = targets()
+    if (!ids.length || !paths.length) return
+    await catalog.addKeywords(ids, paths)
+    sidecars.schedule(ids)
+    refresh()
+  }
+
+  async function removeKeyword(path: string) {
+    const ids = targets()
+    await catalog.removeKeywords(ids, [path])
+    sidecars.schedule(ids)
+    refresh()
+  }
+
+  async function deleteKeyword(path: string) {
+    const name = path.split('|').join(' › ')
+    if (!window.confirm(`Delete the keyword “${name}” and any keywords below it from the library?\n\nIt is removed from every photo that has it, and from their sidecar files. The photos themselves are not changed.`)) return
+    const ids = await catalog.deleteKeyword(path)
+    sidecars.schedule(ids)
+    setFilters((f) => (f.keyword && (f.keyword.toLowerCase() === path.toLowerCase() || f.keyword.toLowerCase().startsWith(`${path.toLowerCase()}|`)) ? { ...f, keyword: undefined } : f))
+    refresh()
+  }
+
   /** Full-screen culling of the photos shown, starting at the focused one. */
   const startCulling = useCallback(() => {
     if (rows.length) setCulling({ rows, start: focus ?? rows[0].id })
@@ -261,6 +310,10 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
         if (k === 'a') {
           setSelected(new Set(rows.map((r) => r.id)))
           e.preventDefault()
+        } else if (k === 'k' && targets().length) {
+          // Lightroom: Ctrl+K goes to the keyword box.
+          e.preventDefault()
+          keywordInput.current?.focus()
         } else if (k === 'o' && supportsFolderAccess()) {
           e.preventDefault()
           void openFolder()
@@ -341,7 +394,17 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           onSelect={setFolder}
           onRescan={(rootId, path) => void rescan(rootId, path)}
           busy={!!indexing.active}
-        />
+        >
+          <KeywordList
+            keywords={allKeywords}
+            active={filters.keyword}
+            onSelect={(path) => {
+              setFilters((f) => ({ ...f, keyword: path }))
+              if (path) setFolder(null)
+            }}
+            onDelete={(path) => void deleteKeyword(path)}
+          />
+        </FolderPanel>
       </aside>
 
       <section className="center-pane">
@@ -391,7 +454,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
               <Loupe photo={detail} />
             )}
             <p className="hint muted small">
-              Keys: arrows move · P pick · X reject · U unflag · 0–5 stars · 6–9 colour labels · E loupe · F cull · G grid · D develop · Delete removes from library
+              Keys: arrows move · P pick · X reject · U unflag · 0–5 stars · 6–9 colour labels · Ctrl+K keywords · E loupe · F cull · G grid · D develop · Delete removes from library
             </p>
           </>
         )}
@@ -404,7 +467,16 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
         onFlag={(v: Flag) => void apply('flag', v)}
         onColor={(v: ColorLabel) => void apply('color', v)}
         onDevelop={() => focus !== null && onDevelop(focus, rows.map((r) => r.id))}
-      />
+      >
+        <KeywordEditor
+          ref={keywordInput}
+          attached={targetKeywords}
+          total={targets().length}
+          all={allKeywords}
+          onAdd={(paths) => void addKeywords(paths)}
+          onRemove={(path) => void removeKeyword(path)}
+        />
+      </InfoPanel>
 
       {culling && (
         <CullView

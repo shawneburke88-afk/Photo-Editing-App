@@ -15,6 +15,7 @@ import { joinPath } from '../import/plan'
 import { scanSource, type ScannedFile } from '../import/scan'
 import { getDirAt, getRootHandle, resolveRoot } from '../platform/roots'
 import { filesToAdd } from './index-plan'
+import { readXmp } from '../sidecar/xmp'
 import type { ProbeResult } from '../import/probe'
 
 export interface IndexStatus {
@@ -30,8 +31,10 @@ export interface IndexStatus {
   } | null
   /** Folders waiting their turn. */
   queued: number
-  /** Photos added since the page loaded (changes whenever the grid should refresh). */
+  /** Photos added since the page loaded. */
   added: number
+  /** Bumped whenever the library changed (photos or keywords added), so views refresh. */
+  changes: number
   /** Photos that could not be read in the last run. */
   failed: { name: string; error: string }[]
   /** Summary of the last finished run, e.g. "Added 120 photos from Trip". */
@@ -49,7 +52,7 @@ const FLUSH_MS = 400
 const FLUSH_COUNT = 48
 
 class FolderIndexer {
-  status: IndexStatus = { active: null, queued: 0, added: 0, failed: [], lastResult: null }
+  status: IndexStatus = { active: null, queued: 0, added: 0, changes: 0, failed: [], lastResult: null }
   private queue: Job[] = []
   private running = false
   private stopped = false
@@ -156,9 +159,10 @@ class FolderIndexer {
           if (!dirs.has(file.dir)) dirs.set(file.dir, await getDirAt(dir, file.dir).catch(() => null))
           const folder = dirs.get(file.dir)
           const sidecar = folder ? await findSidecar(folder, file.name) : null
-          if (sidecar) await applySidecar(catalog, id, sidecar.text).catch(() => {})
+          const xmpText = sidecar?.text ?? result.xmp
+          if (xmpText) await applySidecar(catalog, id, xmpText).catch(() => {})
         }
-        this.set({ added: this.status.added + ids.filter((id) => id !== null).length })
+        this.set({ added: this.status.added + ids.filter((id) => id !== null).length, changes: this.status.changes + 1 })
       })
       return writing
     }
@@ -190,6 +194,17 @@ class FolderIndexer {
       this.pool = null
     }
 
+    // Photos added before LightBench had keywords: bring in their sidecar keywords now.
+    for (const p of await catalog.photosWithUnreadKeywords(rootId, subPath)) {
+      if (this.stopped) break
+      const folder = await getDirAt(dir, relativeTo(subPath, p.folderPath)).catch(() => null)
+      const sidecar = folder ? await findSidecar(folder, p.fileName) : null
+      const kws = sidecar ? readXmp(sidecar.text).keywords : undefined
+      if (kws?.length) await catalog.addKeywords([p.id], kws)
+      await catalog.markKeywordsRead(p.id)
+      if (kws?.length) this.set({ changes: this.status.changes + 1 })
+    }
+
     const where = `“${name}”`
     const result = this.stopped
       ? `Stopped: added ${added} of ${todo.length} new photos from ${where}`
@@ -198,6 +213,11 @@ class FolderIndexer {
         : `Added ${added} ${added === 1 ? 'photo' : 'photos'} from ${where}`
     this.set({ failed, lastResult: failed.length ? `${result} · ${failed.length} could not be read` : result })
   }
+}
+
+/** `path` relative to `base` (both relative to the same library root). */
+function relativeTo(base: string, path: string): string {
+  return base && path.startsWith(`${base}/`) ? path.slice(base.length + 1) : base === path ? '' : path
 }
 
 export const indexer = new FolderIndexer()

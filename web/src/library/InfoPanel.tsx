@@ -10,9 +10,11 @@ interface Props {
   onFlag: (v: Flag) => void
   onColor: (v: ColorLabel) => void
   onDevelop: () => void
+  /** Extra sections below the rating controls (keywords). */
+  children?: React.ReactNode
 }
 
-export function InfoPanel({ photo, count, onRating, onFlag, onColor, onDevelop }: Props) {
+export function InfoPanel({ photo, count, onRating, onFlag, onColor, onDevelop, children }: Props) {
   if (!photo) return <aside className="info"><p className="muted small pad">Select a photo to see its details.</p></aside>
   const rows: [string, string][] = [
     ['File', photo.fileName],
@@ -49,6 +51,7 @@ export function InfoPanel({ photo, count, onRating, onFlag, onColor, onDevelop }
           ))}
         </div>
       </div>
+      {children}
       <dl className="info-list">
         {rows.map(([k, v]) => (
           <div key={k}>

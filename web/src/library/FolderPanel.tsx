@@ -47,9 +47,11 @@ interface Props {
   onRescan: (rootId: number, path: string) => void
   /** True while a folder is being indexed. */
   busy: boolean
+  /** Shown below the folders, in the same scrolling column (the keyword list). */
+  children?: React.ReactNode
 }
 
-export function FolderPanel({ roots, folders, total, selection, disconnected, onSelect, onRescan, busy }: Props) {
+export function FolderPanel({ roots, folders, total, selection, disconnected, onSelect, onRescan, busy, children }: Props) {
   const trees = useMemo(
     () => roots.map((r) => ({ root: r, tree: buildTree(folders.filter((f) => f.rootId === r.id)) })),
     [roots, folders],
@@ -75,6 +77,7 @@ export function FolderPanel({ roots, folders, total, selection, disconnected, on
         />
       ))}
       {!roots.length && <p className="muted small pad">No folders yet.</p>}
+      {children}
     </nav>
   )
 }

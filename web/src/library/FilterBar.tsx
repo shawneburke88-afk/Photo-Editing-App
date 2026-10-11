@@ -1,7 +1,8 @@
 import type { ColorLabel, PhotoQuery } from '../catalog/types'
 import { COLOR_NAMES } from './format'
+import { showKeyword } from './keywords'
 
-type Filters = Pick<PhotoQuery, 'text' | 'minRating' | 'flag' | 'color' | 'sort'>
+type Filters = Pick<PhotoQuery, 'text' | 'minRating' | 'flag' | 'color' | 'sort' | 'keyword'>
 
 interface Props {
   value: Filters
@@ -29,7 +30,7 @@ export function FilterBar({ value, onChange, view, onView, onCull, cellSize, onC
       </div>
       <input
         type="search"
-        placeholder="Search name, camera, lens"
+        placeholder="Search name, camera, lens, keyword"
         value={value.text ?? ''}
         onChange={(e) => set({ text: e.target.value })}
         aria-label="Search"
@@ -59,6 +60,12 @@ export function FilterBar({ value, onChange, view, onView, onCull, cellSize, onC
           <input type="checkbox" checked={subfolders} onChange={(e) => onSubfolders(e.target.checked)} />
           Subfolders
         </label>
+      )}
+      {value.keyword && (
+        <span className="kw-filter small">
+          Keyword: {showKeyword(value.keyword)}
+          <button className="kw-x" onClick={() => set({ keyword: undefined })} aria-label="Clear keyword filter">×</button>
+        </span>
       )}
       <span className="muted small grow">{shown.toLocaleString()} photos</span>
       {view === 'grid' && (

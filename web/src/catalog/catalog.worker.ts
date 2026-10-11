@@ -5,7 +5,7 @@ import { exposeRpc } from '../lib/rpc'
 import type { DuplicateKey, FolderNode, LibraryRoot, NewPhoto, PhotoDetail, PhotoQuery, PhotoRow } from './types'
 
 const DB_FILE = '/lightbench-catalog.sqlite3'
-const SCHEMA_VERSION = 4
+const SCHEMA_VERSION = 5
 
 let db: Database | null = null
 let persistent = false
@@ -121,6 +121,24 @@ function migrate(d: Database) {
       // When LightBench last wrote this photo's XMP sidecar (Unix seconds), to spot later outside changes.
       d.exec('ALTER TABLE photos ADD COLUMN sidecar_written_at INTEGER')
     }
+    if (version < 5) {
+      // Hierarchical keywords, stored as darktable stores tags: "Places|Canada|Ottawa". keywords_read marks photos
+      // whose sidecar keywords are already in the catalog; photos added before keywords existed get 0, so their
+      // sidecar's keywords are read before LightBench first rewrites it (otherwise they would be lost).
+      d.exec(`
+        CREATE TABLE keywords (
+          id INTEGER PRIMARY KEY,
+          path TEXT NOT NULL UNIQUE COLLATE NOCASE
+        );
+        CREATE TABLE photo_keywords (
+          photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+          keyword_id INTEGER NOT NULL REFERENCES keywords(id) ON DELETE CASCADE,
+          PRIMARY KEY (photo_id, keyword_id)
+        );
+        CREATE INDEX photo_keywords_keyword ON photo_keywords(keyword_id);
+        ALTER TABLE photos ADD COLUMN keywords_read INTEGER NOT NULL DEFAULT 0;
+      `)
+    }
     d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     d.exec('COMMIT')
   } catch (err) {
@@ -208,8 +226,8 @@ function addPhotos(photos: NewPhoto[]): (number | null)[] {
     const stmt = d.prepare(`
       INSERT OR IGNORE INTO photos (folder_id, file_name, original_name, file_type, file_size, file_modified,
         captured_at, imported_at, camera_make, camera_model, lens, iso, shutter, aperture, focal_length,
-        width, height, orientation)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        width, height, orientation, keywords_read)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`)
     for (const p of photos) {
       stmt.bind([
         folderId(p.rootId, p.folderPath), p.fileName, p.originalName, p.fileType, p.fileSize, p.fileModified,
@@ -253,10 +271,15 @@ function queryPhotos(q: PhotoQuery): PhotoRow[] {
     where.push('p.color_label = ?')
     bind.push(q.color)
   }
+  if (q.keyword) {
+    where.push(`EXISTS (SELECT 1 FROM photo_keywords pk JOIN keywords k ON k.id = pk.keyword_id WHERE pk.photo_id = p.id AND ${KEYWORD_UNDER})`)
+    bind.push(q.keyword, q.keyword, q.keyword)
+  }
   if (q.text?.trim()) {
-    where.push('(p.file_name LIKE ? OR p.camera_model LIKE ? OR p.lens LIKE ?)')
+    where.push(`(p.file_name LIKE ? OR p.camera_model LIKE ? OR p.lens LIKE ?
+      OR EXISTS (SELECT 1 FROM photo_keywords pk JOIN keywords k ON k.id = pk.keyword_id WHERE pk.photo_id = p.id AND k.path LIKE ?))`)
     const like = `%${q.text.trim()}%`
-    bind.push(like, like, like)
+    bind.push(like, like, like, like)
   }
   const order =
     q.sort === 'name' ? 'p.file_name COLLATE NOCASE' : q.sort === 'captureAsc' ? 'p.captured_at, p.file_name' : 'p.captured_at DESC, p.file_name DESC'
@@ -265,6 +288,101 @@ function queryPhotos(q: PhotoQuery): PhotoRow[] {
     FROM photos p ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order}`
   type Row = Omit<PhotoRow, 'edited'> & { edited: number }
   return (conn().selectObjects(sql, bind) as unknown as Row[]).map((r) => ({ ...r, edited: !!r.edited }))
+}
+
+// ---- keywords
+
+/** Matches a keyword path and everything below it ("Places" matches "Places|Canada|Ottawa"). */
+const KEYWORD_UNDER = `(lower(k.path) = lower(?) OR substr(lower(k.path), 1, length(?) + 1) = lower(?) || '|')`
+
+/** Every keyword with the number of photos it is attached to directly. */
+function listKeywords(): { path: string; count: number }[] {
+  return conn().selectObjects(
+    `SELECT k.path, COUNT(pk.photo_id) AS count FROM keywords k LEFT JOIN photo_keywords pk ON pk.keyword_id = k.id
+     GROUP BY k.id ORDER BY k.path COLLATE NOCASE`,
+  ) as unknown as { path: string; count: number }[]
+}
+
+/** Keywords on any of `ids`, each with how many of them carry it. */
+function keywordsOf(ids: number[]): { path: string; count: number }[] {
+  if (!ids.length) return []
+  return conn().selectObjects(
+    `SELECT k.path, COUNT(*) AS count FROM photo_keywords pk JOIN keywords k ON k.id = pk.keyword_id
+     WHERE pk.photo_id IN (${ids.map(() => '?').join(',')}) GROUP BY k.id ORDER BY k.path COLLATE NOCASE`,
+    ids,
+  ) as unknown as { path: string; count: number }[]
+}
+
+function keywordId(path: string): number {
+  const d = conn()
+  d.exec({ sql: 'INSERT OR IGNORE INTO keywords(path) VALUES (?)', bind: [path] })
+  return Number(d.selectValue('SELECT id FROM keywords WHERE path = ?', [path]))
+}
+
+function inTransaction<T>(fn: () => T): T {
+  const d = conn()
+  d.exec('BEGIN')
+  try {
+    const r = fn()
+    d.exec('COMMIT')
+    return r
+  } catch (err) {
+    d.exec('ROLLBACK')
+    throw err
+  }
+}
+
+/** Attaches keywords (already normalised paths) to photos. */
+function addKeywords(ids: number[], paths: string[]) {
+  inTransaction(() => {
+    const stmt = conn().prepare('INSERT OR IGNORE INTO photo_keywords(photo_id, keyword_id) VALUES (?, ?)')
+    for (const path of paths) {
+      const kid = keywordId(path)
+      for (const id of ids) stmt.bind([id, kid]).stepReset()
+    }
+    stmt.finalize()
+  })
+}
+
+/** Detaches keywords from photos (the keywords stay in the keyword list). */
+function removeKeywords(ids: number[], paths: string[]) {
+  inTransaction(() => {
+    const stmt = conn().prepare('DELETE FROM photo_keywords WHERE photo_id = ? AND keyword_id = (SELECT id FROM keywords WHERE path = ?)')
+    for (const path of paths) for (const id of ids) stmt.bind([id, path]).stepReset()
+    stmt.finalize()
+  })
+}
+
+/** Deletes a keyword and everything below it from the library; returns the photos that carried them. */
+function deleteKeyword(path: string): number[] {
+  return inTransaction(() => {
+    const ids = (conn().selectObjects(
+      `SELECT DISTINCT pk.photo_id AS id FROM photo_keywords pk JOIN keywords k ON k.id = pk.keyword_id WHERE ${KEYWORD_UNDER}`,
+      [path, path, path],
+    ) as unknown as { id: number }[]).map((r) => r.id)
+    conn().exec({ sql: `DELETE FROM keywords AS k WHERE ${KEYWORD_UNDER}`, bind: [path, path, path] })
+    return ids
+  })
+}
+
+function photoKeywords(photoId: number): string[] {
+  return (conn().selectObjects(
+    'SELECT k.path FROM photo_keywords pk JOIN keywords k ON k.id = pk.keyword_id WHERE pk.photo_id = ? ORDER BY k.path COLLATE NOCASE',
+    [photoId],
+  ) as unknown as { path: string }[]).map((r) => r.path)
+}
+
+/** Photos under a folder whose sidecar keywords haven't been read yet (added before keywords existed). */
+function photosWithUnreadKeywords(rootId: number, path: string): { id: number; folderPath: string; fileName: string }[] {
+  return conn().selectObjects(
+    `SELECT p.id, f.path AS folderPath, p.file_name AS fileName FROM photos p JOIN folders f ON f.id = p.folder_id
+     WHERE p.keywords_read = 0 AND f.root_id = ?1 AND (?2 = '' OR f.path = ?2 OR substr(f.path, 1, length(?2) + 1) = ?2 || '/')`,
+    [rootId, path],
+  ) as unknown as { id: number; folderPath: string; fileName: string }[]
+}
+
+function markKeywordsRead(photoId: number) {
+  conn().exec({ sql: 'UPDATE photos SET keywords_read = 1 WHERE id = ?', bind: [photoId] })
 }
 
 function getEdit(photoId: number): { settings: string; history: string } | null {
@@ -355,7 +473,8 @@ function sidecarSource(photoId: number) {
     [p.folderId, photoId, base],
   ) as unknown as { fileType: string }[]
   const owner = !(isJpeg && twins.some((t) => !/^jpe?g$/i.test(t.fileType)))
-  return { photo: p, settings: edit?.settings ?? null, owner }
+  const keywordsRead = Number(conn().selectValue('SELECT keywords_read FROM photos WHERE id = ?', [photoId])) === 1
+  return { photo: p, settings: edit?.settings ?? null, owner, keywords: photoKeywords(photoId), keywordsRead }
 }
 
 function markSidecarWritten(photoId: number, at: number) {
@@ -391,6 +510,14 @@ const handlers = {
   saveTarget,
   deleteTarget,
   sidecarSource,
+  listKeywords,
+  keywordsOf,
+  addKeywords,
+  removeKeywords,
+  deleteKeyword,
+  photoKeywords,
+  markKeywordsRead,
+  photosWithUnreadKeywords,
   markSidecarWritten,
   stats,
 }
