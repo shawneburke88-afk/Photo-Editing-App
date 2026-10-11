@@ -78,7 +78,16 @@ each phase below delivers usable software on the live site.
 Delivered in three parts:
 - **Part 1, Import + Library:** merged.
 - **Part 2, Develop with darktable processing:** built, see [PHASE1.md](PHASE1.md).
-- **Part 3, Export, XMP sidecars and JPEG editing:** next.
+- **Part 2b, Histogram + Auto** (owner's request, 2026-10-11): next.
+  - **Histogram:** live in Develop, updating with every edit.
+  - **Clipping warnings:** shadow/highlight clipping indicators, plus a **J** key overlay that paints
+    clipped areas.
+  - **Auto button:** moves the visible sliders as one history step, aiming at a chosen target profile:
+    - **built-in looks** (e.g. Natural, Vivid, Landscape, Portrait, Low-key, High-key);
+    - **match a reference photo**;
+    - **the owner's own saved targets.**
+- **Part 3, Export, XMP sidecars and JPEG editing:** after Part 2b.
+- The tone curve stays with the Phase 3 colour tools.
 
 Non-destructive editing: originals are never modified. Edits are settings re-applied to the original on every render, as in Lightroom. Virtual copies (Phase 2) and snapshots (Phase 3) build on this.
 

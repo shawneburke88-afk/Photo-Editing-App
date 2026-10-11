@@ -85,7 +85,7 @@ export function RawCheck() {
         return
       }
       const s = r.sensor
-      lines.push(`Sensor: ${s.width}×${s.height}, CFA ${s.cfa.join('')}, black ${s.black.join('/')}, white ${s.white}, WB ${s.wb.map((v) => v.toFixed(3)).join('/')}`)
+      lines.push(`Sensor: ${s.width}×${s.height}, CFA ${s.cfa.join('')}, black ${s.black.join('/')}, white ${s.white} (${s.whiteSource}), WB ${s.wb.map((v) => v.toFixed(3)).join('/')}`)
 
       if (!rendererRef.current) {
         try {
