@@ -62,3 +62,16 @@ export function sigmoidCurve(p: SigmoidParams): SigmoidCurve {
   const paperExp = (filmFog + MIDDLE_GREY) ** filmPower * whiteGrey
   return { whiteTarget, blackTarget, paperExp, filmFog, filmPower, paperPower }
 }
+
+/**
+ * Inverse of the sigmoid's per-channel curve (no hue preservation): the scene value that the curve maps to
+ * the display value `y`. Used to bring display-referred images (JPEGs) into the scene-referred pipeline so
+ * that, with default settings, the output equals the input. Values at or above the white target map to `cap`.
+ */
+export function inverseLoglogistic(y: number, c: SigmoidCurve, cap = 1e4): number {
+  if (y <= 0) return 0
+  if (y >= c.whiteTarget) return cap
+  const r = (y / c.whiteTarget) ** (1 / c.paperPower)
+  const film = (c.paperExp * r) / (1 - r)
+  return Math.min(cap, Math.max(0, film ** (1 / c.filmPower) - c.filmFog))
+}

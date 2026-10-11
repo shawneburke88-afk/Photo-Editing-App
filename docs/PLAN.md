@@ -93,7 +93,12 @@ Delivered in three parts:
     - **the owner's own saved targets.**
   - **Hints and tooltips** for every Basic slider.
   - Resizable left panel with History docked under the histogram.
-- **Part 3, Export, XMP sidecars and JPEG editing:** after Part 2b.
+- **Part 3, Export, XMP sidecars and JPEG editing:** built, see [PHASE1.md](PHASE1.md#part-3-export-xmp-sidecars-jpeg-editing). The JPEG encoder (jpegli) and its defaults were chosen by a benchmark ([JPEG_ENCODER_BENCHMARK.md](research/JPEG_ENCODER_BENCHMARK.md)).
+  - Export follow-ups suggested by the benchmark:
+    - **AVIF** export: 22–36 % smaller than JPEG; all major browsers display it.
+    - An optional **"optimise PNG"** step (oxipng): −8 to −11 %.
+    - **JPEG XL** once Safari and Edge support it fully.
+    - "Target a perceptual quality" mode: not yet (too slow in the browser).
 - The tone curve stays with the Phase 3 colour tools.
 
 Non-destructive editing: originals are never modified. Edits are settings re-applied to the original on every render, as in Lightroom. Virtual copies (Phase 2) and snapshots (Phase 3) build on this.
@@ -132,8 +137,10 @@ Non-destructive editing: originals are never modified. Edits are settings re-app
     change also updates a `.xmp` file next to the photo. Write permission is asked once per folder.
   - **Standard fields** for ratings, labels and keywords (`xmp:Rating`, `xmp:Label`, `dc:subject`,
     `lr:hierarchicalSubject`), so Lightroom, darktable and Bridge can read them.
-  - LightBench's own edit settings and history go in a separate `lightbench:` namespace that other apps
-    ignore.
+  - LightBench's own edit settings go in a separate `lightbench:` namespace that other apps ignore.
+  - **Lightroom-style names** (`DSC_0001.xmp`), owner's choice 2026-10-11: Lightroom, Bridge and Capture One
+    read them; darktable imports them when it has no sidecar of its own.
+  - Written whenever a rating, flag, label or edit changes (not for untouched photos at import).
   - Reading sidecars back recovers the edits if browser storage is cleared, or on another computer.
   - Existing sidecars written by other apps are preserved: LightBench updates only its own fields and the
     standard fields above.

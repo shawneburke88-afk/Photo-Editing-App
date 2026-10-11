@@ -61,13 +61,29 @@ export const DEFAULT_SETTINGS: DevelopSettings = {
   },
 }
 
-/** Fills in missing fields (e.g. from older saved edits) with defaults. */
-export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined): DevelopSettings {
+/** What kind of source a photo is: camera RAW, or an already-rendered (display-referred) RGB image. */
+export type SourceKind = 'raw' | 'rgb'
+
+/**
+ * Defaults for display-referred images (JPEG, later PNG/TIFF). Like darktable, a JPEG gets no +0.7 EV base
+ * exposure. Hue preservation is 0 so that the pipeline's inverse tone mapping at load is exact and an
+ * unedited JPEG looks exactly as shot (see engine/gpu/rgb-input.wgsl).
+ */
+export const DEFAULT_RGB_SETTINGS: DevelopSettings = {
+  ...DEFAULT_SETTINGS,
+  advanced: { ...DEFAULT_SETTINGS.advanced, baseExposure: 0, huePreservation: 0 },
+}
+
+export const defaultsFor = (kind: SourceKind) => (kind === 'rgb' ? DEFAULT_RGB_SETTINGS : DEFAULT_SETTINGS)
+
+/** Fills in missing fields (e.g. from older saved edits) with the defaults for this kind of photo. */
+export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined, kind: SourceKind = 'raw'): DevelopSettings {
+  const d = defaultsFor(kind)
   return {
-    ...DEFAULT_SETTINGS,
+    ...d,
     ...s,
-    whiteBalance: { ...DEFAULT_SETTINGS.whiteBalance, ...s?.whiteBalance },
-    advanced: { ...DEFAULT_SETTINGS.advanced, ...s?.advanced },
+    whiteBalance: { ...d.whiteBalance, ...s?.whiteBalance },
+    advanced: { ...d.advanced, ...s?.advanced },
     version: 1,
   }
 }

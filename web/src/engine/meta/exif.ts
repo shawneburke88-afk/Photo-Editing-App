@@ -14,6 +14,10 @@ export interface ExifInfo {
   focalLength: number
   width: number
   height: number
+  /** EXIF interoperability index, e.g. "R98" (sRGB) or "R03" (Adobe RGB); '' if absent. */
+  interopIndex: string
+  /** EXIF ColorSpace tag: 1 = sRGB, 0xFFFF = uncalibrated, 0 = absent. */
+  colorSpace: number
 }
 
 const EXIF_TO_FLIP: Record<number, number> = { 1: 0, 3: 3, 6: 6, 8: 5 }
@@ -50,7 +54,7 @@ function readTiff(v: DataView, base: number, end: number): ExifInfo | null {
   const u32 = (o: number) => v.getUint32(o, le)
   const info: ExifInfo = {
     make: '', model: '', lens: '', orientation: 0, capturedAt: 0,
-    iso: 0, shutter: 0, aperture: 0, focalLength: 0, width: 0, height: 0,
+    iso: 0, shutter: 0, aperture: 0, focalLength: 0, width: 0, height: 0, interopIndex: '', colorSpace: 0,
   }
 
   const TYPE_SIZE: Record<number, number> = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8 }
@@ -92,6 +96,7 @@ function readTiff(v: DataView, base: number, end: number): ExifInfo | null {
   }
 
   let exifIfd = 0
+  let interopIfd = 0
   readEntries(u32(base + 4), (tag, type, count, o) => {
     if (tag === 0x010f) info.make = str(o, count)
     else if (tag === 0x0110) info.model = str(o, count)
@@ -108,6 +113,11 @@ function readTiff(v: DataView, base: number, end: number): ExifInfo | null {
     else if (tag === 0xa434) info.lens = str(o, count)
     else if (tag === 0xa002) info.width = num(type, o)
     else if (tag === 0xa003) info.height = num(type, o)
+    else if (tag === 0xa001) info.colorSpace = num(type, o)
+    else if (tag === 0xa005) interopIfd = num(type, o)
+  })
+  readEntries(interopIfd, (tag, _type, count, o) => {
+    if (tag === 0x0001) info.interopIndex = str(o, count)
   })
   return info
 }

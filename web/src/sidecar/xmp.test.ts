@@ -1,0 +1,91 @@
+// @vitest-environment jsdom
+import { describe, expect, it } from 'vitest'
+import { readXmp, sidecarName, writeXmp, type SidecarData } from './xmp'
+
+const LIGHTROOM = `<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 7.0-c000 1.000000, 0000/00/00-00:00:00        ">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+    xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmp:Rating="4"
+   xmp:Label="Green"
+   crs:Exposure2012="+0.35"
+   crs:WhiteBalance="As Shot">
+   <dc:subject>
+    <rdf:Bag>
+     <rdf:li>Glarus</rdf:li>
+     <rdf:li>Lake</rdf:li>
+    </rdf:Bag>
+   </dc:subject>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+`
+
+const data = (p: Partial<SidecarData> = {}): SidecarData => ({ rating: 0, flag: 0, color: 0, develop: null, ...p })
+
+describe('XMP sidecars', () => {
+  it('uses Lightroom-style names', () => {
+    expect(sidecarName('DSC_0001.NEF')).toBe('DSC_0001.xmp')
+    expect(sidecarName('IMG.2024.jpg')).toBe('IMG.2024.xmp')
+  })
+
+  it('writes a new sidecar that reads back', () => {
+    const text = writeXmp(null, data({ rating: 3, color: 2, develop: '{"exposure":0.5}' }), new Date('2026-10-11T12:00:00Z'))!
+    expect(text.startsWith('<?xml')).toBe(true)
+    expect(text).toContain('xmp:Rating="3"')
+    expect(text).toContain('xmp:Label="Yellow"')
+    expect(text).toContain('xmp:MetadataDate="2026-10-11T12:00:00Z"')
+    expect(readXmp(text)).toEqual({ rating: 3, flag: 0, color: 2, develop: '{"exposure":0.5}' })
+  })
+
+  it('reads Lightroom’s rating and label', () => {
+    expect(readXmp(LIGHTROOM)).toEqual({ rating: 4, color: 3 })
+  })
+
+  it('updates only its own fields and keeps everything else', () => {
+    const text = writeXmp(LIGHTROOM, data({ rating: 5, color: 4, develop: '{"a":1}' }))!
+    const back = readXmp(text)
+    expect(back.rating).toBe(5)
+    expect(back.color).toBe(4)
+    expect(text).toContain('crs:Exposure2012="+0.35"')
+    expect(text).toContain('<rdf:li>Glarus</rdf:li>')
+    expect(text).toContain('x:xmptk="Adobe XMP Core')
+  })
+
+  it('writes rejected photos as rating −1 but keeps their stars', () => {
+    const text = writeXmp(null, data({ rating: 4, flag: -1 }))!
+    expect(text).toContain('xmp:Rating="-1"')
+    expect(readXmp(text)).toMatchObject({ rating: 4, flag: -1 })
+  })
+
+  it('reads a rejection written by another app', () => {
+    expect(readXmp(LIGHTROOM.replace('xmp:Rating="4"', 'xmp:Rating="-1"'))).toMatchObject({ flag: -1, rating: 0 })
+  })
+
+  it('returns null when nothing changed, so the file is not rewritten', () => {
+    const first = writeXmp(LIGHTROOM, data({ rating: 2 }))!
+    expect(writeXmp(first, data({ rating: 2 }))).toBeNull()
+    expect(writeXmp(first, data({ rating: 3 }))).not.toBeNull()
+  })
+
+  it('removes its label when cleared, but keeps a custom label from another app', () => {
+    expect(readXmp(writeXmp(LIGHTROOM, data())!).color).toBeUndefined()
+    const custom = LIGHTROOM.replace('xmp:Label="Green"', 'xmp:Label="Approved"')
+    expect(writeXmp(custom, data())!).toContain('xmp:Label="Approved"')
+  })
+
+  it('reads properties written as elements', () => {
+    const el = LIGHTROOM.replace('xmp:Rating="4"', '').replace('<dc:subject>', '<xmp:Rating>2</xmp:Rating><dc:subject>')
+    expect(readXmp(el).rating).toBe(2)
+    const out = writeXmp(el, data({ rating: 1 }))!
+    expect(out).not.toContain('<xmp:Rating>')
+    expect(readXmp(out).rating).toBe(1)
+  })
+
+  it('refuses to overwrite a damaged file', () => {
+    expect(() => writeXmp('<not xml', data())).toThrow()
+    expect(readXmp('<not xml')).toEqual({})
+  })
+})

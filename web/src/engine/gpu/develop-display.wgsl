@@ -41,7 +41,7 @@ struct View {
   rawWidth: u32,
   rawHeight: u32,
   cfa: u32,           // CFA colours of the 2×2 tile, 2 bits each
-  statsPass: u32,     // 1 = output unclamped display RGB + clipping class in alpha (for the histogram)
+  statsPass: u32,     // 1 = unclamped display RGB + clipping class in alpha (histogram); 2 = linear Rec.2020 output (export)
   pad0: f32,
   pad1: f32,
   pad2: f32,
@@ -166,6 +166,11 @@ fn srgbOetfUnbounded(c: vec3f) -> vec3f {
 
 /** The full develop transform for one scene-linear Rec.2020 pixel; returns unclamped linear sRGB. */
 fn develop(scene: vec3f) -> vec3f {
+  return rec2020ToSrgb(developRec2020(scene));
+}
+
+/** The develop transform up to the tone mapper: display-referred linear Rec.2020 (before the output profile). */
+fn developRec2020(scene: vec3f) -> vec3f {
   var c = vec3f(dot(V.wbFix0.xyz, scene), dot(V.wbFix1.xyz, scene), dot(V.wbFix2.xyz, scene));
   c *= V.exposure;
 
@@ -183,8 +188,7 @@ fn develop(scene: vec3f) -> vec3f {
     c = y + (c - y) * k;
   }
 
-  c = sigmoid(c);
-  return rec2020ToSrgb(c);
+  return sigmoid(c);
 }
 
 // ---- clipping indicators
@@ -280,6 +284,10 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) { return V.background; }
   let suv = sourceUv(uv);
   let scene = textureSampleLevel(img, samp, suv, V.lod).rgb;
+  if (V.statsPass == 2u) {
+    // Export: the output colour profile, resizing and encoding happen afterwards (export.wgsl).
+    return vec4f(developRec2020(scene), 1.0);
+  }
   let lin = develop(scene);
   let t = srgbOetfUnbounded(lin);
   if (V.statsPass == 1u) {
