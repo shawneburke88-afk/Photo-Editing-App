@@ -170,6 +170,18 @@ heal and clone, snapshots, soft proofing. Develop tools in **one scrolling stack
 Subject / sky / object / background masks (SAM 2 / MobileSAM), AI remove (LaMa),
 AI denoise (NAFNet-class), assisted culling (sharpness, eyes-open), face grouping, content search.
 Model licenses checked individually (avoid non-commercial weights).
+Owner's requests (2026-10-11), to be built on the AI masks:
+- **AI-assisted Auto**: finds the subject, sky, faces and background, measures each region in the scene-linear
+  data, and drives the existing Auto solver with per-region goals (e.g. subject at mid-grey, sky not clipped,
+  faces at skin brightness). Results stay ordinary, editable sliders.
+- **Auto for a selected area**: with a mask selected, Auto sets that mask's adjustments from its own pixels only.
+- **Hover selection previews**: moving the cursor over the photo outlines the object under it live (a SAM-style
+  model reads the image once, then outlines what is under the cursor in milliseconds); a click makes it a mask.
+- **Model downloads**: on first use, as darktable does; a small default model per tool with an optional
+  higher-quality download (owner: "let the user choose").
+- Model research runs now, alongside Phase 2: [research/AI_MODELS.md](research/AI_MODELS.md) (licences checked at
+  the source, browser speed, mask quality). darktable 5.6 ships SAM 2.1 (Hiera small) and SegNext for masks
+  (`data/ai_models.json`).
 
 ### Phase 5 — Output and advanced
 HDR and panorama merge, HDR editing and export (AVIF / JPEG XL / gain-map JPEG), map module,
