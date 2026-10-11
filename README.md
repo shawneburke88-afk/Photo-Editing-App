@@ -5,8 +5,9 @@ desktop app planned from the same code. Your photos never leave your computer.
 
 **Try it:** https://shawneburke88-afk.github.io/Photo-Editing-App/ (best in Chrome or Edge)
 
-- **Status:** Phase 0 — foundations. The site currently has a **System Check** page that tests RAW
-  decoding, GPU editing, folder access and the catalog database on your computer.
+- **Status:** Phase 1, Part 1. **Import** photos from a memory card or folder and organise them in the
+  **Library** (folders, ratings, flags, colour labels, filters, loupe). **Develop** (editing) is next.
+  A **System Check** page tests your computer and browser.
 - **License:** [GPL-3.0-or-later](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 - **Docs:** [Research summary](docs/RESEARCH.md) · [Project plan & roadmap](docs/PLAN.md) ·
   [Phase 0 results](docs/PHASE0.md)
@@ -18,6 +19,7 @@ cd web
 npm install
 npm run dev        # http://localhost:5173
 npm run lint
+npm test           # unit tests (Vitest)
 npm run build      # type-checks, then builds to web/dist
 ```
 
@@ -29,8 +31,12 @@ Pushes to `main` are built and published to GitHub Pages by `.github/workflows/d
 web/                    Browser app (Vite + React + TypeScript)
   src/engine/raw/       RAW decoding (LibRaw in a Web Worker)
   src/engine/gpu/       WebGPU develop pipeline (WGSL shaders)
-  src/engine/catalog/   SQLite catalog (in browser storage)
-  src/platform/         Folder access (File System Access API)
+  src/engine/catalog/   Catalog benchmark (System Check)
+  src/engine/meta/      EXIF reader for JPEGs
+  src/catalog/          Library catalog: SQLite in browser storage, thumbnails
+  src/import/           Import window: scanning, duplicate detection, copying
+  src/library/          Library module: folders, grid, loupe, filters, info panel
+  src/platform/         Folder access and library roots (File System Access API)
   src/syscheck/         System Check page
 docs/                   Research, plan, phase results
 ```

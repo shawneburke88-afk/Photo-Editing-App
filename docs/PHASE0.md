@@ -1,7 +1,43 @@
 # Phase 0 — Foundations and Spikes
 
-_2026-10-10. Built and tested in a cloud container. **Results from the owner's Windows PC are still
-needed**. Run the System Check page on the live site and paste the report back._
+_2026-10-10. Built and tested in a cloud container, then run by the owner on the live GitHub Pages site
+(results below)._
+
+## Results on the owner's PC
+
+Windows, **Microsoft Edge 155**, **Intel Iris Xe** integrated graphics (gen-12lp), 28 CPU threads, 32 GB
+RAM. Tested on the live site (`https://shawneburke88-afk.github.io/Photo-Editing-App/`).
+
+| Check | Result |
+|---|---|
+| Cross-origin isolation on GitHub Pages | ✅ Enabled (the `coi-serviceworker` workaround works on the real site) |
+| WebGPU | ✅ Available. Shows frames directly on screen (no compatibility mode), max texture size 16384, supports `shader-f16` |
+| RAW decode, Nikon **D5200** (24 MP, 28.9 MB NEF) | ✅ Embedded preview in **47 ms**, full decode **1.99 s** |
+| GPU processing, once per photo (upload + demosaic) | ✅ **429 ms** |
+| Slider redraw | ✅ **3.5 ms** median, 5.0 ms slowest (≈285 updates/s) |
+| Folder scan (7 files) | ✅ 3.8 ms |
+| Import preview speed | ✅ **32 ms per photo** (≈0.5 min per 1,000 photos from the local disk) |
+| Folder write test | ✅ Works |
+| Catalog, 50,000 photos | ✅ Every query **≤ 14 ms**. Insert 0.9 s, rating 500 photos 8.6 ms |
+
+**Takeaways for Phase 1**
+- The full RAW decode (about 2 s, single-threaded) is the slowest step.
+  - Show the embedded preview instantly and decode in the background.
+  - Pre-decode the next photos in parallel workers (the PC has 28 threads).
+- Ask the browser for **persistent storage** (`persisted` was false) so the catalog can't be evicted.
+- The lens was reported as unknown for the D5200. Lens identification is needed before lens corrections
+  (Phase 3).
+- **Reconnect** after a reload worked: Edge remembered the folder permission.
+- **Visual comparison**, from the owner's screenshots of four files (Nikon D700, Sony A7 II, Nikon D80,
+  Nikon D5200 test chart):
+  - White balance is correct and there are no colour casts.
+  - LightBench is consistently about **⅔–1 EV darker** and **less saturated** than the camera JPEGs.
+  - The test chart shows **moiré** when zoomed out.
+  - Planned fixes in Phase 1 Part 2 (the darktable processing core):
+    - darktable's scene-referred default of **+0.7 EV** exposure;
+    - sigmoid tone mapping and colour handling;
+    - a mip-mapped (multi-resolution) preview to remove the moiré;
+    - RCD demosaic.
 
 ## What was built
 

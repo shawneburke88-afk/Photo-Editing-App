@@ -30,3 +30,5 @@ export const saveHandle = (key: string, handle: FileSystemDirectoryHandle) =>
 
 export const loadHandle = (key: string) =>
   tx<FileSystemDirectoryHandle | undefined>('readonly', (s) => s.get(key))
+
+export const deleteHandle = (key: string) => tx('readwrite', (s) => s.delete(key)).then(() => undefined)

@@ -30,6 +30,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm run lint
+      - run: npm test
       - name: Build
         run: npm run build
         env:

@@ -1,12 +1,24 @@
+import { useState } from 'react'
+import { LibraryView } from './library/LibraryView'
 import { SystemCheck } from './syscheck/SystemCheck'
 
-const MODULES = [
-  { name: 'Library', ready: false },
-  { name: 'Develop', ready: false },
-  { name: 'Export', ready: false },
+type Module = 'library' | 'develop' | 'export' | 'syscheck'
+
+const MODULES: { id: Module; name: string; ready: boolean }[] = [
+  { id: 'library', name: 'Library', ready: true },
+  { id: 'develop', name: 'Develop', ready: false },
+  { id: 'export', name: 'Export', ready: false },
+  { id: 'syscheck', name: 'System Check', ready: true },
 ]
 
 export default function App() {
+  const [module, setModule] = useState<Module>(() => (location.hash === '#syscheck' ? 'syscheck' : 'library'))
+
+  const go = (m: Module) => {
+    setModule(m)
+    history.replaceState(null, '', m === 'library' ? location.pathname : `#${m}`)
+  }
+
   return (
     <div className="app">
       <header className="topbar">
@@ -19,15 +31,21 @@ export default function App() {
         </div>
         <nav className="modules" aria-label="Modules">
           {MODULES.map((m) => (
-            <button key={m.name} className="module" disabled={!m.ready} title="Coming in Phase 1">
+            <button
+              key={m.id}
+              className={`module ${module === m.id ? 'active' : ''}`}
+              disabled={!m.ready}
+              title={m.ready ? undefined : 'Coming in the next update'}
+              aria-current={module === m.id ? 'page' : undefined}
+              onClick={() => go(m.id)}
+            >
               {m.name}
             </button>
           ))}
-          <button className="module active" aria-current="page">System Check</button>
         </nav>
       </header>
-      <main className="main">
-        <SystemCheck />
+      <main className={module === 'library' ? 'main full' : 'main'}>
+        {module === 'library' ? <LibraryView /> : <SystemCheck />}
       </main>
     </div>
   )
