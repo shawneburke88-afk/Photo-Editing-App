@@ -61,12 +61,12 @@ The right panel is ordered by how often people use each tool. The first section 
 Every group follows the same rules:
 - **One control per job.** Alternative algorithms (e.g. sigmoid / filmic / AgX for tone mapping) go in a **Method** dropdown inside the group, not in separate modules.
 - **"Advanced ▸"** inside each group shows the darktable module's own parameters, so no capability is lost.
-- **Solo mode** (proposed): opening one group closes the others, so the panel never becomes a long scroll. It can be switched off.
-- **Tool search** (proposed): `/` or Ctrl+F finds a tool by its Lightroom name, LightBench name or darktable name, e.g. "Clarity" → Presence → Clarity (local contrast).
+- **Tool tabs** (owner's direction, 2026-10-11; layout to be confirmed): the groups become tabs in typical workflow order, and the panel shows only the selected tab's tools. This keeps the panel short.
+- **Tool search** (owner, 2026-10-11): `/` or Ctrl+F finds a tool by its Lightroom name, LightBench name or darktable name, e.g. "Clarity" → Presence → Clarity (local contrast). It comes late, once most tools exist.
 
 ### Guidance in the interface (owner's request)
 
-- **Sublabel** under each control: a short plain-language line, e.g. "Bright areas (skies, clouds)". Switchable with the **Hints** checkbox.
+- **Hint** on the same line as each control's name: a short plain-language phrase, e.g. "Bright areas (skies, clouds)". It never adds a row; it shows only when it fits the panel's width completely (owner's decision, 2026-10-11). On by default; the **Hints** checkbox turns hints off.
 - **Tooltip** on hover or keyboard focus. It says:
   - what the control does;
   - what moving it left or right does;
@@ -90,9 +90,11 @@ Every group follows the same rules:
 - **Auto** moves visible sliders and leaves white balance alone, as Lightroom's does.
 - **Hints and tooltips** on every Basic slider.
 
-## Decisions for the owner
+## Decisions
 
-1. **Hints default:** on for everyone (they can be switched off), or off with tooltips only?
-2. **Solo mode** for the Develop groups: on or off by default?
-3. **Browse before import:** add an "Open folder" view that lets you cull without importing? This is research lesson 11; LightBench's "Add photos in place" import already avoids copying.
-4. **Tool search** (`/`): build it in Phase 2 or Phase 3?
+| Question | Owner's answer (2026-10-11) |
+|---|---|
+| Hints on by default? | Yes, but on the label's line only, shown only when they fit the panel width. Built. |
+| Solo mode? | Use tool tabs in workflow order instead; only the selected tab's tools show. Tab list to be confirmed. |
+| Browse before import ("Open folder")? | Yes. Planned for Phase 2. |
+| Tool search? | Late, once most tools are chosen (end of Phase 3). |

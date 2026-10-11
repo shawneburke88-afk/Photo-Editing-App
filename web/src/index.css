@@ -279,7 +279,9 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .dpanel h4 { font-size: 0.8rem; color: var(--accent); margin: 12px 0 4px; font-weight: 600; }
 .dpanel select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font: inherit; font-size: 0.88rem; }
 .dslider { padding: 3px 0; }
-.dslider-head { display: flex; justify-content: space-between; font-size: 0.86rem; }
+.dslider-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 0.86rem; }
+.dslider-head label { flex-shrink: 0; }
+.dslider-value { flex-shrink: 0; }
 .dslider-head label { cursor: default; user-select: none; }
 .dslider-value { color: var(--muted); font-variant-numeric: tabular-nums; }
 .dslider input[type=range] { width: 100%; accent-color: var(--accent); margin: 2px 0 0; height: 16px; border-radius: 999px; }
@@ -352,7 +354,7 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 
 /* slider guidance */
 .dslider { position: relative; }
-.dslider-hint { font-size: 0.74rem; color: var(--muted); margin: -2px 0 2px; }
+.dslider-hint { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; font-size: 0.74rem; color: var(--muted); }
 .dslider-tip { display: none; position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 2px); background: #23262c; border: 1px solid #3a3e46; border-radius: 6px; padding: 8px 10px; box-shadow: 0 8px 22px rgba(0,0,0,0.55); font-size: 0.8rem; line-height: 1.35; color: var(--text); pointer-events: none; }
 .dslider-tip p { margin: 0 0 6px; }
 .dslider-tip dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; margin: 0 0 6px; }

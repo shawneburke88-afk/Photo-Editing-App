@@ -50,7 +50,7 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, auto, pick
       <section>
         <div className="dpanel-head">
           <h3>White balance</h3>
-          <label className="hints-toggle" title="Show a short description under each slider. Hover a slider’s name for full details.">
+          <label className="hints-toggle" title="Show a short description next to each slider’s name when the panel is wide enough. Hover a slider’s name for full details.">
             <input type="checkbox" checked={hints} onChange={(e) => setHintsPref(e.target.checked ? 1 : 2)} /> Hints
           </label>
         </div>

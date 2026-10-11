@@ -139,6 +139,7 @@ Non-destructive editing: originals are never modified. Edits are settings re-app
     standard fields above.
 
 ### Phase 2 — Library depth
+**Open folder (browse before import)**, owner's choice 2026-10-11: open any folder and cull it (flags, stars, labels) without importing, then add the keepers to the library.
 Collections, smart collections, collection sets, hierarchical keywords, EXIF/IPTC editing,
 metadata presets, import presets, stacks, virtual copies, compare and survey views, presets,
 copy/paste/sync settings across many photos, **Lightroom catalog/XMP import (ratings, keywords,
@@ -149,7 +150,7 @@ More darktable modules behind Lightroom-style controls (color balance rgb, filmi
 diffuse or sharpen, AMaZE and X-Trans demosaic). Tone curve (parametric + point, RGB), HSL / color mixer, point color, color grading, sharpening
 and noise reduction, lens profile corrections (lensfun), chromatic aberration, transform/upright,
 vignette and grain, dehaze, camera profiles, masking (brush, linear, radial, color/luminance range),
-heal and clone, snapshots, soft proofing.
+heal and clone, snapshots, soft proofing. Develop tools in **tabs ordered by workflow** (see USABILITY.md). **Tool search** comes at the end of this phase, once most tools exist.
 
 ### Phase 4 — Local AI
 Subject / sky / object / background masks (SAM 2 / MobileSAM), AI remove (LaMa),
