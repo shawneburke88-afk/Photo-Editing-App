@@ -169,7 +169,7 @@ heal and clone, snapshots, soft proofing. Develop tools in **one scrolling stack
 ### Phase 4 — Local AI
 Subject / sky / object / background masks (SAM 2 / MobileSAM), AI remove (LaMa),
 AI denoise (NAFNet-class), assisted culling (sharpness, eyes-open), face grouping, content search.
-Model licenses checked individually (avoid non-commercial weights).
+Model licenses checked individually: **permissive only** — code and weights must allow any use, including commercial (owner, 2026-10-11, re-confirmed after the AI research even though LightBench won't be sold, because the public website's users are bound by each model's licence and the GPL allows no extra restrictions). Non-commercial, research-only and field-of-use-restricted models (e.g. SAM 3) are excluded, also as optional downloads.
 Owner's requests (2026-10-11), to be built on the AI masks:
 - **AI-assisted Auto**: finds the subject, sky, faces and background, measures each region in the scene-linear
   data, and drives the existing Auto solver with per-region goals (e.g. subject at mid-grey, sky not clipped,
