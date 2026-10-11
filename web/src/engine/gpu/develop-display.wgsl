@@ -4,6 +4,8 @@
 // sigmoid → output colour profile. The sigmoid functions are translated from darktable's
 // data/kernels/sigmoid.cl (darktable developers, GPL-3.0-or-later); the tone-equalizer correction
 // follows darktable's src/iop/toneequal.c (global mode, "RGB average" luminance estimator).
+// The clipping indicators are translated from darktable's src/iop/overexposed.c (display clipping:
+// any RGB / luminance / saturation / full gamut) and src/iop/rawoverexposed.c (sensor clipping).
 
 struct View {
   offset: vec2f,      // canvas pixel of the image's top-left corner
@@ -27,6 +29,18 @@ struct View {
   sgFilmPower: f32,
   sgPaperPower: f32,
   huePreservation: f32,
+  clipMode: u32,      // display clipping indicator: 0 off, 1 any RGB, 2 luminance, 3 saturation, 4 full gamut
+  clipUpper: f32,     // darktable overexposed: upper threshold (fraction, default 0.9999)
+  clipLower: f32,     // lower threshold, linear (2^EV, default 2^-12.69)
+  upperColor: vec4f,
+  lowerColor: vec4f,
+  rawThreshold: vec4f, // raw value per CFA position at which a photosite counts as clipped
+  rawColor: vec4f,
+  rawMode: u32,       // sensor clipping indicator: 0 off, 1 CFA colour, 2 solid colour, 3 false colour
+  rawWidth: u32,
+  rawHeight: u32,
+  cfa: u32,           // CFA colours of the 2×2 tile, 2 bits each
+  statsPass: u32,     // 1 = output unclamped display RGB + clipping class in alpha (for the histogram)
   pad0: f32,
   pad1: f32,
   pad2: f32,
@@ -35,6 +49,7 @@ struct View {
 @group(0) @binding(0) var img: texture_2d<f32>;
 @group(0) @binding(1) var samp: sampler;
 @group(0) @binding(2) var<uniform> V: View;
+@group(0) @binding(3) var<storage, read> raw: array<u32>; // packed uint16 sensor data (for sensor clipping)
 
 const REC2020_Y = vec3f(0.2627002, 0.6779981, 0.0593017);
 
@@ -143,7 +158,12 @@ fn srgbOetf(c: vec3f) -> vec3f {
   return select(hi, lo, c <= vec3f(0.0031308));
 }
 
-/** The full develop transform for one scene-linear Rec.2020 pixel; returns display sRGB. */
+/** sRGB encoding extended to values outside 0…1 (mirrored for negatives), for the clipping tests. */
+fn srgbOetfUnbounded(c: vec3f) -> vec3f {
+  return sign(c) * srgbOetf(abs(c));
+}
+
+/** The full develop transform for one scene-linear Rec.2020 pixel; returns unclamped linear sRGB. */
 fn develop(scene: vec3f) -> vec3f {
   var c = vec3f(dot(V.wbFix0.xyz, scene), dot(V.wbFix1.xyz, scene), dot(V.wbFix2.xyz, scene));
   c *= V.exposure;
@@ -163,13 +183,89 @@ fn develop(scene: vec3f) -> vec3f {
   }
 
   c = sigmoid(c);
-  return srgbOetf(clamp(rec2020ToSrgb(c), vec3f(0.0), vec3f(1.0)));
+  return rec2020ToSrgb(c);
+}
+
+// ---- clipping indicators
+
+// sRGB (D50-adapted, as darktable's ICC profiles are) RGB → Y row, for dt_ioppr_rgb_luminance.
+const SRGB_D50_Y = vec3f(0.2224845, 0.7169069, 0.0606086);
+
+/**
+ * darktable overexposed.c: 1 = over (upper colour), 2 = under (lower colour), 0 = fine.
+ * `t` is the display-encoded RGB, `lin` the same pixel linear (for luminance).
+ */
+fn clipClass(t: vec3f, lin: vec3f) -> u32 {
+  let upper = V.clipUpper;
+  let lower = V.clipLower;
+  let anyOver = any(t >= vec3f(upper));
+  let allUnder = all(t <= vec3f(lower));
+  switch V.clipMode {
+    case 1u: { // any RGB channel
+      if (anyOver) { return 1u; }
+      if (allUnder) { return 2u; }
+      return 0u;
+    }
+    case 2u: { // luminance only
+      let y = dot(SRGB_D50_Y, lin);
+      if (y >= upper) { return 1u; }
+      if (y <= lower) { return 2u; }
+      return 0u;
+    }
+    case 3u, 4u: { // saturation only / full gamut
+      let y = dot(SRGB_D50_Y, lin);
+      if (y >= upper || y <= lower) {
+        if (V.clipMode == 3u) { return 0u; }
+        return select(2u, 1u, y >= upper);
+      }
+      let d = t - y;
+      let sat = sqrt(d * d / (y * y + t * t));
+      if (any(sat > vec3f(upper)) || anyOver) { return 1u; }
+      if (allUnder) { return 2u; }
+      return 0u;
+    }
+    default: { return 0u; }
+  }
+}
+
+fn cfaColor(x: u32, y: u32) -> u32 {
+  return (V.cfa >> (((y & 1u) * 2u + (x & 1u)) * 2u)) & 3u;
+}
+
+/** darktable rawoverexposed.c: marks the pixel if its source photosite is at or above the threshold. */
+fn rawOverexposed(uv: vec2f, out: vec3f) -> vec3f {
+  let px = min(vec2u(uv * vec2f(f32(V.rawWidth), f32(V.rawHeight))), vec2u(V.rawWidth - 1u, V.rawHeight - 1u));
+  let i = px.y * V.rawWidth + px.x;
+  let v = f32((raw[i >> 1u] >> ((i & 1u) * 16u)) & 0xffffu);
+  let pos = (px.y & 1u) * 2u + (px.x & 1u);
+  if (v < V.rawThreshold[pos]) { return out; }
+  let c = cfaColor(px.x, px.y);
+  switch V.rawMode {
+    case 1u: { var m = vec3f(0.0); m[c] = 1.0; return m; }   // mark with CFA colour
+    case 2u: { return V.rawColor.rgb; }                     // mark with solid colour
+    default: { var m = out; m[c] = 0.0; return m; }         // false colour
+  }
 }
 
 @fragment
 fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let uv = (pos.xy - V.offset) / V.size;
   if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) { return V.background; }
-  let scene = textureSampleLevel(img, samp, sourceUv(uv), V.lod).rgb;
-  return vec4f(develop(scene), 1.0);
+  let suv = sourceUv(uv);
+  let scene = textureSampleLevel(img, samp, suv, V.lod).rgb;
+  let lin = develop(scene);
+  let t = srgbOetfUnbounded(lin);
+  if (V.statsPass == 1u) {
+    // Alpha carries the clipping class: 1 fine, 0.5 under, 0 over.
+    let cls = clipClass(t, lin);
+    return vec4f(t, select(select(1.0, 0.5, cls == 2u), 0.0, cls == 1u));
+  }
+  var out = clamp(t, vec3f(0.0), vec3f(1.0));
+  // darktable order: overexposed (66) before rawoverexposed (67), both just before gamma.
+  if (V.clipMode != 0u) {
+    let cls = clipClass(t, lin);
+    if (cls == 1u) { out = V.upperColor.rgb; } else if (cls == 2u) { out = V.lowerColor.rgb; }
+  }
+  if (V.rawMode != 0u) { out = rawOverexposed(suv, out); }
+  return vec4f(out, 1.0);
 }

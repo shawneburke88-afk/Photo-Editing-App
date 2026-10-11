@@ -5,7 +5,7 @@ import { exposeRpc } from '../lib/rpc'
 import type { DuplicateKey, FolderNode, LibraryRoot, NewPhoto, PhotoDetail, PhotoQuery, PhotoRow } from './types'
 
 const DB_FILE = '/lightbench-catalog.sqlite3'
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 
 let db: Database | null = null
 let persistent = false
@@ -103,6 +103,17 @@ function migrate(d: Database) {
           settings TEXT NOT NULL,
           history TEXT NOT NULL DEFAULT '[]',
           updated_at INTEGER NOT NULL
+        );
+      `)
+    }
+    if (version < 3) {
+      // Auto targets saved by the user (JSON of AutoTarget).
+      d.exec(`
+        CREATE TABLE auto_targets (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          target TEXT NOT NULL,
+          created_at INTEGER NOT NULL
         );
       `)
     }
@@ -276,6 +287,19 @@ function removePhotos(ids: number[]) {
   d.exec('COMMIT')
 }
 
+function listTargets(): { id: number; name: string; target: string }[] {
+  return conn().selectObjects('SELECT id, name, target FROM auto_targets ORDER BY name COLLATE NOCASE') as unknown as { id: number; name: string; target: string }[]
+}
+
+function saveTarget(name: string, target: string): number {
+  conn().exec({ sql: 'INSERT INTO auto_targets (name, target, created_at) VALUES (?, ?, ?)', bind: [name, target, Math.floor(Date.now() / 1000)] })
+  return Number(conn().selectValue('SELECT last_insert_rowid()'))
+}
+
+function deleteTarget(id: number) {
+  conn().exec({ sql: 'DELETE FROM auto_targets WHERE id = ?', bind: [id] })
+}
+
 function stats() {
   return {
     photos: Number(conn().selectValue('SELECT COUNT(*) FROM photos')),
@@ -299,6 +323,9 @@ const handlers = {
   getEdit,
   saveEdit,
   deleteEdit,
+  listTargets,
+  saveTarget,
+  deleteTarget,
   stats,
 }
 

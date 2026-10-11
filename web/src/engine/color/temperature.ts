@@ -21,7 +21,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 function spdBlackbody(wavelength: number, tempK: number): number {
   const lambda = wavelength * 1e-9
   const c1 = 3.741771524664128e-16 // 2πhc²
-  const c2 = 0.014387769599838157 // hc/k
+  const c2 = 0.014387769599838156 // hc/k
   return c1 / (lambda ** 5 * (Math.exp(c2 / (lambda * tempK)) - 1))
 }
 

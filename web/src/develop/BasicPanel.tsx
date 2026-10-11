@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { HIGHEST_TEMPERATURE, LOWEST_TEMPERATURE } from '../engine/color/temperature'
 import { DEFAULT_SETTINGS, sliderFromTint, tintFromSlider, type DevelopSettings } from '../engine/develop/settings'
+import { AutoControls, type AutoProps } from './AutoControls'
 import { Slider } from './Slider'
 
 interface Props {
@@ -9,6 +10,7 @@ interface Props {
   asShot: { temperature: number; tint: number } | null
   onChange: (label: string, next: DevelopSettings) => void
   disabled: boolean
+  auto: AutoProps
 }
 
 const signed = (v: number) => (v > 0 ? `+${Math.round(v)}` : `${Math.round(v)}`)
@@ -22,7 +24,7 @@ const TINT_TRACK = 'linear-gradient(90deg, #4caf50, #ddd 50%, #c050c0)'
 const toMired = (k: number) => -1e6 / k
 const fromMired = (m: number) => Math.round(-1e6 / m)
 
-export function BasicPanel({ settings: s, asShot, onChange, disabled }: Props) {
+export function BasicPanel({ settings: s, asShot, onChange, disabled, auto }: Props) {
   const [advanced, setAdvanced] = useState(false)
   const set = (label: string, patch: Partial<DevelopSettings>) => onChange(label, { ...s, ...patch })
   const setAdv = (label: string, patch: Partial<DevelopSettings['advanced']>) =>
@@ -81,6 +83,7 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled }: Props) {
 
       <section>
         <h3>Tone</h3>
+        <AutoControls {...auto} busy={auto.busy || disabled} />
         <Slider label="Exposure" value={s.exposure} min={-5} max={5} step={0.05} defaultValue={0} format={ev} disabled={disabled}
           onChange={(v) => set('Exposure', { exposure: v })} />
         <Slider label="Contrast" value={s.contrast} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
