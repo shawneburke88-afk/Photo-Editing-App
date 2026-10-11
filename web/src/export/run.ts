@@ -10,7 +10,7 @@ import { DevelopEngine } from '../engine/gpu/develop-engine'
 import { RawDecoder } from '../engine/raw/decoder'
 import { getDirAt, getRootHandle, openPhotoFile } from '../platform/roots'
 import { buildExif } from './exif-writer'
-import { encodeJpeg } from './jpeg-encoder'
+import { encodeJpeg, type ChromaSubsampling } from './jpeg-encoder'
 import { DEFAULT_METADATA, exportXmp, type MetadataOptions } from './metadata'
 import { encodePng } from './png'
 import { DEFAULT_SIZE, outputSize, type SizeSettings } from './size'
@@ -22,14 +22,21 @@ export type Conflict = 'unique' | 'overwrite' | 'skip'
 
 export interface ExportSettings {
   format: ExportFormat
-  /** JPEG quality 1–100 (darktable default 95). */
+  /** JPEG quality 1–100 (jpegli; 90 by the benchmark). */
   quality: number
+  /** JPEG chroma subsampling ('auto': 4:4:4 at quality ≥ 80, else 4:2:0). */
+  jpegChroma: ChromaSubsampling
+  /** JPEG file size limit in KB (0 = none). */
+  limitKb: number
   /** PNG / TIFF bit depth. */
   bits: 8 | 16
   tiffCompression: 'deflate' | 'none'
   space: OutputSpace
   size: SizeSettings
-  /** Triangular dither of ±1 output step before rounding (darktable: off unless its dither module is on). */
+  /**
+   * Triangular dither of ±1 output step before rounding, for 8-bit PNG/TIFF (the benchmark measured it
+   * removing banding there; it had no effect in JPEGs, so JPEGs are never dithered).
+   */
   dither: boolean
   metadata: MetadataOptions
   /** File name template (darktable syntax), without extension. */
@@ -41,15 +48,20 @@ export interface ExportSettings {
   conflict: Conflict
 }
 
-/** Defaults follow darktable where it has one (JPEG quality 95, sRGB, unique file names, metadata on). */
+/**
+ * Defaults: darktable's where it has one (sRGB, unique file names, metadata on); JPEG quality, chroma and
+ * dithering from the encoder benchmark (docs/research/JPEG_ENCODER_BENCHMARK.md).
+ */
 export const DEFAULT_EXPORT: ExportSettings = {
   format: 'jpeg',
-  quality: 95,
+  quality: 90,
+  jpegChroma: 'auto',
+  limitKb: 0,
   bits: 8,
   tiffCompression: 'deflate',
   space: 'srgb',
   size: DEFAULT_SIZE,
-  dither: false,
+  dither: true,
   metadata: DEFAULT_METADATA,
   template: '$(FILE.NAME)',
   destination: 'folder',
@@ -146,7 +158,7 @@ export async function runExport(
           toOutput: rec2020ToProfile(space.profile),
           trc: outputTrc(space.profile),
           bits,
-          dither: s.dither ? 1 : 0,
+          dither: s.dither && s.format !== 'jpeg' && bits === 8 ? 1 : 0,
         })
 
         const exif = s.metadata.camera
@@ -159,7 +171,9 @@ export async function runExport(
 
         let blob: Blob
         if (s.format === 'jpeg') {
-          blob = await encodeJpeg(out.rgba as Uint8ClampedArray<ArrayBuffer>, width, height, { quality: s.quality, exif, xmp, icc })
+          blob = (await encodeJpeg(out.rgba as Uint8ClampedArray<ArrayBuffer>, width, height, {
+            quality: s.quality, subsampling: s.jpegChroma, maxBytes: Math.round(s.limitKb * 1024), exif, xmp, icc,
+          })).blob
         } else if (s.format === 'png') {
           blob = await encodePng({ width, height, pixels: toRgb(out.rgba), icc: { name: space.profile.name, data: icc }, cicp: space.cicp, exif, xmp, dpi: 300 })
         } else {

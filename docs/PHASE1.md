@@ -121,13 +121,16 @@ darktable's code was reviewed first; the findings are in
 | Rendering | darktable high-quality export | Full-resolution develop, then **Lanczos3** resampling in linear light before the output profile (`finalscale` before `colorout`). Size = floor(scale × size); "Don't enlarge" on by default. |
 | Size choices | Lightroom + darktable | Original, long edge, short edge, width × height (darktable's max size), percentage. |
 | Output colour | darktable `colorout` | sRGB (default), Display P3, Adobe RGB; matrix + tone curve; profile always embedded; EXIF ColorSpace = 1 only for sRGB. |
-| Quantisation | darktable | round(clamp(v) × (2ⁿ−1)). Optional triangular dither (off by default, as darktable). |
-| JPEG | darktable defaults | Quality 95. **Encoder interim:** the browser's built-in encoder until the benchmark decides. EXIF, XMP and ICC are inserted as APP1/APP1/APP2 segments. |
+| Quantisation | darktable + benchmark | round(clamp(v) × (2ⁿ−1)). Triangular dither (±1 step) **on by default for 8-bit PNG/TIFF**: in the benchmark it removed banding completely (CAMBI 13.7 → 0.00). Measured cost on real photos: +4–6 % PNG size. |
+| JPEG | Benchmark ([JPEG_ENCODER_BENCHMARK.md](research/JPEG_ENCODER_BENCHMARK.md)) | **jpegli** (Google) compiled to WebAssembly, in a worker: 16–24 % smaller than the browser's encoder at the same SSIMULACRA2 score in the benchmark. Quality 90 by default (presets Web 78 / High 90 / Archive 95); full colour detail (4:4:4) at quality ≥ 80, 4:2:0 below, or chosen manually; progressive. Optional **file-size limit** (interpolation search; measured: 300 KB limit → 248–285 KB in about 0.6 s at 3 MP). EXIF, XMP and ICC are inserted as APP1/APP1/APP2 segments. No dither (the benchmark found it has no effect in JPEGs). Rebuild: `web/scripts/build-jpegli.sh`. |
 | PNG | darktable | 8/16-bit RGB, iCCP + cICP, eXIf, iTXt XMP, pHYs (300 dpi). Adaptive row filters; compression via the browser's deflate. |
 | TIFF | darktable | 8/16-bit RGB, deflate + horizontal predictor (default) or none, ICC, XMP, EXIF IFD. |
 | Metadata | darktable defaults | Camera/exposure/capture date (EXIF), rating + label (XMP), LightBench settings (XMP), each optional. `xmpMM:DerivedFrom` = original file name. GPS isn't stored yet, so it is never exported. |
 | File names | darktable variables | `$(FILE.NAME)`, `$(SEQUENCE[4,1])`, `$(EXIF.YEAR)` … plus legacy names and operators; `/` makes subfolders. Presets in the dialog. On conflict: add `_01` (default), overwrite, or skip. |
 | Where | — | A chosen folder (remembered), or next to each original, with an optional subfolder. |
+
+Checked (jpegli): at 2048 px, quality 90 with full colour detail gave 502 KB and 546 KB, against 542 KB and 609 KB from the
+browser's encoder at quality 90 with quarter colour detail; about 0.2 s per photo in the browser.
 
 Checked: a full-size export matches the Develop render within 1 level; JPEG, 16-bit PNG and TIFF exports
 decode in Pillow with the right size, embedded sRGB profile, camera EXIF and XMP; PNG and TIFF pixels are

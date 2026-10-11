@@ -93,7 +93,12 @@ Delivered in three parts:
     - **the owner's own saved targets.**
   - **Hints and tooltips** for every Basic slider.
   - Resizable left panel with History docked under the histogram.
-- **Part 3, Export, XMP sidecars and JPEG editing:** built, see [PHASE1.md](PHASE1.md#part-3-export-xmp-sidecars-jpeg-editing). The JPEG encoder is chosen by a benchmark ([JPEG_ENCODER_BENCHMARK.md](research/JPEG_ENCODER_BENCHMARK.md)).
+- **Part 3, Export, XMP sidecars and JPEG editing:** built, see [PHASE1.md](PHASE1.md#part-3-export-xmp-sidecars-jpeg-editing). The JPEG encoder (jpegli) and its defaults were chosen by a benchmark ([JPEG_ENCODER_BENCHMARK.md](research/JPEG_ENCODER_BENCHMARK.md)).
+  - Export follow-ups suggested by the benchmark:
+    - **AVIF** export: 22–36 % smaller than JPEG; all major browsers display it.
+    - An optional **"optimise PNG"** step (oxipng): −8 to −11 %.
+    - **JPEG XL** once Safari and Edge support it fully.
+    - "Target a perceptual quality" mode: not yet (too slow in the browser).
 - The tone curve stays with the Phase 3 colour tools.
 
 Non-destructive editing: originals are never modified. Edits are settings re-applied to the original on every render, as in Lightroom. Virtual copies (Phase 2) and snapshots (Phase 3) build on this.

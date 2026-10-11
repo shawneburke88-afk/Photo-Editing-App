@@ -16,6 +16,13 @@ interface Props {
 
 const FOLDER_KEY = 'export:folder'
 
+/** Quick choices (benchmark: "Web" q75–80 with 4:2:0, default 90, "Archive" 95). */
+const JPEG_PRESETS = [
+  { label: 'Web', quality: 78, hint: 'Small files for websites and social media' },
+  { label: 'High', quality: 90, hint: 'Recommended: visually close to the original, compact' },
+  { label: 'Archive', quality: 95, hint: 'Highest quality, larger files' },
+]
+
 const SIZE_MODES: [SizeMode, string][] = [
   ['original', 'Original size'],
   ['long', 'Long edge'],
@@ -199,11 +206,33 @@ export function ExportDialog({ ids, onClose }: Props) {
               {s.format === 'jpeg' ? 'Small files that open everywhere: sharing, web, printing services.' : s.format === 'png' ? 'Lossless; larger files. Good for graphics or further editing.' : 'Lossless, 16-bit capable. Best for editing in other apps or archiving.'}
             </p>
             {s.format === 'jpeg' ? (
-              <label className="inline">
-                Quality
-                <input type="range" min={50} max={100} value={s.quality} onChange={(e) => set({ quality: Number(e.target.value) })} style={{ width: 160 }} />
-                <span>{s.quality}</span>
-              </label>
+              <>
+                <div className="inline">
+                  Quality
+                  <input type="range" min={40} max={100} value={s.quality} onChange={(e) => set({ quality: Number(e.target.value) })} style={{ width: 140 }} aria-label="JPEG quality" />
+                  <span>{s.quality}</span>
+                </div>
+                <div className="seg">
+                  {JPEG_PRESETS.map((p) => (
+                    <button key={p.label} className={`chip ${s.quality === p.quality ? 'on' : ''}`} title={p.hint} onClick={() => set({ quality: p.quality })}>{p.label}</button>
+                  ))}
+                </div>
+                <label className="inline">
+                  Colour detail
+                  <select value={String(s.jpegChroma)} onChange={(e) => set({ jpegChroma: e.target.value === 'auto' ? 'auto' : (Number(e.target.value) as 444 | 422 | 420) })}>
+                    <option value="auto">Automatic (full at quality 80+)</option>
+                    <option value="444">Full (4:4:4) — best for text, graphics, vivid colour</option>
+                    <option value="422">Half horizontal (4:2:2)</option>
+                    <option value="420">Quarter (4:2:0) — smallest</option>
+                  </select>
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={s.limitKb > 0} onChange={(e) => set({ limitKb: e.target.checked ? 1000 : 0 })} />
+                  <span>Limit file size{s.limitKb > 0 && (
+                    <> to <input type="number" min={20} value={s.limitKb} onChange={(e) => set({ limitKb: Math.max(20, Number(e.target.value)) })} style={{ width: 80 }} aria-label="Maximum size in KB" /> KB</>
+                  )} <span className="muted small">— lowers the quality just enough to fit (for email and upload limits)</span></span>
+                </label>
+              </>
             ) : (
               <label className="inline">
                 Bit depth
@@ -277,13 +306,15 @@ export function ExportDialog({ ids, onClose }: Props) {
             <p className="muted small">Location (GPS) is never included yet: LightBench doesn’t store it.</p>
           </fieldset>
 
-          <fieldset>
-            <legend>Quality</legend>
-            <label className="check">
-              <input type="checkbox" checked={s.dither} onChange={(e) => set({ dither: e.target.checked })} />
-              <span>Dither <span className="muted small">— adds invisible noise to prevent banding in smooth skies (8-bit)</span></span>
-            </label>
-          </fieldset>
+          {s.format !== 'jpeg' && s.bits === 8 && (
+            <fieldset>
+              <legend>Smooth gradients</legend>
+              <label className="check">
+                <input type="checkbox" checked={s.dither} onChange={(e) => set({ dither: e.target.checked })} />
+                <span>Dither <span className="muted small">— adds invisible noise so skies don’t show steps (banding). Makes files larger.</span></span>
+              </label>
+            </fieldset>
+          )}
         </div>
         {error && <p className="error import-error">{error}</p>}
         <div className="dialog-actions">
