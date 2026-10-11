@@ -10,7 +10,7 @@ Import window, catalog and Library module. See pull request #2 and [PLAN.md](PLA
 
 | Step | Implementation | Source |
 |---|---|---|
-| Raw prepare: black/white normalisation | WGSL | LightBench. The white level is the camera's linear maximum (LibRaw `linear_max`), lowered to any channel's clipping pile-up, so every channel clips together and highlight reconstruction catches clipped greens. |
+| Raw prepare: black/white normalisation | WGSL | LightBench. The white level comes from darktable's camera database (rawspeed `cameras.xml`) and is chosen as rawspeed does: by mode (bit depth) and ISO. Sony files use their own stored white level, and DNGs use the file's WhiteLevel, as rawspeed does. For cameras not in the database, LightBench falls back to its own detection: the camera's linear maximum, lowered to any channel's clipping pile-up. |
 | White balance (temperature/tint ⇄ multipliers) | TypeScript | Translated from darktable `src/iop/temperature.c` |
 | Highlight reconstruction: **inpaint opposed** (default) or clip | WGSL | Translated from darktable `data/kernels/basic.cl` (`highlights_initmask`, `_dilatemask`, `_chroma`, `_opposed`) |
 | Demosaic: **RCD** (default) or bilinear | WGSL | Translated from darktable `data/kernels/demosaic_rcd.cl`. The 9 px border uses bilinear instead of PPG. |
@@ -56,7 +56,9 @@ When a photo is shown smaller than 100 %, a mip chain (2×2 averaging) is used t
 - **Pink clouds and highlights** (Nikon D80, also the faint lilac edges on the D700). Green clips earlier than
   red and blue on these sensors (D80: green at ~3990, red/blue at 4095). With the white level at 4095, clipped
   green was not recognised, so highlight reconstruction skipped it and highlights turned magenta. The white
-  level now comes from the camera's linear maximum and per-channel clipping detection (`src/engine/raw/white-level.ts`).
+  level now comes from darktable's camera database, which lists the level at which every channel is clipped
+  (D80: 3880; D700 and D5200 14-bit: 15892). See `src/engine/raw/camera-db.ts`. Cameras missing from the
+  database fall back to per-channel clipping detection (`src/engine/raw/white-level.ts`).
 
 ### Not yet
 

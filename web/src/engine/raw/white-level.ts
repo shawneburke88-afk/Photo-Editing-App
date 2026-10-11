@@ -1,9 +1,10 @@
 /**
- * The raw value at which the sensor should be treated as clipped.
+ * Fallback for cameras missing from darktable's camera database (see camera-db.ts): the raw value at
+ * which the sensor should be treated as clipped.
  *
  * Channels often saturate at different levels (e.g. Nikon D80: red/blue at 4095, green at ~3990). The
  * white level must sit at or below the *lowest* channel's clipping point, or clipped greens aren't
- * recognised and blown highlights turn pink. Like darktable's camera database, we use:
+ * recognised and blown highlights turn pink. Without database values, we use:
  *  - the camera's own linear maximum (LibRaw linear_max, from the maker notes) when it is reported;
  *  - lowered further to any channel's clipping "pile-up" (a value held by ≥ 0.1 % of that channel's
  *    pixels in the top quarter of the range), so cameras without maker-note data are handled too.

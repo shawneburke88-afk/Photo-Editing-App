@@ -33,6 +33,8 @@ export interface SensorData {
   /** Black level per CFA position, same order as `cfa`. */
   black: [number, number, number, number]
   white: number
+  /** Where the white level came from (shown in System Check). */
+  whiteSource: string
   /** As-shot white balance multipliers, normalised so green = 1. */
   wb: [number, number, number]
   /** Row-major 3×3 matrix: white-balanced camera RGB → linear sRGB. */

@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 import { LibRaw } from '@colorhythm/libraw-wasm'
 import wasmUrl from '@colorhythm/libraw-wasm/libraw.wasm?url'
+import { databaseWhiteLevel } from './camera-db'
 import { whiteLevel } from './white-level'
 import type { DecodeRequest, DecodeResponse, DecodeResult, EmbeddedPreview, SensorData } from './types'
 
@@ -156,7 +157,23 @@ function extractSensor(lr: LibRaw): SensorData | string {
   const xyzToCam: number[] = []
   for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) xyzToCam.push(lr.getCamXyz(i, j))
 
-  const white = whiteLevel(data, width, lr.getColorMaximum(), [0, 1, 2, 3].map((i) => lr.getLinearMax(i)))
+  // White level: darktable's camera database first (as rawspeed does), then our own detection for
+  // cameras it doesn't list.
+  const ip = lr.getIParams()
+  const nominal = lr.getColorMaximum()
+  const linearMax = [0, 1, 2, 3].map((i) => lr.getLinearMax(i))
+  const fromDb = databaseWhiteLevel({
+    make: ip.normalized_make || ip.make,
+    model: ip.normalized_model || ip.model,
+    iso: lr.getImgOther().iso_speed,
+    nominal,
+    rawWidth,
+    rawHeight: lr.getRawHeight(),
+    linearMax: linearMax[0],
+    isDng: ip.dng_version > 0,
+  })
+  const white = fromDb?.white ?? whiteLevel(data, width, nominal, linearMax)
+  const whiteSource = fromDb?.source ?? 'detected (camera not in darktable database)'
 
-  return { width, height, data, cfa, black, white, wb, camToRgb, xyzToCam }
+  return { width, height, data, cfa, black, white, whiteSource, wb, camToRgb, xyzToCam }
 }
