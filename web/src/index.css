@@ -349,3 +349,19 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .wb-loupe { position: absolute; z-index: 15; pointer-events: none; background: var(--panel); border: 1px solid #555; border-radius: 6px; padding: 4px; box-shadow: 0 6px 20px rgba(0,0,0,0.6); }
 .wb-loupe canvas { display: block; border-radius: 3px; }
 .wb-loupe-rgb { font-size: 0.75rem; text-align: center; padding-top: 3px; color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* slider guidance */
+.dslider { position: relative; }
+.dslider-hint { font-size: 0.74rem; color: var(--muted); margin: -2px 0 2px; }
+.dslider-tip { display: none; position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 2px); background: #23262c; border: 1px solid #3a3e46; border-radius: 6px; padding: 8px 10px; box-shadow: 0 8px 22px rgba(0,0,0,0.55); font-size: 0.8rem; line-height: 1.35; color: var(--text); pointer-events: none; }
+.dslider-tip p { margin: 0 0 6px; }
+.dslider-tip dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; margin: 0 0 6px; }
+.dslider-tip dt { color: var(--muted); white-space: nowrap; }
+.dslider-tip dd { margin: 0; }
+.dslider-tip .tip-warn { color: #f0c27a; }
+.dslider-tip .tip-foot { color: var(--muted); font-size: 0.72rem; margin: 0; }
+.dslider:has(.dslider-head label:hover) .dslider-tip { display: block; animation: tip-in 0.15s 0.35s both; }
+.dslider:has(input:focus-visible) .dslider-tip { display: block; }
+@keyframes tip-in { from { opacity: 0; } to { opacity: 1; } }
+.hints-toggle { display: flex; gap: 6px; align-items: center; font-size: 0.78rem; color: var(--muted); cursor: pointer; }
+.dpanel-head { display: flex; justify-content: space-between; align-items: baseline; }
