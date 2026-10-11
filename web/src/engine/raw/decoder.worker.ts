@@ -152,5 +152,15 @@ function extractSensor(lr: LibRaw): SensorData | string {
   const camToRgb: number[] = []
   for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) camToRgb.push(lr.getRgbCam(i, j))
 
-  return { width, height, data, cfa, black, white: lr.getColorMaximum(), wb, camToRgb }
+  const xyzToCam: number[] = []
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) xyzToCam.push(lr.getCamXyz(i, j))
+
+  // LibRaw's default "adjust maximum" rule (adjust_maximum_thr = 0.75): if the brightest value in the
+  // file is above 75 % of the nominal maximum, treat it as the real clipping point.
+  let dataMax = 0
+  for (let i = 0; i < data.length; i++) if (data[i] > dataMax) dataMax = data[i]
+  const nominal = lr.getColorMaximum()
+  const white = dataMax > 0.75 * nominal ? dataMax : nominal
+
+  return { width, height, data, cfa, black, white, wb, camToRgb, xyzToCam }
 }

@@ -76,9 +76,9 @@ each phase below delivers usable software on the live site.
 ### Phase 1 — Thin end-to-end slice (first usable version)
 
 Delivered in three parts:
-- **Part 1, Import + Library:** built.
-- **Part 2, Develop with darktable processing:** next.
-- **Part 3, Export + XMP sidecars:** after that.
+- **Part 1, Import + Library:** merged.
+- **Part 2, Develop with darktable processing:** built, see [PHASE1.md](PHASE1.md).
+- **Part 3, Export, XMP sidecars and JPEG editing:** next.
 
 - **Import wizard** (Chrome/Edge):
   1. Click **Import** and choose the card or source folder in the Windows folder picker. Subfolders are

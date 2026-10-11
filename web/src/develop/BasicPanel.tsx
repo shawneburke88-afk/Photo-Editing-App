@@ -1,0 +1,160 @@
+import { useState } from 'react'
+import { HIGHEST_TEMPERATURE, LOWEST_TEMPERATURE } from '../engine/color/temperature'
+import { DEFAULT_SETTINGS, sliderFromTint, tintFromSlider, type DevelopSettings } from '../engine/develop/settings'
+import { Slider } from './Slider'
+
+interface Props {
+  settings: DevelopSettings
+  /** As-shot white balance expressed as temperature/tint (null for non-RAW files). */
+  asShot: { temperature: number; tint: number } | null
+  onChange: (label: string, next: DevelopSettings) => void
+  disabled: boolean
+}
+
+const signed = (v: number) => (v > 0 ? `+${Math.round(v)}` : `${Math.round(v)}`)
+const ev = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(2)} EV`
+
+const TEMP_TRACK = 'linear-gradient(90deg, #4a7bd1, #ddd 45%, #e8b04a)'
+const TINT_TRACK = 'linear-gradient(90deg, #4caf50, #ddd 50%, #c050c0)'
+
+// The temperature slider works in (negated) mireds, −1e6 / K, so it feels even across the range and
+// runs from low K (left, blue) to high K (right, yellow) like Lightroom.
+const toMired = (k: number) => -1e6 / k
+const fromMired = (m: number) => Math.round(-1e6 / m)
+
+export function BasicPanel({ settings: s, asShot, onChange, disabled }: Props) {
+  const [advanced, setAdvanced] = useState(false)
+  const set = (label: string, patch: Partial<DevelopSettings>) => onChange(label, { ...s, ...patch })
+  const setAdv = (label: string, patch: Partial<DevelopSettings['advanced']>) =>
+    onChange(label, { ...s, advanced: { ...s.advanced, ...patch } })
+
+  const wb = s.whiteBalance
+  const shown = wb.mode === 'as-shot' && asShot ? asShot : wb
+  const tintSlider = asShot ? sliderFromTint(shown.tint, asShot.tint) : 0
+  const setWb = (label: string, temperature: number, tint: number) =>
+    set(label, { whiteBalance: { mode: 'custom', temperature, tint } })
+
+  return (
+    <div className="dpanel">
+      <section>
+        <h3>White balance</h3>
+        <div className="wb-mode">
+          <select
+            value={wb.mode}
+            disabled={disabled || !asShot}
+            onChange={(e) =>
+              e.target.value === 'as-shot'
+                ? set('White balance: As shot', { whiteBalance: { ...wb, mode: 'as-shot' } })
+                : asShot && setWb('White balance: Custom', asShot.temperature, asShot.tint)
+            }
+            aria-label="White balance preset"
+          >
+            <option value="as-shot">As shot</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+        <Slider
+          label="Temp"
+          value={toMired(shown.temperature)}
+          min={toMired(LOWEST_TEMPERATURE + 99)}
+          max={toMired(HIGHEST_TEMPERATURE / 2)}
+          step={0.5}
+          defaultValue={asShot ? toMired(asShot.temperature) : toMired(5000)}
+          format={(m) => `${fromMired(m)} K`}
+          track={TEMP_TRACK}
+          disabled={disabled || !asShot}
+          onChange={(m) => setWb('Temperature', fromMired(m), shown.tint)}
+        />
+        <Slider
+          label="Tint"
+          value={tintSlider}
+          min={-150}
+          max={150}
+          step={1}
+          defaultValue={0}
+          format={signed}
+          track={TINT_TRACK}
+          disabled={disabled || !asShot}
+          onChange={(v) => asShot && setWb('Tint', shown.temperature, tintFromSlider(v, asShot.tint))}
+        />
+      </section>
+
+      <section>
+        <h3>Tone</h3>
+        <Slider label="Exposure" value={s.exposure} min={-5} max={5} step={0.05} defaultValue={0} format={ev} disabled={disabled}
+          onChange={(v) => set('Exposure', { exposure: v })} />
+        <Slider label="Contrast" value={s.contrast} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+          onChange={(v) => set('Contrast', { contrast: v })} />
+        <Slider label="Highlights" value={s.highlights} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+          onChange={(v) => set('Highlights', { highlights: v })} />
+        <Slider label="Shadows" value={s.shadows} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+          onChange={(v) => set('Shadows', { shadows: v })} />
+        <Slider label="Whites" value={s.whites} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+          onChange={(v) => set('Whites', { whites: v })} />
+        <Slider label="Blacks" value={s.blacks} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+          onChange={(v) => set('Blacks', { blacks: v })} />
+      </section>
+
+      <section>
+        <h3>Presence</h3>
+        <Slider label="Vibrance" value={s.vibrance} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+          onChange={(v) => set('Vibrance', { vibrance: v })} />
+        <Slider label="Saturation" value={s.saturation} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+          onChange={(v) => set('Saturation', { saturation: v })} />
+        <p className="muted small">Texture, Clarity and Dehaze arrive with the local-contrast modules (Phase 3).</p>
+      </section>
+
+      <section className="advanced">
+        <button className="adv-toggle" onClick={() => setAdvanced(!advanced)} aria-expanded={advanced}>
+          {advanced ? '▾' : '▸'} Advanced (darktable modules)
+        </button>
+        {advanced && (
+          <div className="adv-body">
+            <p className="muted small">
+              The sliders above drive these darktable modules. Change them for finer control; double-click any slider to reset it.
+            </p>
+            <h4>exposure</h4>
+            <Slider label="Base exposure" value={s.advanced.baseExposure} min={-2} max={3} step={0.05}
+              defaultValue={DEFAULT_SETTINGS.advanced.baseExposure} format={ev} disabled={disabled}
+              onChange={(v) => setAdv('Base exposure', { baseExposure: v })} />
+            <h4>sigmoid</h4>
+            <Slider label="Skew" value={s.advanced.skew} min={-1} max={1} step={0.01}
+              defaultValue={DEFAULT_SETTINGS.advanced.skew} disabled={disabled}
+              onChange={(v) => setAdv('Sigmoid skew', { skew: v })} />
+            <Slider label="Target white" value={s.advanced.whiteTarget} min={20} max={200} step={1}
+              defaultValue={DEFAULT_SETTINGS.advanced.whiteTarget} format={(v) => `${v.toFixed(0)} %`} disabled={disabled}
+              onChange={(v) => setAdv('Sigmoid target white', { whiteTarget: v })} />
+            <Slider label="Target black" value={s.advanced.blackTarget} min={0} max={2} step={0.0001}
+              defaultValue={DEFAULT_SETTINGS.advanced.blackTarget} format={(v) => `${v.toFixed(4)} %`} disabled={disabled}
+              onChange={(v) => setAdv('Sigmoid target black', { blackTarget: v })} />
+            <Slider label="Preserve hue" value={s.advanced.huePreservation} min={0} max={100} step={1}
+              defaultValue={DEFAULT_SETTINGS.advanced.huePreservation} format={(v) => `${v.toFixed(0)} %`} disabled={disabled}
+              onChange={(v) => setAdv('Sigmoid hue preservation', { huePreservation: v })} />
+            <h4>highlight reconstruction</h4>
+            <label className="adv-row">
+              Method
+              <select value={s.advanced.highlightReconstruction ? 'opposed' : 'clip'} disabled={disabled}
+                onChange={(e) => setAdv('Highlight method', { highlightReconstruction: e.target.value === 'opposed' })}>
+                <option value="opposed">inpaint opposed</option>
+                <option value="clip">clip highlights</option>
+              </select>
+            </label>
+            <Slider label="Clipping threshold" value={s.advanced.highlightClip} min={0.5} max={1.5} step={0.005}
+              defaultValue={DEFAULT_SETTINGS.advanced.highlightClip} format={(v) => v.toFixed(3)} disabled={disabled}
+              onChange={(v) => setAdv('Highlight clipping threshold', { highlightClip: v })} />
+            <h4>demosaic</h4>
+            <label className="adv-row">
+              Method
+              <select value={s.advanced.demosaic} disabled={disabled}
+                onChange={(e) => setAdv('Demosaic', { demosaic: e.target.value as 'rcd' | 'bilinear' })}>
+                <option value="rcd">RCD</option>
+                <option value="bilinear">bilinear (fast preview)</option>
+              </select>
+            </label>
+          </div>
+        )}
+      </section>
+    </div>
+  )
+}
+

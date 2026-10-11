@@ -72,6 +72,7 @@ export function Grid({ rows, selected, focus, cellSize, onClick, onOpen }: Props
             <Thumb id={row.id} alt={row.fileName} />
             {row.flag === 1 && <span className="flag pick" title="Picked">⚑</span>}
             {row.flag === -1 && <span className="flag reject" title="Rejected">✕</span>}
+            {row.edited && <span className="edited-badge" title="Edited in Develop">✎</span>}
           </div>
           <div className="cell-foot">
             <Stars value={row.rating} size="small" />

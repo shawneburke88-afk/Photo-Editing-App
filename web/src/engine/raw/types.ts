@@ -37,6 +37,8 @@ export interface SensorData {
   wb: [number, number, number]
   /** Row-major 3×3 matrix: white-balanced camera RGB → linear sRGB. */
   camToRgb: number[]
+  /** Row-major 3×3 Adobe matrix XYZ → camera RGB (LibRaw cam_xyz), for temperature/tint. */
+  xyzToCam: number[]
 }
 
 export interface DecodeTimings {
