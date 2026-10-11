@@ -3,10 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getCatalog } from '../catalog/client'
 import { forgetThumbUrl, loadThumb, saveThumb, thumbUrl } from '../catalog/thumbs'
 import type { PhotoDetail } from '../catalog/types'
-import type { Mat3, Vec3 } from '../engine/color/matrix'
+import { invert, mul, REC2020_TO_XYZ, type Mat3, type Vec3 } from '../engine/color/matrix'
 import { multipliersToTemperature, temperatureToMultipliers } from '../engine/color/temperature'
 import { BUILT_IN_TARGETS, metricsFromStats, solveAuto, statsFromPixels, targetFromMetrics, type AutoTarget } from '../engine/develop/auto'
-import { DEFAULT_SETTINGS, displayUniforms, normalizeSettings, type DevelopSettings } from '../engine/develop/settings'
+import { defaultsFor, displayUniforms, normalizeSettings, type DevelopSettings, type SourceKind } from '../engine/develop/settings'
 import { DevelopEngine, type ImageStats, type RawStageOptions, type ViewState } from '../engine/gpu/develop-engine'
 import { RawDecoder } from '../engine/raw/decoder'
 import { Thumb } from '../library/Thumb'
@@ -29,9 +29,12 @@ interface Props {
 }
 
 interface SensorInfo {
+  kind: SourceKind
   asShotWb: Vec3
   xyzToCam: Mat3
   asShot: { temperature: number; tint: number }
+  /** Input colour profile of a JPEG, and a note when it had to be assumed. */
+  profile?: { name: string; note?: string }
 }
 
 type Status = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string }
@@ -46,7 +49,8 @@ function multipliers(s: DevelopSettings, info: SensorInfo): Vec3 {
 
 function stageOptions(s: DevelopSettings, info: SensorInfo): RawStageOptions {
   return {
-    wb: multipliers(s, info),
+    // A JPEG's white balance is applied entirely in the develop pass, so it never needs reprocessing.
+    wb: info.kind === 'rgb' ? [1, 1, 1] : multipliers(s, info),
     highlightMode: s.advanced.highlightReconstruction ? 'opposed' : 'clip',
     highlightClip: s.advanced.highlightClip,
     demosaic: s.advanced.demosaic,
@@ -113,7 +117,8 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
   const pendingSave = useRef<(() => Promise<void>) | null>(null)
   const saving = useRef<Promise<void> | null>(null)
 
-  const settings = history ? current(history) : DEFAULT_SETTINGS
+  const defaults = defaultsFor(info?.kind ?? 'raw')
+  const settings = history ? current(history) : defaults
 
   // ---- engine lifetime
   useEffect(() => {
@@ -167,31 +172,41 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
       const d = await catalog.getPhoto(id)
       if (stale() || !d) return
       setPhoto(d)
-      if (/^jpe?g$/i.test(d.fileType)) {
-        throw new Error('Editing JPEG files arrives in the next update. RAW files can be edited now.')
-      }
       const file = await openPhotoFile(d.rootId, d.folderPath, d.fileName)
       if (!file) throw new Error('This photo’s folder isn’t connected. Go to the Library and click “Reconnect”.')
       decoder ??= new RawDecoder()
       const r = await decoder.decode(file, true)
       if (stale()) return
-      if (!r.sensor) throw new Error(r.sensorUnsupported ?? 'This RAW file can’t be developed yet.')
+      if (!r.sensor && !r.rgb) throw new Error(r.sensorUnsupported ?? 'This RAW file can’t be developed yet.')
       for (let t = 0; !engineRef.current && t < 100; t++) await new Promise((res) => setTimeout(res, 50))
       const engine = engineRef.current
       if (!engine) throw new Error('Graphics acceleration is not available.')
-      engine.loadSensor(r.sensor, r.info.flip)
-      const xyzToCam = r.sensor.xyzToCam as Mat3
-      const sensorInfo: SensorInfo = { asShotWb: r.sensor.wb, xyzToCam, asShot: multipliersToTemperature(r.sensor.wb, xyzToCam) }
+      let sensorInfo: SensorInfo
+      if (r.rgb) {
+        // JPEG: the engine inverts the JPEG defaults' tone mapping so the unedited photo looks as shot.
+        const du = displayUniforms(defaultsFor('rgb'))
+        engine.loadRgb(r.rgb, du.sigmoid, du.exposureGain)
+        // White balance works on the file's linear colours: "camera" RGB is the profile's RGB.
+        const xyzToCam = invert(mul(REC2020_TO_XYZ, r.rgb.toRec2020 as Mat3))
+        const wb: Vec3 = [1, 1, 1]
+        sensorInfo = { kind: 'rgb', asShotWb: wb, xyzToCam, asShot: multipliersToTemperature(wb, xyzToCam), profile: { name: r.rgb.profileName, note: r.rgb.profileNote } }
+      } else {
+        const sensor = r.sensor!
+        engine.loadSensor(sensor, r.info.flip)
+        const xyzToCam = sensor.xyzToCam as Mat3
+        sensorInfo = { kind: 'raw', asShotWb: sensor.wb, xyzToCam, asShot: multipliersToTemperature(sensor.wb, xyzToCam) }
+      }
+      const kind = sensorInfo.kind
 
       const saved = await catalog.getEdit(id)
-      let h = startHistory(DEFAULT_SETTINGS)
+      let h = startHistory(defaultsFor(kind))
       if (saved) {
         try {
           const sh = JSON.parse(saved.history) as SavedHistory
-          const steps = sh.steps.map((st) => ({ label: st.label, settings: normalizeSettings(st.settings), at: 0 }))
-          h = steps.length ? { steps, index: Math.min(sh.index, steps.length - 1) } : startHistory(normalizeSettings(JSON.parse(saved.settings)))
+          const steps = sh.steps.map((st) => ({ label: st.label, settings: normalizeSettings(st.settings, kind), at: 0 }))
+          h = steps.length ? { steps, index: Math.min(sh.index, steps.length - 1) } : startHistory(normalizeSettings(JSON.parse(saved.settings), kind))
         } catch {
-          h = startHistory(normalizeSettings(JSON.parse(saved.settings)))
+          h = startHistory(normalizeSettings(JSON.parse(saved.settings), kind))
         }
       }
       const opts = stageOptions(current(h), sensorInfo)
@@ -243,7 +258,7 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
       const engine = engineRef.current
       const { settings: s, info: inf, before: b, indicators: ind } = latest.current
       if (!engine || !inf) return
-      const shown = b ? DEFAULT_SETTINGS : s
+      const shown = b ? defaultsFor(inf.kind) : s
       try {
         setStats(await engine.renderStats(displayUniforms(shown), b ? inf.asShotWb : multipliers(shown, inf), 256, ind))
       } catch {
@@ -263,7 +278,7 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
         const engine = engineRef.current
         const { settings: s, info: inf, view: v, before: b, indicators: o } = latest.current
         if (!engine || !inf) break
-        const shown = b ? DEFAULT_SETTINGS : s
+        const shown = b ? defaultsFor(inf.kind) : s
         try {
           const ms = await engine.render(displayUniforms(shown), b ? inf.asShotWb : multipliers(shown, inf), v, o)
           setTiming((x) => ({ ...x, frame: ms }))
@@ -334,7 +349,7 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
     setHistory((h) => (h ? record(h, label, next) : h))
   }, [])
 
-  const reset = () => change('Reset', DEFAULT_SETTINGS)
+  const reset = () => change('Reset', defaults)
 
   // ---- Auto
   const targets = useMemo(() => [...BUILT_IN_TARGETS, ...(refTarget ? [refTarget] : []), ...savedTargets], [refTarget, savedTargets])
@@ -652,6 +667,8 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
         <BasicPanel
           settings={settings}
           asShot={info?.asShot ?? null}
+          kind={info?.kind ?? 'raw'}
+          defaults={defaults}
           onChange={change}
           disabled={status.kind !== 'ready'}
           pickingWb={wbPick}

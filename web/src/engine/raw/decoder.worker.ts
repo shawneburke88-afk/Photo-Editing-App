@@ -1,9 +1,11 @@
 /// <reference lib="webworker" />
 import { LibRaw } from '@colorhythm/libraw-wasm'
 import wasmUrl from '@colorhythm/libraw-wasm/libraw.wasm?url'
+import { chooseInputProfile, extractJpegIcc, linearizationLut, profileToRec2020 } from '../color/icc'
+import { readJpegExif } from '../meta/exif'
 import { databaseWhiteLevel } from './camera-db'
 import { whiteLevel } from './white-level'
-import type { DecodeRequest, DecodeResponse, DecodeResult, EmbeddedPreview, SensorData } from './types'
+import type { DecodeRequest, DecodeResponse, DecodeResult, EmbeddedPreview, RgbImage, SensorData } from './types'
 
 const ready = LibRaw.initialize(fetch(wasmUrl))
 
@@ -16,6 +18,7 @@ self.onmessage = async (e: MessageEvent<DecodeRequest>) => {
     const result = await decode(file, full)
     if (result.preview) transfer.push(result.preview.bytes.buffer)
     if (result.sensor) transfer.push(result.sensor.data.buffer)
+    if (result.rgb) transfer.push(result.rgb.pixels.buffer, result.rgb.lut.buffer)
     response = { id, ok: true, result }
   } catch (err) {
     response = { id, ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -23,7 +26,10 @@ self.onmessage = async (e: MessageEvent<DecodeRequest>) => {
   self.postMessage(response, transfer)
 }
 
+const isJpeg = (name: string) => /\.jpe?g$/i.test(name)
+
 async function decode(file: File, full: boolean): Promise<DecodeResult> {
+  if (isJpeg(file.name)) return decodeJpeg(file)
   let t = performance.now()
   const buffer = await file.arrayBuffer()
   const read = performance.now() - t
@@ -176,4 +182,55 @@ function extractSensor(lr: LibRaw): SensorData | string {
   const whiteSource = fromDb?.source ?? 'detected (camera not in darktable database)'
 
   return { width, height, data, cfa, black, white, whiteSource, wb, camToRgb, xyzToCam }
+}
+
+/**
+ * Decodes a JPEG for editing. The browser decodes the pixels without colour conversion, so the input profile
+ * is applied by the engine as darktable's colorin does. The EXIF orientation is applied while decoding
+ * (darktable applies it later in the pipe; the result is the same), so the image comes out upright.
+ */
+async function decodeJpeg(file: File): Promise<DecodeResult> {
+  let t = performance.now()
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  const read = performance.now() - t
+  t = performance.now()
+  const exif = readJpegExif(bytes)
+  const { profile, note } = chooseInputProfile(extractJpegIcc(bytes), exif?.interopIndex || null)
+  const bmp = await createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }), {
+    colorSpaceConversion: 'none',
+    imageOrientation: 'from-image',
+  })
+  const canvas = new OffscreenCanvas(bmp.width, bmp.height)
+  const ctx = canvas.getContext('2d')!
+  ctx.drawImage(bmp, 0, 0)
+  bmp.close()
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const rgb: RgbImage = {
+    width: img.width,
+    height: img.height,
+    pixels: img.data,
+    profileName: profile.name,
+    profileNote: note,
+    toRec2020: profileToRec2020(profile),
+    lut: linearizationLut(profile) as Float32Array<ArrayBuffer>,
+  }
+  return {
+    fileName: file.name,
+    fileSize: file.size,
+    info: {
+      make: exif?.make ?? '',
+      model: exif?.model ?? '',
+      lens: exif?.lens ?? '',
+      iso: exif?.iso ?? 0,
+      shutter: exif?.shutter ?? 0,
+      aperture: exif?.aperture ?? 0,
+      focalLength: exif?.focalLength ?? 0,
+      timestamp: exif?.capturedAt ?? 0,
+      flip: 0,
+    },
+    preview: null,
+    sensor: null,
+    rgb,
+    timings: { read, open: performance.now() - t, preview: 0, unpack: 0 },
+  }
 }

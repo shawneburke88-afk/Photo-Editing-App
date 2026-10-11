@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { HIGHEST_TEMPERATURE, LOWEST_TEMPERATURE } from '../engine/color/temperature'
-import { DEFAULT_SETTINGS, sliderFromTint, tintFromSlider, type DevelopSettings } from '../engine/develop/settings'
+import { sliderFromTint, tintFromSlider, type DevelopSettings, type SourceKind } from '../engine/develop/settings'
 import { useStoredNumber } from '../lib/useStoredNumber'
 import { AutoControls, type AutoProps } from './AutoControls'
 import { HELP } from './help'
@@ -12,6 +12,10 @@ interface Props {
   asShot: { temperature: number; tint: number } | null
   onChange: (label: string, next: DevelopSettings) => void
   disabled: boolean
+  /** RAW or display-referred (JPEG): JPEGs have no highlight reconstruction or demosaic. */
+  kind: SourceKind
+  /** Default settings for this kind of photo (double-click reset values). */
+  defaults: DevelopSettings
   auto: AutoProps
   /** White balance picker (W) is active. */
   pickingWb: boolean
@@ -29,7 +33,7 @@ const TINT_TRACK = 'linear-gradient(90deg, #4caf50, #ddd 50%, #c050c0)'
 const toMired = (k: number) => -1e6 / k
 const fromMired = (m: number) => Math.round(-1e6 / m)
 
-export function BasicPanel({ settings: s, asShot, onChange, disabled, auto, pickingWb, onPickWb }: Props) {
+export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, defaults, auto, pickingWb, onPickWb }: Props) {
   const [advanced, setAdvanced] = useState(false)
   // Sublabels under each slider: 1 = shown, 2 = hidden (tooltips are always available on hover).
   const [hintsPref, setHintsPref] = useStoredNumber('lightbench.develop.hints', 1)
@@ -144,42 +148,51 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, auto, pick
             </p>
             <h4>exposure</h4>
             <Slider label="Base exposure" value={s.advanced.baseExposure} min={-2} max={3} step={0.05}
-              defaultValue={DEFAULT_SETTINGS.advanced.baseExposure} format={ev} disabled={disabled}
+              defaultValue={defaults.advanced.baseExposure} format={ev} disabled={disabled}
               onChange={(v) => setAdv('Base exposure', { baseExposure: v })} />
             <h4>sigmoid</h4>
             <Slider label="Skew" value={s.advanced.skew} min={-1} max={1} step={0.01}
-              defaultValue={DEFAULT_SETTINGS.advanced.skew} disabled={disabled}
+              defaultValue={defaults.advanced.skew} disabled={disabled}
               onChange={(v) => setAdv('Sigmoid skew', { skew: v })} />
             <Slider label="Target white" value={s.advanced.whiteTarget} min={20} max={200} step={1}
-              defaultValue={DEFAULT_SETTINGS.advanced.whiteTarget} format={(v) => `${v.toFixed(0)} %`} disabled={disabled}
+              defaultValue={defaults.advanced.whiteTarget} format={(v) => `${v.toFixed(0)} %`} disabled={disabled}
               onChange={(v) => setAdv('Sigmoid target white', { whiteTarget: v })} />
             <Slider label="Target black" value={s.advanced.blackTarget} min={0} max={2} step={0.0001}
-              defaultValue={DEFAULT_SETTINGS.advanced.blackTarget} format={(v) => `${v.toFixed(4)} %`} disabled={disabled}
+              defaultValue={defaults.advanced.blackTarget} format={(v) => `${v.toFixed(4)} %`} disabled={disabled}
               onChange={(v) => setAdv('Sigmoid target black', { blackTarget: v })} />
             <Slider label="Preserve hue" value={s.advanced.huePreservation} min={0} max={100} step={1}
-              defaultValue={DEFAULT_SETTINGS.advanced.huePreservation} format={(v) => `${v.toFixed(0)} %`} disabled={disabled}
+              defaultValue={defaults.advanced.huePreservation} format={(v) => `${v.toFixed(0)} %`} disabled={disabled}
               onChange={(v) => setAdv('Sigmoid hue preservation', { huePreservation: v })} />
-            <h4>highlight reconstruction</h4>
-            <label className="adv-row">
-              Method
-              <select value={s.advanced.highlightReconstruction ? 'opposed' : 'clip'} disabled={disabled}
-                onChange={(e) => setAdv('Highlight method', { highlightReconstruction: e.target.value === 'opposed' })}>
-                <option value="opposed">inpaint opposed</option>
-                <option value="clip">clip highlights</option>
-              </select>
-            </label>
-            <Slider label="Clipping threshold" value={s.advanced.highlightClip} min={0.5} max={1.5} step={0.005}
-              defaultValue={DEFAULT_SETTINGS.advanced.highlightClip} format={(v) => v.toFixed(3)} disabled={disabled}
-              onChange={(v) => setAdv('Highlight clipping threshold', { highlightClip: v })} />
-            <h4>demosaic</h4>
-            <label className="adv-row">
-              Method
-              <select value={s.advanced.demosaic} disabled={disabled}
-                onChange={(e) => setAdv('Demosaic', { demosaic: e.target.value as 'rcd' | 'bilinear' })}>
-                <option value="rcd">RCD</option>
-                <option value="bilinear">bilinear (fast preview)</option>
-              </select>
-            </label>
+            {kind === 'raw' ? (
+              <>
+                <h4>highlight reconstruction</h4>
+                <label className="adv-row">
+                  Method
+                  <select value={s.advanced.highlightReconstruction ? 'opposed' : 'clip'} disabled={disabled}
+                    onChange={(e) => setAdv('Highlight method', { highlightReconstruction: e.target.value === 'opposed' })}>
+                    <option value="opposed">inpaint opposed</option>
+                    <option value="clip">clip highlights</option>
+                  </select>
+                </label>
+                <Slider label="Clipping threshold" value={s.advanced.highlightClip} min={0.5} max={1.5} step={0.005}
+                  defaultValue={defaults.advanced.highlightClip} format={(v) => v.toFixed(3)} disabled={disabled}
+                  onChange={(v) => setAdv('Highlight clipping threshold', { highlightClip: v })} />
+                <h4>demosaic</h4>
+                <label className="adv-row">
+                  Method
+                  <select value={s.advanced.demosaic} disabled={disabled}
+                    onChange={(e) => setAdv('Demosaic', { demosaic: e.target.value as 'rcd' | 'bilinear' })}>
+                    <option value="rcd">RCD</option>
+                    <option value="bilinear">bilinear (fast preview)</option>
+                  </select>
+                </label>
+              </>
+            ) : (
+              <p className="muted small">
+                JPEG: highlight reconstruction and demosaic only apply to RAW files. LightBench reads the photo through its
+                colour profile and undoes the default tone curve, so an unedited JPEG looks exactly as shot.
+              </p>
+            )}
           </div>
         )}
       </section>

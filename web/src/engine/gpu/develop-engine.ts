@@ -8,10 +8,12 @@
 import { apply, invert, mul, SRGB_TO_REC2020, type Mat3, type Vec3 } from '../color/matrix'
 import { clipUniforms, DEFAULT_CLIP, DEFAULT_RAW_CLIP, RAW_COLOURS, rawModeCode, rawThresholds, type Indicators } from '../develop/indicators'
 import type { DisplayUniforms } from '../develop/settings'
-import type { SensorData } from '../raw/types'
+import { inverseLoglogistic, type SigmoidCurve } from '../color/sigmoid'
+import type { RgbImage, SensorData } from '../raw/types'
 import displayWgsl from './develop-display.wgsl?raw'
 import mipWgsl from './mip.wgsl?raw'
 import rawWgsl from './raw-pipeline.wgsl?raw'
+import rgbInputWgsl from './rgb-input.wgsl?raw'
 import statsWgsl from './stats.wgsl?raw'
 
 export interface RawStageOptions {
@@ -90,6 +92,9 @@ export class DevelopEngine {
   private readonly statsModule: GPUShaderModule
   private statsPipe: GPUComputePipeline | null = null
   private sensor: SensorData | null = null
+  /** Set for display-referred photos (JPEG): the uploaded pixels and how to bring them into the pipeline. */
+  private rgbInput: { texture: GPUTexture; lut: Float32Array<ArrayBuffer>; toRec2020: Mat3; curve: SigmoidCurve; gain: number } | null = null
+  private rgbPipe: GPUComputePipeline | null = null
   private rawBuf: GPUBuffer | null = null
   private scene: GPUTexture | null = null
   private flip = 0
@@ -217,6 +222,50 @@ export class DevelopEngine {
     this.sensor = sensor
     this.flip = flip
     this.camToWorking = mul(SRGB_TO_REC2020, sensor.camToRgb as Mat3)
+    this.rgbInput?.texture.destroy()
+    this.rgbInput = null
+  }
+
+  /**
+   * Uploads a display-referred photo (JPEG). `curve` and `gain` are the sigmoid curve and exposure gain of the
+   * JPEG default settings, which the input stage inverts. Call `process` next.
+   */
+  loadRgb(img: RgbImage, curve: SigmoidCurve, gain: number) {
+    this.checkAlive()
+    const max = this.device.limits.maxTextureDimension2D
+    if (img.width > max || img.height > max) throw new Error(`Image is ${img.width}×${img.height}; this GPU allows at most ${max}×${max}`)
+    // The "sensor" of a JPEG is its pixels: the clipping indicators test the largest channel against 255,
+    // which marks detail already lost in the file.
+    const n = img.width * img.height
+    const data = new Uint16Array(n + (n & 1))
+    const px = img.pixels
+    for (let i = 0; i < n; i++) data[i] = Math.max(px[4 * i], px[4 * i + 1], px[4 * i + 2])
+    const sensor: SensorData = {
+      width: img.width,
+      height: img.height,
+      data,
+      cfa: [1, 1, 1, 1],
+      black: [0, 0, 0, 0],
+      white: 255,
+      whiteSource: 'file (8-bit)',
+      wb: [1, 1, 1],
+      camToRgb: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      xyzToCam: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    }
+    this.loadSensor(sensor, 0)
+    this.camToWorking = img.toRec2020 as Mat3
+    const texture = this.device.createTexture({
+      size: [img.width, img.height],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    })
+    this.device.queue.writeTexture({ texture }, px, { bytesPerRow: img.width * 4 }, [img.width, img.height])
+    this.rgbInput = { texture, lut: img.lut, toRec2020: img.toRec2020 as Mat3, curve, gain }
+  }
+
+  /** True when the loaded photo is display-referred (JPEG). */
+  get isRgb(): boolean {
+    return this.rgbInput !== null
   }
 
   get imageSize(): [number, number] {
@@ -228,6 +277,7 @@ export class DevelopEngine {
   /** Stage A. Resolves with the GPU time in ms. */
   async process(opts: RawStageOptions): Promise<number> {
     this.checkAlive()
+    if (this.rgbInput) return this.processRgb()
     const s = this.sensor
     if (!s || !this.rawBuf) throw new Error('No photo loaded')
     const { device } = this
@@ -345,6 +395,21 @@ export class DevelopEngine {
     }
 
     // 4. Mip chain
+    this.encodeMips(enc, scene)
+
+    device.queue.submit([enc.finish()])
+    await device.queue.onSubmittedWorkDone()
+    for (const b of temps) b.destroy()
+    paramBuf.destroy()
+    this.scene?.destroy()
+    this.scene = scene
+    this.builtWb = [...opts.wb] as Vec3
+    return performance.now() - t0
+  }
+
+  /** Fills the scene texture's mip levels (for zoomed-out viewing) from level 0. */
+  private encodeMips(enc: GPUCommandEncoder, scene: GPUTexture) {
+    const { device } = this
     for (let level = 1; level < scene.mipLevelCount; level++) {
       const pass = enc.beginRenderPass({
         colorAttachments: [{ view: scene.createView({ baseMipLevel: level, mipLevelCount: 1 }), loadOp: 'clear', storeOp: 'store' }],
@@ -360,14 +425,57 @@ export class DevelopEngine {
       pass.draw(3)
       pass.end()
     }
+  }
 
+  /** Input stage for display-referred photos: profile → linear Rec.2020 → inverse tone mapping → mips. */
+  private async processRgb(): Promise<number> {
+    const { device } = this
+    const t0 = performance.now()
+    const rgb = this.rgbInput!
+    const { width: w, height: h } = rgb.texture
+    this.rgbPipe ??= device.createComputePipeline({
+      layout: 'auto',
+      compute: { module: device.createShaderModule({ code: rgbInputWgsl }), entryPoint: 'rgbInput' },
+    })
+    const c = rgb.curve
+    const m = rgb.toRec2020
+    // Pixels at the white target (clipped in the file) get the scene value just below the white target.
+    const cap = inverseLoglogistic(c.whiteTarget * 0.9995, c)
+    const params = new Float32Array([m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0,
+      c.whiteTarget, c.paperExp, c.filmFog, c.filmPower, c.paperPower, cap, 1 / rgb.gain, 0])
+    const paramBuf = device.createBuffer({ size: params.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    device.queue.writeBuffer(paramBuf, 0, params)
+    const lutBuf = device.createBuffer({ size: rgb.lut.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
+    device.queue.writeBuffer(lutBuf, 0, rgb.lut)
+    const scene = device.createTexture({
+      size: [w, h],
+      format: 'rgba16float',
+      mipLevelCount: Math.floor(Math.log2(Math.max(w, h))) + 1,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+    })
+    const enc = device.createCommandEncoder()
+    const pass = enc.beginComputePass()
+    pass.setPipeline(this.rgbPipe)
+    pass.setBindGroup(0, device.createBindGroup({
+      layout: this.rgbPipe.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: paramBuf } },
+        { binding: 1, resource: rgb.texture.createView() },
+        { binding: 2, resource: { buffer: lutBuf } },
+        { binding: 3, resource: scene.createView({ baseMipLevel: 0, mipLevelCount: 1 }) },
+      ],
+    }))
+    pass.dispatchWorkgroups(Math.ceil(w / 16), Math.ceil(h / 16))
+    pass.end()
+    this.encodeMips(enc, scene)
     device.queue.submit([enc.finish()])
     await device.queue.onSubmittedWorkDone()
-    for (const b of temps) b.destroy()
     paramBuf.destroy()
+    lutBuf.destroy()
     this.scene?.destroy()
     this.scene = scene
-    this.builtWb = [...opts.wb] as Vec3
+    // White balance on a JPEG is applied entirely by the develop pass (relative to the file's colours).
+    this.builtWb = [1, 1, 1]
     return performance.now() - t0
   }
 
@@ -640,6 +748,7 @@ export class DevelopEngine {
   }
 
   destroy() {
+    this.rgbInput?.texture.destroy()
     this.scene?.destroy()
     this.rawBuf?.destroy()
     this.viewBuf.destroy()

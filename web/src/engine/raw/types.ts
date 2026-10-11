@@ -43,6 +43,21 @@ export interface SensorData {
   xyzToCam: number[]
 }
 
+/** A display-referred RGB image (JPEG), upright, with its input colour profile. */
+export interface RgbImage {
+  width: number
+  height: number
+  /** 8-bit RGBA, the file's encoded values (no browser colour conversion). */
+  pixels: Uint8ClampedArray<ArrayBuffer>
+  /** Input colour profile name, and why it was chosen when it isn't the embedded one. */
+  profileName: string
+  profileNote?: string
+  /** Row-major 3×3: linear profile RGB → linear Rec.2020 (D65). */
+  toRec2020: number[]
+  /** Linearisation table: 3 × 256 entries (channel-major), encoded value → linear light. */
+  lut: Float32Array<ArrayBuffer>
+}
+
 export interface DecodeTimings {
   read: number
   open: number
@@ -56,6 +71,8 @@ export interface DecodeResult {
   info: PhotoInfo
   preview: EmbeddedPreview | null
   sensor: SensorData | null
+  /** Set instead of `sensor` for JPEGs. */
+  rgb?: RgbImage
   /** Set when the file decoded but its sensor layout is not supported yet (e.g. X-Trans, Foveon). */
   sensorUnsupported?: string
   timings: DecodeTimings
