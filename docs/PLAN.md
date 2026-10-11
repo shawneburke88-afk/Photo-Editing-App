@@ -18,6 +18,10 @@ _Updated 2026-10-10. Based on [RESEARCH.md](RESEARCH.md) and the owner's answers
 | Name | **LightBench** (the owner's first choice, "DarkRoom", clashes with an existing photo app). |
 | Cameras to test first | **Nikon (NEF)** and **Sony (ARW)**. |
 | Git workflow | `main` publishes the site. Work happens on a feature branch and is merged via pull requests the owner approves. |
+| darktable first | Before designing a feature, review how darktable does it (full source kept locally; module catalogue in [DARKTABLE_MODULES.md](DARKTABLE_MODULES.md)), then improve the usability. Not just a port (owner, 2026-10-11). |
+| Usability | Clean layout, most-used adjustments most prominent, tools grouped by task, sublabels and tooltips that explain each control and its pitfalls. See [USABILITY.md](USABILITY.md). |
+| Clipping warning (J) | Shows **lost detail**: sensor clipping plus pure white/black on screen. darktable's own indicator modes stay available (owner, 2026-10-11). |
+| Auto and white balance | Auto leaves white balance alone, like Lightroom. White balance gets a **picker with a magnifying loupe** (W) using darktable's spot-picker maths (owner, 2026-10-11). |
 
 ## Guiding principles
 
@@ -78,14 +82,17 @@ each phase below delivers usable software on the live site.
 Delivered in three parts:
 - **Part 1, Import + Library:** merged.
 - **Part 2, Develop with darktable processing:** built, see [PHASE1.md](PHASE1.md).
-- **Part 2b, Histogram + Auto** (owner's request, 2026-10-11): next.
-  - **Histogram:** live in Develop, updating with every edit.
-  - **Clipping warnings:** shadow/highlight clipping indicators, plus a **J** key overlay that paints
-    clipped areas.
+- **Part 2b, Histogram + Auto** (owner's request, 2026-10-11): built, awaiting PR once PR #4 is merged.
+  - **Histogram:** live in Develop, drawn as darktable draws it (log scale by default), with clipping triangles.
+  - **Clipping warnings:** **J** (or darktable's **O**) paints lost detail; **Shift+O** shows sensor
+    clipping only. darktable's four display-clipping modes and thresholds are in the histogram menu.
+  - **White balance picker (W)** with a loupe that follows the cursor.
   - **Auto button:** moves the visible sliders as one history step, aiming at a chosen target profile:
-    - **built-in looks** (e.g. Natural, Vivid, Landscape, Portrait, Low-key, High-key);
+    - **built-in looks** (Natural, Vivid, Landscape, Portrait, Low-key, High-key);
     - **match a reference photo**;
     - **the owner's own saved targets.**
+  - **Hints and tooltips** for every Basic slider.
+  - Resizable left panel with History docked under the histogram.
 - **Part 3, Export, XMP sidecars and JPEG editing:** after Part 2b.
 - The tone curve stays with the Phase 3 colour tools.
 
