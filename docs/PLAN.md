@@ -80,6 +80,8 @@ Delivered in three parts:
 - **Part 2, Develop with darktable processing:** built, see [PHASE1.md](PHASE1.md).
 - **Part 3, Export, XMP sidecars and JPEG editing:** next.
 
+Non-destructive editing: originals are never modified. Edits are settings re-applied to the original on every render, as in Lightroom. Virtual copies (Phase 2) and snapshots (Phase 3) build on this.
+
 - **Import wizard** (Chrome/Edge):
   1. Click **Import** and choose the card or source folder in the Windows folder picker. Subfolders are
      included.
@@ -109,7 +111,16 @@ Delivered in three parts:
   darktable's modules: demosaic (RCD), highlight reconstruction, exposure, white balance, input colour
   profile and sigmoid tone mapping. The Lightroom-style sliders drive these modules.
 - **Export:** JPEG / PNG / TIFF, resize, quality, filename template, metadata include/exclude.
-- **Sidecars:** write edits and ratings to XMP so nothing is locked into our catalog.
+- **XMP sidecars** (owner's decisions, 2026-10-11):
+  - **Written automatically, always**, like darktable. Every edit, rating, flag, colour label and keyword
+    change also updates a `.xmp` file next to the photo. Write permission is asked once per folder.
+  - **Standard fields** for ratings, labels and keywords (`xmp:Rating`, `xmp:Label`, `dc:subject`,
+    `lr:hierarchicalSubject`), so Lightroom, darktable and Bridge can read them.
+  - LightBench's own edit settings and history go in a separate `lightbench:` namespace that other apps
+    ignore.
+  - Reading sidecars back recovers the edits if browser storage is cleared, or on another computer.
+  - Existing sidecars written by other apps are preserved: LightBench updates only its own fields and the
+    standard fields above.
 
 ### Phase 2 — Library depth
 Collections, smart collections, collection sets, hierarchical keywords, EXIF/IPTC editing,
