@@ -146,7 +146,7 @@ Non-destructive editing: originals are never modified. Edits are settings re-app
     standard fields above.
 
 ### Phase 2 — Library depth
-**Open folder (browse before import)** — _Part 1 built, see [PHASE2.md](PHASE2.md)_ — owner's choice 2026-10-11: open any folder and start culling (flags, stars, labels) at once. **One library model** (owner, after the round-2 research): opening a folder adds it to the library in place (no copying), it is indexed in the background, and every library feature works on it; there is no separate browse mode. Removing a folder from LightBench never deletes files.
+**Open folder (browse before import)** and **full-screen culling** — _built, see [PHASE2.md](PHASE2.md)_ — owner's choice 2026-10-11: open any folder and start culling (flags, stars, labels) at once. **One library model** (owner, after the round-2 research): opening a folder adds it to the library in place (no copying), it is indexed in the background, and every library feature works on it; there is no separate browse mode. Removing a folder from LightBench never deletes files.
 **Auto, tunable** (owner, after round 2): a strength slider, a choice of which sliders Auto may touch, and Auto re-run per photo when applied to many photos.
 Collections, smart collections, collection sets, hierarchical keywords, EXIF/IPTC editing,
 metadata presets, import presets, stacks, virtual copies, compare and survey views, presets,
@@ -169,7 +169,21 @@ heal and clone, snapshots, soft proofing. Develop tools in **one scrolling stack
 ### Phase 4 — Local AI
 Subject / sky / object / background masks (SAM 2 / MobileSAM), AI remove (LaMa),
 AI denoise (NAFNet-class), assisted culling (sharpness, eyes-open), face grouping, content search.
-Model licenses checked individually (avoid non-commercial weights).
+Model licenses checked individually: **permissive only** — code and weights must allow any use, including commercial (owner, 2026-10-11, re-confirmed after the AI research even though LightBench won't be sold, because the public website's users are bound by each model's licence and the GPL allows no extra restrictions). Non-commercial, research-only and field-of-use-restricted models (e.g. SAM 3) are excluded, also as optional downloads.
+Owner's requests (2026-10-11), to be built on the AI masks:
+- **AI-assisted Auto**: finds the subject, sky, faces and background, measures each region in the scene-linear
+  data, and drives the existing Auto solver with per-region goals (e.g. subject at mid-grey, sky not clipped,
+  faces at skin brightness). Results stay ordinary, editable sliders.
+- **Auto for a selected area**: with a mask selected, Auto sets that mask's adjustments from its own pixels only.
+- **Hover selection previews**: moving the cursor over the photo outlines the object under it live (a SAM-style
+  model reads the image once, then outlines what is under the cursor in milliseconds); a click makes it a mask.
+- **Model downloads**: on first use, as darktable does; a small default model per tool with an optional
+  higher-quality download (owner: "let the user choose").
+- Model research (done 2026-10-11): [research/AI_MODELS.md](research/AI_MODELS.md). Defaults proposed: SAM 2.1 Tiny
+  (hover/click), BiRefNet-lite (subject), MediaPipe Selfie Multiclass (people), YuNet (faces), Depth Anything V2 Small;
+  SAM 3 excluded by its licence; no pretrained tone model has usable training data, so AI Auto is built on masks.
+  The owner picks models before Phase 4. darktable 5.6 ships SAM 2.1 (Hiera small) and SegNext for masks
+  (`data/ai_models.json`).
 
 ### Phase 5 — Output and advanced
 HDR and panorama merge, HDR editing and export (AVIF / JPEG XL / gain-map JPEG), map module,
@@ -184,6 +198,15 @@ faster native processing. Same UI and engine as the website.
 - **Release notes in the app:** new features, bug fixes, and "what moved" notes when a control moves or is renamed.
 - **Rollback:** the previous website version stays one click away.
 - **Compatible edits:** older and newer versions can read each other's saved edits.
+
+### Later — Mobile (to explore)
+Owner's direction (2026-10-11): a mobile version later, for **iPhone, iPad and Android phones**. What it is for (culling and light edits, or full editing) is not decided yet; until then, keep code mobile-friendly (no desktop-only assumptions in the engine, touch-capable controls).
+Known constraints to plan for (to verify when this starts):
+- Phone browsers can't open folders like desktop Chrome, so photos would come through the phone's photo picker into app storage; a Tauri 2 mobile app would get proper library access.
+- Memory: editing at screen resolution and tiled full-size export, because phones cap memory per app or tab.
+- GPU: WebGPU is in Chrome on Android and in Safari since iOS 26 (device support to check); phones throttle when hot.
+- AI: small default models only.
+- Interface: touch layout (bigger controls, swipe culling, bottom panel).
 
 ## Owner tests pending
 

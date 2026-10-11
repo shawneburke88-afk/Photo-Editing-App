@@ -176,3 +176,17 @@ Every group follows the same rules:
 | Subfolders in the grid? | Included, with a **Subfolders** toggle; on by default. |
 | Thumbnails and previews? | The camera's embedded JPEG first (darktable's default for unedited images); the RAW is rendered in Develop. The Loupe marks these with a **Camera preview** badge. |
 | Full-screen culling view? | Next PR, after Open folder and background indexing. |
+| Culling layout? | One photo, plus a 2-up toggle (C). |
+| Auto-advance after a flag/star/label key? | Yes, on by default in the culling view, with a toggle. |
+| What does 100 % show? | Always the photo rendered from the original file (true pixels), even though it takes a few seconds. |
+| What surrounds the photo? | Filmstrip, info line (I toggles) and key hints. |
+
+### AI features requested by the owner (2026-10-11)
+
+| Request | Plan |
+|---|---|
+| AI "Auto" that weighs subject vs background | Phase 4, on top of AI masks: region-aware goals for the existing Auto solver; results are ordinary sliders (round 2, lesson 9). |
+| Auto for a selected or masked area | Phase 4, with the mask-first local panel. |
+| Hover over the photo to preview selectable objects | Phase 4, SAM-style promptable segmentation. |
+| Model download size | User's choice: small default, optional high-quality download. |
+| Model research | Now, alongside Phase 2 (`docs/research/AI_MODELS.md`). |

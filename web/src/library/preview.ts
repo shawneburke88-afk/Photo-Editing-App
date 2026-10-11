@@ -1,0 +1,165 @@
+// Large previews for the Loupe and the culling view, and true-pixel RAW renders for 100 % zoom.
+
+import { getCatalog } from '../catalog/client'
+import { loadThumb } from '../catalog/thumbs'
+import type { PhotoDetail } from '../catalog/types'
+import { loadIntoEngine, multipliers, savedSettings, stageOptions } from '../develop/source'
+import { outputTrc, rec2020ToProfile, SRGB_PROFILE } from '../engine/color/icc'
+import { displayUniforms } from '../engine/develop/settings'
+import { DevelopEngine } from '../engine/gpu/develop-engine'
+import { RawDecoder } from '../engine/raw/decoder'
+import { openPhotoFile } from '../platform/roots'
+
+export interface Preview {
+  bmp: ImageBitmap
+  /** Clockwise rotation needed to show it upright. */
+  rotate: number
+  /** The RAW's embedded camera preview (not a rendering of the RAW itself). */
+  camera: boolean
+}
+
+const FLIP_TO_ROTATION: Record<number, number> = { 0: 0, 3: 180, 5: 270, 6: 90 }
+let decoder: RawDecoder | null = null
+
+export const isJpeg = (p: Pick<PhotoDetail, 'fileType'>) => /^jpe?g$/i.test(p.fileType)
+
+/** The cached grid thumbnail, as a bitmap (already upright). */
+export async function loadThumbPreview(photoId: number): Promise<Preview | null> {
+  const thumb = await loadThumb(photoId)
+  return thumb ? { bmp: await createImageBitmap(thumb), rotate: 0, camera: false } : null
+}
+
+/**
+ * The full-size preview: the JPEG itself, or the camera preview embedded in a RAW (fast; darktable's default
+ * for unedited images). Throws with a user-facing message when the file can't be shown.
+ */
+export async function loadFullPreview(photo: PhotoDetail): Promise<Preview> {
+  const file = await openPhotoFile(photo.rootId, photo.folderPath, photo.fileName)
+  if (!file) throw new Error('Showing a small preview. Reconnect this photo’s folder to see it full size.')
+  if (isJpeg(photo)) return { bmp: await createImageBitmap(file), rotate: 0, camera: false }
+  decoder ??= new RawDecoder()
+  const r = await decoder.decode(file, false)
+  if (!r.preview || r.preview.format !== 'jpeg') throw new Error('This file has no full-size preview; open it in Develop to see the RAW.')
+  const bmp = await createImageBitmap(new Blob([r.preview.bytes], { type: 'image/jpeg' }))
+  let rotate = FLIP_TO_ROTATION[photo.orientation] ?? 0
+  // Some cameras store an already-rotated preview; only turn it if it is still landscape.
+  if ((rotate === 90 || rotate === 270) && bmp.height > bmp.width) rotate = 0
+  return { bmp, rotate, camera: true }
+}
+
+/** Small LRU of decoded bitmaps; evicted bitmaps are closed. Concurrent requests for one key share a load. */
+export class BitmapCache<T extends { bmp: ImageBitmap }> {
+  private done = new Map<number, T>()
+  private loading = new Map<number, Promise<T>>()
+  private disposed = false
+  private readonly capacity: number
+  private readonly load: (id: number) => Promise<T>
+
+  constructor(capacity: number, load: (id: number) => Promise<T>) {
+    this.capacity = capacity
+    this.load = load
+  }
+
+  peek(id: number): T | undefined {
+    const hit = this.done.get(id)
+    if (hit) {
+      this.done.delete(id)
+      this.done.set(id, hit)
+    }
+    return hit
+  }
+
+  get(id: number): Promise<T> {
+    const hit = this.peek(id)
+    if (hit) return Promise.resolve(hit)
+    let p = this.loading.get(id)
+    if (!p) {
+      p = this.load(id).then((v) => {
+        this.loading.delete(id)
+        if (this.disposed) {
+          v.bmp.close()
+          throw new Error('cancelled')
+        }
+        this.done.set(id, v)
+        while (this.done.size > this.capacity) {
+          const [oldId, old] = this.done.entries().next().value!
+          this.done.delete(oldId)
+          old.bmp.close()
+        }
+        return v
+      }, (e) => {
+        this.loading.delete(id)
+        throw e
+      })
+      this.loading.set(id, p)
+    }
+    return p
+  }
+
+  /** Allows loading again after `dispose` (a view that is shown again). */
+  open() {
+    this.disposed = false
+  }
+
+  dispose() {
+    this.disposed = true
+    for (const v of this.done.values()) v.bmp.close()
+    this.done.clear()
+  }
+}
+
+/**
+ * Renders photos at full resolution with their saved Develop settings, exactly as Export does (RAW decode,
+ * darktable pipeline on the GPU, sRGB output), for a true 100 % view. One render at a time.
+ */
+export class FullRenderer {
+  private engine: Promise<DevelopEngine> | null = null
+  private raw: RawDecoder | null = null
+  private queue: Promise<unknown> = Promise.resolve()
+  private disposed = false
+
+  /** Allows rendering again after `dispose`; the GPU engine and decoder are created on first use. */
+  open() {
+    this.disposed = false
+  }
+
+  /** Queues a render; `wanted` is checked when its turn comes, so photos the user moved past are skipped. */
+  render(photo: PhotoDetail, wanted: () => boolean = () => true): Promise<ImageBitmap> {
+    const job = this.queue.then(() => (wanted() ? this.renderNow(photo) : Promise.reject(new Error('cancelled'))))
+    this.queue = job.catch(() => {})
+    return job
+  }
+
+  private async renderNow(photo: PhotoDetail): Promise<ImageBitmap> {
+    if (this.disposed) throw new Error('cancelled')
+    const file = await openPhotoFile(photo.rootId, photo.folderPath, photo.fileName)
+    if (!file) throw new Error('Reconnect this photo’s folder to render it at 100 %.')
+    if (!('gpu' in navigator)) throw new Error('Rendering at 100 % needs WebGPU (Chrome or Edge).')
+    this.engine ??= DevelopEngine.create('readback')
+    const engine = await this.engine
+    this.raw ??= new RawDecoder()
+    const decoded = await this.raw.decode(file, true)
+    const info = loadIntoEngine(engine, decoded)
+    const settings = savedSettings(await getCatalog().getEdit(photo.id), info.kind)
+    await engine.process(stageOptions(settings, info))
+    const [width, height] = engine.imageSize
+    const out = await engine.renderOutput(displayUniforms(settings), multipliers(settings, info), {
+      width,
+      height,
+      toOutput: rec2020ToProfile(SRGB_PROFILE),
+      trc: outputTrc(SRGB_PROFILE),
+      bits: 8,
+      dither: 0,
+    })
+    if (this.disposed) throw new Error('cancelled')
+    return createImageBitmap(new ImageData(out.rgba as Uint8ClampedArray<ArrayBuffer>, width, height))
+  }
+
+  dispose() {
+    this.disposed = true
+    void this.engine?.then((e) => e.destroy(), () => {})
+    this.engine = null
+    this.raw?.dispose()
+    this.raw = null
+  }
+}

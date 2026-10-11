@@ -8,6 +8,8 @@ interface Props {
   onChange: (f: Filters) => void
   view: 'grid' | 'loupe'
   onView: (v: 'grid' | 'loupe') => void
+  /** Opens the full-screen culling view. */
+  onCull: () => void
   cellSize: number
   onCellSize: (n: number) => void
   shown: number
@@ -16,13 +18,14 @@ interface Props {
   onSubfolders: (on: boolean) => void
 }
 
-export function FilterBar({ value, onChange, view, onView, cellSize, onCellSize, shown, subfolders, onSubfolders }: Props) {
+export function FilterBar({ value, onChange, view, onView, onCull, cellSize, onCellSize, shown, subfolders, onSubfolders }: Props) {
   const set = (patch: Partial<Filters>) => onChange({ ...value, ...patch })
   return (
     <div className="filterbar">
       <div className="seg" role="group" aria-label="View">
         <button className={view === 'grid' ? 'on' : ''} onClick={() => onView('grid')} title="Grid (G)">Grid</button>
         <button className={view === 'loupe' ? 'on' : ''} onClick={() => onView('loupe')} title="Loupe (E)">Loupe</button>
+        <button onClick={onCull} disabled={!shown} title="Full-screen culling: flag and rate one photo at a time (F)">Cull</button>
       </div>
       <input
         type="search"
