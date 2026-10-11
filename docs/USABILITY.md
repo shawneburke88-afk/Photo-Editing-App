@@ -153,9 +153,17 @@ Every group follows the same rules:
 | Open folder model? (round 2) | One library model: opening a folder adds it in place, indexes it in the background, every feature works; removing it never deletes files. |
 | Auto additions? (round 2) | A strength slider and a choice of which sliders Auto may touch. Auto re-runs per photo when applied to many. |
 
-### Open after round 2
+### Second batch after round 2 (owner, 2026-10-11)
 
-Conflicts 1–4 are settled (above). Queued for a later round of questions, so they don't hold up current work:
-- **AI masks earlier?** Round 2 calls AI subject/sky masks table stakes (R2 10). They are planned for Phase 4, after the manual masks in Phase 3. Option: build the mask-first panel in Phase 3 with AI subject/sky as its first mask types.
-- **darktable XMP develop edits (R2 18).** Reading darktable's history stack (and writing it back) would let darktable users bring their edits. darktable stores each module's parameters as a binary blob per module version, so this is a sizeable, module-by-module job; it fits Phase 2's migration work.
-- **Trust promise, shortcuts/UI scaling, PWA/offline, release discipline, latency budgets, labelled base exposure:** proposals above; each needs a yes/no before it goes into PLAN.md.
+| Question | Owner's answer |
+|---|---|
+| AI subject/sky masks earlier than Phase 4? | No: keep them in Phase 4. Manual masks come first, in Phase 3. |
+| Read/write darktable XMP develop edits (R2 18)? | Later (Phase 3 or after), once more darktable tools exist in LightBench so more of each edit maps across. |
+| Publish a trust promise (R2 3)? | Not yet; revisit closer to a public release. |
+| Keyboard and display (R2 17) | Remappable shortcuts (with a Lightroom-compatible preset), UI scaling, and every core action reachable by keyboard. A high-contrast theme was not chosen. |
+| Installable, offline website (PWA)? | Yes, in Phase 2. |
+| Speed targets (R2 1) | Yes: agreed slider-to-preview time budgets with an automated speed test before each release, and published minimum browsers/GPUs. Budgets are confirmed on the owner's GPU before they are fixed. |
+| Release discipline (R2 19) | Update notes (new features, bug fixes) in the app; "what moved" notes when a control moves or is renamed; the previous website version kept one click away; saved edits readable by both older and newer versions. |
+| Showing the +0.7 EV base exposure (R2 8) | A note under the Exposure slider for RAW files, e.g. "includes +0.7 EV base (darktable default)", with a tooltip saying why and where to change it. This is the one place a note may add a row. |
+| Changing the +0.7 EV default | Yes: a preference. It applies to photos not yet edited; existing edits keep their value. |
+| Jump bar buttons | Icons with one-word labels (Crop, Basic, Curve, Colour, Detail, Effects). Labels hide when the panel is narrow; the name shows on hover. |
