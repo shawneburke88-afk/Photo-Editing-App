@@ -134,6 +134,26 @@ function addRoot(name: string): number {
   return Number(conn().selectValue('SELECT last_insert_rowid()'))
 }
 
+/**
+ * Moves every folder of root `childId` under root `parentId` at `prefix`, then deletes the child root. Used
+ * when the user opens a folder that contains a folder already in the library, so no photo is listed twice.
+ */
+function adoptRoot(childId: number, parentId: number, prefix: string) {
+  const d = conn()
+  d.exec('BEGIN')
+  try {
+    d.exec({
+      sql: `UPDATE folders SET root_id = ?1, path = CASE WHEN path = '' THEN ?3 ELSE ?3 || '/' || path END WHERE root_id = ?2`,
+      bind: [parentId, childId, prefix],
+    })
+    d.exec({ sql: 'DELETE FROM roots WHERE id = ?', bind: [childId] })
+    d.exec('COMMIT')
+  } catch (err) {
+    d.exec('ROLLBACK')
+    throw err
+  }
+}
+
 function listRoots(): LibraryRoot[] {
   return conn().selectObjects('SELECT id, name FROM roots ORDER BY name') as unknown as LibraryRoot[]
 }
@@ -149,6 +169,16 @@ function folderId(rootId: number, path: string): number {
   const d = conn()
   d.exec({ sql: 'INSERT OR IGNORE INTO folders(root_id, path) VALUES (?, ?)', bind: [rootId, path] })
   return Number(d.selectValue('SELECT id FROM folders WHERE root_id = ? AND path = ?', [rootId, path]))
+}
+
+/** Files already catalogued under a folder of a root (and its subfolders), as "folder/name" paths. */
+function listFiles(rootId: number, path: string): string[] {
+  const rows = conn().selectObjects(
+    `SELECT f.path, p.file_name AS name FROM photos p JOIN folders f ON f.id = p.folder_id
+     WHERE f.root_id = ?1 AND (?2 = '' OR f.path = ?2 OR substr(f.path, 1, length(?2) + 1) = ?2 || '/')`,
+    [rootId, path],
+  ) as unknown as { path: string; name: string }[]
+  return rows.map((r) => (r.path ? `${r.path}/${r.name}` : r.name))
 }
 
 /** Returns, for each key, whether a matching photo is already in the catalog. */
@@ -202,9 +232,12 @@ function addPhotos(photos: NewPhoto[]): (number | null)[] {
 function queryPhotos(q: PhotoQuery): PhotoRow[] {
   const where: string[] = []
   const bind: (string | number)[] = []
-  if (q.folder) {
+  if (q.folder?.recursive === false) {
+    where.push('p.folder_id IN (SELECT id FROM folders WHERE root_id = ?1 AND path = ?2)')
+    bind.push(q.folder.rootId, q.folder.path)
+  } else if (q.folder) {
     // Prefix match without LIKE, so "_" and "%" in folder names aren't treated as wildcards.
-    where.push(`p.folder_id IN (SELECT id FROM folders WHERE root_id = ?
+    where.push(`p.folder_id IN (SELECT id FROM folders WHERE root_id = ?1
       AND (?2 = '' OR path = ?2 OR substr(path, 1, length(?2) + 1) = ?2 || '/'))`)
     bind.push(q.folder.rootId, q.folder.path)
   }
@@ -339,9 +372,11 @@ function stats() {
 const handlers = {
   open,
   addRoot,
+  adoptRoot,
   listRoots,
   folderTree,
   findDuplicates,
+  listFiles,
   addPhotos,
   queryPhotos,
   getPhoto,

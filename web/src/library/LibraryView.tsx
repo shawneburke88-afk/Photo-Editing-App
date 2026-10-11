@@ -10,10 +10,24 @@ import { sidecars } from '../sidecar/sync'
 import { FilterBar } from './FilterBar'
 import { FolderPanel, type FolderSelection } from './FolderPanel'
 import { Grid } from './Grid'
+import { IndexProgress } from './IndexProgress'
+import { useIndexStatus } from './useIndexStatus'
+import { indexer } from './indexer'
 import { InfoPanel } from './InfoPanel'
 import { Loupe } from './Loupe'
 
 type Filters = Pick<PhotoQuery, 'text' | 'minRating' | 'flag' | 'color' | 'sort'>
+
+const SUBFOLDERS_KEY = 'library:subfolders'
+
+/** Remembered per browser; the grid works the same if storage is unavailable. */
+function loadSubfolders(): boolean {
+  try {
+    return localStorage.getItem(SUBFOLDERS_KEY) !== 'off'
+  } catch {
+    return true
+  }
+}
 
 interface Props {
   /** False while another module is shown (keyboard shortcuts are paused). */
@@ -42,6 +56,9 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   const [view, setView] = useState<'grid' | 'loupe'>('grid')
   const [cellSize, setCellSize] = useState(170)
   const [importing, setImporting] = useState(false)
+  const [subfolders, setSubfolders] = useState(loadSubfolders)
+  const [folderError, setFolderError] = useState('')
+  const indexing = useIndexStatus()
   const [version, setVersion] = useState(0)
   const anchor = useRef<number | null>(null)
 
@@ -56,6 +73,53 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   }, [catalog])
 
   const refresh = useCallback(() => setVersion((v) => v + 1), [])
+
+  // Photos added in the background by Open folder appear as they are read.
+  useEffect(() => {
+    let added = indexer.status.added
+    return indexer.subscribe(() => {
+      if (indexer.status.added === added) return
+      added = indexer.status.added
+      refresh()
+    })
+  }, [refresh])
+
+  function toggleSubfolders(on: boolean) {
+    setSubfolders(on)
+    try {
+      localStorage.setItem(SUBFOLDERS_KEY, on ? 'on' : 'off')
+    } catch {
+      // Not remembered; the choice still applies now.
+    }
+  }
+
+  /** Adds a folder in place (no copying) and shows it straight away while it is indexed. */
+  async function openFolder() {
+    setFolderError('')
+    let dir: FileSystemDirectoryHandle
+    try {
+      dir = await window.showDirectoryPicker!({ id: 'lightbench-open-folder', mode: 'read' })
+    } catch (e) {
+      if ((e as DOMException).name !== 'AbortError') setFolderError(e instanceof Error ? e.message : String(e))
+      return
+    }
+    void requestPersistentStorage()
+    try {
+      setFolder(await indexer.open(dir))
+      refresh()
+    } catch (e) {
+      setFolderError(`Could not open “${dir.name}”: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  async function rescan(rootId: number, path: string) {
+    setFolderError('')
+    try {
+      if (!(await indexer.rescan(rootId, path))) setFolderError('LightBench needs permission to read that folder again.')
+    } catch (e) {
+      setFolderError(`Could not read that folder (was it moved or renamed?): ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
 
   // Folder tree, roots and their connection state.
   useEffect(() => {
@@ -77,7 +141,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   useEffect(() => {
     if (status !== 'ready') return
     let live = true
-    void catalog.queryPhotos({ ...filters, folder: folder ?? undefined }).then((r) => {
+    void catalog.queryPhotos({ ...filters, folder: folder ? { ...folder, recursive: subfolders } : undefined }).then((r) => {
       if (!live) return
       setRows(r)
       setSelected((s) => new Set([...s].filter((id) => r.some((x) => x.id === id))))
@@ -86,7 +150,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     return () => {
       live = false
     }
-  }, [catalog, status, folder, filters, version, externalVersion])
+  }, [catalog, status, folder, filters, subfolders, version, externalVersion])
 
   // Details of the focused photo.
   useEffect(() => {
@@ -180,6 +244,9 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
         if (k === 'a') {
           setSelected(new Set(rows.map((r) => r.id)))
           e.preventDefault()
+        } else if (k === 'o' && supportsFolderAccess()) {
+          e.preventDefault()
+          void openFolder()
         } else if (k === 'e' && e.shiftKey && targets().length) {
           // Lightroom: Ctrl+Shift+E opens Export.
           onExport(targets())
@@ -225,19 +292,38 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   if (status === 'opening') return <div className="center muted">Opening your library…</div>
   if (status === 'error') return <div className="center error">{openError}</div>
 
-  const empty = total === 0
+  const empty = total === 0 && !indexing.active
   const offRoots = roots.filter((r) => disconnected.has(r.id))
 
   return (
     <div className="library">
       <aside className="left">
-        <button className="button primary import-btn" onClick={openImport} disabled={!supportsFolderAccess()}>
-          Import…
+        <button
+          className="button primary import-btn"
+          onClick={() => void openFolder()}
+          disabled={!supportsFolderAccess()}
+          title="Add a folder where it is, without copying, and start culling at once (Ctrl+O)"
+        >
+          Open folder…
+        </button>
+        <button className="button card-btn" onClick={openImport} disabled={!supportsFolderAccess()} title="Copy photos from a memory card into your photo folder">
+          Import from card…
         </button>
         <button className="button export-btn" onClick={() => onExport(targets())} disabled={!targets().length} title="Export the selected photos (Ctrl+Shift+E)">
           Export…
         </button>
-        <FolderPanel roots={roots} folders={folders} total={total} selection={folder} disconnected={disconnected} onSelect={setFolder} />
+        <IndexProgress status={indexing} />
+        {folderError && <p className="error small pad">{folderError}</p>}
+        <FolderPanel
+          roots={roots}
+          folders={folders}
+          total={total}
+          selection={folder}
+          disconnected={disconnected}
+          onSelect={setFolder}
+          onRescan={(rootId, path) => void rescan(rootId, path)}
+          busy={!!indexing.active}
+        />
       </aside>
 
       <section className="center-pane">
@@ -252,11 +338,15 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
         {empty ? (
           <div className="empty big">
             <h2>Your library is empty</h2>
-            <p className="muted">Import photos from a memory card or a folder to get started.</p>
             {supportsFolderAccess() ? (
-              <button className="button primary large" onClick={openImport}>Import photos…</button>
+              <>
+                <p className="muted">Open a folder of photos to start: they stay where they are, nothing is copied.</p>
+                <button className="button primary large" onClick={() => void openFolder()}>Open folder…</button>
+                <p className="muted small">Photos on a memory card? <button className="linklike" onClick={openImport}>Import from card…</button> copies them into your photo folder first.</p>
+                {folderError && <p className="error">{folderError}</p>}
+              </>
             ) : (
-              <p className="warn">Importing needs Chrome or Edge (this browser can’t open folders).</p>
+              <p className="warn">Opening folders needs Chrome or Edge (this browser can’t open folders).</p>
             )}
           </div>
         ) : (
@@ -264,6 +354,8 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
             <FilterBar
               value={filters}
               onChange={setFilters}
+              subfolders={folder ? subfolders : undefined}
+              onSubfolders={toggleSubfolders}
               view={view}
               onView={setView}
               cellSize={cellSize}
@@ -271,7 +363,11 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
               shown={rows.length}
             />
             {view === 'grid' || !detail ? (
-              <Grid rows={rows} selected={selected} focus={focus} cellSize={cellSize} onClick={clickCell} onOpen={(id) => { setFocus(id); setView('loupe') }} />
+              rows.length === 0 && indexing.active ? (
+                <div className="center muted">Reading photos… they appear here as they are found.</div>
+              ) : (
+                <Grid rows={rows} selected={selected} focus={focus} cellSize={cellSize} onClick={clickCell} onOpen={(id) => { setFocus(id); setView('loupe') }} />
+              )
             ) : (
               <Loupe photo={detail} />
             )}

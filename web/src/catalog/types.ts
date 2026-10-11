@@ -71,8 +71,8 @@ export interface PhotoDetail extends PhotoMeta {
 }
 
 export interface PhotoQuery {
-  /** Limit to one folder of a root ("" = the root itself), including its subfolders. */
-  folder?: { rootId: number; path: string }
+  /** Limit to one folder of a root ("" = the root itself); subfolders are included unless `recursive` is false. */
+  folder?: { rootId: number; path: string; recursive?: boolean }
   minRating?: number
   flag?: 'picked' | 'rejected' | 'unflagged' | 'notRejected'
   color?: ColorLabel

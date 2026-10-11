@@ -167,3 +167,12 @@ Every group follows the same rules:
 | Showing the +0.7 EV base exposure (R2 8) | A note under the Exposure slider for RAW files, e.g. "includes +0.7 EV base (darktable default)", with a tooltip saying why and where to change it. This is the one place a note may add a row. |
 | Changing the +0.7 EV default | Yes: a preference. It applies to photos not yet edited; existing edits keep their value. |
 | Jump bar buttons | Icons with one-word labels (Crop, Basic, Curve, Colour, Detail, Effects). Labels hide when the panel is narrow; the name shows on hover. |
+
+### Open folder details (owner, 2026-10-11)
+
+| Question | Owner's answer |
+|---|---|
+| Where does Open folder live? | A prominent **Open folder…** button. It replaces the Import window's "add in place" mode; Import now only copies (cards, backups). |
+| Subfolders in the grid? | Included, with a **Subfolders** toggle; on by default. |
+| Thumbnails and previews? | The camera's embedded JPEG first (darktable's default for unedited images); the RAW is rendered in Develop. The Loupe marks these with a **Camera preview** badge. |
+| Full-screen culling view? | Next PR, after Open folder and background indexing. |

@@ -1,4 +1,5 @@
-// Executes an import: copies files (plus an optional backup), adds them to the catalog, saves thumbnails.
+// Executes an import from a card: copies files (plus an optional backup), adds them to the catalog, saves
+// thumbnails. Adding a folder where it is (no copying) is Open folder, in library/indexer.ts.
 
 import type { Catalog } from '../catalog/client'
 import { saveThumb } from '../catalog/thumbs'
@@ -15,9 +16,8 @@ export interface ImportItem {
 }
 
 export interface ImportOptions {
-  mode: 'copy' | 'add'
   source: FileSystemDirectoryHandle
-  destination?: FileSystemDirectoryHandle
+  destination: FileSystemDirectoryHandle
   rename: RenameTemplate
   backup?: FileSystemDirectoryHandle
 }
@@ -87,7 +87,7 @@ async function copyInto(dir: FileSystemDirectoryHandle, name: string, file: File
  * Finds an existing sidecar for a photo: Lightroom-style `name.xmp` (what LightBench writes), or darktable's
  * `name.ext.xmp`. Returns its file name and text, or null.
  */
-async function findSidecar(dir: FileSystemDirectoryHandle, photoName: string): Promise<{ name: string; text: string } | null> {
+export async function findSidecar(dir: FileSystemDirectoryHandle, photoName: string): Promise<{ name: string; text: string } | null> {
   for (const name of [sidecarName(photoName), `${photoName}.xmp`]) {
     try {
       return { name, text: await (await (await dir.getFileHandle(name)).getFile()).text() }
@@ -99,7 +99,7 @@ async function findSidecar(dir: FileSystemDirectoryHandle, photoName: string): P
 }
 
 /** Applies what a sidecar says (ratings, flag, label, LightBench edits) to a newly imported photo. */
-async function applySidecar(catalog: Catalog, id: number, text: string) {
+export async function applySidecar(catalog: Catalog, id: number, text: string) {
   const r = readXmp(text)
   if (r.rating !== undefined) await catalog.setRating([id], r.rating)
   if (r.flag !== undefined) await catalog.setFlag([id], r.flag)
@@ -120,12 +120,11 @@ export async function runImport(
   const ordered = [...items].sort((a, b) => photoTime(a.meta) - photoTime(b.meta) || a.file.name.localeCompare(b.file.name))
   const progress: ImportProgress = { done: 0, total: ordered.length, imported: 0, skipped: 0, failed: [], current: '' }
 
-  const target = opts.mode === 'copy' ? opts.destination : opts.source
-  if (!target) throw new Error('Choose a destination folder first')
+  const target = opts.destination
   const { rootId, subPath } = await resolveRoot(catalog, target)
 
   let backupDir: FileSystemDirectoryHandle | undefined
-  if (opts.mode === 'copy' && opts.backup) {
+  if (opts.backup) {
     const now = new Date()
     const p = (n: number) => String(n).padStart(2, '0')
     const name = `LightBench backup ${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())} ${p(now.getHours())}${p(now.getMinutes())}`
@@ -137,34 +136,27 @@ export async function runImport(
     progress.current = item.file.name
     onProgress({ ...progress })
     try {
-      let folderPath: string
-      let fileName: string
       // An existing sidecar (from Lightroom, darktable, or LightBench itself) carries ratings, labels and edits.
       const sourceDir = await getDirAt(opts.source, item.file.dir).catch(() => null)
       const sidecar = sourceDir ? await findSidecar(sourceDir, item.file.name) : null
-      if (opts.mode === 'copy') {
-        const folder = dateFolder(photoTime(item.meta))
-        const dir = await getDirAt(target, folder, true)
-        const file = await item.file.handle.getFile()
-        const wanted = renamedFile(opts.rename, item.file.name, item.meta.capturedAt || item.meta.fileModified, index)
-        fileName = (await copyInto(dir, wanted, file)).name
-        if (backupDir) await copyInto(backupDir, item.file.name, file)
-        if (sidecar) {
-          // The sidecar travels with the photo, renamed to match it. An existing one there is kept.
-          const name = sidecarName(fileName)
-          const exists = await dir.getFileHandle(name).then(() => true, () => false)
-          if (!exists) {
-            const w = await (await dir.getFileHandle(name, { create: true })).createWritable()
-            await w.write(sidecar.text)
-            await w.close()
-          }
-          if (backupDir) await copyInto(backupDir, sidecar.name, new File([sidecar.text], sidecar.name))
+      const folder = dateFolder(photoTime(item.meta))
+      const dir = await getDirAt(target, folder, true)
+      const file = await item.file.handle.getFile()
+      const wanted = renamedFile(opts.rename, item.file.name, item.meta.capturedAt || item.meta.fileModified, index)
+      const fileName = (await copyInto(dir, wanted, file)).name
+      if (backupDir) await copyInto(backupDir, item.file.name, file)
+      if (sidecar) {
+        // The sidecar travels with the photo, renamed to match it. An existing one there is kept.
+        const name = sidecarName(fileName)
+        const exists = await dir.getFileHandle(name).then(() => true, () => false)
+        if (!exists) {
+          const w = await (await dir.getFileHandle(name, { create: true })).createWritable()
+          await w.write(sidecar.text)
+          await w.close()
         }
-        folderPath = joinPath(subPath, folder)
-      } else {
-        folderPath = joinPath(subPath, item.file.dir)
-        fileName = item.file.name
+        if (backupDir) await copyInto(backupDir, sidecar.name, new File([sidecar.text], sidecar.name))
       }
+      const folderPath = joinPath(subPath, folder)
       const [id] = await catalog.addPhotos([
         { ...item.meta, fileName, rootId, folderPath, originalName: item.file.name },
       ])
