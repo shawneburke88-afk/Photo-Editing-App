@@ -69,3 +69,19 @@ When a photo is shown smaller than 100 %, a mip chain (2×2 averaging) is used t
 - Speed on the owner's GPU still needs checking. In this cloud environment a 24 MP RAW takes ~8 s to process
   on the software renderer; on the owner's Iris Xe, Phase 0 measured the GPU stage at 0.4 s for the simpler
   pipeline.
+
+## Part 2b: Histogram, clipping, white balance picker, Auto, guidance
+
+| Feature | Based on | Notes |
+|---|---|---|
+| Histogram | darktable `src/libs/scopes/histogram.c`, `src/common/histogram.c` | 256 bins of display-encoded sRGB, channels added at 50 % opacity, log scale by default (linear in the menu), max excludes bin 0. The clipping triangles are a Lightroom-style addition. |
+| Clipping overlay **J** / **O** | darktable `src/iop/overexposed.c` + `rawoverexposed.c` | Default **lost detail**: red where the sensor clipped (any photosite of the pixel's 2×2 CFA tile) or a channel is at the display limit; blue where it is pure black. darktable's modes (any RGB, luminance, saturation, full gamut), thresholds (99.99 %, −12.69 EV) and colour schemes are in the histogram menu. darktable's sigmoid rolls highlights off, so its display test alone rarely fires. |
+| Sensor clipping **Shift+O** | darktable `src/iop/rawoverexposed.c` | Marks clipped photosites in their sensor colour, a solid colour, or false colour; threshold 0–2 × white level. |
+| White balance picker **W** | darktable `src/iop/temperature.c` (spot picker) | Averages 5×5 full-resolution pixels and sets multipliers so they become neutral: coeff = (1/cam[c]) / (1/cam[G]), clamped to 0…8. The loupe (15×15 pixels at 10×, with R/G/B readout) is a LightBench addition. |
+| Auto | LightBench | Looks apply fixed Contrast/Vibrance amounts. Exposure, Whites, Blacks (and Highlights if clipping) move only when the photo is outside the look's acceptable range. Each slider minimises (miss/tolerance)² + (slider/scale)², so it moves only as far as it helps. White balance is left alone, like Lightroom. Reference photos and saved targets also match contrast spread and colourfulness. |
+| Hints and tooltips | LightBench | `src/develop/help.ts`: what each Basic control does, left/right effects, pitfalls, and the darktable module behind it. Hints can be switched off; tooltips appear on hover or keyboard focus. |
+
+Checked in headless Chromium on the D80 sample:
+- J marks the clipped sky (18 % of the frame).
+- The picker set 5223 K → 5592 K from the hazy lake, as one history step.
+- Auto Natural gives −0.20 EV and Blacks −4; Vivid gives Contrast +25 and Vibrance +35.

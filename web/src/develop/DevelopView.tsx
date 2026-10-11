@@ -1,16 +1,24 @@
 import { isSliderKey, isTextEntry } from '../lib/keys'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getCatalog } from '../catalog/client'
-import { forgetThumbUrl, saveThumb, thumbUrl } from '../catalog/thumbs'
+import { forgetThumbUrl, loadThumb, saveThumb, thumbUrl } from '../catalog/thumbs'
 import type { PhotoDetail } from '../catalog/types'
 import type { Mat3, Vec3 } from '../engine/color/matrix'
 import { multipliersToTemperature, temperatureToMultipliers } from '../engine/color/temperature'
+import { BUILT_IN_TARGETS, metricsFromStats, solveAuto, statsFromPixels, targetFromMetrics, type AutoTarget } from '../engine/develop/auto'
 import { DEFAULT_SETTINGS, displayUniforms, normalizeSettings, type DevelopSettings } from '../engine/develop/settings'
-import { DevelopEngine, type RawStageOptions, type ViewState } from '../engine/gpu/develop-engine'
+import { DevelopEngine, type ImageStats, type RawStageOptions, type ViewState } from '../engine/gpu/develop-engine'
 import { RawDecoder } from '../engine/raw/decoder'
 import { Thumb } from '../library/Thumb'
 import { openPhotoFile } from '../platform/roots'
+import { useStoredJson } from '../lib/useStoredJson'
+import { useStoredNumber } from '../lib/useStoredNumber'
+import { DEFAULT_CLIP, DEFAULT_RAW_CLIP, type Indicators } from '../engine/develop/indicators'
+import { exposureText } from '../library/format'
 import { BasicPanel } from './BasicPanel'
+import { Histogram } from './Histogram'
+import { ResizeHandle } from './ResizeHandle'
+import { WbLoupe } from './WbLoupe'
 import { canRedo, canUndo, current, jump, record, redo, startHistory, undo, type History } from './history'
 
 interface Props {
@@ -68,6 +76,36 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
   const [before, setBefore] = useState(false)
   const [placeholder, setPlaceholder] = useState<string | null>(null)
   const [timing, setTiming] = useState<{ stage?: number; frame?: number }>({})
+  const [stats, setStats] = useState<ImageStats | null>(null)
+  const [overlay, setOverlay] = useState(false)
+  const [rawOverlay, setRawOverlay] = useState(false)
+  const [clipSettings, setClipSettings] = useStoredJson('lightbench.develop.clipping', DEFAULT_CLIP)
+  const [rawClipSettings, setRawClipSettings] = useStoredJson('lightbench.develop.rawClipping', DEFAULT_RAW_CLIP)
+  const [histLog, setHistLog] = useStoredNumber('lightbench.develop.histogramLog', 1)
+  const [autoBusy, setAutoBusy] = useState(false)
+  const [picking, setPicking] = useState(false)
+  const [wbPick, setWbPick] = useState(false)
+  const [loupe, setLoupe] = useState<{ x: number; y: number; image: ImageData } | null>(null)
+  const [savedTargets, setSavedTargets] = useState<AutoTarget[]>([])
+  const [refTarget, setRefTarget] = useState<AutoTarget | null>(null)
+  const [targetId, setTargetIdState] = useState(() => {
+    try {
+      return localStorage.getItem('lightbench.autoTarget') ?? 'natural'
+    } catch {
+      return 'natural'
+    }
+  })
+  const setTargetId = (v: string) => {
+    setTargetIdState(v)
+    try {
+      localStorage.setItem('lightbench.autoTarget', v)
+    } catch {
+      // not remembered this time
+    }
+  }
+  const [leftW, setLeftW] = useStoredNumber('lightbench.develop.left', 240)
+  const [rightW, setRightW] = useStoredNumber('lightbench.develop.right', 300)
+  const [histH, setHistH] = useStoredNumber('lightbench.develop.histogram', 170)
   const builtStage = useRef<RawStageOptions | null>(null)
   const dirty = useRef(false)
   const loadToken = useRef(0)
@@ -98,6 +136,21 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
       setTimeout(() => void (saving.current ?? Promise.resolve()).catch(() => {}).finally(() => e?.destroy()), 0)
     }
   }, [])
+
+  // ---- saved Auto targets
+  useEffect(() => {
+    void catalog.listTargets().then((rows) =>
+      setSavedTargets(
+        rows.flatMap((r) => {
+          try {
+            return [{ ...(JSON.parse(r.target) as AutoTarget), id: `saved:${r.id}`, name: r.name, builtIn: false }]
+          } catch {
+            return []
+          }
+        }),
+      ),
+    )
+  }, [catalog])
 
   // ---- load a photo
   useEffect(() => {
@@ -174,8 +227,30 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
   }, [settings, info, status.kind])
 
   // ---- drawing (coalesced so dragging never queues up frames)
-  const latest = useRef({ settings, info, view, before })
-  latest.current = { settings, info, view, before }
+  const indicators: Indicators = useMemo(
+    () => ({ clip: clipSettings, showClip: overlay, raw: rawClipSettings, showRaw: rawOverlay }),
+    [clipSettings, overlay, rawClipSettings, rawOverlay],
+  )
+  const latest = useRef({ settings, info, view, before, indicators })
+  latest.current = { settings, info, view, before, indicators }
+
+  // Histogram: measured on a small rendering shortly after each redraw (throttled).
+  const statsTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const scheduleStats = useCallback(() => {
+    if (statsTimer.current !== null) return
+    statsTimer.current = setTimeout(async () => {
+      statsTimer.current = null
+      const engine = engineRef.current
+      const { settings: s, info: inf, before: b, indicators: ind } = latest.current
+      if (!engine || !inf) return
+      const shown = b ? DEFAULT_SETTINGS : s
+      try {
+        setStats(await engine.renderStats(displayUniforms(shown), b ? inf.asShotWb : multipliers(shown, inf), 256, ind))
+      } catch {
+        // e.g. engine closed while measuring
+      }
+    }, 120)
+  }, [])
   const rendering = useRef(false)
   const pending = useRef(false)
   const requestRender = useCallback(() => {
@@ -186,23 +261,24 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
       while (pending.current) {
         pending.current = false
         const engine = engineRef.current
-        const { settings: s, info: inf, view: v, before: b } = latest.current
+        const { settings: s, info: inf, view: v, before: b, indicators: o } = latest.current
         if (!engine || !inf) break
         const shown = b ? DEFAULT_SETTINGS : s
         try {
-          const ms = await engine.render(displayUniforms(shown), b ? inf.asShotWb : multipliers(shown, inf), v)
+          const ms = await engine.render(displayUniforms(shown), b ? inf.asShotWb : multipliers(shown, inf), v, o)
           setTiming((x) => ({ ...x, frame: ms }))
+          scheduleStats()
         } catch (e) {
           setStatus({ kind: 'error', message: e instanceof Error ? e.message : String(e) })
         }
       }
       rendering.current = false
     })()
-  }, [])
+  }, [scheduleStats])
 
   useEffect(() => {
     if (status.kind === 'ready') requestRender()
-  }, [status.kind, settings, view, before, requestRender])
+  }, [status.kind, settings, view, before, indicators, requestRender])
 
   useEffect(() => {
     const el = stageRef.current
@@ -260,6 +336,77 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
 
   const reset = () => change('Reset', DEFAULT_SETTINGS)
 
+  // ---- Auto
+  const targets = useMemo(() => [...BUILT_IN_TARGETS, ...(refTarget ? [refTarget] : []), ...savedTargets], [refTarget, savedTargets])
+
+  const runAuto = useCallback(
+    async (target: AutoTarget) => {
+      const engine = engineRef.current
+      if (!engine || !info || !history) return
+      setAutoBusy(true)
+      try {
+        // Like Lightroom's Auto, this leaves white balance alone (owner's decision, 2026-10-11).
+        const start = current(history)
+        const r = await solveAuto(start, target, async (s) =>
+          metricsFromStats(await engine.renderStats(displayUniforms(s), multipliers(s, info), 256)),
+        )
+        change(`Auto: ${target.name}`, r.settings)
+      } catch (e) {
+        if (engineRef.current === engine) setStatus({ kind: 'error', message: `Auto failed: ${e instanceof Error ? e.message : e}` })
+      } finally {
+        setAutoBusy(false)
+      }
+    },
+    [info, history, change],
+  )
+
+  /** Uses another photo's look (its current thumbnail rendering) as the Auto target. */
+  async function matchReference(refId: number) {
+    setPicking(false)
+    const blob = await loadThumb(refId)
+    if (!blob) return
+    const bmp = await createImageBitmap(blob)
+    const c = new OffscreenCanvas(bmp.width, bmp.height)
+    const ctx = c.getContext('2d')!
+    ctx.drawImage(bmp, 0, 0)
+    bmp.close()
+    const m = metricsFromStats(statsFromPixels(ctx.getImageData(0, 0, c.width, c.height).data))
+    const ref = await catalog.getPhoto(refId)
+    const t = targetFromMetrics(`ref:${refId}`, `Match ${ref?.fileName ?? 'reference'}`, m)
+    setRefTarget(t)
+    setTargetId(t.id)
+    await runAuto(t)
+  }
+
+  async function saveCurrentAsTarget() {
+    const engine = engineRef.current
+    if (!engine || !info) return
+    const name = window.prompt('Name for this target look (e.g. "My landscapes"):', '')?.trim()
+    if (!name) return
+    const m = metricsFromStats(await engine.renderStats(displayUniforms(settings), multipliers(settings, info), 256))
+    const t = targetFromMetrics('', name, m)
+    const dbId = await catalog.saveTarget(name, JSON.stringify(t))
+    const saved = { ...t, id: `saved:${dbId}`, builtIn: false }
+    setSavedTargets((ts) => [...ts, saved].sort((a, b) => a.name.localeCompare(b.name)))
+    setTargetId(saved.id)
+  }
+
+  async function deleteTarget(tid: string) {
+    if (tid.startsWith('ref:')) {
+      setRefTarget(null)
+      setTargetId('natural')
+      return
+    }
+    const t = savedTargets.find((x) => x.id === tid)
+    if (!t || !window.confirm(`Delete the target "${t.name}"?`)) return
+    await catalog.deleteTarget(Number(tid.slice('saved:'.length)))
+    setSavedTargets((ts) => ts.filter((x) => x.id !== tid))
+    setTargetId('natural')
+  }
+
+  const selectedTarget = targets.find((t) => t.id === targetId) ?? BUILT_IN_TARGETS[0]
+  const infoLine = photo ? exposureText(photo) : ''
+
   // ---- keyboard
   const index = ids.indexOf(id)
   useEffect(() => {
@@ -272,13 +419,26 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
         setHistory((h) => (h ? (k === 'y' || e.shiftKey ? redo(h) : undo(h)) : h))
       } else if (k === '\\') {
         setBefore((b) => !b)
+      } else if (k === 'o' && e.shiftKey) {
+        // darktable: Shift+O toggles the raw (sensor) clipping indicator.
+        setRawOverlay((o) => !o)
+      } else if (k === 'j' || k === 'o') {
+        // J as in Lightroom, O as in darktable.
+        setOverlay((o) => !o)
       } else if (k === 'z') {
         setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center }))
       } else if (k === 'arrowright' && index < ids.length - 1) {
         onNavigate(ids[index + 1])
       } else if (k === 'arrowleft' && index > 0) {
         onNavigate(ids[index - 1])
+      } else if (k === 'w' && !e.ctrlKey && !e.metaKey) {
+        // Lightroom: W selects the white balance picker.
+        setWbPick((p) => !p)
+        setLoupe(null)
       } else if (k === 'escape') {
+        setPicking(false)
+        setWbPick(false)
+        setLoupe(null)
         setView((v) => ({ ...v, zoom: 'fit' }))
       }
     }
@@ -296,12 +456,68 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
     const l = engine.layout(view, engine.canvas.width, engine.canvas.height)
     return { l, px: (e.clientX - r.left) * dpr, py: (e.clientY - r.top) * dpr }
   }
+  /** Pointer position as displayed-image uv, or null outside the photo. */
+  function imageUv(e: React.PointerEvent): [number, number] | null {
+    const p = canvasPoint(e)
+    if (!p) return null
+    const u = (p.px - p.l.x) / p.l.w
+    const v = (p.py - p.l.y) / p.l.h
+    return u >= 0 && u < 1 && v >= 0 && v < 1 ? [u, v] : null
+  }
+
+  // ---- white balance picker (darktable temperature.c spot picker + a Lightroom-style loupe)
+  const LOUPE_PIXELS = 15
+  const LOUPE_ZOOM = 10
+  const loupeBusy = useRef(false)
+  const loupeNext = useRef<{ uv: [number, number]; x: number; y: number } | null>(null)
+  const updateLoupe = useCallback(() => {
+    if (loupeBusy.current) return
+    loupeBusy.current = true
+    void (async () => {
+      while (loupeNext.current) {
+        const { uv, x, y } = loupeNext.current
+        loupeNext.current = null
+        const engine = engineRef.current
+        const { settings: s, info: inf } = latest.current
+        if (!engine || !inf) break
+        try {
+          const image = await engine.renderLoupe(displayUniforms(s), multipliers(s, inf), uv[0], uv[1], LOUPE_PIXELS)
+          setLoupe({ x, y, image })
+        } catch {
+          break
+        }
+      }
+      loupeBusy.current = false
+    })()
+  }, [])
+
+  async function pickWhiteBalance(uv: [number, number]) {
+    const engine = engineRef.current
+    if (!engine || !info) return
+    setWbPick(false)
+    setLoupe(null)
+    const working = await engine.sampleScene(uv[0], uv[1], 2)
+    const { temperature, tint } = multipliersToTemperature(engine.neutralMultipliers(working), info.xyzToCam)
+    change('White balance: picker', { ...settings, whiteBalance: { mode: 'custom', temperature, tint } })
+  }
+
   function onPointerDown(e: React.PointerEvent) {
-    if (status.kind !== 'ready') return
+    if (status.kind !== 'ready' || wbPick) return
     ;(e.target as Element).setPointerCapture(e.pointerId)
     drag.current = { x: e.clientX, y: e.clientY, center: view.center, moved: false }
   }
   function onPointerMove(e: React.PointerEvent) {
+    if (wbPick) {
+      const uv = imageUv(e)
+      const r = stageRef.current?.getBoundingClientRect()
+      if (!uv || !r) {
+        setLoupe(null)
+        return
+      }
+      loupeNext.current = { uv, x: e.clientX - r.left, y: e.clientY - r.top }
+      updateLoupe()
+      return
+    }
     const d = drag.current
     if (!d || view.zoom === 'fit') return
     const p = canvasPoint(e)
@@ -313,6 +529,11 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
     setView({ zoom: view.zoom, center: [Math.min(1, Math.max(0, d.center[0] - dx)), Math.min(1, Math.max(0, d.center[1] - dy))] })
   }
   function onPointerUp(e: React.PointerEvent) {
+    if (wbPick) {
+      const uv = imageUv(e)
+      if (uv) void pickWhiteBalance(uv)
+      return
+    }
     const d = drag.current
     drag.current = null
     if (!d || d.moved) return
@@ -330,8 +551,25 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
   const strip = useMemo(() => ids.slice(Math.max(0, index - 40), index + 41), [ids, index])
 
   return (
-    <div className="develop">
+    <div className="develop" style={{ '--left-w': `${leftW}px`, '--right-w': `${rightW}px` } as React.CSSProperties}>
       <aside className="dleft">
+        <section className="dhisto" style={{ height: histH }}>
+          <Histogram
+            stats={stats}
+            info={infoLine}
+            overlay={overlay}
+            onToggleOverlay={() => setOverlay((o) => !o)}
+            rawOverlay={rawOverlay}
+            onToggleRawOverlay={() => setRawOverlay((o) => !o)}
+            clip={clipSettings}
+            onClip={setClipSettings}
+            rawClip={rawClipSettings}
+            onRawClip={setRawClipSettings}
+            log={histLog === 1}
+            onLog={(l) => setHistLog(l ? 1 : 2)}
+          />
+        </section>
+        <ResizeHandle axis="y" value={histH} min={90} max={480} onChange={setHistH} label="Resize histogram" />
         <h3 className="panel-title">History</h3>
         <ol className="history" reversed>
           {history &&
@@ -361,6 +599,7 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
         )}
       </aside>
 
+      <ResizeHandle axis="x" value={leftW} min={170} max={480} onChange={setLeftW} label="Resize left panel" />
       <section className="dcenter">
         <div className="dtoolbar">
           <span className="dtitle">{photo ? photo.fileName : ''}</span>
@@ -372,29 +611,66 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
           </button>
         </div>
         <div
-          className={`dstage ${view.zoom === 'fit' ? 'fit' : 'zoomed'}`}
+          className={`dstage ${view.zoom === 'fit' ? 'fit' : 'zoomed'} ${wbPick ? 'wb-picking' : ''}`}
           ref={stageRef}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onPointerLeave={() => setLoupe(null)}
         >
           {status.kind !== 'ready' && placeholder && <img className="dplaceholder" src={placeholder} alt="" />}
           {status.kind === 'loading' && <div className="dmessage">Developing…</div>}
           {status.kind === 'error' && <div className="dmessage error">{status.message}</div>}
           {engineError && <div className="dmessage error">{engineError}</div>}
           {before && <div className="dbadge">Before</div>}
+          {(overlay || rawOverlay) && (
+            <div className="dbadge right">
+              {[overlay && 'Clipping shown (J)', rawOverlay && 'Sensor clipping shown (Shift+O)'].filter(Boolean).join(' · ')}
+            </div>
+          )}
+          {wbPick && <div className="dbadge pick">Click something that should be neutral grey or white · Esc to cancel</div>}
+          {wbPick && loupe && <WbLoupe x={loupe.x} y={loupe.y} image={loupe.image} zoom={LOUPE_ZOOM} />}
+          {picking && <div className="dbadge pick">Click a photo in the filmstrip to match its look · Esc to cancel</div>}
         </div>
         <div className="filmstrip" role="listbox" aria-label="Filmstrip">
           {strip.map((pid) => (
-            <button key={pid} className={`fs-cell ${pid === id ? 'on' : ''}`} onClick={() => onNavigate(pid)} aria-selected={pid === id}>
+            <button
+              key={pid}
+              className={`fs-cell ${pid === id ? 'on' : ''} ${picking ? 'picking' : ''}`}
+              onClick={() => (picking ? void matchReference(pid) : onNavigate(pid))}
+              aria-selected={pid === id}
+              title={picking ? 'Use this photo as the reference look' : undefined}
+            >
               <Thumb id={pid} />
             </button>
           ))}
         </div>
       </section>
 
+      <ResizeHandle axis="x" value={rightW} min={240} max={520} direction={-1} onChange={setRightW} label="Resize right panel" />
       <aside className="dright">
-        <BasicPanel settings={settings} asShot={info?.asShot ?? null} onChange={change} disabled={status.kind !== 'ready'} />
+        <BasicPanel
+          settings={settings}
+          asShot={info?.asShot ?? null}
+          onChange={change}
+          disabled={status.kind !== 'ready'}
+          pickingWb={wbPick}
+          onPickWb={() => {
+            setWbPick((p) => !p)
+            setLoupe(null)
+          }}
+          auto={{
+            targets,
+            selected: selectedTarget.id,
+            busy: autoBusy,
+            picking,
+            onSelect: setTargetId,
+            onAuto: () => void runAuto(selectedTarget),
+            onPickReference: () => setPicking((p) => !p),
+            onSaveTarget: () => void saveCurrentAsTarget(),
+            onDeleteTarget: (tid) => void deleteTarget(tid),
+          }}
+        />
       </aside>
     </div>
   )

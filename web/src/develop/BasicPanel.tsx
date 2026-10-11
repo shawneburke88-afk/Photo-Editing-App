@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { HIGHEST_TEMPERATURE, LOWEST_TEMPERATURE } from '../engine/color/temperature'
 import { DEFAULT_SETTINGS, sliderFromTint, tintFromSlider, type DevelopSettings } from '../engine/develop/settings'
+import { useStoredNumber } from '../lib/useStoredNumber'
+import { AutoControls, type AutoProps } from './AutoControls'
+import { HELP } from './help'
 import { Slider } from './Slider'
 
 interface Props {
@@ -9,6 +12,10 @@ interface Props {
   asShot: { temperature: number; tint: number } | null
   onChange: (label: string, next: DevelopSettings) => void
   disabled: boolean
+  auto: AutoProps
+  /** White balance picker (W) is active. */
+  pickingWb: boolean
+  onPickWb: () => void
 }
 
 const signed = (v: number) => (v > 0 ? `+${Math.round(v)}` : `${Math.round(v)}`)
@@ -22,8 +29,12 @@ const TINT_TRACK = 'linear-gradient(90deg, #4caf50, #ddd 50%, #c050c0)'
 const toMired = (k: number) => -1e6 / k
 const fromMired = (m: number) => Math.round(-1e6 / m)
 
-export function BasicPanel({ settings: s, asShot, onChange, disabled }: Props) {
+export function BasicPanel({ settings: s, asShot, onChange, disabled, auto, pickingWb, onPickWb }: Props) {
   const [advanced, setAdvanced] = useState(false)
+  // Sublabels under each slider: 1 = shown, 2 = hidden (tooltips are always available on hover).
+  const [hintsPref, setHintsPref] = useStoredNumber('lightbench.develop.hints', 1)
+  const hints = hintsPref === 1
+  const guide = (key: string) => ({ help: HELP[key], showHint: hints })
   const set = (label: string, patch: Partial<DevelopSettings>) => onChange(label, { ...s, ...patch })
   const setAdv = (label: string, patch: Partial<DevelopSettings['advanced']>) =>
     onChange(label, { ...s, advanced: { ...s.advanced, ...patch } })
@@ -37,7 +48,12 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled }: Props) {
   return (
     <div className="dpanel">
       <section>
-        <h3>White balance</h3>
+        <div className="dpanel-head">
+          <h3>White balance</h3>
+          <label className="hints-toggle" title="Show a short description next to each slider’s name when the panel is wide enough. Hover a slider’s name for full details.">
+            <input type="checkbox" checked={hints} onChange={(e) => setHintsPref(e.target.checked ? 1 : 2)} /> Hints
+          </label>
+        </div>
         <div className="wb-mode">
           <select
             value={wb.mode}
@@ -52,9 +68,20 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled }: Props) {
             <option value="as-shot">As shot</option>
             <option value="custom">Custom</option>
           </select>
+          <button
+            className={`button small wb-pick ${pickingWb ? 'on' : ''}`}
+            disabled={disabled || !asShot}
+            onClick={onPickWb}
+            aria-pressed={pickingWb}
+            title="White balance picker (W): click something in the photo that should be neutral grey or white"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M13.4 1.2a2 2 0 0 0-2.8 0L8.9 2.9 8.2 2.2 7.1 3.3l.7.7-5.6 5.6-.6 2.8L.5 13.5l2 2 1.1-1.1 2.8-.6 5.6-5.6.7.7 1.1-1.1-.7-.7 1.7-1.7a2 2 0 0 0 0-2.8zM5.5 13.2l-2 .4.4-2 5-5 1.6 1.6z"/></svg>
+            {pickingWb ? 'Picking…' : 'Pick'}
+          </button>
         </div>
         <Slider
           label="Temp"
+          {...guide('temp')}
           value={toMired(shown.temperature)}
           min={toMired(LOWEST_TEMPERATURE + 99)}
           max={toMired(HIGHEST_TEMPERATURE / 2)}
@@ -67,6 +94,7 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled }: Props) {
         />
         <Slider
           label="Tint"
+          {...guide('tint')}
           value={tintSlider}
           min={-150}
           max={150}
@@ -81,25 +109,26 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled }: Props) {
 
       <section>
         <h3>Tone</h3>
-        <Slider label="Exposure" value={s.exposure} min={-5} max={5} step={0.05} defaultValue={0} format={ev} disabled={disabled}
+        <AutoControls {...auto} busy={auto.busy || disabled} />
+        <Slider label="Exposure" {...guide('exposure')} value={s.exposure} min={-5} max={5} step={0.05} defaultValue={0} format={ev} disabled={disabled}
           onChange={(v) => set('Exposure', { exposure: v })} />
-        <Slider label="Contrast" value={s.contrast} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+        <Slider label="Contrast" {...guide('contrast')} value={s.contrast} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
           onChange={(v) => set('Contrast', { contrast: v })} />
-        <Slider label="Highlights" value={s.highlights} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+        <Slider label="Highlights" {...guide('highlights')} value={s.highlights} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
           onChange={(v) => set('Highlights', { highlights: v })} />
-        <Slider label="Shadows" value={s.shadows} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+        <Slider label="Shadows" {...guide('shadows')} value={s.shadows} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
           onChange={(v) => set('Shadows', { shadows: v })} />
-        <Slider label="Whites" value={s.whites} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+        <Slider label="Whites" {...guide('whites')} value={s.whites} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
           onChange={(v) => set('Whites', { whites: v })} />
-        <Slider label="Blacks" value={s.blacks} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+        <Slider label="Blacks" {...guide('blacks')} value={s.blacks} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
           onChange={(v) => set('Blacks', { blacks: v })} />
       </section>
 
       <section>
         <h3>Presence</h3>
-        <Slider label="Vibrance" value={s.vibrance} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+        <Slider label="Vibrance" {...guide('vibrance')} value={s.vibrance} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
           onChange={(v) => set('Vibrance', { vibrance: v })} />
-        <Slider label="Saturation" value={s.saturation} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+        <Slider label="Saturation" {...guide('saturation')} value={s.saturation} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
           onChange={(v) => set('Saturation', { saturation: v })} />
         <p className="muted small">Texture, Clarity and Dehaze arrive with the local-contrast modules (Phase 3).</p>
       </section>
