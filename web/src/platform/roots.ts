@@ -23,6 +23,15 @@ export async function resolveRoot(catalog: Catalog, dir: FileSystemDirectoryHand
   }
   const rootId = await catalog.addRoot(dir.name)
   await saveHandle(key(rootId), dir)
+  // Library folders inside the new one become part of it, so their photos aren't catalogued twice.
+  for (const root of await catalog.listRoots()) {
+    if (root.id === rootId) continue
+    const handle = await getRootHandle(root.id)
+    const rel = handle ? await dir.resolve(handle) : null
+    if (!rel?.length) continue
+    await catalog.adoptRoot(root.id, rootId, rel.join('/'))
+    await forgetRootHandle(root.id)
+  }
   return { rootId, subPath: '' }
 }
 

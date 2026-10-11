@@ -32,7 +32,6 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
   const [scanning, setScanning] = useState(0)
   const [cands, setCands] = useState<Candidate[]>([])
   const [error, setError] = useState('')
-  const [mode, setMode] = useState<'copy' | 'add'>('copy')
   const [dest, setDest] = useState<FileSystemDirectoryHandle | null>(null)
   const [backupOn, setBackupOn] = useState(false)
   const [backup, setBackup] = useState<FileSystemDirectoryHandle | null>(null)
@@ -50,10 +49,8 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
   candsRef.current = cands
   const destRef = useRef(dest)
   destRef.current = dest
-  const modeRef = useRef(mode)
-  modeRef.current = mode
 
-  const isDuplicate = (c: Candidate) => c.inCatalog || (modeRef.current === 'copy' && c.atDestination)
+  const isDuplicate = (c: Candidate) => c.inCatalog || c.atDestination
   /** Untouched photos are ticked unless they look already imported, failed, or are RAW+JPEG companions. */
   const withAutoSelection = (c: Candidate): Candidate =>
     c.touched ? c : { ...c, selected: c.status !== 'error' && !c.pairedJpeg && !isDuplicate(c) }
@@ -67,17 +64,12 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
     }
   }, [])
 
-  // Re-check "already in destination" whenever the destination changes, and re-tick when the mode changes.
+  // Re-check "already in destination" whenever the destination changes.
   useEffect(() => {
     if (dest) void markDestinationDuplicates(dest, candsRef.current.filter((c) => c.status === 'ready'))
     else setCands((cs) => cs.map((c) => withAutoSelection({ ...c, atDestination: false })))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dest])
-
-  useEffect(() => {
-    setCands((cs) => cs.map(withAutoSelection))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode])
 
   async function markDestinationDuplicates(d: FileSystemDirectoryHandle, ready: Candidate[]) {
     if (!ready.length || (await d.queryPermission({ mode: 'read' })) !== 'granted') return
@@ -245,17 +237,18 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
     .reduce<ImportItem | undefined>((a, b) => (!a || photoTime(b.meta) < photoTime(a.meta) ? b : a), undefined)
   const exampleName = example ? renamedFile(rename, example.file.name, photoTime(example.meta), 0) : ''
 
-  const canImport = selected.length > 0 && reading === 0 && (mode === 'add' || !!dest) && (!backupOn || !!backup)
+  const canImport = selected.length > 0 && reading === 0 && !!dest && (!backupOn || !!backup)
 
   async function startImport() {
     if (!source) return
     setError('')
     // Permission prompts must happen here, directly after the click.
-    if (mode === 'copy' && dest && !(await ensurePermission(dest, 'readwrite'))) {
+    if (!dest) return
+    if (!(await ensurePermission(dest, 'readwrite'))) {
       setError('LightBench needs permission to save into the destination folder.')
       return
     }
-    if (mode === 'copy' && backupOn && backup && !(await ensurePermission(backup, 'readwrite'))) {
+    if (backupOn && backup && !(await ensurePermission(backup, 'readwrite'))) {
       setError('LightBench needs permission to save into the backup folder.')
       return
     }
@@ -266,7 +259,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
       await runImport(
         catalog,
         items,
-        { mode, source, destination: dest ?? undefined, rename, backup: backupOn ? (backup ?? undefined) : undefined },
+        { source, destination: dest, rename, backup: backupOn ? (backup ?? undefined) : undefined },
         setProgress,
         abort.signal,
       )
@@ -321,7 +314,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
       <div className="dialog import" role="dialog" aria-label="Import photos">
         <header className="import-head">
           <div>
-            <h2>Import photos</h2>
+            <h2>Import from card</h2>
             <p className="muted small">
               {source
                 ? `From “${source.name}” · ${shownCount} ${shownCount === 1 ? 'photo' : 'photos'} found${reading ? ` · reading ${reading}…` : ''}${already ? ` · ${already} already imported` : ''}`
@@ -387,20 +380,11 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
           </section>
 
           <aside className="import-options">
-            <fieldset>
-              <legend>How to import</legend>
-              <label className="radio">
-                <input type="radio" checked={mode === 'copy'} onChange={() => setMode('copy')} />
-                <span><strong>Copy</strong> to my photo folder <span className="muted small">(recommended for memory cards)</span></span>
-              </label>
-              <label className="radio">
-                <input type="radio" checked={mode === 'add'} onChange={() => setMode('add')} />
-                <span><strong>Add</strong> — leave the files where they are</span>
-              </label>
-            </fieldset>
+            <p className="muted small">
+              Import <strong>copies</strong> photos from a memory card into your photo folder. For photos that are already
+              on your computer, close this and use <strong>Open folder</strong>: they stay where they are.
+            </p>
 
-            {mode === 'copy' && (
-              <>
                 <fieldset>
                   <legend>Destination</legend>
                   <div className="folder-pick">
@@ -445,8 +429,6 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
                   )}
                   {backupOn && <p className="muted small">Untouched originals, with their camera file names, in a dated backup folder.</p>}
                 </fieldset>
-              </>
-            )}
 
             {pairedCount > 0 && (
               <fieldset>
@@ -463,8 +445,8 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
         <footer className="dialog-actions">
           <span className="muted small">
             {selected.length} selected
-            {mode === 'copy' && !dest && ' · choose a destination'}
-            {mode === 'copy' && backupOn && !backup && ' · choose a backup folder'}
+            {!dest && ' · choose a destination'}
+            {backupOn && !backup && ' · choose a backup folder'}
             {reading > 0 && ' · still reading photos'}
           </span>
           <button className="button" onClick={onClose}>Cancel</button>

@@ -113,7 +113,7 @@ Non-destructive editing: originals are never modified. Edits are settings re-app
      ticked.
   4. You tick or untick photos individually, select all or none, shift-click a range, or filter by
      shooting date.
-  5. You choose how to import: **Copy** to a destination, or **Add** photos in place.
+  5. Import **copies** to a destination. (Adding photos where they are moved to **Open folder** in Phase 2.)
      - Destination layout: **by date**, `YYYY/YYYY-MM-DD/` (owner's choice).
      - **Optional renaming templates**, off by default: Date-Sequence, or Custom name + number.
      - **Second backup copy**: copies each original untouched to a backup folder, for example on an
@@ -146,7 +146,7 @@ Non-destructive editing: originals are never modified. Edits are settings re-app
     standard fields above.
 
 ### Phase 2 — Library depth
-**Open folder (browse before import)**, owner's choice 2026-10-11: open any folder and start culling (flags, stars, labels) at once. **One library model** (owner, after the round-2 research): opening a folder adds it to the library in place (no copying), it is indexed in the background, and every library feature works on it; there is no separate browse mode. Removing a folder from LightBench never deletes files.
+**Open folder (browse before import)** — _Part 1 built, see [PHASE2.md](PHASE2.md)_ — owner's choice 2026-10-11: open any folder and start culling (flags, stars, labels) at once. **One library model** (owner, after the round-2 research): opening a folder adds it to the library in place (no copying), it is indexed in the background, and every library feature works on it; there is no separate browse mode. Removing a folder from LightBench never deletes files.
 **Auto, tunable** (owner, after round 2): a strength slider, a choice of which sliders Auto may touch, and Auto re-run per photo when applied to many photos.
 Collections, smart collections, collection sets, hierarchical keywords, EXIF/IPTC editing,
 metadata presets, import presets, stacks, virtual copies, compare and survey views, presets,

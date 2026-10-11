@@ -43,9 +43,13 @@ interface Props {
   selection: FolderSelection
   disconnected: Set<number>
   onSelect: (s: FolderSelection) => void
+  /** Looks for new photos in a folder. */
+  onRescan: (rootId: number, path: string) => void
+  /** True while a folder is being indexed. */
+  busy: boolean
 }
 
-export function FolderPanel({ roots, folders, total, selection, disconnected, onSelect }: Props) {
+export function FolderPanel({ roots, folders, total, selection, disconnected, onSelect, onRescan, busy }: Props) {
   const trees = useMemo(
     () => roots.map((r) => ({ root: r, tree: buildTree(folders.filter((f) => f.rootId === r.id)) })),
     [roots, folders],
@@ -65,6 +69,8 @@ export function FolderPanel({ roots, folders, total, selection, disconnected, on
           depth={0}
           selection={selection}
           onSelect={onSelect}
+          onRescan={onRescan}
+          busy={busy}
           warn={disconnected.has(root.id)}
         />
       ))}
@@ -73,8 +79,19 @@ export function FolderPanel({ roots, folders, total, selection, disconnected, on
   )
 }
 
-function FolderBranch(props: { rootId: number; node: TreeNode; depth: number; selection: FolderSelection; onSelect: (s: FolderSelection) => void; warn?: boolean }) {
-  const { rootId, node, depth, selection, onSelect, warn } = props
+interface BranchProps {
+  rootId: number
+  node: TreeNode
+  depth: number
+  selection: FolderSelection
+  onSelect: (s: FolderSelection) => void
+  onRescan: (rootId: number, path: string) => void
+  busy: boolean
+  warn?: boolean
+}
+
+function FolderBranch(props: BranchProps) {
+  const { rootId, node, depth, selection, onSelect, onRescan, busy, warn } = props
   const [open, setOpen] = useState(depth < 2)
   const active = selection?.rootId === rootId && selection.path === node.path
   return (
@@ -87,10 +104,15 @@ function FolderBranch(props: { rootId: number; node: TreeNode; depth: number; se
           {warn && <span className="warn-dot" aria-label="Not connected">●</span>}
           {node.name}
         </button>
+        {active && (
+          <button className="rescan" onClick={() => onRescan(rootId, node.path)} disabled={busy} title="Look for new photos in this folder" aria-label="Look for new photos">
+            ⟳
+          </button>
+        )}
         <span className="count">{node.total.toLocaleString()}</span>
       </div>
       {open && node.children.map((c) => (
-        <FolderBranch key={c.path} rootId={rootId} node={c} depth={depth + 1} selection={selection} onSelect={onSelect} />
+        <FolderBranch key={c.path} rootId={rootId} node={c} depth={depth + 1} selection={selection} onSelect={onSelect} onRescan={onRescan} busy={busy} />
       ))}
     </div>
   )

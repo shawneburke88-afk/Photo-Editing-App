@@ -11,9 +11,12 @@ interface Props {
   cellSize: number
   onCellSize: (n: number) => void
   shown: number
+  /** Whether a selected folder's subfolders are included (undefined when no folder is selected). */
+  subfolders?: boolean
+  onSubfolders: (on: boolean) => void
 }
 
-export function FilterBar({ value, onChange, view, onView, cellSize, onCellSize, shown }: Props) {
+export function FilterBar({ value, onChange, view, onView, cellSize, onCellSize, shown, subfolders, onSubfolders }: Props) {
   const set = (patch: Partial<Filters>) => onChange({ ...value, ...patch })
   return (
     <div className="filterbar">
@@ -48,6 +51,12 @@ export function FilterBar({ value, onChange, view, onView, cellSize, onCellSize,
         <option value="captureAsc">Oldest first</option>
         <option value="name">File name</option>
       </select>
+      {subfolders !== undefined && (
+        <label className="check small" title="Show photos in this folder's subfolders too">
+          <input type="checkbox" checked={subfolders} onChange={(e) => onSubfolders(e.target.checked)} />
+          Subfolders
+        </label>
+      )}
       <span className="muted small grow">{shown.toLocaleString()} photos</span>
       {view === 'grid' && (
         <label className="size small">

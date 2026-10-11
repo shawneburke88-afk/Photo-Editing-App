@@ -7,10 +7,14 @@ import { openPhotoFile } from '../platform/roots'
 let decoder: RawDecoder | null = null
 const FLIP_TO_ROTATION: Record<number, number> = { 0: 0, 3: 180, 5: 270, 6: 90 }
 
-/** Large single-photo view. Shows the camera's full-size preview; full RAW rendering arrives with Develop. */
+/**
+ * Large single-photo view. For RAW files it shows the camera's embedded full-size preview (fast, like
+ * darktable's default for unedited images) and says so; the RAW itself is rendered in Develop.
+ */
 export function Loupe({ photo }: { photo: PhotoDetail }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [bitmap, setBitmap] = useState<{ bmp: ImageBitmap; rotate: number } | null>(null)
+  /** `camera`: the RAW's embedded preview (not a rendering of the RAW itself). */
+  const [bitmap, setBitmap] = useState<{ bmp: ImageBitmap; rotate: number; camera: boolean } | null>(null)
   const [note, setNote] = useState('')
 
   useEffect(() => {
@@ -22,7 +26,7 @@ export function Loupe({ photo }: { photo: PhotoDetail }) {
       const thumb = await loadThumb(photo.id)
       if (thumb && live) {
         loaded = await createImageBitmap(thumb)
-        if (live) setBitmap({ bmp: loaded, rotate: 0 })
+        if (live) setBitmap({ bmp: loaded, rotate: 0, camera: false })
       }
       const file = await openPhotoFile(photo.rootId, photo.folderPath, photo.fileName)
       if (!file) {
@@ -50,7 +54,7 @@ export function Loupe({ photo }: { photo: PhotoDetail }) {
       }
       loaded?.close()
       loaded = full
-      setBitmap({ bmp: full, rotate })
+      setBitmap({ bmp: full, rotate, camera: !/^jpe?g$/i.test(photo.fileType) })
     })().catch((e: Error) => live && setNote(`Could not open this photo: ${e.message}`))
     return () => {
       live = false
@@ -91,6 +95,11 @@ export function Loupe({ photo }: { photo: PhotoDetail }) {
   return (
     <div className="loupe">
       <canvas ref={canvasRef} className="loupe-canvas" aria-label={photo.fileName} />
+      {bitmap?.camera && (
+        <span className="preview-badge" title="The JPEG preview your camera stored in the RAW file. Press D to render the RAW itself in Develop.">
+          Camera preview
+        </span>
+      )}
       {note && <p className="loupe-note">{note}</p>}
     </div>
   )
