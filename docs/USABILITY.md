@@ -74,12 +74,16 @@ The second round ([REVIEWS_ROUND2.md](research/REVIEWS_ROUND2.md), lessons cited
 
 ### Conflicts with decisions already made
 
-These need the owner's call; nothing has been changed yet.
+The owner settled these on 2026-10-11; the outcome is under each item and in the Decisions table.
 
 1. **Tabs vs one stack.** The owner chose tool tabs (2026-10-11). Round 2 finds the single right-hand stack (Lightroom) rated most approachable, and quotes reviewers criticising Capture One for making you "switch to different tabs to edit your pictures" (R2 A1). Caveats: those two quotes come from affiliate sites (⚠ in the report), and the same reviewers praise Capture One's custom tabs for experts. A middle path exists: one scrolling stack with a row of group buttons at the top that jump to (and highlight) each group, instead of hiding the others.
+   **Owner: one stack with a jump bar** (replaces the tabs decision).
 2. **Order of groups.** The owner chose Crop & Lens before Basic. Round 2: every app called easy uses roughly "profile/basic light → colour → effects/detail → optics/geometry → local tools" (R2 B, R2 4). Nuance not in the report: Lightroom Classic shows Crop in a tool strip *above* the Basic panel and puts Lens Corrections below Detail; Lightroom (cloud) has Crop as a separate tool button. So "Crop first, lens later" matches Lightroom. A reason to keep crop first: Auto and the histogram should judge the cropped frame.
+   **Owner: keep Crop & Lens first.**
 3. **"Open folder" as a separate browse mode.** PLAN.md Phase 2 says: open a folder and cull without importing, then add the keepers to the library. Round 2 warns against two storage models with different features (ON1 Browse vs Catalog, Lightroom cloud vs local; R2 14). Alternative: opening a folder *is* adding it in place (no copying, as the importer's "add" mode already does), indexed in the background, with culling available at once and every library feature working; removing a folder from LightBench never deletes files.
+   **Owner: one model.**
 4. **Auto looks.** Built-in looks currently fix Contrast and Vibrance per look (Part 2b). Round 2 suggests adding a strength slider and a choice of sliders Auto may touch (R2 9). This is an addition, not a change of the earlier decision.
+   **Owner: add both** the strength slider and the choice of sliders.
 
 ## What darktable's own code offers here (from the catalogue)
 
@@ -92,23 +96,22 @@ These need the owner's call; nothing has been changed yet.
 
 ### Develop panel layout
 
-The right panel is ordered by how often people use each tool. The first section is always open; the rest are collapsible groups.
+The right panel is one scrolling stack in workflow order, with Crop & Lens first (owner's decision). Groups are collapsible, and the jump bar at the top reaches any group in one click.
 
 | Order | Group | Contents | Engine (darktable) | Status |
 |---|---|---|---|---|
-| 1 | **Basic** (always open) | Auto + look; White balance (preset, **Pick**, Temp, Tint); Tone (Exposure, Contrast, Highlights, Shadows, Whites, Blacks); Presence (Texture, Clarity, Dehaze, Vibrance, Saturation) | temperature, exposure, sigmoid, tone equalizer, colour balance rgb, local contrast, haze removal | Built, except Texture/Clarity/Dehaze and colour balance rgb |
-| 2 | **Tone curve** | Parametric + point, RGB | rgb curve | Phase 3 |
-| 3 | **Colour** | Colour mixer (HSL), Colour grading, Point colour | colour equalizer, colour balance rgb | Phase 3 |
-| 4 | **Detail** | Sharpening, Noise reduction | diffuse or sharpen / sharpen, denoise (profiled) | Phase 3 |
-| 5 | **Optics** | Lens profile, Chromatic aberration, Vignetting | lens correction (lensfun), CA correction | Phase 3 |
-| 6 | **Geometry** | Crop, Straighten, Transform/Upright | crop, rotate and perspective (ashift) | Crop: Phase 1; rest: Phase 3 |
-| 7 | **Effects** | Vignette, Grain | vignette, grain | Phase 3 |
+| 1 | **Crop & Lens** | Crop, Straighten, Transform/Upright; Lens profile, Chromatic aberration, Vignetting correction | crop, rotate and perspective (ashift), lens correction (lensfun), CA correction | Crop/straighten: Phase 1 (not built yet); rest: Phase 3 |
+| 2 | **Basic** (open by default) | Auto + look; White balance (preset, **Pick**, Temp, Tint); Tone (Exposure, Contrast, Highlights, Shadows, Whites, Blacks); Presence (Texture, Clarity, Dehaze, Vibrance, Saturation) | temperature, exposure, sigmoid, tone equalizer, colour balance rgb, local contrast, haze removal | Built, except Texture/Clarity/Dehaze and colour balance rgb |
+| 3 | **Tone curve** | Parametric + point, RGB | rgb curve | Phase 3 |
+| 4 | **Colour** | Colour mixer (HSL), Colour grading, Point colour | colour equalizer, colour balance rgb | Phase 3 |
+| 5 | **Detail** | Sharpening, Noise reduction | diffuse or sharpen / sharpen, denoise (profiled) | Phase 3 |
+| 6 | **Effects** | Vignette, Grain | vignette, grain | Phase 3 |
 | — | **Masks** (own panel) | AI subject/sky, brush, linear, radial, then colour/luminance range refinement | drawn + parametric masks, blending | Phase 3–4 |
 
 Every group follows the same rules:
 - **One control per job.** Alternative algorithms (e.g. sigmoid / filmic / AgX for tone mapping) go in a **Method** dropdown inside the group, not in separate modules.
 - **"Advanced ▸"** inside each group shows the darktable module's own parameters, so no capability is lost.
-- **Tool tabs** (owner's direction, 2026-10-11; layout to be confirmed): the groups become tabs in typical workflow order, and the panel shows only the selected tab's tools. This keeps the panel short.
+- **One stack with a jump bar** (owner, 2026-10-11, after round 2; replaces the earlier tool-tabs choice): all groups stay in one scrolling list in workflow order. A row of group buttons at the top of the panel jumps to a group and highlights the group in view; nothing is hidden. Panel order is cosmetic; the processing order is fixed (R2 7).
 - **Tool search** (owner, 2026-10-11): `/` or Ctrl+F finds a tool by its Lightroom name, LightBench name or darktable name, e.g. "Clarity" → Presence → Clarity (local contrast). It comes late, once most tools exist.
 
 ### Guidance in the interface (owner's request)
@@ -142,14 +145,17 @@ Every group follows the same rules:
 | Question | Owner's answer (2026-10-11) |
 |---|---|
 | Hints on by default? | Yes, but on the label's line only, shown only when they fit the panel width. Built. |
-| Solo mode? | Use tool tabs in workflow order instead; only the selected tab's tools show. Tab list to be confirmed. |
+| Solo mode? | Use tool tabs in workflow order instead. **Superseded** by the stack + jump bar decision below. |
 | Browse before import ("Open folder")? | Yes. Planned for Phase 2. |
 | Tool search? | Late, once most tools are chosen (end of Phase 3). |
-| Crop & Lens position? | Before Basic. Round 2 points the other way for lens tools; asked again (conflict 2 above). |
+| Crop & Lens position? | Before Basic. Re-confirmed after round 2 (conflict 2 above). |
+| Tabs or one stack? (round 2) | One scrolling stack with a jump bar of group buttons; nothing hidden. |
+| Open folder model? (round 2) | One library model: opening a folder adds it in place, indexes it in the background, every feature works; removing it never deletes files. |
+| Auto additions? (round 2) | A strength slider and a choice of which sliders Auto may touch. Auto re-runs per photo when applied to many. |
 
 ### Open after round 2
 
-Asked now: conflicts 1–4 above. Queued for a later round of questions, so they don't hold up current work:
+Conflicts 1–4 are settled (above). Queued for a later round of questions, so they don't hold up current work:
 - **AI masks earlier?** Round 2 calls AI subject/sky masks table stakes (R2 10). They are planned for Phase 4, after the manual masks in Phase 3. Option: build the mask-first panel in Phase 3 with AI subject/sky as its first mask types.
 - **darktable XMP develop edits (R2 18).** Reading darktable's history stack (and writing it back) would let darktable users bring their edits. darktable stores each module's parameters as a binary blob per module version, so this is a sizeable, module-by-module job; it fits Phase 2's migration work.
 - **Trust promise, shortcuts/UI scaling, PWA/offline, release discipline, latency budgets, labelled base exposure:** proposals above; each needs a yes/no before it goes into PLAN.md.

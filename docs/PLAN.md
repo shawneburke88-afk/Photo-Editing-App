@@ -146,7 +146,8 @@ Non-destructive editing: originals are never modified. Edits are settings re-app
     standard fields above.
 
 ### Phase 2 — Library depth
-**Open folder (browse before import)**, owner's choice 2026-10-11: open any folder and cull it (flags, stars, labels) without importing, then add the keepers to the library.
+**Open folder (browse before import)**, owner's choice 2026-10-11: open any folder and start culling (flags, stars, labels) at once. **One library model** (owner, after the round-2 research): opening a folder adds it to the library in place (no copying), it is indexed in the background, and every library feature works on it; there is no separate browse mode. Removing a folder from LightBench never deletes files.
+**Auto, tunable** (owner, after round 2): a strength slider, a choice of which sliders Auto may touch, and Auto re-run per photo when applied to many photos.
 Collections, smart collections, collection sets, hierarchical keywords, EXIF/IPTC editing,
 metadata presets, import presets, stacks, virtual copies, compare and survey views, presets,
 copy/paste/sync settings across many photos, **Lightroom catalog/XMP import (ratings, keywords,
@@ -157,7 +158,7 @@ More darktable modules behind Lightroom-style controls (color balance rgb, filmi
 diffuse or sharpen, AMaZE and X-Trans demosaic). Tone curve (parametric + point, RGB), HSL / color mixer, point color, color grading, sharpening
 and noise reduction, lens profile corrections (lensfun), chromatic aberration, transform/upright,
 vignette and grain, dehaze, camera profiles, masking (brush, linear, radial, color/luminance range),
-heal and clone, snapshots, soft proofing. Develop tools in **tabs ordered by workflow** (see USABILITY.md). **Tool search** comes at the end of this phase, once most tools exist.
+heal and clone, snapshots, soft proofing. Develop tools in **one scrolling stack in workflow order, Crop & Lens first, with a jump bar of group buttons** (owner, after round 2; replaces the earlier tabs plan; see USABILITY.md). **Tool search** comes at the end of this phase, once most tools exist.
 
 ### Phase 4 — Local AI
 Subject / sky / object / background masks (SAM 2 / MobileSAM), AI remove (LaMa),
