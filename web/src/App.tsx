@@ -1,23 +1,47 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { DevelopView } from './develop/DevelopView'
+import { isTextEntry } from './lib/keys'
 import { LibraryView } from './library/LibraryView'
 import { SystemCheck } from './syscheck/SystemCheck'
 
 type Module = 'library' | 'develop' | 'export' | 'syscheck'
 
-const MODULES: { id: Module; name: string; ready: boolean }[] = [
-  { id: 'library', name: 'Library', ready: true },
-  { id: 'develop', name: 'Develop', ready: false },
-  { id: 'export', name: 'Export', ready: false },
-  { id: 'syscheck', name: 'System Check', ready: true },
-]
-
 export default function App() {
   const [module, setModule] = useState<Module>(() => (location.hash === '#syscheck' ? 'syscheck' : 'library'))
+  const [focus, setFocus] = useState<{ id: number | null; ids: number[] }>({ id: null, ids: [] })
+  const [developing, setDeveloping] = useState<{ id: number; ids: number[] } | null>(null)
+  const [libraryVersion, setLibraryVersion] = useState(0)
 
-  const go = (m: Module) => {
+  const go = useCallback((m: Module) => {
     setModule(m)
     history.replaceState(null, '', m === 'library' ? location.pathname : `#${m}`)
-  }
+  }, [])
+
+  const onFocusChange = useCallback((id: number | null, ids: number[]) => setFocus({ id, ids }), [])
+  const openDevelop = useCallback(
+    (id: number, ids: number[]) => {
+      setDeveloping({ id, ids })
+      go('develop')
+    },
+    [go],
+  )
+  const onEdited = useCallback(() => setLibraryVersion((v) => v + 1), [])
+
+  // G returns to the Library grid from Develop, like Lightroom.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (module === 'develop' && e.key.toLowerCase() === 'g' && !isTextEntry(e.target)) go('library')
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [module, go])
+
+  const modules: { id: Module; name: string; enabled: boolean; hint?: string }[] = [
+    { id: 'library', name: 'Library', enabled: true },
+    { id: 'develop', name: 'Develop', enabled: focus.id !== null || developing !== null, hint: 'Select a photo first' },
+    { id: 'export', name: 'Export', enabled: false, hint: 'Coming in the next update' },
+    { id: 'syscheck', name: 'System Check', enabled: true },
+  ]
 
   return (
     <div className="app">
@@ -30,22 +54,36 @@ export default function App() {
           LightBench
         </div>
         <nav className="modules" aria-label="Modules">
-          {MODULES.map((m) => (
+          {modules.map((m) => (
             <button
               key={m.id}
               className={`module ${module === m.id ? 'active' : ''}`}
-              disabled={!m.ready}
-              title={m.ready ? undefined : 'Coming in the next update'}
+              disabled={!m.enabled}
+              title={m.enabled ? undefined : m.hint}
               aria-current={module === m.id ? 'page' : undefined}
-              onClick={() => go(m.id)}
+              onClick={() => {
+                if (m.id === 'develop' && focus.id !== null && (!developing || module !== 'develop')) setDeveloping({ id: focus.id, ids: focus.ids })
+                go(m.id)
+              }}
             >
               {m.name}
             </button>
           ))}
         </nav>
       </header>
-      <main className={module === 'library' ? 'main full' : 'main'}>
-        {module === 'library' ? <LibraryView /> : <SystemCheck />}
+      <main className={module === 'syscheck' ? 'main' : 'main full'}>
+        <div className="module-pane" hidden={module !== 'library'}>
+          <LibraryView active={module === 'library'} externalVersion={libraryVersion} onFocusChange={onFocusChange} onDevelop={openDevelop} />
+        </div>
+        {module === 'develop' && developing && (
+          <DevelopView
+            ids={developing.ids}
+            id={developing.id}
+            onNavigate={(id) => setDeveloping((d) => (d ? { ...d, id } : d))}
+            onEdited={onEdited}
+          />
+        )}
+        {module === 'syscheck' && <SystemCheck />}
       </main>
     </div>
   )

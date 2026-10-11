@@ -9,9 +9,10 @@ interface Props {
   onRating: (v: number) => void
   onFlag: (v: Flag) => void
   onColor: (v: ColorLabel) => void
+  onDevelop: () => void
 }
 
-export function InfoPanel({ photo, count, onRating, onFlag, onColor }: Props) {
+export function InfoPanel({ photo, count, onRating, onFlag, onColor, onDevelop }: Props) {
   if (!photo) return <aside className="info"><p className="muted small pad">Select a photo to see its details.</p></aside>
   const rows: [string, string][] = [
     ['File', photo.fileName],
@@ -27,6 +28,9 @@ export function InfoPanel({ photo, count, onRating, onFlag, onColor }: Props) {
     <aside className="info">
       {count > 1 && <p className="info-multi">{count} photos selected — changes apply to all of them</p>}
       <div className="info-actions">
+        {!/^jpe?g$/i.test(photo.fileType) && (
+          <button className="button primary" onClick={onDevelop} title="Develop (D)">Edit in Develop</button>
+        )}
         <Stars value={photo.rating} onChange={onRating} />
         <div className="flag-buttons" role="group" aria-label="Flag">
           <button className={photo.flag === 1 ? 'on pick' : ''} onClick={() => onFlag(photo.flag === 1 ? 0 : 1)} title="Pick (P)">⚑ Pick</button>

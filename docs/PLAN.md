@@ -76,9 +76,11 @@ each phase below delivers usable software on the live site.
 ### Phase 1 — Thin end-to-end slice (first usable version)
 
 Delivered in three parts:
-- **Part 1, Import + Library:** built.
-- **Part 2, Develop with darktable processing:** next.
-- **Part 3, Export + XMP sidecars:** after that.
+- **Part 1, Import + Library:** merged.
+- **Part 2, Develop with darktable processing:** built, see [PHASE1.md](PHASE1.md).
+- **Part 3, Export, XMP sidecars and JPEG editing:** next.
+
+Non-destructive editing: originals are never modified. Edits are settings re-applied to the original on every render, as in Lightroom. Virtual copies (Phase 2) and snapshots (Phase 3) build on this.
 
 - **Import wizard** (Chrome/Edge):
   1. Click **Import** and choose the card or source folder in the Windows folder picker. Subfolders are
@@ -109,7 +111,16 @@ Delivered in three parts:
   darktable's modules: demosaic (RCD), highlight reconstruction, exposure, white balance, input colour
   profile and sigmoid tone mapping. The Lightroom-style sliders drive these modules.
 - **Export:** JPEG / PNG / TIFF, resize, quality, filename template, metadata include/exclude.
-- **Sidecars:** write edits and ratings to XMP so nothing is locked into our catalog.
+- **XMP sidecars** (owner's decisions, 2026-10-11):
+  - **Written automatically, always**, like darktable. Every edit, rating, flag, colour label and keyword
+    change also updates a `.xmp` file next to the photo. Write permission is asked once per folder.
+  - **Standard fields** for ratings, labels and keywords (`xmp:Rating`, `xmp:Label`, `dc:subject`,
+    `lr:hierarchicalSubject`), so Lightroom, darktable and Bridge can read them.
+  - LightBench's own edit settings and history go in a separate `lightbench:` namespace that other apps
+    ignore.
+  - Reading sidecars back recovers the edits if browser storage is cleared, or on another computer.
+  - Existing sidecars written by other apps are preserved: LightBench updates only its own fields and the
+    standard fields above.
 
 ### Phase 2 — Library depth
 Collections, smart collections, collection sets, hierarchical keywords, EXIF/IPTC editing,
@@ -136,6 +147,17 @@ print module, slideshow, web gallery, book module, plugin system.
 ### Phase 6 — Desktop app (Tauri)
 Native file management, tethered capture, card auto-import, watched folders, larger memory,
 faster native processing. Same UI and engine as the website.
+
+## Owner tests pending
+
+Tests the owner will run later. They are deferred because there is no SD card reader for the laptop.
+
+| Test | Why it matters |
+|---|---|
+| Import from a real SD card (D5200), both **Copy** and **Add** | Confirms the full card workflow in Edge |
+| Can Edge pick the card's top level (`E:\`), or only `E:\DCIM`? | Decides the import window's guidance text |
+| Thumbnail speed and copy speed from the card | Shows whether reading only the preview bytes is urgent |
+| Backup copy to a second drive | Confirms the backup option on real hardware |
 
 ## Tradeoff register
 

@@ -1,3 +1,4 @@
+import { isSliderKey, isTextEntry } from '../lib/keys'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getCatalog, requestPersistentStorage } from '../catalog/client'
 import { deleteThumbs, forgetThumbUrl } from '../catalog/thumbs'
@@ -13,7 +14,16 @@ import { Loupe } from './Loupe'
 
 type Filters = Pick<PhotoQuery, 'text' | 'minRating' | 'flag' | 'color' | 'sort'>
 
-export function LibraryView() {
+interface Props {
+  /** False while another module is shown (keyboard shortcuts are paused). */
+  active: boolean
+  /** Bumped by other modules when photos change (e.g. edits saved). */
+  externalVersion: number
+  onFocusChange: (id: number | null, ids: number[]) => void
+  onDevelop: (id: number, ids: number[]) => void
+}
+
+export function LibraryView({ active, externalVersion, onFocusChange, onDevelop }: Props) {
   const catalog = getCatalog()
   const [status, setStatus] = useState<'opening' | 'ready' | 'error'>('opening')
   const [openError, setOpenError] = useState('')
@@ -73,7 +83,7 @@ export function LibraryView() {
     return () => {
       live = false
     }
-  }, [catalog, status, folder, filters, version])
+  }, [catalog, status, folder, filters, version, externalVersion])
 
   // Details of the focused photo.
   useEffect(() => {
@@ -86,7 +96,11 @@ export function LibraryView() {
     return () => {
       live = false
     }
-  }, [catalog, focus, version])
+  }, [catalog, focus, version, externalVersion])
+
+  useEffect(() => {
+    onFocusChange(focus, rows.map((r) => r.id))
+  }, [focus, rows, onFocusChange])
 
   const targets = useCallback(() => (selected.size ? [...selected] : focus !== null ? [focus] : []), [selected, focus])
 
@@ -143,9 +157,9 @@ export function LibraryView() {
   // Lightroom-style keyboard shortcuts.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (importing || status !== 'ready') return
+      if (!active || importing || status !== 'ready') return
       const t = e.target as HTMLElement
-      if (t.closest('input, select, textarea, [contenteditable]')) return
+      if (isTextEntry(t) || isSliderKey(e)) return
       const idx = focus === null ? -1 : rows.findIndex((r) => r.id === focus)
       const move = (delta: number) => {
         if (!rows.length) return
@@ -177,6 +191,7 @@ export function LibraryView() {
       else if (k === 'x') void apply('flag', -1)
       else if (k === 'u') void apply('flag', 0)
       else if (k === 'e' || k === 'enter') setView('loupe')
+      else if (k === 'd' && focus !== null) onDevelop(focus, rows.map((r) => r.id))
       else if (k === 'g' || k === 'escape') setView('grid')
       else if (k === 'delete' || k === 'backspace') void removeSelected()
       else return
@@ -250,7 +265,7 @@ export function LibraryView() {
               <Loupe photo={detail} />
             )}
             <p className="hint muted small">
-              Keys: arrows move · P pick · X reject · U unflag · 0–5 stars · 6–9 colour labels · E loupe · G grid · Delete removes from library
+              Keys: arrows move · P pick · X reject · U unflag · 0–5 stars · 6–9 colour labels · E loupe · G grid · D develop · Delete removes from library
             </p>
           </>
         )}
@@ -262,6 +277,7 @@ export function LibraryView() {
         onRating={(v) => void apply('rating', v)}
         onFlag={(v: Flag) => void apply('flag', v)}
         onColor={(v: ColorLabel) => void apply('color', v)}
+        onDevelop={() => focus !== null && onDevelop(focus, rows.map((r) => r.id))}
       />
 
       {importing && (

@@ -52,8 +52,13 @@ export async function thumbUrl(photoId: number): Promise<string | null> {
   return url
 }
 
+/** Fires `thumbchange` (detail = photo id) when a thumbnail is replaced, so visible ones reload. */
+export const thumbEvents = new EventTarget()
+
 export function forgetThumbUrl(photoId: number) {
   const url = urls.get(photoId)
-  if (url) URL.revokeObjectURL(url)
   urls.delete(photoId)
+  thumbEvents.dispatchEvent(new CustomEvent('thumbchange', { detail: photoId }))
+  // Revoke after listeners have swapped to the new URL.
+  if (url) setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

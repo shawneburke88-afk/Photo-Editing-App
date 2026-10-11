@@ -1,0 +1,62 @@
+# Phase 1 — First usable version
+
+## Part 1: Import + Library (merged)
+
+Import window, catalog and Library module. See pull request #2 and [PLAN.md](PLAN.md#phase-1--thin-end-to-end-slice-first-usable-version).
+
+## Part 2: Develop with darktable processing
+
+### Pipeline
+
+| Step | Implementation | Source |
+|---|---|---|
+| Raw prepare: black/white normalisation | WGSL | LightBench. The white level follows LibRaw's default rule: the data maximum is used when it is above 75 % of the nominal maximum. |
+| White balance (temperature/tint ⇄ multipliers) | TypeScript | Translated from darktable `src/iop/temperature.c` |
+| Highlight reconstruction: **inpaint opposed** (default) or clip | WGSL | Translated from darktable `data/kernels/basic.cl` (`highlights_initmask`, `_dilatemask`, `_chroma`, `_opposed`) |
+| Demosaic: **RCD** (default) or bilinear | WGSL | Translated from darktable `data/kernels/demosaic_rcd.cl`. The 9 px border uses bilinear instead of PPG. |
+| Camera → linear Rec.2020 (working space) | WGSL | LibRaw camera matrix × sRGB→Rec.2020 |
+| Exposure, default **+0.7 EV** | WGSL | darktable scene-referred default |
+| Highlights / Shadows / Whites / Blacks → **tone equalizer** bands | TS + WGSL | Translated from darktable `src/iop/toneequal.c`. Global mode for now: no guided filter, "RGB average" luminance. |
+| Vibrance / Saturation | WGSL | LightBench simple chroma scaling. darktable's colour balance rgb is planned for Phase 3. |
+| **Sigmoid** display transform (per-channel, hue preservation) | TS + WGSL | Translated from darktable `src/iop/sigmoid.c` and `data/kernels/sigmoid.cl` |
+| Output: Rec.2020 → sRGB | WGSL | Standard matrices |
+
+When a photo is shown smaller than 100 %, a mip chain (2×2 averaging) is used to prevent moiré.
+
+### Develop module
+
+- **Basic panel:** White balance (As shot / Custom, Temp, Tint), Exposure, Contrast, Highlights, Shadows,
+  Whites, Blacks, Vibrance, Saturation. Double-click a slider to reset it.
+- **Advanced (darktable modules):**
+  - base exposure;
+  - sigmoid skew, target white/black and hue preservation;
+  - highlight method and clipping threshold;
+  - demosaic method.
+- **Editing tools:**
+  - History panel with undo/redo (Ctrl+Z / Ctrl+Shift+Z);
+  - **Before/after** (`\`) and Reset all;
+  - click to zoom to 100 %, drag to pan (Z toggles zoom);
+  - a filmstrip, and ←/→ for the previous/next photo.
+- **Saving:**
+  - Edits are saved automatically to the catalog, including the history.
+  - The library thumbnail is re-rendered and an ✎ badge is shown in the grid.
+  - Edits made just before leaving Develop are still saved.
+- **Navigation:** **D** in the Library opens Develop; **G** goes back to the grid.
+
+### Checked so far
+
+- Unit tests (31) for colour maths, slider mapping and history. White balance round-trips within 1 %. The
+  sigmoid hits darktable's targets.
+- Headless Chromium on public-domain Nikon D700 / Sony A7 II / A6300 files:
+  - Mean brightness is within about 8 % of the camera JPEGs. Before this part it was about 1 EV darker.
+  - Import → Develop → edit → undo → before/after → reload works, and the edits persist.
+
+### Not yet
+
+- **JPEG editing.** JPEGs show a message in Develop; planned for Part 3 together with export.
+- Texture / Clarity / Dehaze (local contrast) and lens corrections. Lens corrections should remove the
+  colour fringes seen on the D700 fountain sample. Planned for Phase 3.
+- The tone equalizer's detail-preserving (guided filter) mode.
+- Speed on the owner's GPU still needs checking. In this cloud environment a 24 MP RAW takes ~8 s to process
+  on the software renderer; on the owner's Iris Xe, Phase 0 measured the GPU stage at 0.4 s for the simpler
+  pipeline.

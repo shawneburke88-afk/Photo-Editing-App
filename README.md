@@ -5,12 +5,16 @@ desktop app planned from the same code. Your photos never leave your computer.
 
 **Try it:** https://shawneburke88-afk.github.io/Photo-Editing-App/ (best in Chrome or Edge)
 
-- **Status:** Phase 1, Part 1. **Import** photos from a memory card or folder and organise them in the
-  **Library** (folders, ratings, flags, colour labels, filters, loupe). **Develop** (editing) is next.
-  A **System Check** page tests your computer and browser.
+- **Status:** Phase 1, Part 2.
+  - **Import** photos from a memory card or folder.
+  - Organise them in the **Library**: folders, ratings, flags, colour labels, filters, loupe.
+  - Edit RAW files in **Develop** with Lightroom-style sliders running on darktable's processing (RCD
+    demosaic, highlight reconstruction, sigmoid, tone equalizer).
+  - **Export** is next.
+  - A **System Check** page tests your computer and browser.
 - **License:** [GPL-3.0-or-later](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 - **Docs:** [Research summary](docs/RESEARCH.md) · [Project plan & roadmap](docs/PLAN.md) ·
-  [Phase 0 results](docs/PHASE0.md)
+  [Phase 0 results](docs/PHASE0.md) · [Phase 1](docs/PHASE1.md)
 
 ## Developing
 
@@ -30,7 +34,10 @@ Pushes to `main` are built and published to GitHub Pages by `.github/workflows/d
 ```
 web/                    Browser app (Vite + React + TypeScript)
   src/engine/raw/       RAW decoding (LibRaw in a Web Worker)
-  src/engine/gpu/       WebGPU develop pipeline (WGSL shaders)
+  src/engine/gpu/       WebGPU develop pipeline (WGSL shaders, incl. darktable ports)
+  src/engine/color/     Colour maths: white balance, sigmoid, tone equalizer (darktable ports)
+  src/engine/develop/   Develop settings and Lightroom-slider → darktable-module mapping
+  src/develop/          Develop module UI: panels, history, before/after, filmstrip
   src/engine/catalog/   Catalog benchmark (System Check)
   src/engine/meta/      EXIF reader for JPEGs
   src/catalog/          Library catalog: SQLite in browser storage, thumbnails

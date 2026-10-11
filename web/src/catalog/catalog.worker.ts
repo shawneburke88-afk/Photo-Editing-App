@@ -5,18 +5,27 @@ import { exposeRpc } from '../lib/rpc'
 import type { DuplicateKey, FolderNode, LibraryRoot, NewPhoto, PhotoDetail, PhotoQuery, PhotoRow } from './types'
 
 const DB_FILE = '/lightbench-catalog.sqlite3'
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 
 let db: Database | null = null
 let persistent = false
+let opening: Promise<{ persistent: boolean }> | null = null
 
 function conn(): Database {
   if (!db) throw new Error('Catalog is not open')
   return db
 }
 
-async function open(options: { inMemory?: boolean } = {}): Promise<{ persistent: boolean }> {
-  if (db) return { persistent }
+/** Opens the catalog once; concurrent callers share the same attempt. */
+function open(options: { inMemory?: boolean } = {}): Promise<{ persistent: boolean }> {
+  opening ??= openOnce(options).catch((err) => {
+    opening = null
+    throw err
+  })
+  return opening
+}
+
+async function openOnce(options: { inMemory?: boolean }): Promise<{ persistent: boolean }> {
   const sqlite3 = await sqlite3InitModule()
   if (options.inMemory) {
     db = new sqlite3.oo1.DB(':memory:', 'c')
@@ -42,49 +51,67 @@ function migrate(d: Database) {
   d.exec('PRAGMA foreign_keys = ON')
   const version = Number(d.selectValue('PRAGMA user_version'))
   if (version >= SCHEMA_VERSION) return
-  d.exec(`
-    BEGIN;
-    CREATE TABLE roots (
-      id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL
-    );
-    CREATE TABLE folders (
-      id INTEGER PRIMARY KEY,
-      root_id INTEGER NOT NULL REFERENCES roots(id) ON DELETE CASCADE,
-      path TEXT NOT NULL,
-      UNIQUE (root_id, path)
-    );
-    CREATE TABLE photos (
-      id INTEGER PRIMARY KEY,
-      folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
-      file_name TEXT NOT NULL,
-      original_name TEXT NOT NULL,
-      file_type TEXT NOT NULL,
-      file_size INTEGER NOT NULL,
-      file_modified INTEGER NOT NULL,
-      captured_at INTEGER NOT NULL,
-      imported_at INTEGER NOT NULL,
-      camera_make TEXT NOT NULL DEFAULT '',
-      camera_model TEXT NOT NULL DEFAULT '',
-      lens TEXT NOT NULL DEFAULT '',
-      iso INTEGER NOT NULL DEFAULT 0,
-      shutter REAL NOT NULL DEFAULT 0,
-      aperture REAL NOT NULL DEFAULT 0,
-      focal_length REAL NOT NULL DEFAULT 0,
-      width INTEGER NOT NULL DEFAULT 0,
-      height INTEGER NOT NULL DEFAULT 0,
-      orientation INTEGER NOT NULL DEFAULT 0,
-      rating INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN 0 AND 5),
-      flag INTEGER NOT NULL DEFAULT 0 CHECK (flag BETWEEN -1 AND 1),
-      color_label INTEGER NOT NULL DEFAULT 0 CHECK (color_label BETWEEN 0 AND 5),
-      UNIQUE (folder_id, file_name)
-    );
-    CREATE INDEX photos_captured ON photos(captured_at);
-    CREATE INDEX photos_folder ON photos(folder_id, captured_at);
-    CREATE INDEX photos_duplicate ON photos(original_name, file_size, captured_at);
-    PRAGMA user_version = ${SCHEMA_VERSION};
-    COMMIT;
-  `)
+  d.exec('BEGIN')
+  try {
+    if (version < 1) {
+      d.exec(`
+        CREATE TABLE roots (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL
+        );
+        CREATE TABLE folders (
+          id INTEGER PRIMARY KEY,
+          root_id INTEGER NOT NULL REFERENCES roots(id) ON DELETE CASCADE,
+          path TEXT NOT NULL,
+          UNIQUE (root_id, path)
+        );
+        CREATE TABLE photos (
+          id INTEGER PRIMARY KEY,
+          folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+          file_name TEXT NOT NULL,
+          original_name TEXT NOT NULL,
+          file_type TEXT NOT NULL,
+          file_size INTEGER NOT NULL,
+          file_modified INTEGER NOT NULL,
+          captured_at INTEGER NOT NULL,
+          imported_at INTEGER NOT NULL,
+          camera_make TEXT NOT NULL DEFAULT '',
+          camera_model TEXT NOT NULL DEFAULT '',
+          lens TEXT NOT NULL DEFAULT '',
+          iso INTEGER NOT NULL DEFAULT 0,
+          shutter REAL NOT NULL DEFAULT 0,
+          aperture REAL NOT NULL DEFAULT 0,
+          focal_length REAL NOT NULL DEFAULT 0,
+          width INTEGER NOT NULL DEFAULT 0,
+          height INTEGER NOT NULL DEFAULT 0,
+          orientation INTEGER NOT NULL DEFAULT 0,
+          rating INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN 0 AND 5),
+          flag INTEGER NOT NULL DEFAULT 0 CHECK (flag BETWEEN -1 AND 1),
+          color_label INTEGER NOT NULL DEFAULT 0 CHECK (color_label BETWEEN 0 AND 5),
+          UNIQUE (folder_id, file_name)
+        );
+        CREATE INDEX photos_captured ON photos(captured_at);
+        CREATE INDEX photos_folder ON photos(folder_id, captured_at);
+        CREATE INDEX photos_duplicate ON photos(original_name, file_size, captured_at);
+      `)
+    }
+    if (version < 2) {
+      // Develop edits: current settings plus the history list, as JSON.
+      d.exec(`
+        CREATE TABLE edits (
+          photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+          settings TEXT NOT NULL,
+          history TEXT NOT NULL DEFAULT '[]',
+          updated_at INTEGER NOT NULL
+        );
+      `)
+    }
+    d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
+    d.exec('COMMIT')
+  } catch (err) {
+    d.exec('ROLLBACK')
+    throw err
+  }
 }
 
 function addRoot(name: string): number {
@@ -186,9 +213,27 @@ function queryPhotos(q: PhotoQuery): PhotoRow[] {
   const order =
     q.sort === 'name' ? 'p.file_name COLLATE NOCASE' : q.sort === 'captureAsc' ? 'p.captured_at, p.file_name' : 'p.captured_at DESC, p.file_name DESC'
   const sql = `SELECT p.id, p.file_name AS fileName, p.captured_at AS capturedAt, p.rating, p.flag,
-      p.color_label AS color, p.orientation
+      p.color_label AS color, p.orientation, EXISTS (SELECT 1 FROM edits e WHERE e.photo_id = p.id) AS edited
     FROM photos p ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order}`
-  return conn().selectObjects(sql, bind) as unknown as PhotoRow[]
+  type Row = Omit<PhotoRow, 'edited'> & { edited: number }
+  return (conn().selectObjects(sql, bind) as unknown as Row[]).map((r) => ({ ...r, edited: !!r.edited }))
+}
+
+function getEdit(photoId: number): { settings: string; history: string } | null {
+  return (conn().selectObject('SELECT settings, history FROM edits WHERE photo_id = ?', [photoId]) as { settings: string; history: string } | undefined) ?? null
+}
+
+/** Saves a photo's develop settings and history (JSON strings). */
+function saveEdit(photoId: number, settings: string, history: string) {
+  conn().exec({
+    sql: `INSERT INTO edits (photo_id, settings, history, updated_at) VALUES (?, ?, ?, ?)
+          ON CONFLICT (photo_id) DO UPDATE SET settings = excluded.settings, history = excluded.history, updated_at = excluded.updated_at`,
+    bind: [photoId, settings, history, Math.floor(Date.now() / 1000)],
+  })
+}
+
+function deleteEdit(photoId: number) {
+  conn().exec({ sql: 'DELETE FROM edits WHERE photo_id = ?', bind: [photoId] })
 }
 
 function getPhoto(id: number): PhotoDetail | null {
@@ -251,6 +296,9 @@ const handlers = {
   setFlag: (ids: number[], v: number) => update('flag', ids, v),
   setColor: (ids: number[], v: number) => update('color_label', ids, v),
   removePhotos,
+  getEdit,
+  saveEdit,
+  deleteEdit,
   stats,
 }
 

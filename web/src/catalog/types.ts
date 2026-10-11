@@ -54,6 +54,8 @@ export interface PhotoRow {
   flag: Flag
   color: ColorLabel
   orientation: number
+  /** Has develop edits. */
+  edited: boolean
 }
 
 export interface PhotoDetail extends PhotoMeta {

@@ -1,0 +1,401 @@
+import { isSliderKey, isTextEntry } from '../lib/keys'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { getCatalog } from '../catalog/client'
+import { forgetThumbUrl, saveThumb, thumbUrl } from '../catalog/thumbs'
+import type { PhotoDetail } from '../catalog/types'
+import type { Mat3, Vec3 } from '../engine/color/matrix'
+import { multipliersToTemperature, temperatureToMultipliers } from '../engine/color/temperature'
+import { DEFAULT_SETTINGS, displayUniforms, normalizeSettings, type DevelopSettings } from '../engine/develop/settings'
+import { DevelopEngine, type RawStageOptions, type ViewState } from '../engine/gpu/develop-engine'
+import { RawDecoder } from '../engine/raw/decoder'
+import { Thumb } from '../library/Thumb'
+import { openPhotoFile } from '../platform/roots'
+import { BasicPanel } from './BasicPanel'
+import { canRedo, canUndo, current, jump, record, redo, startHistory, undo, type History } from './history'
+
+interface Props {
+  ids: number[]
+  id: number
+  onNavigate: (id: number) => void
+  onEdited: () => void
+}
+
+interface SensorInfo {
+  asShotWb: Vec3
+  xyzToCam: Mat3
+  asShot: { temperature: number; tint: number }
+}
+
+type Status = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string }
+
+let decoder: RawDecoder | null = null
+
+function multipliers(s: DevelopSettings, info: SensorInfo): Vec3 {
+  return s.whiteBalance.mode === 'as-shot'
+    ? info.asShotWb
+    : temperatureToMultipliers(s.whiteBalance.temperature, s.whiteBalance.tint, info.xyzToCam)
+}
+
+function stageOptions(s: DevelopSettings, info: SensorInfo): RawStageOptions {
+  return {
+    wb: multipliers(s, info),
+    highlightMode: s.advanced.highlightReconstruction ? 'opposed' : 'clip',
+    highlightClip: s.advanced.highlightClip,
+    demosaic: s.advanced.demosaic,
+  }
+}
+
+const sameStage = (a: RawStageOptions | null, b: RawStageOptions) =>
+  !!a && a.highlightMode === b.highlightMode && a.highlightClip === b.highlightClip && a.demosaic === b.demosaic &&
+  a.wb.every((v, i) => Math.abs(v - b.wb[i]) < 1e-6)
+
+/** Saved form of the history (timestamps are not stored). */
+interface SavedHistory {
+  steps: { label: string; settings: DevelopSettings }[]
+  index: number
+}
+
+export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
+  const catalog = getCatalog()
+  const stageRef = useRef<HTMLDivElement>(null)
+  const engineRef = useRef<DevelopEngine | null>(null)
+  const [engineError, setEngineError] = useState('')
+  const [photo, setPhoto] = useState<PhotoDetail | null>(null)
+  const [status, setStatus] = useState<Status>({ kind: 'loading' })
+  const [info, setInfo] = useState<SensorInfo | null>(null)
+  const [history, setHistory] = useState<History | null>(null)
+  const [view, setView] = useState<ViewState>({ zoom: 'fit', center: [0.5, 0.5] })
+  const [before, setBefore] = useState(false)
+  const [placeholder, setPlaceholder] = useState<string | null>(null)
+  const [timing, setTiming] = useState<{ stage?: number; frame?: number }>({})
+  const builtStage = useRef<RawStageOptions | null>(null)
+  const dirty = useRef(false)
+  const loadToken = useRef(0)
+  /** A save waiting for its debounce timer, and the save currently running. */
+  const pendingSave = useRef<(() => Promise<void>) | null>(null)
+  const saving = useRef<Promise<void> | null>(null)
+
+  const settings = history ? current(history) : DEFAULT_SETTINGS
+
+  // ---- engine lifetime
+  useEffect(() => {
+    let alive = true
+    const forced = new URLSearchParams(location.search).get('gpu')
+    DevelopEngine.create(forced === 'readback' || forced === 'canvas' ? forced : 'auto').then(
+      (e) => {
+        if (!alive) return e.destroy()
+        engineRef.current = e
+        stageRef.current?.prepend(e.canvas)
+        setEngineError('')
+      },
+      (e: Error) => setEngineError(`Graphics acceleration is not available: ${e.message}`),
+    )
+    return () => {
+      alive = false
+      const e = engineRef.current
+      engineRef.current = null
+      // Let a final save (flushed by the cleanup below) finish rendering its thumbnail first.
+      setTimeout(() => void (saving.current ?? Promise.resolve()).catch(() => {}).finally(() => e?.destroy()), 0)
+    }
+  }, [])
+
+  // ---- load a photo
+  useEffect(() => {
+    const token = ++loadToken.current
+    const stale = () => token !== loadToken.current
+    setStatus({ kind: 'loading' })
+    setHistory(null)
+    setInfo(null)
+    setView({ zoom: 'fit', center: [0.5, 0.5] })
+    builtStage.current = null
+    dirty.current = false
+    void thumbUrl(id).then((u) => !stale() && setPlaceholder(u))
+    ;(async () => {
+      const d = await catalog.getPhoto(id)
+      if (stale() || !d) return
+      setPhoto(d)
+      if (/^jpe?g$/i.test(d.fileType)) {
+        throw new Error('Editing JPEG files arrives in the next update. RAW files can be edited now.')
+      }
+      const file = await openPhotoFile(d.rootId, d.folderPath, d.fileName)
+      if (!file) throw new Error('This photo’s folder isn’t connected. Go to the Library and click “Reconnect”.')
+      decoder ??= new RawDecoder()
+      const r = await decoder.decode(file, true)
+      if (stale()) return
+      if (!r.sensor) throw new Error(r.sensorUnsupported ?? 'This RAW file can’t be developed yet.')
+      for (let t = 0; !engineRef.current && t < 100; t++) await new Promise((res) => setTimeout(res, 50))
+      const engine = engineRef.current
+      if (!engine) throw new Error('Graphics acceleration is not available.')
+      engine.loadSensor(r.sensor, r.info.flip)
+      const xyzToCam = r.sensor.xyzToCam as Mat3
+      const sensorInfo: SensorInfo = { asShotWb: r.sensor.wb, xyzToCam, asShot: multipliersToTemperature(r.sensor.wb, xyzToCam) }
+
+      const saved = await catalog.getEdit(id)
+      let h = startHistory(DEFAULT_SETTINGS)
+      if (saved) {
+        try {
+          const sh = JSON.parse(saved.history) as SavedHistory
+          const steps = sh.steps.map((st) => ({ label: st.label, settings: normalizeSettings(st.settings), at: 0 }))
+          h = steps.length ? { steps, index: Math.min(sh.index, steps.length - 1) } : startHistory(normalizeSettings(JSON.parse(saved.settings)))
+        } catch {
+          h = startHistory(normalizeSettings(JSON.parse(saved.settings)))
+        }
+      }
+      const opts = stageOptions(current(h), sensorInfo)
+      const ms = await engine.process(opts)
+      if (stale()) return
+      builtStage.current = opts
+      setTiming({ stage: ms })
+      setInfo(sensorInfo)
+      setHistory(h)
+      setStatus({ kind: 'ready' })
+    })().catch((e: Error) => !stale() && setStatus({ kind: 'error', message: e.message }))
+  }, [catalog, id])
+
+  // ---- re-run the raw stage when white balance / highlights / demosaic change (debounced)
+  useEffect(() => {
+    if (status.kind !== 'ready' || !info || !history) return
+    const opts = stageOptions(settings, info)
+    if (sameStage(builtStage.current, opts)) return
+    const t = setTimeout(() => {
+      const engine = engineRef.current
+      if (!engine) return
+      engine.process(opts).then(
+        (ms) => {
+          builtStage.current = opts
+          setTiming((x) => ({ ...x, stage: ms }))
+          requestRender()
+        },
+        (e: Error) => engineRef.current === engine && setStatus({ kind: 'error', message: e.message }),
+      )
+    }, 300)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings, info, status.kind])
+
+  // ---- drawing (coalesced so dragging never queues up frames)
+  const latest = useRef({ settings, info, view, before })
+  latest.current = { settings, info, view, before }
+  const rendering = useRef(false)
+  const pending = useRef(false)
+  const requestRender = useCallback(() => {
+    pending.current = true
+    if (rendering.current) return
+    rendering.current = true
+    void (async () => {
+      while (pending.current) {
+        pending.current = false
+        const engine = engineRef.current
+        const { settings: s, info: inf, view: v, before: b } = latest.current
+        if (!engine || !inf) break
+        const shown = b ? DEFAULT_SETTINGS : s
+        try {
+          const ms = await engine.render(displayUniforms(shown), b ? inf.asShotWb : multipliers(shown, inf), v)
+          setTiming((x) => ({ ...x, frame: ms }))
+        } catch (e) {
+          setStatus({ kind: 'error', message: e instanceof Error ? e.message : String(e) })
+        }
+      }
+      rendering.current = false
+    })()
+  }, [])
+
+  useEffect(() => {
+    if (status.kind === 'ready') requestRender()
+  }, [status.kind, settings, view, before, requestRender])
+
+  useEffect(() => {
+    const el = stageRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => requestRender())
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [requestRender])
+
+  // ---- saving (debounced): settings + history to the catalog, and a fresh thumbnail.
+  // A save still waiting when the photo changes or Develop closes is run immediately, so no edit is lost.
+  useEffect(() => {
+    if (!history || !info || !dirty.current) return
+    const photoId = id
+    const engine = engineRef.current
+    const run = async () => {
+      const s = current(history)
+      const saved: SavedHistory = { steps: history.steps.map(({ label, settings: st }) => ({ label, settings: st })), index: history.index }
+      await catalog.saveEdit(photoId, JSON.stringify(s), JSON.stringify(saved))
+      try {
+        if (engine) {
+          const img = await engine.renderImage(displayUniforms(s), multipliers(s, info), 512)
+          const c = new OffscreenCanvas(img.width, img.height)
+          c.getContext('2d')!.putImageData(img, 0, 0)
+          const blob = await c.convertToBlob({ type: 'image/jpeg', quality: 0.82 })
+          await saveThumb(photoId, new Uint8Array(await blob.arrayBuffer()))
+          forgetThumbUrl(photoId)
+        }
+      } catch {
+        // The settings are saved; only the thumbnail refresh failed (e.g. the GPU was reset).
+      }
+      onEdited()
+    }
+    pendingSave.current = run
+    const t = setTimeout(() => {
+      pendingSave.current = null
+      saving.current = run()
+    }, 800)
+    return () => clearTimeout(t)
+  }, [catalog, history, info, id, onEdited])
+
+  useEffect(
+    () => () => {
+      const run = pendingSave.current
+      pendingSave.current = null
+      if (run) saving.current = run()
+    },
+    [id],
+  )
+
+  const change = useCallback((label: string, next: DevelopSettings) => {
+    dirty.current = true
+    setHistory((h) => (h ? record(h, label, next) : h))
+  }, [])
+
+  const reset = () => change('Reset', DEFAULT_SETTINGS)
+
+  // ---- keyboard
+  const index = ids.indexOf(id)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isTextEntry(e.target) || isSliderKey(e)) return
+      const k = e.key.toLowerCase()
+      if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) {
+        e.preventDefault()
+        dirty.current = true
+        setHistory((h) => (h ? (k === 'y' || e.shiftKey ? redo(h) : undo(h)) : h))
+      } else if (k === '\\') {
+        setBefore((b) => !b)
+      } else if (k === 'z') {
+        setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center }))
+      } else if (k === 'arrowright' && index < ids.length - 1) {
+        onNavigate(ids[index + 1])
+      } else if (k === 'arrowleft' && index > 0) {
+        onNavigate(ids[index - 1])
+      } else if (k === 'escape') {
+        setView((v) => ({ ...v, zoom: 'fit' }))
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [ids, index, onNavigate])
+
+  // ---- click to zoom, drag to pan
+  const drag = useRef<{ x: number; y: number; center: [number, number]; moved: boolean } | null>(null)
+  function canvasPoint(e: React.PointerEvent) {
+    const engine = engineRef.current
+    if (!engine) return null
+    const r = engine.canvas.getBoundingClientRect()
+    const dpr = window.devicePixelRatio || 1
+    const l = engine.layout(view, engine.canvas.width, engine.canvas.height)
+    return { l, px: (e.clientX - r.left) * dpr, py: (e.clientY - r.top) * dpr }
+  }
+  function onPointerDown(e: React.PointerEvent) {
+    if (status.kind !== 'ready') return
+    ;(e.target as Element).setPointerCapture(e.pointerId)
+    drag.current = { x: e.clientX, y: e.clientY, center: view.center, moved: false }
+  }
+  function onPointerMove(e: React.PointerEvent) {
+    const d = drag.current
+    if (!d || view.zoom === 'fit') return
+    const p = canvasPoint(e)
+    if (!p) return
+    const dpr = window.devicePixelRatio || 1
+    const dx = ((e.clientX - d.x) * dpr) / p.l.w
+    const dy = ((e.clientY - d.y) * dpr) / p.l.h
+    if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 3) d.moved = true
+    setView({ zoom: view.zoom, center: [Math.min(1, Math.max(0, d.center[0] - dx)), Math.min(1, Math.max(0, d.center[1] - dy))] })
+  }
+  function onPointerUp(e: React.PointerEvent) {
+    const d = drag.current
+    drag.current = null
+    if (!d || d.moved) return
+    const p = canvasPoint(e)
+    if (!p) return
+    if (view.zoom === 'fit') {
+      const u = (p.px - p.l.x) / p.l.w
+      const v = (p.py - p.l.y) / p.l.h
+      if (u >= 0 && u <= 1 && v >= 0 && v <= 1) setView({ zoom: 1, center: [u, v] })
+    } else {
+      setView({ zoom: 'fit', center: view.center })
+    }
+  }
+
+  const strip = useMemo(() => ids.slice(Math.max(0, index - 40), index + 41), [ids, index])
+
+  return (
+    <div className="develop">
+      <aside className="dleft">
+        <h3 className="panel-title">History</h3>
+        <ol className="history" reversed>
+          {history &&
+            [...history.steps.keys()].reverse().map((i) => (
+              <li key={i}>
+                <button
+                  className={i === history.index ? 'on' : i > history.index ? 'undone' : ''}
+                  onClick={() => {
+                    dirty.current = true
+                    setHistory((h) => (h ? jump(h, i) : h))
+                  }}
+                >
+                  {history.steps[i].label}
+                </button>
+              </li>
+            ))}
+        </ol>
+        <div className="dleft-actions">
+          <button className="button small" disabled={!history || !canUndo(history)} onClick={() => { dirty.current = true; setHistory((h) => (h ? undo(h) : h)) }} title="Undo (Ctrl+Z)">Undo</button>
+          <button className="button small" disabled={!history || !canRedo(history)} onClick={() => { dirty.current = true; setHistory((h) => (h ? redo(h) : h)) }} title="Redo (Ctrl+Shift+Z)">Redo</button>
+          <button className="button small" disabled={status.kind !== 'ready'} onClick={reset}>Reset all</button>
+        </div>
+        {timing.stage !== undefined && (
+          <p className="muted small pad">
+            Processing {Math.round(timing.stage)} ms{timing.frame !== undefined ? ` · redraw ${timing.frame.toFixed(1)} ms` : ''}
+          </p>
+        )}
+      </aside>
+
+      <section className="dcenter">
+        <div className="dtoolbar">
+          <span className="dtitle">{photo ? photo.fileName : ''}</span>
+          <button className={`button small ${before ? 'on' : ''}`} onClick={() => setBefore(!before)} disabled={status.kind !== 'ready'} title="Before / after (\)">
+            {before ? 'Showing before' : 'Before / after'}
+          </button>
+          <button className="button small" onClick={() => setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center }))} disabled={status.kind !== 'ready'} title="Zoom (Z)">
+            {view.zoom === 'fit' ? 'Fit' : '100 %'}
+          </button>
+        </div>
+        <div
+          className={`dstage ${view.zoom === 'fit' ? 'fit' : 'zoomed'}`}
+          ref={stageRef}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+        >
+          {status.kind !== 'ready' && placeholder && <img className="dplaceholder" src={placeholder} alt="" />}
+          {status.kind === 'loading' && <div className="dmessage">Developing…</div>}
+          {status.kind === 'error' && <div className="dmessage error">{status.message}</div>}
+          {engineError && <div className="dmessage error">{engineError}</div>}
+          {before && <div className="dbadge">Before</div>}
+        </div>
+        <div className="filmstrip" role="listbox" aria-label="Filmstrip">
+          {strip.map((pid) => (
+            <button key={pid} className={`fs-cell ${pid === id ? 'on' : ''}`} onClick={() => onNavigate(pid)} aria-selected={pid === id}>
+              <Thumb id={pid} />
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <aside className="dright">
+        <BasicPanel settings={settings} asShot={info?.asShot ?? null} onChange={change} disabled={status.kind !== 'ready'} />
+      </aside>
+    </div>
+  )
+}
