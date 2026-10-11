@@ -19,6 +19,7 @@ import { BasicPanel } from './BasicPanel'
 import { Histogram } from './Histogram'
 import { ResizeHandle } from './ResizeHandle'
 import { WbLoupe } from './WbLoupe'
+import { sidecars } from '../sidecar/sync'
 import { canRedo, canUndo, current, jump, record, redo, startHistory, undo, type History } from './history'
 
 interface Props {
@@ -313,6 +314,7 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
       const s = current(history)
       const saved: SavedHistory = { steps: history.steps.map(({ label, settings: st }) => ({ label, settings: st })), index: history.index }
       await catalog.saveEdit(photoId, JSON.stringify(s), JSON.stringify(saved))
+      sidecars.schedule([photoId])
       try {
         if (engine) {
           const img = await engine.renderImage(displayUniforms(s), multipliers(s, info), 512)

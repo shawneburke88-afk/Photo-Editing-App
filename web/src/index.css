@@ -367,3 +367,8 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 @keyframes tip-in { from { opacity: 0; } to { opacity: 1; } }
 .hints-toggle { display: flex; gap: 6px; align-items: center; font-size: 0.78rem; color: var(--muted); cursor: pointer; }
 .dpanel-head { display: flex; justify-content: space-between; align-items: baseline; }
+
+/* sidecar permission / error banner (above the modules) */
+.sidecar-banner .banner { background: #1d2b3a; color: #d6e6f5; }
+.sidecar-banner .banner span { flex: 1; min-width: 240px; }
+.sidecar-banner .warn-banner { background: #3a2f17; color: #f5deb0; }

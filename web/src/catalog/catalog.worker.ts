@@ -5,7 +5,7 @@ import { exposeRpc } from '../lib/rpc'
 import type { DuplicateKey, FolderNode, LibraryRoot, NewPhoto, PhotoDetail, PhotoQuery, PhotoRow } from './types'
 
 const DB_FILE = '/lightbench-catalog.sqlite3'
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 4
 
 let db: Database | null = null
 let persistent = false
@@ -116,6 +116,10 @@ function migrate(d: Database) {
           created_at INTEGER NOT NULL
         );
       `)
+    }
+    if (version < 4) {
+      // When LightBench last wrote this photo's XMP sidecar (Unix seconds), to spot later outside changes.
+      d.exec('ALTER TABLE photos ADD COLUMN sidecar_written_at INTEGER')
     }
     d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     d.exec('COMMIT')
@@ -300,6 +304,31 @@ function deleteTarget(id: number) {
   conn().exec({ sql: 'DELETE FROM auto_targets WHERE id = ?', bind: [id] })
 }
 
+/** Everything needed to write a photo's sidecar. */
+function sidecarSource(photoId: number) {
+  const p = getPhoto(photoId)
+  if (!p) return null
+  const edit = getEdit(photoId)
+  // Lightroom-style sidecars (name.xmp) are shared by files with the same base name. Like Lightroom with
+  // RAW+JPEG pairs, the RAW owns it: a JPEG doesn't write one when a non-JPEG twin is in the library.
+  const dot = p.fileName.lastIndexOf('.')
+  const base = dot > 0 ? p.fileName.slice(0, dot) : p.fileName
+  const isJpeg = /^jpe?g$/i.test(p.fileType)
+  const twins = conn().selectObjects(
+    `SELECT file_type AS fileType FROM photos
+     WHERE folder_id = ?1 AND id <> ?2
+       AND lower(substr(file_name, 1, length(?3) + 1)) = lower(?3) || '.'
+       AND instr(substr(file_name, length(?3) + 2), '.') = 0`,
+    [p.folderId, photoId, base],
+  ) as unknown as { fileType: string }[]
+  const owner = !(isJpeg && twins.some((t) => !/^jpe?g$/i.test(t.fileType)))
+  return { photo: p, settings: edit?.settings ?? null, owner }
+}
+
+function markSidecarWritten(photoId: number, at: number) {
+  conn().exec({ sql: 'UPDATE photos SET sidecar_written_at = ? WHERE id = ?', bind: [at, photoId] })
+}
+
 function stats() {
   return {
     photos: Number(conn().selectValue('SELECT COUNT(*) FROM photos')),
@@ -326,6 +355,8 @@ const handlers = {
   listTargets,
   saveTarget,
   deleteTarget,
+  sidecarSource,
+  markSidecarWritten,
   stats,
 }
 

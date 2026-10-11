@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { DevelopView } from './develop/DevelopView'
 import { isTextEntry } from './lib/keys'
 import { LibraryView } from './library/LibraryView'
+import { SidecarBanner } from './sidecar/SidecarBanner'
+import { sidecars } from './sidecar/sync'
 import { SystemCheck } from './syscheck/SystemCheck'
 
 type Module = 'library' | 'develop' | 'export' | 'syscheck'
@@ -26,6 +28,13 @@ export default function App() {
     [go],
   )
   const onEdited = useCallback(() => setLibraryVersion((v) => v + 1), [])
+
+  // Write any queued sidecars before the tab closes.
+  useEffect(() => {
+    const onHide = () => void sidecars.flush()
+    window.addEventListener('pagehide', onHide)
+    return () => window.removeEventListener('pagehide', onHide)
+  }, [])
 
   // G returns to the Library grid from Develop, like Lightroom.
   useEffect(() => {
@@ -71,6 +80,7 @@ export default function App() {
           ))}
         </nav>
       </header>
+      <SidecarBanner />
       <main className={module === 'syscheck' ? 'main' : 'main full'}>
         <div className="module-pane" hidden={module !== 'library'}>
           <LibraryView active={module === 'library'} externalVersion={libraryVersion} onFocusChange={onFocusChange} onDevelop={openDevelop} />

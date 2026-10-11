@@ -6,6 +6,7 @@ import type { PhotoMeta } from '../catalog/types'
 import { getDirAt, resolveRoot } from '../platform/roots'
 import { dateFolder, joinPath, numberedName, renamedFile, type RenameTemplate } from './plan'
 import type { ScannedFile } from './scan'
+import { readXmp, sidecarName } from '../sidecar/xmp'
 
 export interface ImportItem {
   file: ScannedFile
@@ -82,6 +83,33 @@ async function copyInto(dir: FileSystemDirectoryHandle, name: string, file: File
   throw new Error(`Too many files named like ${name}`)
 }
 
+/**
+ * Finds an existing sidecar for a photo: Lightroom-style `name.xmp` (what LightBench writes), or darktable's
+ * `name.ext.xmp`. Returns its file name and text, or null.
+ */
+async function findSidecar(dir: FileSystemDirectoryHandle, photoName: string): Promise<{ name: string; text: string } | null> {
+  for (const name of [sidecarName(photoName), `${photoName}.xmp`]) {
+    try {
+      return { name, text: await (await (await dir.getFileHandle(name)).getFile()).text() }
+    } catch {
+      // not there; try the next naming style
+    }
+  }
+  return null
+}
+
+/** Applies what a sidecar says (ratings, flag, label, LightBench edits) to a newly imported photo. */
+async function applySidecar(catalog: Catalog, id: number, text: string) {
+  const r = readXmp(text)
+  if (r.rating !== undefined) await catalog.setRating([id], r.rating)
+  if (r.flag !== undefined) await catalog.setFlag([id], r.flag)
+  if (r.color !== undefined) await catalog.setColor([id], r.color)
+  if (r.develop) {
+    const history = JSON.stringify({ steps: [{ label: 'From sidecar', settings: JSON.parse(r.develop) }], index: 0 })
+    await catalog.saveEdit(id, r.develop, history)
+  }
+}
+
 export async function runImport(
   catalog: Catalog,
   items: ImportItem[],
@@ -111,6 +139,9 @@ export async function runImport(
     try {
       let folderPath: string
       let fileName: string
+      // An existing sidecar (from Lightroom, darktable, or LightBench itself) carries ratings, labels and edits.
+      const sourceDir = await getDirAt(opts.source, item.file.dir).catch(() => null)
+      const sidecar = sourceDir ? await findSidecar(sourceDir, item.file.name) : null
       if (opts.mode === 'copy') {
         const folder = dateFolder(photoTime(item.meta))
         const dir = await getDirAt(target, folder, true)
@@ -118,6 +149,17 @@ export async function runImport(
         const wanted = renamedFile(opts.rename, item.file.name, item.meta.capturedAt || item.meta.fileModified, index)
         fileName = (await copyInto(dir, wanted, file)).name
         if (backupDir) await copyInto(backupDir, item.file.name, file)
+        if (sidecar) {
+          // The sidecar travels with the photo, renamed to match it. An existing one there is kept.
+          const name = sidecarName(fileName)
+          const exists = await dir.getFileHandle(name).then(() => true, () => false)
+          if (!exists) {
+            const w = await (await dir.getFileHandle(name, { create: true })).createWritable()
+            await w.write(sidecar.text)
+            await w.close()
+          }
+          if (backupDir) await copyInto(backupDir, sidecar.name, new File([sidecar.text], sidecar.name))
+        }
         folderPath = joinPath(subPath, folder)
       } else {
         folderPath = joinPath(subPath, item.file.dir)
@@ -131,6 +173,7 @@ export async function runImport(
       } else {
         progress.imported++
         if (item.thumb) await saveThumb(id, item.thumb)
+        if (sidecar) await applySidecar(catalog, id, sidecar.text)
       }
     } catch (err) {
       progress.failed.push({ name: item.file.name, error: err instanceof Error ? err.message : String(err) })

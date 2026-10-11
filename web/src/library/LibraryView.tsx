@@ -6,6 +6,7 @@ import type { ColorLabel, Flag, FolderNode, LibraryRoot, PhotoDetail, PhotoQuery
 import { ImportDialog } from '../import/ImportDialog'
 import { supportsFolderAccess } from '../platform/folders'
 import { getRootHandle } from '../platform/roots'
+import { sidecars } from '../sidecar/sync'
 import { FilterBar } from './FilterBar'
 import { FolderPanel, type FolderSelection } from './FolderPanel'
 import { Grid } from './Grid'
@@ -115,6 +116,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop 
       if (field === 'rating') await catalog.setRating(ids, value)
       else if (field === 'flag') await catalog.setFlag(ids, value)
       else await catalog.setColor(ids, value)
+      sidecars.schedule(ids)
       // Re-run the query if a filter might now hide or show these photos.
       if (filters.minRating || filters.flag || filters.color) refresh()
     },
