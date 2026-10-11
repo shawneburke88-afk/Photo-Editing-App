@@ -41,9 +41,10 @@ describe('solveAuto', () => {
   it('brings a dark photo to the Natural target', async () => {
     const target = BUILT_IN_TARGETS.find((t) => t.id === 'natural')!
     const r = await solveAuto(DEFAULT_SETTINGS, target, fakeMeasure(0.12))
-    expect(r.final.median).toBeCloseTo(target.median, 1)
+    expect(Math.abs(r.final.median - target.median)).toBeLessThan(0.05)
     expect(r.settings.exposure).toBeGreaterThan(1)
-    expect(Math.abs(r.final.p75 - r.final.p25 - target.spread)).toBeLessThan(0.03)
+    // Built-in looks apply a fixed contrast instead of forcing a histogram spread.
+    expect(r.settings.contrast).toBe(target.contrast)
     expect(r.measurements).toBeLessThan(150)
   })
   it('makes a high-key photo brighter than a low-key one', async () => {
@@ -51,7 +52,7 @@ describe('solveAuto', () => {
     const lk = await solveAuto(DEFAULT_SETTINGS, BUILT_IN_TARGETS.find((t) => t.id === 'low-key')!, fakeMeasure(0.3))
     expect(hk.settings.exposure).toBeGreaterThan(lk.settings.exposure)
   })
-  it('raises vibrance only when the target asks for colour', async () => {
+  it('raises vibrance only when the look asks for colour', async () => {
     const natural = await solveAuto(DEFAULT_SETTINGS, BUILT_IN_TARGETS.find((t) => t.id === 'natural')!, fakeMeasure(0.3))
     const vivid = await solveAuto(DEFAULT_SETTINGS, BUILT_IN_TARGETS.find((t) => t.id === 'vivid')!, fakeMeasure(0.3))
     expect(natural.settings.vibrance).toBe(0)
@@ -62,6 +63,16 @@ describe('solveAuto', () => {
     const target = targetFromMetrics('ref', 'Reference', ref)
     const r = await solveAuto(DEFAULT_SETTINGS, target, fakeMeasure(0.3))
     expect(r.settings.exposure).toBeCloseTo(1, 0)
-    expect(r.settings.contrast).toBeGreaterThan(15)
+    // Contrast rises until the spread is within the reference's acceptable range (±0.03).
+    expect(r.settings.contrast).toBeGreaterThan(5)
+    expect(Math.abs(r.final.p75 - r.final.p25 - (ref.p75 - ref.p25))).toBeLessThanOrEqual(0.031)
+  })
+  it('leaves a slider alone when it cannot reach the target (hazy photo without deep blacks)', async () => {
+    const hazy = async (st: DevelopSettings): Promise<Metrics> => {
+      const m = await fakeMeasure(0.4)(st)
+      return { ...m, p005: 0.2 } // Blacks has no effect: nothing dark enough to move
+    }
+    const r = await solveAuto(DEFAULT_SETTINGS, BUILT_IN_TARGETS.find((t) => t.id === 'natural')!, hazy)
+    expect(r.settings.blacks).toBe(0)
   })
 })
