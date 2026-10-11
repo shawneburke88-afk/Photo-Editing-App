@@ -20,11 +20,13 @@ interface Props {
   active: boolean
   /** Bumped by other modules when photos change (e.g. edits saved). */
   externalVersion: number
-  onFocusChange: (id: number | null, ids: number[]) => void
+  /** Focused photo, all photos shown, and the photos an action applies to (selection, or the focused one). */
+  onFocusChange: (id: number | null, ids: number[], targets: number[]) => void
   onDevelop: (id: number, ids: number[]) => void
+  onExport: (ids: number[]) => void
 }
 
-export function LibraryView({ active, externalVersion, onFocusChange, onDevelop }: Props) {
+export function LibraryView({ active, externalVersion, onFocusChange, onDevelop, onExport }: Props) {
   const catalog = getCatalog()
   const [status, setStatus] = useState<'opening' | 'ready' | 'error'>('opening')
   const [openError, setOpenError] = useState('')
@@ -99,11 +101,11 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop 
     }
   }, [catalog, focus, version, externalVersion])
 
-  useEffect(() => {
-    onFocusChange(focus, rows.map((r) => r.id))
-  }, [focus, rows, onFocusChange])
-
   const targets = useCallback(() => (selected.size ? [...selected] : focus !== null ? [focus] : []), [selected, focus])
+
+  useEffect(() => {
+    onFocusChange(focus, rows.map((r) => r.id), targets())
+  }, [focus, rows, onFocusChange, targets])
 
   /** Applies a rating/flag/label to the target photos, updating the grid immediately. */
   const apply = useCallback(
@@ -178,6 +180,10 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop 
         if (k === 'a') {
           setSelected(new Set(rows.map((r) => r.id)))
           e.preventDefault()
+        } else if (k === 'e' && e.shiftKey && targets().length) {
+          // Lightroom: Ctrl+Shift+E opens Export.
+          onExport(targets())
+          e.preventDefault()
         }
         return
       }
@@ -227,6 +233,9 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop 
       <aside className="left">
         <button className="button primary import-btn" onClick={openImport} disabled={!supportsFolderAccess()}>
           Import…
+        </button>
+        <button className="button export-btn" onClick={() => onExport(targets())} disabled={!targets().length} title="Export the selected photos (Ctrl+Shift+E)">
+          Export…
         </button>
         <FolderPanel roots={roots} folders={folders} total={total} selection={folder} disconnected={disconnected} onSelect={setFolder} />
       </aside>

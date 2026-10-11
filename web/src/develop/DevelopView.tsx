@@ -3,10 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getCatalog } from '../catalog/client'
 import { forgetThumbUrl, loadThumb, saveThumb, thumbUrl } from '../catalog/thumbs'
 import type { PhotoDetail } from '../catalog/types'
-import { invert, mul, REC2020_TO_XYZ, type Mat3, type Vec3 } from '../engine/color/matrix'
-import { multipliersToTemperature, temperatureToMultipliers } from '../engine/color/temperature'
+import { multipliersToTemperature } from '../engine/color/temperature'
 import { BUILT_IN_TARGETS, metricsFromStats, solveAuto, statsFromPixels, targetFromMetrics, type AutoTarget } from '../engine/develop/auto'
-import { defaultsFor, displayUniforms, normalizeSettings, type DevelopSettings, type SourceKind } from '../engine/develop/settings'
+import { defaultsFor, displayUniforms, normalizeSettings, type DevelopSettings } from '../engine/develop/settings'
 import { DevelopEngine, type ImageStats, type RawStageOptions, type ViewState } from '../engine/gpu/develop-engine'
 import { RawDecoder } from '../engine/raw/decoder'
 import { Thumb } from '../library/Thumb'
@@ -19,6 +18,7 @@ import { BasicPanel } from './BasicPanel'
 import { Histogram } from './Histogram'
 import { ResizeHandle } from './ResizeHandle'
 import { WbLoupe } from './WbLoupe'
+import { loadIntoEngine, multipliers, stageOptions, type SensorInfo } from './source'
 import { sidecars } from '../sidecar/sync'
 import { canRedo, canUndo, current, jump, record, redo, startHistory, undo, type History } from './history'
 
@@ -27,36 +27,12 @@ interface Props {
   id: number
   onNavigate: (id: number) => void
   onEdited: () => void
-}
-
-interface SensorInfo {
-  kind: SourceKind
-  asShotWb: Vec3
-  xyzToCam: Mat3
-  asShot: { temperature: number; tint: number }
-  /** Input colour profile of a JPEG, and a note when it had to be assumed. */
-  profile?: { name: string; note?: string }
+  onExport: (ids: number[]) => void
 }
 
 type Status = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string }
 
 let decoder: RawDecoder | null = null
-
-function multipliers(s: DevelopSettings, info: SensorInfo): Vec3 {
-  return s.whiteBalance.mode === 'as-shot'
-    ? info.asShotWb
-    : temperatureToMultipliers(s.whiteBalance.temperature, s.whiteBalance.tint, info.xyzToCam)
-}
-
-function stageOptions(s: DevelopSettings, info: SensorInfo): RawStageOptions {
-  return {
-    // A JPEG's white balance is applied entirely in the develop pass, so it never needs reprocessing.
-    wb: info.kind === 'rgb' ? [1, 1, 1] : multipliers(s, info),
-    highlightMode: s.advanced.highlightReconstruction ? 'opposed' : 'clip',
-    highlightClip: s.advanced.highlightClip,
-    demosaic: s.advanced.demosaic,
-  }
-}
 
 const sameStage = (a: RawStageOptions | null, b: RawStageOptions) =>
   !!a && a.highlightMode === b.highlightMode && a.highlightClip === b.highlightClip && a.demosaic === b.demosaic &&
@@ -68,7 +44,7 @@ interface SavedHistory {
   index: number
 }
 
-export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
+export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) {
   const catalog = getCatalog()
   const stageRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<DevelopEngine | null>(null)
@@ -178,25 +154,10 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
       decoder ??= new RawDecoder()
       const r = await decoder.decode(file, true)
       if (stale()) return
-      if (!r.sensor && !r.rgb) throw new Error(r.sensorUnsupported ?? 'This RAW file can’t be developed yet.')
       for (let t = 0; !engineRef.current && t < 100; t++) await new Promise((res) => setTimeout(res, 50))
       const engine = engineRef.current
       if (!engine) throw new Error('Graphics acceleration is not available.')
-      let sensorInfo: SensorInfo
-      if (r.rgb) {
-        // JPEG: the engine inverts the JPEG defaults' tone mapping so the unedited photo looks as shot.
-        const du = displayUniforms(defaultsFor('rgb'))
-        engine.loadRgb(r.rgb, du.sigmoid, du.exposureGain)
-        // White balance works on the file's linear colours: "camera" RGB is the profile's RGB.
-        const xyzToCam = invert(mul(REC2020_TO_XYZ, r.rgb.toRec2020 as Mat3))
-        const wb: Vec3 = [1, 1, 1]
-        sensorInfo = { kind: 'rgb', asShotWb: wb, xyzToCam, asShot: multipliersToTemperature(wb, xyzToCam), profile: { name: r.rgb.profileName, note: r.rgb.profileNote } }
-      } else {
-        const sensor = r.sensor!
-        engine.loadSensor(sensor, r.info.flip)
-        const xyzToCam = sensor.xyzToCam as Mat3
-        sensorInfo = { kind: 'raw', asShotWb: sensor.wb, xyzToCam, asShot: multipliersToTemperature(sensor.wb, xyzToCam) }
-      }
+      const sensorInfo = loadIntoEngine(engine, r)
       const kind = sensorInfo.kind
 
       const saved = await catalog.getEdit(id)
@@ -430,7 +391,10 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
     const onKey = (e: KeyboardEvent) => {
       if (isTextEntry(e.target) || isSliderKey(e)) return
       const k = e.key.toLowerCase()
-      if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && k === 'e') {
+        e.preventDefault()
+        onExport([id])
+      } else if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) {
         e.preventDefault()
         dirty.current = true
         setHistory((h) => (h ? (k === 'y' || e.shiftKey ? redo(h) : undo(h)) : h))
@@ -461,7 +425,7 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [ids, index, onNavigate])
+  }, [ids, id, index, onNavigate, onExport])
 
   // ---- click to zoom, drag to pan
   const drag = useRef<{ x: number; y: number; center: [number, number]; moved: boolean } | null>(null)
@@ -626,6 +590,7 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
           <button className="button small" onClick={() => setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center }))} disabled={status.kind !== 'ready'} title="Zoom (Z)">
             {view.zoom === 'fit' ? 'Fit' : '100 %'}
           </button>
+          <button className="button small" onClick={() => onExport([id])} title="Export this photo (Ctrl+Shift+E)">Export…</button>
         </div>
         <div
           className={`dstage ${view.zoom === 'fit' ? 'fit' : 'zoomed'} ${wbPick ? 'wb-picking' : ''}`}

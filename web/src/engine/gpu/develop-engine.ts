@@ -14,6 +14,7 @@ import displayWgsl from './develop-display.wgsl?raw'
 import mipWgsl from './mip.wgsl?raw'
 import rawWgsl from './raw-pipeline.wgsl?raw'
 import rgbInputWgsl from './rgb-input.wgsl?raw'
+import exportWgsl from './export.wgsl?raw'
 import statsWgsl from './stats.wgsl?raw'
 
 export interface RawStageOptions {
@@ -33,6 +34,26 @@ export interface ViewState {
 }
 
 export type PresentMode = 'canvas' | 'readback'
+
+/** How `renderOutput` produces an exported image. */
+export interface OutputOptions {
+  width: number
+  height: number
+  /** Row-major: linear Rec.2020 → linear output RGB. */
+  toOutput: Mat3
+  /** Output tone curve: the sRGB curve (sRGB, Display P3) or a pure gamma (Adobe RGB 563/256). */
+  trc: { type: 'srgb' } | { type: 'gamma'; gamma: number }
+  bits: 8 | 16
+  /** Dither amplitude in output steps (0 = off). */
+  dither: number
+}
+
+export interface OutputImage {
+  width: number
+  height: number
+  /** RGBA, 8-bit (Uint8ClampedArray) or 16-bit (Uint16Array). Alpha is opaque. */
+  rgba: Uint8ClampedArray<ArrayBuffer> | Uint16Array<ArrayBuffer>
+}
 
 /**
  * Histogram and clipping statistics of a developed rendering. Like darktable's histogram, the bins
@@ -95,6 +116,7 @@ export class DevelopEngine {
   /** Set for display-referred photos (JPEG): the uploaded pixels and how to bring them into the pipeline. */
   private rgbInput: { texture: GPUTexture; lut: Float32Array<ArrayBuffer>; toRec2020: Mat3; curve: SigmoidCurve; gain: number } | null = null
   private rgbPipe: GPUComputePipeline | null = null
+  private exportPipes: { resampleX: GPUComputePipeline; resampleY: GPUComputePipeline; encodeOnly: GPUComputePipeline } | null = null
   private rawBuf: GPUBuffer | null = null
   private scene: GPUTexture | null = null
   private flip = 0
@@ -479,6 +501,110 @@ export class DevelopEngine {
     return performance.now() - t0
   }
 
+  /**
+   * Renders the photo for export: develops it at full resolution, resamples it to `width`×`height` with
+   * Lanczos3 in linear light, converts it to the output colour space and quantises it (export.wgsl).
+   */
+  async renderOutput(u: DisplayUniforms, wb: Vec3, o: OutputOptions): Promise<OutputImage> {
+    this.checkAlive()
+    if (!this.scene) throw new Error('No photo processed')
+    const { device } = this
+    const [iw, ih] = this.imageSize
+    const max = device.limits.maxTextureDimension2D
+    if (o.width > max || o.height > max) throw new Error(`The export size is larger than this GPU allows (${max} px)`)
+    const pipes = (this.exportPipes ??= this.createExportPipes())
+
+    const dev = device.createTexture({ size: [iw, ih], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING })
+    this.writeView(u, wb, { x: 0, y: 0, w: iw, h: ih }, 0, NO_INDICATORS, 2)
+    const enc = device.createCommandEncoder()
+    const rp = enc.beginRenderPass({ colorAttachments: [{ view: dev.createView(), loadOp: 'clear', storeOp: 'store' }] })
+    rp.setPipeline(this.statsRenderPipe)
+    rp.setBindGroup(0, this.displayBindGroup(this.statsRenderPipe))
+    rp.draw(3)
+    rp.end()
+
+    const m = o.toOutput
+    const params = new ArrayBuffer(96)
+    const f = new Float32Array(params)
+    const ui = new Uint32Array(params)
+    f.set([m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0], 0)
+    ui.set([iw, ih, o.width, o.height], 12)
+    f.set([o.width / iw, o.height / ih], 16)
+    ui[18] = o.trc.type === 'gamma' ? 1 : 0
+    f[19] = o.trc.type === 'gamma' ? o.trc.gamma : 2.4
+    f[20] = o.bits === 16 ? 65535 : 255
+    f[21] = o.dither
+    const paramBuf = device.createBuffer({ size: params.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    device.queue.writeBuffer(paramBuf, 0, params)
+    const words = o.width * o.height * (o.bits === 16 ? 2 : 1)
+    const outBuf = device.createBuffer({ size: words * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC })
+    const read = device.createBuffer({ size: words * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
+    const dispatch = (pipe: GPUComputePipeline, entries: GPUBindGroupEntry[], x: number, y: number) => {
+      const pass = enc.beginComputePass()
+      pass.setPipeline(pipe)
+      pass.setBindGroup(0, device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries }))
+      pass.dispatchWorkgroups(Math.ceil(x / 16), Math.ceil(y / 16))
+      pass.end()
+    }
+    let mid: GPUTexture | null = null
+    if (o.width === iw && o.height === ih) {
+      dispatch(pipes.encodeOnly, [
+        { binding: 0, resource: { buffer: paramBuf } },
+        { binding: 1, resource: dev.createView() },
+        { binding: 4, resource: { buffer: outBuf } },
+      ], o.width, o.height)
+    } else {
+      mid = device.createTexture({ size: [o.width, ih], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING })
+      dispatch(pipes.resampleX, [
+        { binding: 0, resource: { buffer: paramBuf } },
+        { binding: 1, resource: dev.createView() },
+        { binding: 2, resource: mid.createView() },
+      ], o.width, ih)
+      dispatch(pipes.resampleY, [
+        { binding: 0, resource: { buffer: paramBuf } },
+        { binding: 3, resource: mid.createView() },
+        { binding: 4, resource: { buffer: outBuf } },
+      ], o.width, o.height)
+    }
+    enc.copyBufferToBuffer(outBuf, 0, read, 0, words * 4)
+    device.queue.submit([enc.finish()])
+    try {
+      await read.mapAsync(GPUMapMode.READ)
+      const data = read.getMappedRange().slice(0)
+      return {
+        width: o.width,
+        height: o.height,
+        rgba: o.bits === 16 ? new Uint16Array(data) : new Uint8ClampedArray(data),
+      }
+    } finally {
+      if (read.mapState === 'mapped') read.unmap()
+      read.destroy()
+      outBuf.destroy()
+      paramBuf.destroy()
+      mid?.destroy()
+      dev.destroy()
+    }
+  }
+
+  private createExportPipes() {
+    const { device } = this
+    const module = device.createShaderModule({ code: exportWgsl })
+    const C = GPUShaderStage.COMPUTE
+    const uniform: GPUBindGroupLayoutEntry = { binding: 0, visibility: C, buffer: { type: 'uniform' } }
+    const tex = (binding: number): GPUBindGroupLayoutEntry => ({ binding, visibility: C, texture: { sampleType: 'unfilterable-float' } })
+    const out: GPUBindGroupLayoutEntry = { binding: 4, visibility: C, buffer: { type: 'storage' } }
+    const make = (entryPoint: string, entries: GPUBindGroupLayoutEntry[]) =>
+      device.createComputePipeline({
+        layout: device.createPipelineLayout({ bindGroupLayouts: [device.createBindGroupLayout({ entries })] }),
+        compute: { module, entryPoint },
+      })
+    return {
+      resampleX: make('resampleX', [uniform, tex(1), { binding: 2, visibility: C, storageTexture: { access: 'write-only', format: 'rgba32float' } }]),
+      resampleY: make('resampleYEncode', [uniform, tex(3), out]),
+      encodeOnly: make('encodeOnly', [uniform, tex(1), out]),
+    }
+  }
+
   /** Rec.2020 matrix that turns the built white balance into `wb` (for instant previews while dragging). */
   private wbFix(wb: Vec3): Mat3 {
     const b = this.builtWb
@@ -489,7 +615,8 @@ export class DevelopEngine {
     return mul(mul(m, d), invert(m))
   }
 
-  private writeView(u: DisplayUniforms, wb: Vec3, rect: { x: number; y: number; w: number; h: number }, lod: number, ind: Indicators = NO_INDICATORS, statsPass = false) {
+  private writeView(u: DisplayUniforms, wb: Vec3, rect: { x: number; y: number; w: number; h: number }, lod: number, ind: Indicators = NO_INDICATORS, pass: 0 | 1 | 2 = 0) {
+    const statsPass = pass === 1
     const v = new ArrayBuffer(VIEW_SIZE)
     const f = new Float32Array(v)
     const ui = new Uint32Array(v)
@@ -516,7 +643,7 @@ export class DevelopEngine {
     ui[61] = s.width
     ui[62] = s.height
     ui[63] = s.cfa.reduce((acc, c, i) => acc | (c << (i * 2)), 0)
-    ui[64] = statsPass ? 1 : 0
+    ui[64] = pass
     this.device.queue.writeBuffer(this.viewBuf, 0, v)
   }
 
@@ -684,7 +811,7 @@ export class DevelopEngine {
     const scale = Math.min(1, maxSize / Math.max(iw, ih))
     const w = Math.max(1, Math.round(iw * scale))
     const h = Math.max(1, Math.round(ih * scale))
-    this.writeView(u, wb, { x: 0, y: 0, w, h }, Math.max(0, Math.log2(1 / scale)), indicators, true)
+    this.writeView(u, wb, { x: 0, y: 0, w, h }, Math.max(0, Math.log2(1 / scale)), indicators, 1)
     const target = device.createTexture({ size: [w, h], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING })
     const rp = enc.beginRenderPass({ colorAttachments: [{ view: target.createView(), loadOp: 'clear', storeOp: 'store' }] })
     rp.setPipeline(this.statsRenderPipe)

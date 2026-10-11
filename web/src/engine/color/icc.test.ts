@@ -42,3 +42,11 @@ describe('ICC profiles', () => {
     expect(chooseInputProfile(new Uint8Array(10), null).note).toBeTruthy()
   })
 })
+
+describe('output spaces', () => {
+  it('derives colorants from primaries consistently with the standard sRGB profile', async () => {
+    const { colorantsFromPrimaries } = await import('./icc')
+    const m = colorantsFromPrimaries([0.64, 0.33], [0.3, 0.6], [0.15, 0.06], [0.3127, 0.329])
+    m.forEach((v, i) => expect(v).toBeCloseTo(SRGB_PROFILE.toXyzD50[i], 3))
+  })
+})

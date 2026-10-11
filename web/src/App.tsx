@@ -5,12 +5,14 @@ import { LibraryView } from './library/LibraryView'
 import { SidecarBanner } from './sidecar/SidecarBanner'
 import { sidecars } from './sidecar/sync'
 import { SystemCheck } from './syscheck/SystemCheck'
+import { ExportDialog } from './export/ExportDialog'
 
 type Module = 'library' | 'develop' | 'export' | 'syscheck'
 
 export default function App() {
   const [module, setModule] = useState<Module>(() => (location.hash === '#syscheck' ? 'syscheck' : 'library'))
-  const [focus, setFocus] = useState<{ id: number | null; ids: number[] }>({ id: null, ids: [] })
+  const [focus, setFocus] = useState<{ id: number | null; ids: number[]; targets: number[] }>({ id: null, ids: [], targets: [] })
+  const [exporting, setExporting] = useState<number[] | null>(null)
   const [developing, setDeveloping] = useState<{ id: number; ids: number[] } | null>(null)
   const [libraryVersion, setLibraryVersion] = useState(0)
 
@@ -19,7 +21,7 @@ export default function App() {
     history.replaceState(null, '', m === 'library' ? location.pathname : `#${m}`)
   }, [])
 
-  const onFocusChange = useCallback((id: number | null, ids: number[]) => setFocus({ id, ids }), [])
+  const onFocusChange = useCallback((id: number | null, ids: number[], targets: number[]) => setFocus({ id, ids, targets }), [])
   const openDevelop = useCallback(
     (id: number, ids: number[]) => {
       setDeveloping({ id, ids })
@@ -48,7 +50,7 @@ export default function App() {
   const modules: { id: Module; name: string; enabled: boolean; hint?: string }[] = [
     { id: 'library', name: 'Library', enabled: true },
     { id: 'develop', name: 'Develop', enabled: focus.id !== null || developing !== null, hint: 'Select a photo first' },
-    { id: 'export', name: 'Export', enabled: false, hint: 'Coming in the next update' },
+    { id: 'export', name: 'Export', enabled: focus.targets.length > 0 || developing !== null, hint: 'Select photos first' },
     { id: 'syscheck', name: 'System Check', enabled: true },
   ]
 
@@ -71,6 +73,11 @@ export default function App() {
               title={m.enabled ? undefined : m.hint}
               aria-current={module === m.id ? 'page' : undefined}
               onClick={() => {
+                if (m.id === 'export') {
+                  // Export opens a dialog over the current module, like Lightroom.
+                  setExporting(module === 'develop' && developing ? [developing.id] : focus.targets)
+                  return
+                }
                 if (m.id === 'develop' && focus.id !== null && (!developing || module !== 'develop')) setDeveloping({ id: focus.id, ids: focus.ids })
                 go(m.id)
               }}
@@ -83,7 +90,7 @@ export default function App() {
       <SidecarBanner />
       <main className={module === 'syscheck' ? 'main' : 'main full'}>
         <div className="module-pane" hidden={module !== 'library'}>
-          <LibraryView active={module === 'library'} externalVersion={libraryVersion} onFocusChange={onFocusChange} onDevelop={openDevelop} />
+          <LibraryView active={module === 'library' && !exporting} externalVersion={libraryVersion} onFocusChange={onFocusChange} onDevelop={openDevelop} onExport={setExporting} />
         </div>
         {module === 'develop' && developing && (
           <DevelopView
@@ -91,10 +98,12 @@ export default function App() {
             id={developing.id}
             onNavigate={(id) => setDeveloping((d) => (d ? { ...d, id } : d))}
             onEdited={onEdited}
+            onExport={setExporting}
           />
         )}
         {module === 'syscheck' && <SystemCheck />}
       </main>
+      {exporting && <ExportDialog ids={exporting} onClose={() => setExporting(null)} />}
     </div>
   )
 }

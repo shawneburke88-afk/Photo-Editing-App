@@ -314,3 +314,44 @@ export function buildIcc(p: MatrixProfile, copyright = 'No copyright, use freely
   for (const [data, at] of placed) out.set(data, at)
   return out
 }
+
+// ---- standard output spaces
+
+/** RGB → XYZ (D50, Bradford-adapted) from chromaticities, as ICC profiles store colorants. */
+export function colorantsFromPrimaries(r: [number, number], g: [number, number], b: [number, number], white: [number, number]): Mat3 {
+  const xyz = ([x, y]: [number, number]) => [x / y, 1, (1 - x - y) / y]
+  const [R, G, B, W] = [xyz(r), xyz(g), xyz(b), xyz(white)]
+  const P: Mat3 = [R[0], G[0], B[0], R[1], G[1], B[1], R[2], G[2], B[2]]
+  const Pi = invert(P)
+  const S = [0, 1, 2].map((i) => Pi[3 * i] * W[0] + Pi[3 * i + 1] * W[1] + Pi[3 * i + 2] * W[2])
+  const M: Mat3 = [P[0] * S[0], P[1] * S[1], P[2] * S[2], P[3] * S[0], P[4] * S[1], P[5] * S[2], P[6] * S[0], P[7] * S[1], P[8] * S[2]]
+  return mul(invert(BRADFORD_D50_TO_D65), M)
+}
+
+const D65: [number, number] = [0.3127, 0.329]
+
+/** Display P3 (DCI-P3 primaries, D65, sRGB tone curve), as used by Apple and modern wide-gamut screens. */
+export const DISPLAY_P3_PROFILE: MatrixProfile = {
+  name: 'Display P3',
+  toXyzD50: colorantsFromPrimaries([0.68, 0.32], [0.265, 0.69], [0.15, 0.06], D65),
+  trc: [SRGB_TRC, SRGB_TRC, SRGB_TRC],
+}
+
+export type OutputSpace = 'srgb' | 'display-p3' | 'adobe-rgb'
+
+export const OUTPUT_SPACES: Record<OutputSpace, { profile: MatrixProfile; label: string; cicp?: [number, number] }> = {
+  srgb: { profile: SRGB_PROFILE, label: 'sRGB (web, most screens)', cicp: [1, 13] },
+  'display-p3': { profile: DISPLAY_P3_PROFILE, label: 'Display P3 (wide gamut screens)', cicp: [12, 13] },
+  'adobe-rgb': { profile: ADOBE_RGB_PROFILE, label: 'Adobe RGB (print workflows)' },
+}
+
+/** Matrix from linear Rec.2020 (the working space) to a profile's linear RGB, for export. */
+export function rec2020ToProfile(p: MatrixProfile): Mat3 {
+  return invert(profileToRec2020(p))
+}
+
+/** The output tone curve of a profile, as the export shader encodes it. */
+export function outputTrc(p: MatrixProfile): { type: 'srgb' } | { type: 'gamma'; gamma: number } {
+  const c = p.trc[0]
+  return c.type === 'gamma' ? { type: 'gamma', gamma: c.gamma } : { type: 'srgb' }
+}
