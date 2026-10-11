@@ -176,3 +176,7 @@ Every group follows the same rules:
 | Subfolders in the grid? | Included, with a **Subfolders** toggle; on by default. |
 | Thumbnails and previews? | The camera's embedded JPEG first (darktable's default for unedited images); the RAW is rendered in Develop. The Loupe marks these with a **Camera preview** badge. |
 | Full-screen culling view? | Next PR, after Open folder and background indexing. |
+| Culling layout? | One photo, plus a 2-up toggle (C). |
+| Auto-advance after a flag/star/label key? | Yes, on by default in the culling view, with a toggle. |
+| What does 100 % show? | Always the photo rendered from the original file (true pixels), even though it takes a few seconds. |
+| What surrounds the photo? | Filmstrip, info line (I toggles) and key hints. |

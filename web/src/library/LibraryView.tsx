@@ -9,6 +9,7 @@ import { getRootHandle } from '../platform/roots'
 import { sidecars } from '../sidecar/sync'
 import { FilterBar } from './FilterBar'
 import { FolderPanel, type FolderSelection } from './FolderPanel'
+import { CullView, type CullField } from './CullView'
 import { Grid } from './Grid'
 import { IndexProgress } from './IndexProgress'
 import { useIndexStatus } from './useIndexStatus'
@@ -56,6 +57,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   const [view, setView] = useState<'grid' | 'loupe'>('grid')
   const [cellSize, setCellSize] = useState(170)
   const [importing, setImporting] = useState(false)
+  const [culling, setCulling] = useState<{ rows: PhotoRow[]; start: number } | null>(null)
   const [subfolders, setSubfolders] = useState(loadSubfolders)
   const [folderError, setFolderError] = useState('')
   const indexing = useIndexStatus()
@@ -171,10 +173,9 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     onFocusChange(focus, rows.map((r) => r.id), targets())
   }, [focus, rows, onFocusChange, targets])
 
-  /** Applies a rating/flag/label to the target photos, updating the grid immediately. */
-  const apply = useCallback(
-    async (field: 'rating' | 'flag' | 'color', value: number) => {
-      const ids = targets()
+  /** Applies a rating/flag/label to photos, updating the grid immediately. */
+  const applyTo = useCallback(
+    async (ids: number[], field: CullField, value: number) => {
       if (!ids.length) return
       const idSet = new Set(ids)
       setRows((rs) => rs.map((r) => (idSet.has(r.id) ? { ...r, [field]: value } : r)))
@@ -186,8 +187,24 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
       // Re-run the query if a filter might now hide or show these photos.
       if (filters.minRating || filters.flag || filters.color) refresh()
     },
-    [catalog, targets, filters, refresh],
+    [catalog, filters, refresh],
   )
+
+  /** Applies a rating/flag/label to the selection (or the focused photo). */
+  const apply = useCallback((field: CullField, value: number) => applyTo(targets(), field, value), [applyTo, targets])
+
+  /** Full-screen culling of the photos shown, starting at the focused one. */
+  const startCulling = useCallback(() => {
+    if (rows.length) setCulling({ rows, start: focus ?? rows[0].id })
+  }, [rows, focus])
+
+  function endCulling(id: number) {
+    setCulling(null)
+    setFocus(id)
+    setSelected(new Set([id]))
+    anchor.current = id
+    setView('grid')
+  }
 
   async function removeSelected() {
     const ids = targets()
@@ -225,7 +242,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   // Lightroom-style keyboard shortcuts.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!active || importing || status !== 'ready') return
+      if (!active || importing || culling || status !== 'ready') return
       const t = e.target as HTMLElement
       if (isTextEntry(t) || isSliderKey(e)) return
       const idx = focus === null ? -1 : rows.findIndex((r) => r.id === focus)
@@ -266,6 +283,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
       else if (k === 'x') void apply('flag', -1)
       else if (k === 'u') void apply('flag', 0)
       else if (k === 'e' || k === 'enter') setView('loupe')
+      else if (k === 'f') startCulling()
       else if (k === 'd' && focus !== null) onDevelop(focus, rows.map((r) => r.id))
       else if (k === 'g' || k === 'escape') setView('grid')
       else if (k === 'delete' || k === 'backspace') void removeSelected()
@@ -358,6 +376,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
               onSubfolders={toggleSubfolders}
               view={view}
               onView={setView}
+              onCull={startCulling}
               cellSize={cellSize}
               onCellSize={setCellSize}
               shown={rows.length}
@@ -372,7 +391,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
               <Loupe photo={detail} />
             )}
             <p className="hint muted small">
-              Keys: arrows move · P pick · X reject · U unflag · 0–5 stars · 6–9 colour labels · E loupe · G grid · D develop · Delete removes from library
+              Keys: arrows move · P pick · X reject · U unflag · 0–5 stars · 6–9 colour labels · E loupe · F cull · G grid · D develop · Delete removes from library
             </p>
           </>
         )}
@@ -386,6 +405,19 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
         onColor={(v: ColorLabel) => void apply('color', v)}
         onDevelop={() => focus !== null && onDevelop(focus, rows.map((r) => r.id))}
       />
+
+      {culling && (
+        <CullView
+          rows={culling.rows}
+          startId={culling.start}
+          onApply={(ids, field, value) => void applyTo(ids, field, value)}
+          onExit={endCulling}
+          onDevelop={(id, ids) => {
+            endCulling(id)
+            onDevelop(id, ids)
+          }}
+        />
+      )}
 
       {importing && (
         <ImportDialog

@@ -1,11 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { loadThumb } from '../catalog/thumbs'
 import type { PhotoDetail } from '../catalog/types'
-import { RawDecoder } from '../engine/raw/decoder'
-import { openPhotoFile } from '../platform/roots'
-
-let decoder: RawDecoder | null = null
-const FLIP_TO_ROTATION: Record<number, number> = { 0: 0, 3: 180, 5: 270, 6: 90 }
+import { loadFullPreview, loadThumbPreview, type Preview } from './preview'
 
 /**
  * Large single-photo view. For RAW files it shows the camera's embedded full-size preview (fast, like
@@ -13,8 +8,7 @@ const FLIP_TO_ROTATION: Record<number, number> = { 0: 0, 3: 180, 5: 270, 6: 90 }
  */
 export function Loupe({ photo }: { photo: PhotoDetail }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  /** `camera`: the RAW's embedded preview (not a rendering of the RAW itself). */
-  const [bitmap, setBitmap] = useState<{ bmp: ImageBitmap; rotate: number; camera: boolean } | null>(null)
+  const [bitmap, setBitmap] = useState<Preview | null>(null)
   const [note, setNote] = useState('')
 
   useEffect(() => {
@@ -23,43 +17,26 @@ export function Loupe({ photo }: { photo: PhotoDetail }) {
     setNote('')
     ;(async () => {
       // Show the thumbnail immediately, then swap in the full-size preview.
-      const thumb = await loadThumb(photo.id)
+      const thumb = await loadThumbPreview(photo.id)
       if (thumb && live) {
-        loaded = await createImageBitmap(thumb)
-        if (live) setBitmap({ bmp: loaded, rotate: 0, camera: false })
+        loaded = thumb.bmp
+        setBitmap(thumb)
       }
-      const file = await openPhotoFile(photo.rootId, photo.folderPath, photo.fileName)
-      if (!file) {
-        if (live) setNote('Showing a small preview. Reconnect this photo’s folder to see it full size.')
-        return
-      }
-      let full: ImageBitmap
-      let rotate = 0
-      if (/^jpe?g$/i.test(photo.fileType)) {
-        full = await createImageBitmap(file)
-      } else {
-        decoder ??= new RawDecoder()
-        const r = await decoder.decode(file, false)
-        if (!r.preview || r.preview.format !== 'jpeg') {
-          if (live) setNote('This file has no full-size preview; full RAW rendering comes with the Develop module.')
-          return
-        }
-        full = await createImageBitmap(new Blob([r.preview.bytes], { type: 'image/jpeg' }))
-        rotate = FLIP_TO_ROTATION[photo.orientation] ?? 0
-        if ((rotate === 90 || rotate === 270) && full.height > full.width) rotate = 0
-      }
+      const full = await loadFullPreview(photo)
       if (!live) {
-        full.close()
+        full.bmp.close()
         return
       }
       loaded?.close()
-      loaded = full
-      setBitmap({ bmp: full, rotate, camera: !/^jpe?g$/i.test(photo.fileType) })
-    })().catch((e: Error) => live && setNote(`Could not open this photo: ${e.message}`))
+      loaded = full.bmp
+      setBitmap(full)
+    })().catch((e: Error) => live && setNote(e.message))
     return () => {
       live = false
       loaded?.close()
     }
+    // Reload only when the file changes, not when its rating or label does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [photo.id, photo.rootId, photo.folderPath, photo.fileName, photo.fileType, photo.orientation])
 
   useEffect(() => {
