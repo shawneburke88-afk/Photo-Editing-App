@@ -74,6 +74,12 @@ each phase below delivers usable software on the live site.
 - All four are on the site's **System Check** page, with a copyable report.
 
 ### Phase 1 — Thin end-to-end slice (first usable version)
+
+Delivered in three parts:
+- **Part 1, Import + Library:** built.
+- **Part 2, Develop with darktable processing:** next.
+- **Part 3, Export + XMP sidecars:** after that.
+
 - **Import wizard** (Chrome/Edge):
   1. Click **Import** and choose the card or source folder in the Windows folder picker. Subfolders are
      included.
@@ -90,10 +96,11 @@ each phase below delivers usable software on the live site.
      - **Second backup copy**: copies each original untouched to a backup folder, for example on an
        external drive.
   6. Imported photos appear in the library as they are copied.
-  - Read only the embedded-preview bytes from each file, not the whole RAW, so thumbnails load fast from
-    slow cards.
-  - Measure copy speed.
-  - Verify whether a drive's top-level folder (`E:\`) can be picked in Chrome, or only `E:\DCIM`.
+  - _Still to do:_
+    - Read only the embedded-preview bytes from each file, not the whole RAW, so thumbnails load fast
+      from slow cards.
+    - Measure copy speed on a real card.
+    - Verify whether a drive's top-level folder (`E:\`) can be picked in Chrome, or only `E:\DCIM`.
 - **Library:** grid and loupe views, flags (P/X/U), stars (0–5), color labels (6–9),
   basic filter bar, folder tree, keyboard navigation.
 - **Develop (basic):** white balance, exposure, contrast, highlights, shadows, whites, blacks,

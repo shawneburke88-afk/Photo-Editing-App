@@ -27,9 +27,17 @@ RAM. Tested on the live site (`https://shawneburke88-afk.github.io/Photo-Editing
 - Ask the browser for **persistent storage** (`persisted` was false) so the catalog can't be evicted.
 - The lens was reported as unknown for the D5200. Lens identification is needed before lens corrections
   (Phase 3).
-- Not yet reported:
-  - the **Reconnect** test, which checks whether the browser remembers the folder after a reload;
-  - a visual comparison against the camera preview.
+- **Reconnect** after a reload worked: Edge remembered the folder permission.
+- **Visual comparison**, from the owner's screenshots of four files (Nikon D700, Sony A7 II, Nikon D80,
+  Nikon D5200 test chart):
+  - White balance is correct and there are no colour casts.
+  - LightBench is consistently about **⅔–1 EV darker** and **less saturated** than the camera JPEGs.
+  - The test chart shows **moiré** when zoomed out.
+  - Planned fixes in Phase 1 Part 2 (the darktable processing core):
+    - darktable's scene-referred default of **+0.7 EV** exposure;
+    - sigmoid tone mapping and colour handling;
+    - a mip-mapped (multi-resolution) preview to remove the moiré;
+    - RCD demosaic.
 
 ## What was built
 
