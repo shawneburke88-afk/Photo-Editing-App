@@ -18,6 +18,7 @@ import { exposureText } from '../library/format'
 import { BasicPanel } from './BasicPanel'
 import { Histogram } from './Histogram'
 import { ResizeHandle } from './ResizeHandle'
+import { WbLoupe } from './WbLoupe'
 import { canRedo, canUndo, current, jump, record, redo, startHistory, undo, type History } from './history'
 
 interface Props {
@@ -83,6 +84,8 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
   const [histLog, setHistLog] = useStoredNumber('lightbench.develop.histogramLog', 1)
   const [autoBusy, setAutoBusy] = useState(false)
   const [picking, setPicking] = useState(false)
+  const [wbPick, setWbPick] = useState(false)
+  const [loupe, setLoupe] = useState<{ x: number; y: number; image: ImageData } | null>(null)
   const [savedTargets, setSavedTargets] = useState<AutoTarget[]>([])
   const [refTarget, setRefTarget] = useState<AutoTarget | null>(null)
   const [targetId, setTargetIdState] = useState(() => {
@@ -342,11 +345,8 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
       if (!engine || !info || !history) return
       setAutoBusy(true)
       try {
-        let start = current(history)
-        if (target.whiteBalance === 'neutral') {
-          const { temperature, tint } = multipliersToTemperature(await engine.greyWorldMultipliers(), info.xyzToCam)
-          start = { ...start, whiteBalance: { mode: 'custom', temperature, tint } }
-        }
+        // Like Lightroom's Auto, this leaves white balance alone (owner's decision, 2026-10-11).
+        const start = current(history)
         const r = await solveAuto(start, target, async (s) =>
           metricsFromStats(await engine.renderStats(displayUniforms(s), multipliers(s, info), 256)),
         )
@@ -431,8 +431,14 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
         onNavigate(ids[index + 1])
       } else if (k === 'arrowleft' && index > 0) {
         onNavigate(ids[index - 1])
+      } else if (k === 'w' && !e.ctrlKey && !e.metaKey) {
+        // Lightroom: W selects the white balance picker.
+        setWbPick((p) => !p)
+        setLoupe(null)
       } else if (k === 'escape') {
         setPicking(false)
+        setWbPick(false)
+        setLoupe(null)
         setView((v) => ({ ...v, zoom: 'fit' }))
       }
     }
@@ -450,12 +456,68 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
     const l = engine.layout(view, engine.canvas.width, engine.canvas.height)
     return { l, px: (e.clientX - r.left) * dpr, py: (e.clientY - r.top) * dpr }
   }
+  /** Pointer position as displayed-image uv, or null outside the photo. */
+  function imageUv(e: React.PointerEvent): [number, number] | null {
+    const p = canvasPoint(e)
+    if (!p) return null
+    const u = (p.px - p.l.x) / p.l.w
+    const v = (p.py - p.l.y) / p.l.h
+    return u >= 0 && u < 1 && v >= 0 && v < 1 ? [u, v] : null
+  }
+
+  // ---- white balance picker (darktable temperature.c spot picker + a Lightroom-style loupe)
+  const LOUPE_PIXELS = 15
+  const LOUPE_ZOOM = 10
+  const loupeBusy = useRef(false)
+  const loupeNext = useRef<{ uv: [number, number]; x: number; y: number } | null>(null)
+  const updateLoupe = useCallback(() => {
+    if (loupeBusy.current) return
+    loupeBusy.current = true
+    void (async () => {
+      while (loupeNext.current) {
+        const { uv, x, y } = loupeNext.current
+        loupeNext.current = null
+        const engine = engineRef.current
+        const { settings: s, info: inf } = latest.current
+        if (!engine || !inf) break
+        try {
+          const image = await engine.renderLoupe(displayUniforms(s), multipliers(s, inf), uv[0], uv[1], LOUPE_PIXELS)
+          setLoupe({ x, y, image })
+        } catch {
+          break
+        }
+      }
+      loupeBusy.current = false
+    })()
+  }, [])
+
+  async function pickWhiteBalance(uv: [number, number]) {
+    const engine = engineRef.current
+    if (!engine || !info) return
+    setWbPick(false)
+    setLoupe(null)
+    const working = await engine.sampleScene(uv[0], uv[1], 2)
+    const { temperature, tint } = multipliersToTemperature(engine.neutralMultipliers(working), info.xyzToCam)
+    change('White balance: picker', { ...settings, whiteBalance: { mode: 'custom', temperature, tint } })
+  }
+
   function onPointerDown(e: React.PointerEvent) {
-    if (status.kind !== 'ready') return
+    if (status.kind !== 'ready' || wbPick) return
     ;(e.target as Element).setPointerCapture(e.pointerId)
     drag.current = { x: e.clientX, y: e.clientY, center: view.center, moved: false }
   }
   function onPointerMove(e: React.PointerEvent) {
+    if (wbPick) {
+      const uv = imageUv(e)
+      const r = stageRef.current?.getBoundingClientRect()
+      if (!uv || !r) {
+        setLoupe(null)
+        return
+      }
+      loupeNext.current = { uv, x: e.clientX - r.left, y: e.clientY - r.top }
+      updateLoupe()
+      return
+    }
     const d = drag.current
     if (!d || view.zoom === 'fit') return
     const p = canvasPoint(e)
@@ -467,6 +529,11 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
     setView({ zoom: view.zoom, center: [Math.min(1, Math.max(0, d.center[0] - dx)), Math.min(1, Math.max(0, d.center[1] - dy))] })
   }
   function onPointerUp(e: React.PointerEvent) {
+    if (wbPick) {
+      const uv = imageUv(e)
+      if (uv) void pickWhiteBalance(uv)
+      return
+    }
     const d = drag.current
     drag.current = null
     if (!d || d.moved) return
@@ -544,11 +611,12 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
           </button>
         </div>
         <div
-          className={`dstage ${view.zoom === 'fit' ? 'fit' : 'zoomed'}`}
+          className={`dstage ${view.zoom === 'fit' ? 'fit' : 'zoomed'} ${wbPick ? 'wb-picking' : ''}`}
           ref={stageRef}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onPointerLeave={() => setLoupe(null)}
         >
           {status.kind !== 'ready' && placeholder && <img className="dplaceholder" src={placeholder} alt="" />}
           {status.kind === 'loading' && <div className="dmessage">Developing…</div>}
@@ -560,6 +628,8 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
               {[overlay && 'Clipping shown (J)', rawOverlay && 'Sensor clipping shown (Shift+O)'].filter(Boolean).join(' · ')}
             </div>
           )}
+          {wbPick && <div className="dbadge pick">Click something that should be neutral grey or white · Esc to cancel</div>}
+          {wbPick && loupe && <WbLoupe x={loupe.x} y={loupe.y} image={loupe.image} zoom={LOUPE_ZOOM} />}
           {picking && <div className="dbadge pick">Click a photo in the filmstrip to match its look · Esc to cancel</div>}
         </div>
         <div className="filmstrip" role="listbox" aria-label="Filmstrip">
@@ -584,6 +654,11 @@ export function DevelopView({ ids, id, onNavigate, onEdited }: Props) {
           asShot={info?.asShot ?? null}
           onChange={change}
           disabled={status.kind !== 'ready'}
+          pickingWb={wbPick}
+          onPickWb={() => {
+            setWbPick((p) => !p)
+            setLoupe(null)
+          }}
           auto={{
             targets,
             selected: selectedTarget.id,

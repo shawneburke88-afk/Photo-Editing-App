@@ -11,6 +11,9 @@ interface Props {
   onChange: (label: string, next: DevelopSettings) => void
   disabled: boolean
   auto: AutoProps
+  /** White balance picker (W) is active. */
+  pickingWb: boolean
+  onPickWb: () => void
 }
 
 const signed = (v: number) => (v > 0 ? `+${Math.round(v)}` : `${Math.round(v)}`)
@@ -24,7 +27,7 @@ const TINT_TRACK = 'linear-gradient(90deg, #4caf50, #ddd 50%, #c050c0)'
 const toMired = (k: number) => -1e6 / k
 const fromMired = (m: number) => Math.round(-1e6 / m)
 
-export function BasicPanel({ settings: s, asShot, onChange, disabled, auto }: Props) {
+export function BasicPanel({ settings: s, asShot, onChange, disabled, auto, pickingWb, onPickWb }: Props) {
   const [advanced, setAdvanced] = useState(false)
   const set = (label: string, patch: Partial<DevelopSettings>) => onChange(label, { ...s, ...patch })
   const setAdv = (label: string, patch: Partial<DevelopSettings['advanced']>) =>
@@ -54,6 +57,16 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, auto }: Pr
             <option value="as-shot">As shot</option>
             <option value="custom">Custom</option>
           </select>
+          <button
+            className={`button small wb-pick ${pickingWb ? 'on' : ''}`}
+            disabled={disabled || !asShot}
+            onClick={onPickWb}
+            aria-pressed={pickingWb}
+            title="White balance picker (W): click something in the photo that should be neutral grey or white"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M13.4 1.2a2 2 0 0 0-2.8 0L8.9 2.9 8.2 2.2 7.1 3.3l.7.7-5.6 5.6-.6 2.8L.5 13.5l2 2 1.1-1.1 2.8-.6 5.6-5.6.7.7 1.1-1.1-.7-.7 1.7-1.7a2 2 0 0 0 0-2.8zM5.5 13.2l-2 .4.4-2 5-5 1.6 1.6z"/></svg>
+            {pickingWb ? 'Picking…' : 'Pick'}
+          </button>
         </div>
         <Slider
           label="Temp"

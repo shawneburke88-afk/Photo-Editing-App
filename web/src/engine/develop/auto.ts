@@ -93,8 +93,6 @@ export interface AutoTarget {
   maxHighlightClip: number
   /** Target colourfulness, or null to leave Vibrance alone. */
   chroma: number | null
-  /** Neutralise the white balance (grey world) or keep the current one. */
-  whiteBalance: 'keep' | 'neutral'
   builtIn?: boolean
 }
 
@@ -103,13 +101,12 @@ export interface AutoTarget {
  * own targets to refine them.
  */
 export const BUILT_IN_TARGETS: AutoTarget[] = [
-  { id: 'natural', name: 'Natural', median: 0.45, low: 0.03, high: 0.95, spread: 0.3, maxHighlightClip: 0.002, chroma: null, whiteBalance: 'keep', builtIn: true },
-  { id: 'vivid', name: 'Vivid', median: 0.46, low: 0.02, high: 0.97, spread: 0.36, maxHighlightClip: 0.003, chroma: 0.24, whiteBalance: 'keep', builtIn: true },
-  { id: 'landscape', name: 'Landscape', median: 0.44, low: 0.025, high: 0.96, spread: 0.34, maxHighlightClip: 0.002, chroma: 0.2, whiteBalance: 'keep', builtIn: true },
-  { id: 'portrait', name: 'Portrait', median: 0.5, low: 0.05, high: 0.94, spread: 0.26, maxHighlightClip: 0.001, chroma: 0.13, whiteBalance: 'keep', builtIn: true },
-  { id: 'neutral', name: 'Neutral (fix colour cast)', median: 0.45, low: 0.03, high: 0.95, spread: 0.3, maxHighlightClip: 0.002, chroma: null, whiteBalance: 'neutral', builtIn: true },
-  { id: 'low-key', name: 'Low-key (dark, moody)', median: 0.26, low: 0.01, high: 0.9, spread: 0.3, maxHighlightClip: 0.001, chroma: null, whiteBalance: 'keep', builtIn: true },
-  { id: 'high-key', name: 'High-key (bright, airy)', median: 0.66, low: 0.1, high: 0.985, spread: 0.22, maxHighlightClip: 0.01, chroma: null, whiteBalance: 'keep', builtIn: true },
+  { id: 'natural', name: 'Natural', median: 0.45, low: 0.03, high: 0.95, spread: 0.3, maxHighlightClip: 0.002, chroma: null, builtIn: true },
+  { id: 'vivid', name: 'Vivid', median: 0.46, low: 0.02, high: 0.97, spread: 0.36, maxHighlightClip: 0.003, chroma: 0.24, builtIn: true },
+  { id: 'landscape', name: 'Landscape', median: 0.44, low: 0.025, high: 0.96, spread: 0.34, maxHighlightClip: 0.002, chroma: 0.2, builtIn: true },
+  { id: 'portrait', name: 'Portrait', median: 0.5, low: 0.05, high: 0.94, spread: 0.26, maxHighlightClip: 0.001, chroma: 0.13, builtIn: true },
+  { id: 'low-key', name: 'Low-key (dark, moody)', median: 0.26, low: 0.01, high: 0.9, spread: 0.3, maxHighlightClip: 0.001, chroma: null, builtIn: true },
+  { id: 'high-key', name: 'High-key (bright, airy)', median: 0.66, low: 0.1, high: 0.985, spread: 0.22, maxHighlightClip: 0.01, chroma: null, builtIn: true },
 ]
 
 /** A target that reproduces how a given image looks (for "match a reference photo" and saved targets). */
@@ -123,7 +120,6 @@ export function targetFromMetrics(id: string, name: string, m: Metrics): AutoTar
     spread: m.p75 - m.p25,
     maxHighlightClip: Math.max(0.001, m.highlightClip),
     chroma: m.chroma,
-    whiteBalance: 'keep',
   }
 }
 

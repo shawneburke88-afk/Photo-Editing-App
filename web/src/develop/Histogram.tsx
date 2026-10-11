@@ -152,7 +152,7 @@ export function Histogram(p: Props) {
           <h4>
             <label><input type="checkbox" checked={p.overlay} onChange={p.onToggleOverlay} /> Clipping on the photo (J or O)</label>
           </h4>
-          <p className="muted small">Marks areas that are pure white or black on screen, like darktable’s clipping indicator.</p>
+          <p className="muted small">Marks where detail is lost: red where the sensor clipped or the result is pure white, blue where it is pure black. The other checks are darktable’s clipping indicator modes.</p>
           <label className="adv-row">
             Check
             <select value={c.mode} onChange={(e) => p.onClip({ ...c, mode: e.target.value as ClipMode })}>

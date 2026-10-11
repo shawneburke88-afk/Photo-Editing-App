@@ -6,7 +6,7 @@
  */
 import type { SensorData } from '../raw/types'
 
-export type ClipMode = 'anyrgb' | 'luminance' | 'saturation' | 'gamut'
+export type ClipMode = 'lost' | 'anyrgb' | 'luminance' | 'saturation' | 'gamut'
 export type RawClipMode = 'cfa' | 'solid' | 'false'
 export type RawClipColour = 'red' | 'green' | 'blue' | 'black'
 
@@ -35,14 +35,18 @@ export interface Indicators {
 }
 
 /**
- * LightBench uses "any RGB channel" as its default mode, which is closest to Lightroom's J overlay.
- * darktable's own default is "full gamut", which also flags very saturated colours. All four
- * darktable modes are available.
+ * LightBench's default mode is "lost detail" (owner's decision, 2026-10-11): a pixel is marked when the
+ * sensor clipped there (any photosite of its 2×2 CFA tile at the raw threshold, as darktable's
+ * rawoverexposed tests) or when any RGB channel is at the display limit (darktable overexposed "any RGB").
+ * darktable's sigmoid rolls highlights off and rarely reaches the display limit, so darktable's display
+ * test alone seldom shows anything; adding the sensor test makes the warning behave like Lightroom's J.
+ * darktable's own four modes stay available; its default is "full gamut".
  */
-export const DEFAULT_CLIP: ClipSettings = { mode: 'anyrgb', upperPercent: 99.99, lowerEv: -12.69, scheme: 1 }
+export const DEFAULT_CLIP: ClipSettings = { mode: 'lost', upperPercent: 99.99, lowerEv: -12.69, scheme: 1 }
 export const DEFAULT_RAW_CLIP: RawClipSettings = { mode: 'cfa', threshold: 1, colour: 'red' }
 
 export const CLIP_MODE_LABELS: Record<ClipMode, string> = {
+  lost: 'Lost detail (sensor or screen)',
   anyrgb: 'Any RGB channel',
   luminance: 'Luminance only',
   saturation: 'Saturation only',
@@ -70,7 +74,7 @@ export const RAW_COLOURS: Record<RawClipColour, [number, number, number]> = {
   black: [0, 0, 0],
 }
 
-const CLIP_MODE_CODE: Record<ClipMode, number> = { anyrgb: 1, luminance: 2, saturation: 3, gamut: 4 }
+const CLIP_MODE_CODE: Record<ClipMode, number> = { anyrgb: 1, luminance: 2, saturation: 3, gamut: 4, lost: 5 }
 const RAW_MODE_CODE: Record<RawClipMode, number> = { cfa: 1, solid: 2, false: 3 }
 
 /** Shader values for the display clipping test (darktable overexposed.c process()). */

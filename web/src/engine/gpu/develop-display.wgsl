@@ -29,7 +29,8 @@ struct View {
   sgFilmPower: f32,
   sgPaperPower: f32,
   huePreservation: f32,
-  clipMode: u32,      // display clipping indicator: 0 off, 1 any RGB, 2 luminance, 3 saturation, 4 full gamut
+  clipMode: u32,      // clipping indicator: 0 off, 1 any RGB, 2 luminance, 3 saturation, 4 full gamut,
+                      // 5 lost detail (any RGB, or sensor clipped in the pixel's 2×2 CFA tile)
   clipUpper: f32,     // darktable overexposed: upper threshold (fraction, default 0.9999)
   clipLower: f32,     // lower threshold, linear (2^EV, default 2^-12.69)
   upperColor: vec4f,
@@ -195,12 +196,17 @@ const SRGB_D50_Y = vec3f(0.2224845, 0.7169069, 0.0606086);
  * darktable overexposed.c: 1 = over (upper colour), 2 = under (lower colour), 0 = fine.
  * `t` is the display-encoded RGB, `lin` the same pixel linear (for luminance).
  */
-fn clipClass(t: vec3f, lin: vec3f) -> u32 {
+fn clipClass(t: vec3f, lin: vec3f, suv: vec2f) -> u32 {
   let upper = V.clipUpper;
   let lower = V.clipLower;
   let anyOver = any(t >= vec3f(upper));
   let allUnder = all(t <= vec3f(lower));
   switch V.clipMode {
+    case 5u: { // lost detail: sensor clipped or any RGB channel at the display limit
+      if (anyOver || sensorTileClipped(suv)) { return 1u; }
+      if (allUnder) { return 2u; }
+      return 0u;
+    }
     case 1u: { // any RGB channel
       if (anyOver) { return 1u; }
       if (allUnder) { return 2u; }
@@ -228,15 +234,36 @@ fn clipClass(t: vec3f, lin: vec3f) -> u32 {
   }
 }
 
+fn rawPx(suv: vec2f) -> vec2u {
+  return min(vec2u(suv * vec2f(f32(V.rawWidth), f32(V.rawHeight))), vec2u(V.rawWidth - 1u, V.rawHeight - 1u));
+}
+
+fn rawValue(x: u32, y: u32) -> f32 {
+  let i = y * V.rawWidth + x;
+  return f32((raw[i >> 1u] >> ((i & 1u) * 16u)) & 0xffffu);
+}
+
+/** True if any photosite of the 2×2 CFA tile under this pixel is at or above its clipping threshold. */
+fn sensorTileClipped(suv: vec2f) -> bool {
+  let p = rawPx(suv) & vec2u(~1u, ~1u);
+  for (var dy = 0u; dy < 2u; dy++) {
+    for (var dx = 0u; dx < 2u; dx++) {
+      let x = min(p.x + dx, V.rawWidth - 1u);
+      let y = min(p.y + dy, V.rawHeight - 1u);
+      if (rawValue(x, y) >= V.rawThreshold[(y & 1u) * 2u + (x & 1u)]) { return true; }
+    }
+  }
+  return false;
+}
+
 fn cfaColor(x: u32, y: u32) -> u32 {
   return (V.cfa >> (((y & 1u) * 2u + (x & 1u)) * 2u)) & 3u;
 }
 
 /** darktable rawoverexposed.c: marks the pixel if its source photosite is at or above the threshold. */
 fn rawOverexposed(uv: vec2f, out: vec3f) -> vec3f {
-  let px = min(vec2u(uv * vec2f(f32(V.rawWidth), f32(V.rawHeight))), vec2u(V.rawWidth - 1u, V.rawHeight - 1u));
-  let i = px.y * V.rawWidth + px.x;
-  let v = f32((raw[i >> 1u] >> ((i & 1u) * 16u)) & 0xffffu);
+  let px = rawPx(uv);
+  let v = rawValue(px.x, px.y);
   let pos = (px.y & 1u) * 2u + (px.x & 1u);
   if (v < V.rawThreshold[pos]) { return out; }
   let c = cfaColor(px.x, px.y);
@@ -257,13 +284,13 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let t = srgbOetfUnbounded(lin);
   if (V.statsPass == 1u) {
     // Alpha carries the clipping class: 1 fine, 0.5 under, 0 over.
-    let cls = clipClass(t, lin);
+    let cls = clipClass(t, lin, suv);
     return vec4f(t, select(select(1.0, 0.5, cls == 2u), 0.0, cls == 1u));
   }
   var out = clamp(t, vec3f(0.0), vec3f(1.0));
   // darktable order: overexposed (66) before rawoverexposed (67), both just before gamma.
   if (V.clipMode != 0u) {
-    let cls = clipClass(t, lin);
+    let cls = clipClass(t, lin, suv);
     if (cls == 1u) { out = V.upperColor.rgb; } else if (cls == 2u) { out = V.lowerColor.rgb; }
   }
   if (V.rawMode != 0u) { out = rawOverexposed(suv, out); }

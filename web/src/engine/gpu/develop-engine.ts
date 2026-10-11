@@ -49,13 +49,25 @@ export interface ImageStats {
   chroma: number
 }
 
-const STATS_WORDS = 1032
+const STATS_WORDS = 1028
 
 const IDENTITY: Mat3 = [1, 0, 0, 0, 1, 0, 0, 0, 1]
 const RAW_PARAMS_SIZE = 160
 const VIEW_SIZE = 272
 
-const NO_INDICATORS: Indicators = { clip: DEFAULT_CLIP, showClip: false, raw: DEFAULT_RAW_CLIP, showRaw: false }
+// Without explicit indicators (e.g. for Auto), clipping is counted on screen values only: sensor
+// clipping can't be fixed by moving sliders.
+const NO_INDICATORS: Indicators = { clip: { ...DEFAULT_CLIP, mode: 'anyrgb' }, showClip: false, raw: DEFAULT_RAW_CLIP, showRaw: false }
+
+/** IEEE 754 half-precision → number. */
+function halfToFloat(h: number): number {
+  const s = h & 0x8000 ? -1 : 1
+  const e = (h >> 10) & 0x1f
+  const f = h & 0x3ff
+  if (e === 0) return s * 2 ** -14 * (f / 1024)
+  if (e === 31) return f ? NaN : s * Infinity
+  return s * 2 ** (e - 15) * (1 + f / 1024)
+}
 
 /** darktable: highlights_clip_magics[DT_IOP_HIGHLIGHTS_OPPOSED] */
 const OPPOSED_CLIP_MAGIC = 0.987
@@ -76,7 +88,7 @@ export class DevelopEngine {
   private readonly sampler: GPUSampler
   private readonly viewBuf: GPUBuffer
   private readonly statsModule: GPUShaderModule
-  private statsPipes: { histogram: GPUComputePipeline; sceneMean: GPUComputePipeline } | null = null
+  private statsPipe: GPUComputePipeline | null = null
   private sensor: SensorData | null = null
   private rawBuf: GPUBuffer | null = null
   private scene: GPUTexture | null = null
@@ -255,7 +267,7 @@ export class DevelopEngine {
       size: [w, h],
       format: 'rgba16float',
       mipLevelCount: Math.floor(Math.log2(Math.max(w, h))) + 1,
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     })
 
     type Res = GPUBindingResource
@@ -460,7 +472,7 @@ export class DevelopEngine {
    * clipping and colourfulness (for the histogram panel and Auto).
    */
   async renderStats(u: DisplayUniforms, wb: Vec3, maxSize = 256, indicators: Indicators = NO_INDICATORS): Promise<ImageStats> {
-    const words = await this.measure(u, wb, maxSize, false, indicators)
+    const words = await this.measure(u, wb, maxSize, indicators)
     const pixels = words[1027]
     return {
       red: words.slice(0, 256),
@@ -474,61 +486,108 @@ export class DevelopEngine {
     }
   }
 
-  /**
-   * Grey-world white balance: multipliers that make the average (unclipped) scene colour neutral,
-   * starting from the white balance the scene was built with.
-   */
-  async greyWorldMultipliers(): Promise<Vec3> {
-    const words = await this.measure(null, this.builtWb, 0, true)
-    const n = words[1031]
-    if (!n) return [...this.builtWb] as Vec3
-    const working: Vec3 = [words[1028] / n, words[1029] / n, words[1030] / n]
-    const cam = apply(invert(this.camToWorking), working)
-    const m: Vec3 = [this.builtWb[0] * (cam[1] / cam[0]), this.builtWb[1], this.builtWb[2] * (cam[1] / cam[2])]
-    return [m[0] / m[1], 1, m[2] / m[1]]
+  /** Maps displayed-image uv (after orientation) to sensor-image uv, like the shader's sourceUv. */
+  private sourceUv(u: number, v: number): [number, number] {
+    switch (this.flip) {
+      case 3: return [1 - u, 1 - v]
+      case 5: return [1 - v, u]
+      case 6: return [v, 1 - u]
+      default: return [u, v]
+    }
   }
 
-  private async measure(u: DisplayUniforms | null, wb: Vec3, maxSize: number, sceneOnly: boolean, indicators = NO_INDICATORS): Promise<Uint32Array> {
+  /**
+   * Mean scene-linear colour (working space) of the (2r+1)² full-resolution pixels around a point given
+   * in displayed-image uv, as built by the last `process` (i.e. with the built white balance).
+   */
+  async sampleScene(u: number, v: number, radius = 2): Promise<Vec3> {
+    this.checkAlive()
+    const scene = this.scene
+    if (!scene) throw new Error('No photo processed')
+    const [su, sv] = this.sourceUv(u, v)
+    const size = 2 * radius + 1
+    const x0 = Math.min(Math.max(0, Math.floor(su * scene.width) - radius), Math.max(0, scene.width - size))
+    const y0 = Math.min(Math.max(0, Math.floor(sv * scene.height) - radius), Math.max(0, scene.height - size))
+    const w = Math.min(size, scene.width)
+    const h = Math.min(size, scene.height)
+    const bytesPerRow = 256 * Math.ceil((w * 8) / 256)
+    const read = this.device.createBuffer({ size: bytesPerRow * h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
+    const enc = this.device.createCommandEncoder()
+    enc.copyTextureToBuffer({ texture: scene, origin: [x0, y0] }, { buffer: read, bytesPerRow }, [w, h])
+    this.device.queue.submit([enc.finish()])
+    try {
+      await read.mapAsync(GPUMapMode.READ)
+      const half = new Uint16Array(read.getMappedRange())
+      const sum: Vec3 = [0, 0, 0]
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const o = (y * bytesPerRow) / 2 + x * 4
+          for (let c = 0; c < 3; c++) sum[c] += halfToFloat(half[o + c])
+        }
+      }
+      return sum.map((s) => s / (w * h)) as Vec3
+    } finally {
+      if (read.mapState === 'mapped') read.unmap()
+      read.destroy()
+    }
+  }
+
+  /**
+   * White balance multipliers that make a scene colour neutral, starting from the white balance the scene
+   * was built with. As darktable's temperature.c spot picker: coeff[c] = (1/cam[c]) / (1/cam[G]),
+   * clamped to 0…8, on camera RGB.
+   */
+  neutralMultipliers(working: Vec3): Vec3 {
+    const cam = apply(invert(this.camToWorking), working)
+    const b = this.builtWb
+    // cam is camera RGB after the built multipliers; the raw value per channel is cam[c] / b[c].
+    const raw = cam.map((v, c) => v / b[c])
+    if (raw.some((v) => !(v > 1e-9))) return [...b] as Vec3
+    const coeff = raw.map((v) => Math.min(8, Math.max(0, raw[1] / v)))
+    return [coeff[0], 1, coeff[2]]
+  }
+
+  /**
+   * Renders a size×size crop at 100 % (one image pixel per output pixel) centred on a point in
+   * displayed-image uv, for the white balance picker's loupe.
+   */
+  async renderLoupe(u: DisplayUniforms, wb: Vec3, cu: number, cv: number, size: number): Promise<ImageData> {
+    this.checkAlive()
+    if (!this.scene) throw new Error('No photo processed')
+    const [iw, ih] = this.imageSize
+    const cx = Math.floor(cu * iw) + 0.5
+    const cy = Math.floor(cv * ih) + 0.5
+    this.writeView(u, wb, { x: size / 2 - cx, y: size / 2 - cy, w: iw, h: ih }, 0)
+    const target = this.device.createTexture({ size: [size, size], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
+    const pixels = (await this.draw(this.offscreenPipe, target, size, size, true))!
+    target.destroy()
+    return pixels
+  }
+
+  private async measure(u: DisplayUniforms, wb: Vec3, maxSize: number, indicators = NO_INDICATORS): Promise<Uint32Array> {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
     const { device } = this
-    this.statsPipes ??= {
-      histogram: device.createComputePipeline({ layout: 'auto', compute: { module: this.statsModule, entryPoint: 'histogram' } }),
-      sceneMean: device.createComputePipeline({ layout: 'auto', compute: { module: this.statsModule, entryPoint: 'sceneMean' } }),
-    }
+    const statsPipe = (this.statsPipe ??= device.createComputePipeline({ layout: 'auto', compute: { module: this.statsModule, entryPoint: 'histogram' } }))
     const bins = device.createBuffer({ size: STATS_WORDS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST })
     const read = device.createBuffer({ size: STATS_WORDS * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
-    let target: GPUTexture | null = null
     const enc = device.createCommandEncoder()
-    if (sceneOnly) {
-      // A mip level of at most ~256 px is plenty for an average.
-      const level = Math.max(0, Math.min(this.scene.mipLevelCount - 1, Math.ceil(Math.log2(Math.max(this.scene.width, this.scene.height) / 256))))
-      const view = this.scene.createView({ baseMipLevel: level, mipLevelCount: 1 })
-      const w = Math.max(1, this.scene.width >> level)
-      const h = Math.max(1, this.scene.height >> level)
-      const pass = enc.beginComputePass()
-      pass.setPipeline(this.statsPipes.sceneMean)
-      pass.setBindGroup(0, device.createBindGroup({ layout: this.statsPipes.sceneMean.getBindGroupLayout(0), entries: [{ binding: 1, resource: { buffer: bins } }, { binding: 2, resource: view }] }))
-      pass.dispatchWorkgroups(Math.ceil(w / 16), Math.ceil(h / 16))
-      pass.end()
-    } else {
-      const [iw, ih] = this.imageSize
-      const scale = Math.min(1, maxSize / Math.max(iw, ih))
-      const w = Math.max(1, Math.round(iw * scale))
-      const h = Math.max(1, Math.round(ih * scale))
-      this.writeView(u!, wb, { x: 0, y: 0, w, h }, Math.max(0, Math.log2(1 / scale)), indicators, true)
-      target = device.createTexture({ size: [w, h], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING })
-      const rp = enc.beginRenderPass({ colorAttachments: [{ view: target.createView(), loadOp: 'clear', storeOp: 'store' }] })
-      rp.setPipeline(this.statsRenderPipe)
-      rp.setBindGroup(0, this.displayBindGroup(this.statsRenderPipe))
-      rp.draw(3)
-      rp.end()
-      const pass = enc.beginComputePass()
-      pass.setPipeline(this.statsPipes.histogram)
-      pass.setBindGroup(0, device.createBindGroup({ layout: this.statsPipes.histogram.getBindGroupLayout(0), entries: [{ binding: 0, resource: target.createView() }, { binding: 1, resource: { buffer: bins } }] }))
-      pass.dispatchWorkgroups(Math.ceil(w / 16), Math.ceil(h / 16))
-      pass.end()
-    }
+    const [iw, ih] = this.imageSize
+    const scale = Math.min(1, maxSize / Math.max(iw, ih))
+    const w = Math.max(1, Math.round(iw * scale))
+    const h = Math.max(1, Math.round(ih * scale))
+    this.writeView(u, wb, { x: 0, y: 0, w, h }, Math.max(0, Math.log2(1 / scale)), indicators, true)
+    const target = device.createTexture({ size: [w, h], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING })
+    const rp = enc.beginRenderPass({ colorAttachments: [{ view: target.createView(), loadOp: 'clear', storeOp: 'store' }] })
+    rp.setPipeline(this.statsRenderPipe)
+    rp.setBindGroup(0, this.displayBindGroup(this.statsRenderPipe))
+    rp.draw(3)
+    rp.end()
+    const pass = enc.beginComputePass()
+    pass.setPipeline(statsPipe)
+    pass.setBindGroup(0, device.createBindGroup({ layout: statsPipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: target.createView() }, { binding: 1, resource: { buffer: bins } }] }))
+    pass.dispatchWorkgroups(Math.ceil(w / 16), Math.ceil(h / 16))
+    pass.end()
     enc.copyBufferToBuffer(bins, 0, read, 0, STATS_WORDS * 4)
     device.queue.submit([enc.finish()])
     try {
@@ -538,7 +597,7 @@ export class DevelopEngine {
       if (read.mapState === 'mapped') read.unmap()
       read.destroy()
       bins.destroy()
-      target?.destroy()
+      target.destroy()
     }
   }
 
