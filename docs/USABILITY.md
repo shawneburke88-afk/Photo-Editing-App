@@ -1,11 +1,12 @@
 # LightBench usability plan
 
-_Drafted 2026-10-11. This combines three inputs:_
+_Drafted 2026-10-11. This combines four inputs:_
 - _the owner's direction;_
-- _two review studies: [REVIEWS_LIGHTROOM.md](research/REVIEWS_LIGHTROOM.md) and [REVIEWS_OPEN_SOURCE.md](research/REVIEWS_OPEN_SOURCE.md);_
+- _two first-round review studies: [REVIEWS_LIGHTROOM.md](research/REVIEWS_LIGHTROOM.md) and [REVIEWS_OPEN_SOURCE.md](research/REVIEWS_OPEN_SOURCE.md);_
+- _a second, independent round of research run by the owner: [REVIEWS_ROUND2.md](research/REVIEWS_ROUND2.md) (11 apps, about 600 pages read in full, sources counted, a verification pass);_
 - _the darktable code catalogue: [DARKTABLE_MODULES.md](DARKTABLE_MODULES.md)._
 
-> **Evidence caveat.** Both review studies could not open web pages in full; fetching and Reddit were blocked. Their findings rest on search-result excerpts and full GitHub issues. Each finding there is tagged with how widespread it seems and cites its source. Treat those tags as judgement, not measurement.
+> **Evidence caveat.** The first-round studies could not open web pages in full; fetching and Reddit were blocked. Their findings rest on search-result excerpts and full GitHub issues, with judgement tags for how widespread each seems. The second round read pages in full and counts sources, but Reddit was still blocked, and some sources are affiliate or vendor sites (flagged ⚠ in that report). Where this plan leans on a finding, it names the round and lesson so the evidence can be checked.
 
 ## The owner's direction
 
@@ -33,6 +34,52 @@ Both studies agree on these points. The numbers in brackets are lesson numbers i
 13. **Build onboarding into the app and keep the UI stable.** Outside tutorials go stale when tools are renamed. [OS 14, LR 8]
 14. **Lightroom migration as a feature,** including finding tools by their Lightroom names. [OS 13]
 15. **Simplicity alone doesn't keep serious users.** RapidRAW is criticised for image quality. LightBench's advantage is darktable's engine, so reveal its depth gradually; don't dilute it. [OS caution]
+
+## Second round: what it confirms, what is new, where it conflicts
+
+The second round ([REVIEWS_ROUND2.md](research/REVIEWS_ROUND2.md), lessons cited as **R2 1–20**, comparison tables as **R2 A/B/C**) was run separately, with a different method, and without seeing round 1. Findings both rounds reached on their own are the strongest evidence this plan has.
+
+### Found independently by both rounds
+
+| Round 1 | Round 2 | What round 2 adds |
+|---|---|---|
+| 1. One obvious way per task | R2 5 (hide the engine) | A September 2026 pixls.us thread shows stacked tone mappers and the white-balance warning still trip new users after darktable 5.4/5.6. Proposes a single White balance control with Temp/Tint and as-shot/auto/picker modes; LightBench already has this. |
+| 2. Basic panel first | R2 4, R2 A1 | Lightroom (cloud) is the layout most often called approachable. |
+| 3. Progressive disclosure, not a beginner mode | R2 4, R2 A2 | "Hide, don't remove": Ansel removed darktable tools and is called "a crippled darktable". Supports the no-silent-cuts rule. |
+| 4. Plain words, photographic units | R2 6 | Keep names stable between releases, keep a rename map for search, and add a glossary linking labels to darktable modules. |
+| 5. Defaults that look finished | R2 C (darktable row), R2 8 | The angle changes: automatic changes must also be *visible* (see "New" below). |
+| 6. Speed; truthful preview | **R2 1** (ranked first) | Speed is the most common reason people quit, at every price. Lightroom on the web takes "a second or two" per slider move. Proposes published latency budgets and minimum GPU/browser requirements. |
+| 7. Auto is a starting point | R2 9, R2 C | No source rates any Auto as a finished edit. Users value a strength control, per-setting undo, and Auto that re-runs per image in a batch. |
+| 8. Masks: one click first | R2 10 | AI subject/sky masks are now "table stakes": their absence pushed Capture One, DxO and darktable users to Adobe. Masks must combine (add/subtract/intersect) and feather; Lightroom's top idea is "Feather Masks" (598 votes). |
+| 9. Understandable history; visible paste | R2 12, R2 13 | One paste dialog with checkboxes, saved paste presets and a preview; paste modes, not numbers (e.g. "As Shot" white balance). Snapshots, before/after and virtual copies are basics. |
+| 10. "Where are my photos?" | R2 14, R2 20 | State where originals and edits live in one sentence on the first screen. |
+| 11. Browse before import | R2 14 | …and keep **one** library model, not a browse mode plus a catalogue mode (see conflicts). |
+| 12. Data safety | R2 2 | Sidecar-first with a rebuildable database, which is LightBench's design since Part 3; add versioned backups and a start-up self-check. |
+| 13. Onboarding; stable UI | R2 A5, A8, R2 19 | Layout churn angers everyone; ship "what moved" notes in the app. |
+| 14. Lightroom migration | R2 18 | Also read and write **darktable** XMP develop edits, so darktable users can arrive and leave with their edits. |
+| 15. Simplicity alone doesn't keep users | R2 16 | Image quality and camera coverage are why power users stay; never refuse a file, fall back to a generic profile. |
+
+### New in round 2
+
+- **Trust promise (R2 3).** Business-model changes drive more departures than missing features. Proposal: a short published promise (GPL licence, no upsell nags, no training on users' photos, export everything at any time).
+- **Panel order is not pipeline order (R2 7).** darktable's visible order *is* its processing order, which confused reviewers. LightBench already separates them: the panel order is cosmetic and the pipeline is fixed. This fits the owner's tool-tabs plan.
+- **Show every automatic change (R2 8).** darktable's hidden +0.7 EV is cited as reading like a bug. LightBench applies the same +0.7 EV base exposure to RAW files (darktable's default, for its tone mapper); it is visible today only under Basic → Advanced. Proposal: label it where the user sees it (e.g. a note under Exposure, or the first history step "Base exposure +0.7 EV (darktable default)"), with a preference to change it. LightBench does not undo in-camera exposure compensation, which is the other half of the darktable complaint.
+- **Tunable Auto (R2 9).** A strength slider; a choice of which sliders Auto may touch; Auto re-run per image when applied to many photos.
+- **Mask-first local panel (R2 10).** One mask (or mask group) carries exposure, colour and detail changes, instead of masks living inside each module. darktable's per-module blend masks would be generated behind it. Recompute AI masks per image when pasted.
+- **AI optional, local and labelled (R2 11).** AI off until the user turns it on, run in the browser (WebGPU) where feasible, every AI step labelled in the history, never upload without per-action consent. Matches the Phase 4 plan ("Local AI").
+- **Library basics and culling (R2 15).** Ratings, labels, flags, hierarchical keywords (all to XMP), smart collections, duplicate detection, stacks including RAW+JPEG, and a full-screen culling view where keys act on what is shown. Mostly already in Phase 2.
+- **Adjustable shortcuts, UI size and contrast (R2 17).** Remappable shortcuts with a Lightroom preset, UI scaling, a high-contrast theme, a choice of background grey, everything reachable by keyboard.
+- **Release discipline (R2 19).** Keep the previous version one click away (also on the website), forward/backward-compatible edit formats, in-app "what moved" notes, performance regression tests.
+- **Web-specific (R2 20).** Installable PWA that works offline; published supported browsers and GPU minimums; test against browser betas; any edit made in one place renders everywhere (website and desktop share one engine).
+
+### Conflicts with decisions already made
+
+These need the owner's call; nothing has been changed yet.
+
+1. **Tabs vs one stack.** The owner chose tool tabs (2026-10-11). Round 2 finds the single right-hand stack (Lightroom) rated most approachable, and quotes reviewers criticising Capture One for making you "switch to different tabs to edit your pictures" (R2 A1). Caveats: those two quotes come from affiliate sites (⚠ in the report), and the same reviewers praise Capture One's custom tabs for experts. A middle path exists: one scrolling stack with a row of group buttons at the top that jump to (and highlight) each group, instead of hiding the others.
+2. **Order of groups.** The owner chose Crop & Lens before Basic. Round 2: every app called easy uses roughly "profile/basic light → colour → effects/detail → optics/geometry → local tools" (R2 B, R2 4). Nuance not in the report: Lightroom Classic shows Crop in a tool strip *above* the Basic panel and puts Lens Corrections below Detail; Lightroom (cloud) has Crop as a separate tool button. So "Crop first, lens later" matches Lightroom. A reason to keep crop first: Auto and the histogram should judge the cropped frame.
+3. **"Open folder" as a separate browse mode.** PLAN.md Phase 2 says: open a folder and cull without importing, then add the keepers to the library. Round 2 warns against two storage models with different features (ON1 Browse vs Catalog, Lightroom cloud vs local; R2 14). Alternative: opening a folder *is* adding it in place (no copying, as the importer's "add" mode already does), indexed in the background, with culling available at once and every library feature working; removing a folder from LightBench never deletes files.
+4. **Auto looks.** Built-in looks currently fix Contrast and Vibrance per look (Part 2b). Round 2 suggests adding a strength slider and a choice of sliders Auto may touch (R2 9). This is an addition, not a change of the earlier decision.
 
 ## What darktable's own code offers here (from the catalogue)
 
@@ -98,3 +145,11 @@ Every group follows the same rules:
 | Solo mode? | Use tool tabs in workflow order instead; only the selected tab's tools show. Tab list to be confirmed. |
 | Browse before import ("Open folder")? | Yes. Planned for Phase 2. |
 | Tool search? | Late, once most tools are chosen (end of Phase 3). |
+| Crop & Lens position? | Before Basic. Round 2 points the other way for lens tools; asked again (conflict 2 above). |
+
+### Open after round 2
+
+Asked now: conflicts 1–4 above. Queued for a later round of questions, so they don't hold up current work:
+- **AI masks earlier?** Round 2 calls AI subject/sky masks table stakes (R2 10). They are planned for Phase 4, after the manual masks in Phase 3. Option: build the mask-first panel in Phase 3 with AI subject/sky as its first mask types.
+- **darktable XMP develop edits (R2 18).** Reading darktable's history stack (and writing it back) would let darktable users bring their edits. darktable stores each module's parameters as a binary blob per module version, so this is a sizeable, module-by-module job; it fits Phase 2's migration work.
+- **Trust promise, shortcuts/UI scaling, PWA/offline, release discipline, latency budgets, labelled base exposure:** proposals above; each needs a yes/no before it goes into PLAN.md.
