@@ -7,6 +7,8 @@ import type { SmartRules } from '../catalog/smart'
 import { batch } from '../develop/batch'
 import { rememberedChoice, settingsClipboard, type Clipboard } from '../develop/paste'
 import { PasteDialog } from '../develop/PasteDialog'
+import { ApplyPresetMenu, NewPhotosPreset } from '../develop/PresetSelect'
+import { presetClip } from '../develop/presets'
 import { savedSettings } from '../develop/source'
 import type { SourceKind } from '../engine/develop/settings'
 import { isRawFile } from '../engine/raw/decoder'
@@ -579,6 +581,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
         <button className="button card-btn" onClick={openImport} disabled={!supportsFolderAccess()} title="Copy photos from a memory card into your photo folder">
           Import from card…
         </button>
+        <NewPhotosPreset />
         <button className="button export-btn" onClick={() => onExport(targets())} disabled={!targets().length} title="Export the selected photos (Ctrl+Shift+E)">
           Export…
         </button>
@@ -735,6 +738,10 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
             >
               Sync…
             </button>
+            <ApplyPresetMenu
+              disabled={!targets().length}
+              onApply={(p) => batch.run({ label: `Preset: ${p.name}`, ids: targets(), clip: presetClip(p) })}
+            />
           </div>
         </section>
       </InfoPanel>

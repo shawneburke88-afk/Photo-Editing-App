@@ -21,6 +21,8 @@ export interface BatchJob {
   label: string
   ids: number[]
   clip: Clipboard
+  /** Leave photos that already have edits alone (the preset for new photos; edits may come from their sidecars). */
+  onlyUnedited?: boolean
 }
 
 export interface BatchStatus {
@@ -81,7 +83,7 @@ class BatchDeveloper {
     // Auto Sync sends a job per change; one still waiting for the same photos absorbs the next.
     const last = this.queue[this.queue.length - 1]
     const waiting = this.running ? this.queue.indexOf(last) > 0 : !!last
-    if (last && waiting && last.label === job.label && last.ids.length === job.ids.length && last.ids.every((id, i) => id === job.ids[i])) {
+    if (last && waiting && last.label === job.label && !last.onlyUnedited === !job.onlyUnedited && last.ids.length === job.ids.length && last.ids.every((id, i) => id === job.ids[i])) {
       last.clip = mergeClipboards(last.clip, job.clip)
     } else {
       this.queue.push({ ...job, ids: [...job.ids] })
@@ -107,6 +109,7 @@ class BatchDeveloper {
     this.running = true
     const problems: BatchStatus['problems'] = []
     let changed = 0
+    let skipped = 0
     let label = ''
     try {
       while (this.queue.length) {
@@ -117,8 +120,8 @@ class BatchDeveloper {
           if (this.stopped) break
           this.publish({ active: { label: job.label, done: i, total: job.ids.length, current: '' }, lastResult: '', problems: [] })
           try {
-            await this.applyTo(id, job, (name) => this.publish({ active: { label: job.label, done: i, total: job.ids.length, current: name } }))
-            changed++
+            if (await this.applyTo(id, job, (name) => this.publish({ active: { label: job.label, done: i, total: job.ids.length, current: name } }))) changed++
+            else skipped++
           } catch (e) {
             const p = await getCatalog().getPhoto(id).catch(() => null)
             problems.push({ name: p?.fileName ?? `#${id}`, error: e instanceof Error ? e.message : String(e) })
@@ -128,7 +131,7 @@ class BatchDeveloper {
       }
     } finally {
       this.running = false
-      const result = `${label}: ${changed} ${changed === 1 ? 'photo' : 'photos'} updated${problems.length ? `, ${problems.length} with problems` : ''}.`
+      const result = `${label}: ${changed} ${changed === 1 ? 'photo' : 'photos'} updated${skipped ? `, ${skipped} already edited and left as they were` : ''}${problems.length ? `, ${problems.length} with problems` : ''}.`
       this.publish({ active: null, lastResult: result, problems, runs: this.status.runs + 1 })
       // Free the GPU memory until the next job.
       const engine = this.engine
@@ -139,10 +142,12 @@ class BatchDeveloper {
     }
   }
 
-  private async applyTo(id: number, job: BatchJob, onName: (name: string) => void) {
+  /** Returns false when the photo was left alone (already edited, for `onlyUnedited`). */
+  private async applyTo(id: number, job: BatchJob, onName: (name: string) => void): Promise<boolean> {
     const catalog = getCatalog()
     const p = await catalog.getPhoto(id)
     if (!p) throw new Error('Photo not found in the library')
+    if (job.onlyUnedited && (await catalog.getEdit(id))) return false
     onName(p.fileName)
     const file = await openPhotoFile(p.rootId, p.folderPath, p.fileName)
     const wantsAuto = job.clip.rerunAuto && !!job.clip.settings.auto
@@ -171,6 +176,7 @@ class BatchDeveloper {
     } finally {
       this.updatedListeners.forEach((fn) => fn(id))
     }
+    return true
   }
 }
 

@@ -8,6 +8,7 @@
 // the camera's embedded preview; the RAW itself is rendered only in Develop.
 
 import { getCatalog } from '../catalog/client'
+import { photosAdded } from './added'
 import { saveThumb } from '../catalog/thumbs'
 import { ProbePool } from '../import/probe'
 import { applySidecar, findSidecar } from '../import/run'
@@ -169,6 +170,7 @@ class FolderIndexer {
         const newIds = ids.filter((id): id is number => id !== null)
         if (newIds.length) sidecars.schedule(await catalog.stackRawJpegPairs(newIds))
         this.set({ added: this.status.added + newIds.length, changes: this.status.changes + 1 })
+        photosAdded.emit(newIds)
       })
       return writing
     }
