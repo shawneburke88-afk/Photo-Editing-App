@@ -6,14 +6,17 @@
 // for it after a click, so photos waiting for permission are held per folder until the user allows it.
 
 import { getCatalog } from '../catalog/client'
+import { QUIET_MS } from '../catalog/storage'
 import { getDirAt, getRootHandle } from '../platform/roots'
 import { readXmp, sidecarName, writeXmp } from './xmp'
 
 export interface SidecarStatus {
   /** Library folders where LightBench is waiting for permission to write sidecars. */
   needsPermission: { rootId: number; name: string }[]
-  /** The last problem, e.g. a sidecar that isn't valid XMP (left unchanged). */
+  /** The last problem, e.g. a sidecar that isn't valid XMP (left unchanged) or a write that failed. */
   lastError: string | null
+  /** Sidecars not saved since the notice was last hidden (shown as "and n more"). */
+  failed: number
   /** Sidecar files written since the page loaded. */
   written: number
 }
@@ -26,7 +29,10 @@ class SidecarSync {
   private timer: ReturnType<typeof setTimeout> | null = null
   private running = false
   private listeners = new Set<() => void>()
-  status: SidecarStatus = { needsPermission: [], lastError: null, written: 0 }
+  status: SidecarStatus = { needsPermission: [], lastError: null, failed: 0, written: 0 }
+  /** After the notice is hidden, failures within QUIET_MS are counted but don't bring it back. */
+  private quietUntil = 0
+  private hiddenFailures = 0
 
   /** Queues photos whose sidecar should reflect their current catalog state. */
   schedule(ids: Iterable<number>) {
@@ -52,8 +58,7 @@ class SidecarSync {
         try {
           await this.writeOne(id)
         } catch (e) {
-          this.status = { ...this.status, lastError: e instanceof Error ? e.message : String(e) }
-          this.emit()
+          this.failed(e instanceof Error ? e.message : String(e))
         }
       }
     } finally {
@@ -66,8 +71,10 @@ class SidecarSync {
     const src = await catalog.sidecarSource(id)
     if (!src || !src.owner) return
     const { photo } = src
+    const name = sidecarName(photo.fileName)
     const root = await getRootHandle(photo.rootId)
-    if (!root) return
+    // The browser forgot the folder (e.g. its site data was cleared): say so rather than skipping silently.
+    if (!root) throw new Error(`${name}: LightBench no longer has access to this photo's folder. Open the folder again with Open folder.`)
     if ((await root.queryPermission({ mode: 'readwrite' })) !== 'granted') {
       const waiting = this.blocked.get(photo.rootId) ?? new Set<number>()
       waiting.add(id)
@@ -79,8 +86,10 @@ class SidecarSync {
       }
       return
     }
-    const dir = await getDirAt(root, photo.folderPath)
-    const name = sidecarName(photo.fileName)
+    const where = photo.folderPath ? `${name} (in ${photo.folderPath})` : name
+    const dir = await getDirAt(root, photo.folderPath).catch((e: Error) => {
+      throw new Error(`${where}: ${e.name === 'NotFoundError' ? 'the folder can’t be found (was it moved or renamed?)' : e.message}`, { cause: e })
+    })
     let existing: string | null = null
     try {
       existing = await (await (await dir.getFileHandle(name)).getFile()).text()
@@ -110,12 +119,16 @@ class SidecarSync {
     try {
       text = writeXmp(existing, { rating: photo.rating, flag: photo.flag, color: photo.color, develop: src.settings, keywords, collections: src.collections, stack: src.stack, versions: src.versions, metadata })
     } catch (e) {
-      throw new Error(`${name}: ${e instanceof Error ? e.message : e}`, { cause: e })
+      throw new Error(`${where}: ${e instanceof Error ? e.message : e}`, { cause: e })
     }
     if (text === null) return
-    const w = await (await dir.getFileHandle(name, { create: true })).createWritable()
-    await w.write(text)
-    await w.close()
+    try {
+      const w = await (await dir.getFileHandle(name, { create: true })).createWritable()
+      await w.write(text)
+      await w.close()
+    } catch (e) {
+      throw new Error(`${where}: ${e instanceof Error ? e.message : e}`, { cause: e })
+    }
     await catalog.markSidecarWritten(id, Math.floor(Date.now() / 1000))
     this.status = { ...this.status, written: this.status.written + 1 }
     this.emit()
@@ -148,8 +161,19 @@ class SidecarSync {
     this.emit()
   }
 
+  private failed(message: string, now = Date.now()) {
+    if (!this.status.lastError && now < this.quietUntil) {
+      this.hiddenFailures++
+      return
+    }
+    this.status = { ...this.status, lastError: message, failed: this.status.failed + this.hiddenFailures + 1 }
+    this.hiddenFailures = 0
+    this.emit()
+  }
+
   clearError() {
-    this.status = { ...this.status, lastError: null }
+    this.quietUntil = Date.now() + QUIET_MS
+    this.status = { ...this.status, lastError: null, failed: 0 }
     this.emit()
   }
 

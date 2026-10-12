@@ -17,7 +17,7 @@ See [PLAN.md](PLAN.md#phase-2--library-depth) for the whole phase and [USABILITY
 | Opening a parent folder | If the new folder contains folders already in the library, they become part of it (their photos, ratings and edits move with them), so no photo is listed twice. | LightBench |
 | Permissions | Open folder asks only to read. Writing sidecars asks for write permission once per folder, through the existing banner. | Part 3 |
 
-**Import** now only copies (from cards, with an optional backup). Its old "add in place" mode is replaced by Open folder.
+**Import** now only copies (from cards, with an optional backup). Its old "add in place" mode is replaced by Open folder. Every copy and backup copy is read back and checked against the card (see [Fixes from the LightCraft review](#fixes-from-the-lightcraft-review)).
 
 **Not yet:**
 - Photos deleted or moved outside LightBench stay in the library until removed (Lightroom marks them "missing"; planned).
@@ -62,12 +62,12 @@ See [PLAN.md](PLAN.md#phase-2--library-depth) for the whole phase and [USABILITY
 | Several photos | Applies to the selection. Keywords on only some photos show as dashed chips with a count (“Glarus 1/2”); click to add to all. × removes from all selected. | Lightroom |
 | Keyword list | Left panel, under Folders: a tree with photo counts. Click shows every photo with that keyword or one below it; the filter bar shows it with × to clear. Hover × deletes a keyword (and those below it) from the library and from the photos' sidecars, after a confirmation. | Lightroom keyword list; darktable tagging dictionary |
 | Search | The search box also matches keywords. | LightBench |
-| Sidecars | Written as `dc:subject` (every level, once each) and `lr:hierarchicalSubject` (full paths). Read from `lr:hierarchicalSubject`, else `dc:subject`; darktable's internal `darktable|…` tags are ignored. | darktable `src/common/exif.cc` (`_exif_xmp_read_data` writes, `_exif_import_tags` reads), `omit_tag_hierarchy` default off |
+| Sidecars | Written as `dc:subject` (every level, once each) and `lr:hierarchicalSubject` (full paths). Read from both: every `lr:hierarchicalSubject` path, plus each `dc:subject` keyword that isn't a level of any of those paths, as a top-level keyword (so a keyword another app wrote only to `dc:subject` isn't lost). darktable's internal `darktable|…` tags are ignored, and their levels (“darktable”, “format”…) aren't added from `dc:subject`. Until the LightCraft-review fixes, `dc:subject` was read only when there was no hierarchy. | darktable `src/common/exif.cc` (`_exif_xmp_read_data` writes, `_exif_import_tags` reads), `omit_tag_hierarchy` default off |
 | JPEGs | Keywords (and ratings, labels) embedded in a JPEG's own XMP are read when there is no sidecar. | Lightroom/Bridge write XMP into JPEGs |
 | Older libraries | Photos added before keywords existed keep their sidecar keywords: they are read in before LightBench first rewrites the sidecar, and **⟳** (Look for new photos) reads them for a whole folder. | LightBench (schema v5 `keywords_read`) |
 | Export | Keywords included by default as a flat list; **Include the keyword hierarchy** adds `lr:hierarchicalSubject`. | darktable export defaults: `DT_META_TAG` on, `DT_META_HIERARCHICAL_TAG` off (`src/common/metadata_export.c`) |
 
-**Not yet:** renaming or moving a keyword, synonyms, "don't export" (darktable's category/private flags), keyword sets, and IPTC-IIM keywords inside JPEGs.
+**Not yet:** renaming or moving a keyword, synonyms, "don't export" (darktable's category/private flags), keyword sets, and IPTC-IIM keywords inside JPEGs. If another app writes keyword synonyms into `dc:subject` (Lightroom can, as far as known; not checked with a Lightroom-written file), LightBench reads them as top-level keywords.
 
 **Verified** (headless Chromium, `e2e-keywords`): a Lightroom sidecar's `Places|USA|Philadelphia` and a JPEG's embedded “Embedded” keyword were read; `Places > Switzerland > Glarus, Lake` plus a suggestion picked from “phila” were added; the sidecar got `dc:subject` [Lake, Places, Switzerland, Glarus, USA, Philadelphia] and `lr:hierarchicalSubject` [Lake, Places|Switzerland|Glarus, Places|USA|Philadelphia]; multi-select showed “Glarus 1/2”; the “Places” filter showed 2 photos; search found the JPEG by keyword; deleting “Lake” removed it from the sidecar.
 
@@ -429,3 +429,76 @@ Lightroom sources: Adobe's help site (helpx.adobe.com) could not be opened from 
 - Interface size uses CSS `zoom`, so it relies on the browser's `zoom` behaving as Chromium 141's did; only Chromium was tested (not Firefox or Safari). The photo areas measure their own size, so other layouts that read sizes in a zoomed area (none known now) would need the same care.
 - Real non-US keyboards weren't used: the layouts were imitated with synthetic key events (`key` and `code` as Chrome reports them on those layouts). AltGr handling and macOS ⌘/Option were covered by unit tests only.
 - Screen readers weren't tested with the Settings window, the list or command search.
+
+## Fixes from the LightCraft review
+
+A review comparing LightBench with LightCraft (an MIT/Apache Rust editor) found six problems in parts already built. Each was confirmed in LightBench's code, and the owner approved the fixes (2026-10-12).
+
+| Fix | What changed | Files (`web/src/`) |
+|---|---|---|
+| 1. Rating precedence | When a sidecar is read, `xmp:Rating` now wins over `lightbench:Rating`, so stars changed in Lightroom or Bridge are no longer overridden. `lightbench:Rating` is used only when `xmp:Rating` is missing or −1 (rejected, which hides the stars). `lightbench:Flag` still keeps picks. A photo LightBench rejected that another app has since given stars (`xmp:Rating` 0 or more) is read as not rejected. Writing is unchanged. | `sidecar/xmp.ts` |
+| 2. Keywords | Both `lr:hierarchicalSubject` and `dc:subject` are read (see the Part 3 table). | `sidecar/xmp.ts` (`readKeywords`) |
+| 3. Newer catalogs | A catalog whose `user_version` is above this version's schema (10) is refused before anything is written. The Library shows “This library was saved by a newer version of LightBench. Reload to get the latest version. Nothing in the library was changed.” with a **Reload** button. Reload uses a waiting update if there is one (Part 9), and LightBench checks for one straight away. Before, it opened such a catalog as if it were its own. | `catalog/catalog.worker.ts`, `catalog/errors.ts`, `catalog/OpenError.tsx`, `pwa/register.ts`, `library/LibraryView.tsx` (one line) |
+| 4. Verified card copies | Import copies each file in 8 MiB pieces, hashing each piece (SHA-256 with `crypto.subtle`) as it is read from the card. It then reads the copy back and compares. The backup copy is checked against the same digest. A file's digest is the SHA-256 of its pieces' digests, so memory stays at about one piece. On a mismatch, the bad copy is deleted, the photo is listed under “Show problems” (“The copy in … didn't match the original, so it was deleted. The original wasn't changed…”), and it isn't added to the library. The card is only ever read. A file with the same name at the destination counts as “already copied” only if its content matches; otherwise the copy gets the existing numbered name (`-1`). | `import/copy.ts` (new), `import/run.ts` |
+| 5. Storage notices | LightBench asks for persistent storage when a folder is opened or imported. If the browser doesn't grant it, a notice says the library may be cleared when disk space runs low, and suggests installing the app or allowing storage. **OK** hides the notice in this browser for 30 days. When a catalog request fails because storage failed, a notice says “LightBench couldn't save a change to its library…”. This covers SQLite's read-only, I/O error, corrupt, disk full, can't-open and not-a-database errors, and the browser's quota. Sidecar failures were already shown, but a folder the browser had forgotten was skipped silently: that is now reported. Messages name the file and folder, and repeated failures update one notice (“and 2 more”). After **OK**, failures within the next minute don't bring a notice back. | `catalog/storage.ts` (new), `catalog/client.ts`, `catalog/catalog.worker.ts`, `lib/rpc.ts` (keeps the error's name), `sidecar/sync.ts`, `sidecar/SidecarBanner.tsx` (shows the new notices too, so `App.tsx` is unchanged) |
+| 6. Tint direction | Test only. It goes through the conversion used for rendering (`develop/source.ts` `multipliers` → `temperatureToMultipliers`). Moving Tint towards magenta lowers green relative to red and blue, and moving it towards green raises it, for a D700 RAW and an sRGB JPEG. The direction was already right. | `engine/develop/settings.test.ts` |
+
+**Verified:**
+- **Checks:** `npx vitest run` (202 tests pass), `npx tsc -b`, `npx oxlint` (only the two existing warnings) and `npm run build`.
+- **New unit tests:**
+  - `xmp.test.ts`:
+    - every rating and flag LightBench writes round-trips;
+    - stars changed elsewhere win, and a pick survives a star change made elsewhere;
+    - a LightBench rejection keeps its stars, and a rejection made elsewhere keeps the LightBench stars;
+    - stars given elsewhere un-reject the photo;
+    - fallback without `xmp:Rating`, and clamping;
+    - a sidecar that was read is written back without a rewrite;
+    - Lightroom, darktable, mixed and one-list keyword sidecars.
+  - `copy.test.ts`:
+    - the digest doesn't depend on the piece size;
+    - a copy corrupted on write is deleted and reported;
+    - a backup that differs from the first reading is reported;
+    - an identical file with the same name counts as copied;
+    - a different file of the same size keeps its name, and the copy is numbered.
+  - `storage.test.ts`: which errors count as storage failures, and the notices' show, hide and quiet rules.
+  - `settings.test.ts`: the Tint direction.
+- **In the browser** (headless Chromium with software WebGPU; scratch scripts `e2e-fixes`, 27 of 27 checks passed, and `e2e-quota`):
+  - **Ratings:**
+    - A.NEF, rated 2 in LightBench, wrote `xmp:Rating="2" lightbench:Rating="2"`.
+    - B.NEF, given 3 stars and rejected, wrote `xmp:Rating="-1" lightbench:Rating="3" lightbench:Flag="-1"`.
+    - A.xmp's `xmp:Rating` was then changed to 5 (as Lightroom would). After removing the photos and opening the folder again, A had 5 stars and B had 3 stars and was rejected.
+  - **Keywords:**
+    - A Lightroom-style C.xmp had the hierarchy `Places|USA|Philadelphia`, and a flat list with its levels plus `Sunset` and `Dog`. It gave Philadelphia (under Places › USA), Sunset and Dog.
+    - A darktable-style `B.NEF.xmp` had `darktable|format|nef`, `darktable|changed`, `Trips|Glarus` and `Lake`, with those levels also in the flat list. It gave Glarus (under Trips) and Lake, with no “darktable”, “format” or “nef”.
+    - A flat-only D.xmp gave both its keywords.
+  - **Newer catalog:**
+    - `user_version` was set to 99 through SQLite, from a page of the same origin.
+    - Reloading showed the message and the Reload button.
+    - Afterwards `user_version` was still 99, the rows were the same, and every file in the catalog's storage folder was byte-identical.
+    - With `user_version` set back to 10, the library opened again.
+  - **Card import** (DSC_0001.NEF from a D700, DSC_0002.NEF from a D80 and DSC_0003.JPG, with a backup folder):
+    - Writes of DSC_0003.JPG into the destination were corrupted (one bit flipped). The summary showed “2 imported · 1 failed”, with the message.
+    - The bad copy was gone, DSC_0003 wasn't in the library, and the card's files were byte-identical.
+    - A different file with DSC_0002's name and size was already in `2010/2010-07-20`. It was left alone, and the photo was copied as `DSC_0002-1.NEF` (identical to the card's file).
+    - Importing again without corruption gave “1 imported · 2 were already in the library”, with no extra numbered copies.
+  - **Time cost of checking** (medians of 3 runs, in the browser's private storage on this machine's disk):
+
+    | Photo | Plain copy | Checked copy | Extra |
+    |---|---|---|---|
+    | D700 NEF, 15.1 MB | 57–124 ms | 221–308 ms | +164–184 ms |
+    | D80 NEF, 8.6 MB | 39–66 ms | 122–185 ms | +83–119 ms |
+
+    Hashing alone runs at about 120–200 MB/s here, so checking adds roughly 1–1.4 s per 100 MB to the copy. Copying from a real card is usually slower than this, so checking is a smaller share of the total. Not measured on the owner's PC.
+  - **Storage notices:**
+    - With `navigator.storage.persist()` stubbed to resolve false, the notice appeared after Open folder (not before), appeared only once, and stayed hidden after OK. With it resolving true, the notice never appeared.
+    - With `.xmp` writes made to fail, rating D.JPG showed “Sidecar not saved: D.xmp: …”. A second failure (C.JPG) updated the same notice to “(and 1 more)”, and after OK another failure within the minute didn't bring it back.
+    - In `e2e-quota`, shrinking the site's quota through the DevTools protocol made a real sidecar write fail with the browser's quota message. It was shown the same way.
+- **Screenshots** of the storage notice, the sidecar notice, the newer-catalog screen and the import summary were checked by eye.
+
+**Limitations:**
+- A catalog write failing because storage failed was **not seen end to end**. Shrinking the quota made sidecar writes fail, but not the catalog's, because SQLite's files in the browser's storage didn't need to grow. Only the unit tests (error classification, notice) and the type-checked worker → page plumbing cover it.
+- When a sidecar changes outside LightBench, photos already in the library still don't re-read it, because ⟳ only adds new photos. In the test, A kept 2 stars after ⟳ until it was removed and added again. Catalog v4's `sidecar_written_at` is there for this but isn't used yet.
+- The check reads the copy back through the browser, which may be served from the operating system's cache rather than the disk itself. So it catches a bad write path (browser, cable or card reader errors that change bytes), but not necessarily a disk that loses data later. Each file is read from the card once, so a reader that returns the same wrong bytes every time can't be detected.
+- The Import window's “Already imported” badge still compares only name and size, because reading every file to mark it would be slow. Importing then checks the content.
+- Not checked here: whether installing the app makes Chrome or Edge grant persistent storage (Chrome decides by its own rules). The notice only says it may.
+- Found while writing the Tint test and **not changed**: on an sRGB JPEG at its as-shot 6500 K, Tint +150 asks for a white outside sRGB, and the red multiplier comes out negative (about −7.9; +100 gives about 9.5). For RAW files (D700) the multipliers stay positive across the whole range.

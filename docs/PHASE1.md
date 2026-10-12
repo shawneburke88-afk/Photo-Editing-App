@@ -112,6 +112,10 @@ darktable's code was reviewed first; the findings are in
   sidecar to the RAW.
 - Import reads `name.xmp` (or darktable's `name.ext.xmp`): ratings, flags, labels and LightBench edits. Copy
   imports bring the sidecar along. Catalog v4 stores when each sidecar was last written.
+- Reading ratings (changed after the LightCraft review, see PHASE2.md): `xmp:Rating` wins, so stars changed in
+  Lightroom or Bridge are kept. `lightbench:Rating` is used only when `xmp:Rating` is missing, or is −1 (rejected),
+  which hides the stars. `lightbench:Flag` keeps picks; a photo LightBench rejected that another app has since
+  given stars (`xmp:Rating` 0 or more) is no longer rejected.
 - Checked in the browser: a Lightroom sidecar's 4 stars + Green came through on import; pressing 5 and 6 wrote
   5 stars + Red, kept `crs:Exposure2012`, and a Develop edit appeared as `lightbench:Develop`.
 

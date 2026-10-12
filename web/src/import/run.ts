@@ -6,7 +6,8 @@ import { photosAdded } from '../library/added'
 import { loadThumb, saveThumb } from '../catalog/thumbs'
 import type { PhotoMeta, PhotoMetadata } from '../catalog/types'
 import { getDirAt, resolveRoot } from '../platform/roots'
-import { baseNameOf, dateFolder, extensionOf, JPEG_EXTENSIONS, joinPath, numberedName, renamedFile, type RenameTemplate } from './plan'
+import { copyVerified } from './copy'
+import { baseNameOf, dateFolder, extensionOf, JPEG_EXTENSIONS, joinPath, renamedFile, type RenameTemplate } from './plan'
 import type { ScannedFile } from './scan'
 import { readXmp, sidecarName } from '../sidecar/xmp'
 
@@ -39,7 +40,10 @@ export interface ImportProgress {
 /** Capture time for folder naming, falling back to the file's modified time. */
 export const photoTime = (m: PhotoMeta) => m.capturedAt || m.fileModified
 
-/** True if `dir` already holds a file called `name` of the same size (i.e. this photo was copied before). */
+/**
+ * True if `dir` already holds a file called `name` of the same size (this photo was probably copied before). Used
+ * only to mark photos "Already imported" in the Import window; importing compares the content (copy.ts).
+ */
 export async function existsSameSize(dir: FileSystemDirectoryHandle, name: string, size: number): Promise<boolean> {
   try {
     return (await (await dir.getFileHandle(name)).getFile()).size === size
@@ -59,33 +63,6 @@ export async function findAtDestination(dest: FileSystemDirectoryHandle, items: 
     out.push(dir ? await existsSameSize(dir, it.name, it.meta.fileSize) : false)
   }
   return out
-}
-
-/** Copies `file` into `dir`, avoiding clashes. Returns the final name, and whether a copy was made. */
-async function copyInto(dir: FileSystemDirectoryHandle, name: string, file: File): Promise<{ name: string; copied: boolean }> {
-  for (let n = 0; n < 1000; n++) {
-    const candidate = n === 0 ? name : numberedName(name, n)
-    let existing: File | null = null
-    try {
-      existing = await (await dir.getFileHandle(candidate)).getFile()
-    } catch {
-      existing = null
-    }
-    if (existing) {
-      if (existing.size === file.size) return { name: candidate, copied: false } // copied on an earlier import
-      continue
-    }
-    const fh = await dir.getFileHandle(candidate, { create: true })
-    const w = await fh.createWritable()
-    try {
-      await file.stream().pipeTo(w)
-    } catch (err) {
-      await dir.removeEntry(candidate).catch(() => {})
-      throw err
-    }
-    return { name: candidate, copied: true }
-  }
-  throw new Error(`Too many files named like ${name}`)
 }
 
 /**
@@ -166,8 +143,10 @@ export async function runImport(
       const dir = await getDirAt(target, folder, true)
       const file = await item.file.handle.getFile()
       const wanted = renamedFile(opts.rename, item.file.name, item.meta.capturedAt || item.meta.fileModified, index)
-      const fileName = (await copyInto(dir, wanted, file)).name
-      if (backupDir) await copyInto(backupDir, item.file.name, file)
+      // Each copy is read back and compared with the card (copy.ts); a mismatch fails this photo.
+      const copy = await copyVerified(dir, wanted, file)
+      const fileName = copy.name
+      if (backupDir) await copyVerified(backupDir, item.file.name, file, copy.digest)
       if (sidecar) {
         // The sidecar travels with the photo, renamed to match it. An existing one there is kept.
         const name = sidecarName(fileName)
@@ -177,7 +156,7 @@ export async function runImport(
           await w.write(sidecar.text)
           await w.close()
         }
-        if (backupDir) await copyInto(backupDir, sidecar.name, new File([sidecar.text], sidecar.name))
+        if (backupDir) await copyVerified(backupDir, sidecar.name, new File([sidecar.text], sidecar.name))
       }
       const folderPath = joinPath(subPath, folder)
       const [id] = await catalog.addPhotos([

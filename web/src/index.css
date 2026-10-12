@@ -384,6 +384,8 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .sidecar-banner .banner { background: #1d2b3a; color: #d6e6f5; }
 .sidecar-banner .banner span { flex: 1; min-width: 240px; }
 .sidecar-banner .warn-banner { background: #3a2f17; color: #f5deb0; }
+.catalog-error { max-width: 560px; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+.catalog-error p { margin: 0; }
 
 /* export dialog */
 .dialog.export { width: min(560px, 100%); max-height: min(900px, 100%); }
