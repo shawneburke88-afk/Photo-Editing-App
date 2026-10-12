@@ -539,6 +539,31 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .new-photos-preset select { width: 100%; }
 .preset-amount > .muted { white-space: nowrap; min-width: 3.4em; text-align: right; }
 
+/* Metadata, metadata presets, import presets */
+.metadata-head .panel-title { margin: 10px 0 6px; }
+.metadata-note { margin: 0 0 6px; }
+.meta-fields { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 8px; align-items: center; }
+.meta-fields label { font-size: 0.78rem; color: var(--muted); text-align: right; white-space: nowrap; }
+.meta-fields input, .meta-fields textarea { width: 100%; min-width: 0; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 7px; font: inherit; font-size: 0.85rem; }
+.meta-fields textarea { resize: vertical; line-height: 1.35; }
+.meta-fields .mixed::placeholder { color: var(--muted); font-style: italic; }
+.meta-presets .menu { min-width: 220px; }
+.meta-presets .menu-note { margin: 2px 12px 4px; }
+.meta-presets .menu-row { display: flex; align-items: center; }
+.meta-presets .menu-row button[role=menuitem] { flex: 1; }
+.meta-presets .menu-row .kw-x { padding: 0 10px; }
+.meta-presets .menu-new { border-top: 1px solid var(--line) !important; margin-top: 4px; }
+.metadata-preset-dialog { width: min(560px, calc(100vw - 32px)); padding: 20px 20px 0; gap: 8px; max-height: min(860px, 100%); overflow: auto; }
+.metadata-preset-dialog p { margin: 0; }
+.metadata-preset-dialog .dialog-actions { margin: 6px -20px 0; }
+.meta-preset-fields { display: flex; flex-direction: column; gap: 4px; }
+.meta-preset-fields .check { display: grid; grid-template-columns: auto 8.5em minmax(0, 1fr); align-items: center; gap: 8px; }
+.meta-preset-fields input[type=text] { min-width: 0; }
+.import-options fieldset.import-preset { min-width: 0; }
+.import-preset-row { display: flex; gap: 6px; align-items: center; }
+.import-preset-row select, .import-preset-row input[type=text] { flex: 1 1 0; width: 0; min-width: 0; }
+.import-preset-row .button { flex: none; }
+
 /* Installable app: update notice, Open with LightBench */
 .update-notice { position: fixed; right: 16px; bottom: 16px; z-index: 90; width: min(400px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); padding: 14px 16px; }
 .update-notice h3 { margin: 8px 0 0; font-size: 0.95rem; }

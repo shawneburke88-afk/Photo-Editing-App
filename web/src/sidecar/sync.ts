@@ -1,5 +1,6 @@
-// Keeps XMP sidecars up to date. Every rating, flag, label or edit change schedules the photo; changes are
-// batched (like darktable's background sidecar queue) and a file is rewritten only when its content changes.
+// Keeps XMP sidecars up to date. Every rating, flag, label, keyword, metadata or edit change schedules the photo;
+// changes are batched (like darktable's background sidecar queue) and a file is rewritten only when its content
+// changes.
 //
 // Writing needs read-write permission on the photo's library folder. The browser only lets LightBench ask
 // for it after a click, so photos waiting for permission are held per folder until the user allows it.
@@ -96,9 +97,18 @@ class SidecarSync {
       await catalog.markKeywordsRead(id)
       keywords = [...keywords, ...missing]
     }
+    let metadata = src.metadata
+    if (!src.metadataRead) {
+      // Added before LightBench had title, caption…: the same, so another app's values aren't dropped. Fields
+      // already set in LightBench win.
+      const found = existing ? readXmp(existing).metadata : undefined
+      if (found) await catalog.fillMetadata([photo.id], found)
+      await catalog.markMetadataRead(photo.id)
+      metadata = await catalog.photoMetadata(photo.id)
+    }
     let text: string | null
     try {
-      text = writeXmp(existing, { rating: photo.rating, flag: photo.flag, color: photo.color, develop: src.settings, keywords, collections: src.collections, stack: src.stack, versions: src.versions })
+      text = writeXmp(existing, { rating: photo.rating, flag: photo.flag, color: photo.color, develop: src.settings, keywords, collections: src.collections, stack: src.stack, versions: src.versions, metadata })
     } catch (e) {
       throw new Error(`${name}: ${e instanceof Error ? e.message : e}`, { cause: e })
     }

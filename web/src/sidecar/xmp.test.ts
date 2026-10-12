@@ -131,6 +131,65 @@ describe('XMP sidecars', () => {
     expect(readXmp(writeXmp(text, data({ versions: [] }))!).versions).toBeUndefined()
   })
 
+  const META = {
+    title: 'Glarus <Lake> & "Hills"', caption: 'Line one\nLine two', creator: 'Ann Smith; Bo Lee', copyright: '© 2026 Ann Smith',
+    copyrightUrl: 'https://example.com/licence?a=1&b=2', headline: 'Morning light', city: 'Glarus', state: 'GL', country: 'Switzerland',
+  }
+  const NO_META = { title: '', caption: '', creator: '', copyright: '', copyrightUrl: '', headline: '', city: '', state: '', country: '' }
+
+  it('writes title, caption and copyright as language alternatives, creator as a list, the rest as text', () => {
+    const text = writeXmp(null, data({ metadata: META }))!
+    expect(text).toMatch(/<dc:title><rdf:Alt><rdf:li xml:lang="x-default">Glarus &lt;Lake&gt; &amp; "Hills"<\/rdf:li><\/rdf:Alt><\/dc:title>/)
+    expect(text).toMatch(/<dc:description><rdf:Alt><rdf:li xml:lang="x-default">Line one\nLine two<\/rdf:li>/)
+    expect(text).toMatch(/<dc:rights><rdf:Alt><rdf:li xml:lang="x-default">© 2026 Ann Smith<\/rdf:li>/)
+    expect(text).toMatch(/<dc:creator><rdf:Seq><rdf:li>Ann Smith<\/rdf:li><rdf:li>Bo Lee<\/rdf:li><\/rdf:Seq><\/dc:creator>/)
+    expect(text).toContain('<xmpRights:WebStatement>https://example.com/licence?a=1&amp;b=2</xmpRights:WebStatement>')
+    expect(text).toContain('<photoshop:Headline>Morning light</photoshop:Headline>')
+    expect(text).toContain('<photoshop:City>Glarus</photoshop:City>')
+    expect(text).toContain('<photoshop:State>GL</photoshop:State>')
+    expect(text).toContain('<photoshop:Country>Switzerland</photoshop:Country>')
+    expect(text).toContain('xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/"')
+    expect(text).toContain('xmlns:xmpRights="http://ns.adobe.com/xap/1.0/rights/"')
+    expect(readXmp(text).metadata).toEqual(META)
+    expect(writeXmp(text, data({ metadata: META }))).toBeNull()
+  })
+
+  it('reads metadata written by other apps, as attributes or elements, preferring the default language', () => {
+    const lr = LIGHTROOM.replace('xmp:Label="Green"', 'xmp:Label="Green" photoshop:City="Bern" xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/"')
+      .replace('</dc:subject>', `</dc:subject>
+   <dc:title><rdf:Alt><rdf:li xml:lang="de">Der See</rdf:li><rdf:li xml:lang="x-default">The lake</rdf:li></rdf:Alt></dc:title>
+   <dc:creator><rdf:Seq><rdf:li>A</rdf:li><rdf:li>B</rdf:li></rdf:Seq></dc:creator>
+   <dc:rights><rdf:Alt><rdf:li xml:lang="en-US">© Me</rdf:li></rdf:Alt></dc:rights>`)
+    expect(readXmp(lr).metadata).toEqual({ title: 'The lake', creator: 'A; B', copyright: '© Me', city: 'Bern' })
+  })
+
+  it('changes only the metadata that differs, keeping other languages and other apps’ fields', () => {
+    const lr = LIGHTROOM.replace('</dc:subject>', `</dc:subject>
+   <dc:title><rdf:Alt><rdf:li xml:lang="x-default">Old</rdf:li><rdf:li xml:lang="de">Alt</rdf:li></rdf:Alt></dc:title>
+   <photoshop:SupplementalCategories xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/"><rdf:Bag><rdf:li>Keep</rdf:li></rdf:Bag></photoshop:SupplementalCategories>`)
+    const out = writeXmp(lr, data({ rating: 4, color: 3, metadata: { ...NO_META, title: 'New', city: 'Glarus' } }))!
+    expect(out).toContain('<rdf:li xml:lang="x-default">New</rdf:li>')
+    expect(out).toContain('<rdf:li xml:lang="de">Alt</rdf:li>')
+    expect(out).toContain('<rdf:li>Keep</rdf:li>')
+    expect(out).toContain('crs:Exposure2012="+0.35"')
+    expect(readXmp(out).metadata).toEqual({ title: 'New', city: 'Glarus' })
+    // Cleared: the whole property goes.
+    const cleared = writeXmp(out, data({ rating: 4, color: 3, metadata: NO_META }))!
+    expect(cleared).not.toContain('dc:title')
+    expect(cleared).not.toContain('photoshop:City')
+    expect(cleared).toContain('<rdf:li>Keep</rdf:li>')
+  })
+
+  it('leaves metadata alone when not given', () => {
+    const text = writeXmp(null, data({ metadata: META }))!
+    expect(readXmp(writeXmp(text, data({ rating: 2 }))!).metadata).toEqual(META)
+  })
+
+  it('keeps a virtual copy’s own metadata in the original’s sidecar', () => {
+    const v = { name: 'Copy 1', rating: 0, flag: 0, color: 0, develop: null, keywords: [], collections: [], metadata: { title: 'Copy title' } }
+    expect(readXmp(writeXmp(null, data({ versions: [v] }))!).versions).toEqual([v])
+  })
+
   it('refuses to overwrite a damaged file', () => {
     expect(() => writeXmp('<not xml', data())).toThrow()
     expect(readXmp('<not xml')).toEqual({})

@@ -313,6 +313,10 @@ export function ExportDialog({ ids, onClose }: Props) {
                 Include the keyword hierarchy
               </label>
             )}
+            <label className="check">
+              <input type="checkbox" checked={s.metadata.description !== false} onChange={(e) => set({ metadata: { ...s.metadata, description: e.target.checked } })} />
+              Title, caption, creator, copyright and location
+            </label>
             <p className="muted small">Location (GPS) is never included yet: LightBench doesn’t store it.</p>
           </fieldset>
 

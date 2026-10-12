@@ -107,6 +107,24 @@ export interface DuplicateKey {
   fileSize: number
 }
 
+/**
+ * Descriptive metadata a photo carries (the IPTC Core fields LightBench edits). '' = not set. Written to sidecars
+ * and exports as XMP (sidecar/xmp.ts METADATA_XMP lists the properties).
+ */
+export interface PhotoMetadata {
+  title: string
+  caption: string
+  creator: string
+  copyright: string
+  copyrightUrl: string
+  headline: string
+  city: string
+  state: string
+  country: string
+}
+
+export type MetadataKey = keyof PhotoMetadata
+
 export interface CollectionInfo {
   id: number
   name: string

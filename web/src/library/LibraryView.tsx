@@ -32,6 +32,7 @@ import { indexer } from './indexer'
 import { InfoPanel } from './InfoPanel'
 import { KeywordEditor, type KeywordCount } from './KeywordEditor'
 import { KeywordList } from './KeywordList'
+import { MetadataPanel, NewPhotosMetadataPreset } from './MetadataPanel'
 import { Loupe } from './Loupe'
 import { OpenWithDialog } from './OpenWithDialog'
 
@@ -645,6 +646,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           Import from card…
         </button>
         <NewPhotosPreset />
+        <NewPhotosMetadataPreset />
         <button className="button export-btn" onClick={() => onExport(targets())} disabled={!targets().length} title="Export the selected photos (Ctrl+Shift+E)">
           Export…
         </button>
@@ -788,6 +790,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           onRemove={(id) => void removeFromCollection(id, targets())}
           onNew={() => setDraft({ mode: 'new', kind: 'manual', withPhotos: targets().length })}
         />
+        <MetadataPanel ids={targets()} version={version} onChanged={refresh} />
         <section className="keywords" aria-label="Develop settings">
           <h3 className="panel-title">Develop settings</h3>
           <div className="dleft-actions">

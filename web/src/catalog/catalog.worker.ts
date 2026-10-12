@@ -4,10 +4,10 @@ import sqlite3InitModule, { type Database } from '@sqlite.org/sqlite-wasm'
 import { exposeRpc } from '../lib/rpc'
 import { compileSmart, type SmartRules } from './smart'
 import { burstGroups, collapseStacks } from './stacks'
-import type { CollectionInfo, DuplicateKey, FolderNode, LibraryRoot, NewPhoto, PhotoDetail, PhotoQuery, PhotoRow } from './types'
+import type { CollectionInfo, DuplicateKey, FolderNode, LibraryRoot, MetadataKey, NewPhoto, PhotoDetail, PhotoMetadata, PhotoQuery, PhotoRow } from './types'
 
 const DB_FILE = '/lightbench-catalog.sqlite3'
-const SCHEMA_VERSION = 9
+const SCHEMA_VERSION = 10
 
 let db: Database | null = null
 let persistent = false
@@ -238,6 +238,39 @@ function migrate(d: Database) {
         );
       `)
     }
+    if (version < 10) {
+      // Descriptive metadata (title, caption, creator, copyright, location; '' = not set), one row per photo that has
+      // any. metadata_read works like keywords_read: photos added earlier get 0, so their sidecar's title, caption…
+      // are read in before LightBench first rewrites the sidecar. Metadata presets hold chosen fields (JSON of
+      // { fields }), import presets the Import window's options (JSON; their folders are in the browser's handle store).
+      d.exec(`
+        CREATE TABLE photo_metadata (
+          photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+          title TEXT NOT NULL DEFAULT '',
+          caption TEXT NOT NULL DEFAULT '',
+          creator TEXT NOT NULL DEFAULT '',
+          copyright TEXT NOT NULL DEFAULT '',
+          copyright_url TEXT NOT NULL DEFAULT '',
+          headline TEXT NOT NULL DEFAULT '',
+          city TEXT NOT NULL DEFAULT '',
+          state TEXT NOT NULL DEFAULT '',
+          country TEXT NOT NULL DEFAULT ''
+        );
+        ALTER TABLE photos ADD COLUMN metadata_read INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE metadata_presets (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+          preset TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+        CREATE TABLE import_presets (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+          preset TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+      `)
+    }
     d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     d.exec('COMMIT')
   } catch (err) {
@@ -337,8 +370,8 @@ function addPhotos(photos: NewPhoto[]): (number | null)[] {
     const stmt = d.prepare(`
       INSERT OR IGNORE INTO photos (folder_id, file_name, original_name, file_type, file_size, file_modified,
         captured_at, imported_at, camera_make, camera_model, lens, iso, shutter, aperture, focal_length,
-        width, height, orientation, keywords_read)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`)
+        width, height, orientation, keywords_read, metadata_read)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)`)
     for (const p of photos) {
       stmt.bind([
         folderId(p.rootId, p.folderPath), p.fileName, p.originalName, p.fileType, p.fileSize, p.fileModified,
@@ -401,9 +434,10 @@ function queryPhotos(q: PhotoQuery): PhotoRow[] {
   }
   if (q.text?.trim()) {
     where.push(`(p.file_name LIKE ? OR p.camera_model LIKE ? OR p.lens LIKE ?
-      OR EXISTS (SELECT 1 FROM photo_keywords pk JOIN keywords k ON k.id = pk.keyword_id WHERE pk.photo_id = p.id AND k.path LIKE ?))`)
+      OR EXISTS (SELECT 1 FROM photo_keywords pk JOIN keywords k ON k.id = pk.keyword_id WHERE pk.photo_id = p.id AND k.path LIKE ?)
+      OR EXISTS (SELECT 1 FROM photo_metadata m WHERE m.photo_id = p.id AND (m.title LIKE ? OR m.caption LIKE ? OR m.creator LIKE ?)))`)
     const like = `%${q.text.trim()}%`
-    bind.push(like, like, like, like)
+    bind.push(like, like, like, like, like, like, like)
   }
   const order =
     q.sort === 'name' ? 'p.file_name COLLATE NOCASE, p.version' : q.sort === 'captureAsc' ? 'p.captured_at, p.file_name, p.version' : 'p.captured_at DESC, p.file_name DESC, p.version'
@@ -513,17 +547,130 @@ function photoKeywords(photoId: number): string[] {
   ) as unknown as { path: string }[]).map((r) => r.path)
 }
 
-/** Photos under a folder whose sidecar keywords haven't been read yet (added before keywords existed). */
-function photosWithUnreadKeywords(rootId: number, path: string): { id: number; folderPath: string; fileName: string }[] {
-  return conn().selectObjects(
-    `SELECT p.id, f.path AS folderPath, p.file_name AS fileName FROM photos p JOIN folders f ON f.id = p.folder_id
-     WHERE p.keywords_read = 0 AND f.root_id = ?1 AND (?2 = '' OR f.path = ?2 OR substr(f.path, 1, length(?2) + 1) = ?2 || '/')`,
+/**
+ * Photos under a folder whose sidecar keywords or metadata haven't been read yet (added before LightBench had
+ * them), with which of the two is still to read.
+ */
+function photosWithUnreadSidecar(rootId: number, path: string): { id: number; folderPath: string; fileName: string; keywordsRead: boolean; metadataRead: boolean }[] {
+  const rows = conn().selectObjects(
+    `SELECT p.id, f.path AS folderPath, p.file_name AS fileName, p.keywords_read AS keywordsRead, p.metadata_read AS metadataRead
+     FROM photos p JOIN folders f ON f.id = p.folder_id
+     WHERE (p.keywords_read = 0 OR p.metadata_read = 0) AND p.version = 0
+       AND f.root_id = ?1 AND (?2 = '' OR f.path = ?2 OR substr(f.path, 1, length(?2) + 1) = ?2 || '/')`,
     [rootId, path],
-  ) as unknown as { id: number; folderPath: string; fileName: string }[]
+  ) as unknown as { id: number; folderPath: string; fileName: string; keywordsRead: number; metadataRead: number }[]
+  return rows.map((r) => ({ ...r, keywordsRead: !!r.keywordsRead, metadataRead: !!r.metadataRead }))
 }
 
 function markKeywordsRead(photoId: number) {
   conn().exec({ sql: 'UPDATE photos SET keywords_read = 1 WHERE id = ?', bind: [photoId] })
+}
+
+// ---- descriptive metadata
+
+/** Column of each metadata field (fixed names, so they can be put into SQL text). */
+const META_COLUMNS: Record<MetadataKey, string> = {
+  title: 'title', caption: 'caption', creator: 'creator', copyright: 'copyright', copyrightUrl: 'copyright_url',
+  headline: 'headline', city: 'city', state: 'state', country: 'country',
+}
+const META_KEYS = Object.keys(META_COLUMNS) as MetadataKey[]
+const META_SELECT = META_KEYS.map((k) => `COALESCE(m.${META_COLUMNS[k]}, '') AS ${k}`).join(', ')
+
+/** Each photo's metadata ('' where not set), in the order of `ids`. */
+function metadataOf(ids: number[]): (PhotoMetadata & { id: number })[] {
+  if (!ids.length) return []
+  const rows = conn().selectObjects(
+    `SELECT p.id, ${META_SELECT} FROM photos p LEFT JOIN photo_metadata m ON m.photo_id = p.id WHERE p.id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  ) as unknown as (PhotoMetadata & { id: number })[]
+  const byId = new Map(rows.map((r) => [r.id, r]))
+  return ids.flatMap((id) => byId.get(id) ?? [])
+}
+
+function photoMetadata(id: number): PhotoMetadata {
+  const m = Object.fromEntries(META_KEYS.map((k) => [k, ''])) as unknown as PhotoMetadata
+  const r = metadataOf([id])[0]
+  if (r) for (const k of META_KEYS) m[k] = r[k]
+  return m
+}
+
+/** Only the known fields, as strings. */
+function metadataPatch(patch: Partial<PhotoMetadata>): [MetadataKey, string][] {
+  return META_KEYS.flatMap((k) => (typeof patch[k] === 'string' ? [[k, patch[k]] as [MetadataKey, string]] : []))
+}
+
+/** Sets the given fields on every photo (other fields are left as they are). */
+function setMetadata(ids: number[], patch: Partial<PhotoMetadata>) {
+  const fields = metadataPatch(patch)
+  if (!ids.length || !fields.length) return
+  inTransaction(() => {
+    const row = conn().prepare('INSERT OR IGNORE INTO photo_metadata (photo_id) VALUES (?)')
+    const stmt = conn().prepare(`UPDATE photo_metadata SET ${fields.map(([k]) => `${META_COLUMNS[k]} = ?`).join(', ')} WHERE photo_id = ?`)
+    for (const id of ids) {
+      row.bind([id]).stepReset()
+      stmt.bind([...fields.map(([, v]) => v), id]).stepReset()
+    }
+    row.finalize()
+    stmt.finalize()
+  })
+}
+
+/** Sets the given fields only where a photo has none yet (presets for new photos, camera EXIF). Returns the photos changed. */
+function fillMetadata(ids: number[], patch: Partial<PhotoMetadata>): number[] {
+  const fields = metadataPatch(patch).filter(([, v]) => v !== '')
+  if (!ids.length || !fields.length) return []
+  const changed = new Set<number>()
+  inTransaction(() => {
+    const row = conn().prepare('INSERT OR IGNORE INTO photo_metadata (photo_id) VALUES (?)')
+    for (const id of ids) row.bind([id]).stepReset()
+    row.finalize()
+    for (const [k, v] of fields) {
+      const stmt = conn().prepare(`UPDATE photo_metadata SET ${META_COLUMNS[k]} = ? WHERE photo_id = ? AND ${META_COLUMNS[k]} = ''`)
+      for (const id of ids) {
+        stmt.bind([v, id]).stepReset()
+        if (conn().changes() > 0) changed.add(id)
+      }
+      stmt.finalize()
+    }
+  })
+  return [...changed]
+}
+
+/** Capture and file dates, for presets' {year}. */
+function photoDates(ids: number[]): { id: number; capturedAt: number; fileModified: number }[] {
+  if (!ids.length) return []
+  return conn().selectObjects(
+    `SELECT id, captured_at AS capturedAt, file_modified AS fileModified FROM photos WHERE id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  ) as unknown as { id: number; capturedAt: number; fileModified: number }[]
+}
+
+function markMetadataRead(photoId: number) {
+  conn().exec({ sql: 'UPDATE photos SET metadata_read = 1 WHERE id = ?', bind: [photoId] })
+}
+
+/** Presets stored as JSON under a unique name (metadata and import presets). */
+type PresetTable = 'metadata_presets' | 'import_presets'
+
+function listNamedPresets(table: PresetTable): { id: number; name: string; preset: string }[] {
+  return conn().selectObjects(`SELECT id, name, preset FROM ${table} ORDER BY name COLLATE NOCASE`) as unknown as { id: number; name: string; preset: string }[]
+}
+
+/** Saves a preset; one with the same name (ignoring case) is replaced. Returns its id. */
+function saveNamedPreset(table: PresetTable, name: string, preset: string): number {
+  const n = name.trim()
+  if (!n) throw new Error('Give the preset a name.')
+  const old = conn().selectValue(`SELECT id FROM ${table} WHERE name = ?`, [n])
+  if (old !== undefined) {
+    conn().exec({ sql: `UPDATE ${table} SET name = ?, preset = ? WHERE id = ?`, bind: [n, preset, old] })
+    return Number(old)
+  }
+  conn().exec({ sql: `INSERT INTO ${table} (name, preset, created_at) VALUES (?, ?, ?)`, bind: [n, preset, Math.floor(Date.now() / 1000)] })
+  return Number(conn().selectValue('SELECT last_insert_rowid()'))
+}
+
+function deleteNamedPreset(table: PresetTable, id: number) {
+  conn().exec({ sql: `DELETE FROM ${table} WHERE id = ?`, bind: [id] })
 }
 
 // ---- collections
@@ -834,7 +981,11 @@ export interface VersionData {
   develop: string | null
   keywords: string[]
   collections: string[]
+  /** The copy's metadata (fields that are set); undefined = as its original (sidecars written before metadata). */
+  metadata?: Partial<PhotoMetadata>
 }
+
+const setFields = (m: PhotoMetadata): Partial<PhotoMetadata> => Object.fromEntries(Object.entries(m).filter(([, v]) => v !== '')) as Partial<PhotoMetadata>
 
 function versionsOf(originalId: number): VersionData[] {
   const rows = conn().selectObjects(
@@ -842,15 +993,21 @@ function versionsOf(originalId: number): VersionData[] {
      JOIN photos c ON c.folder_id = o.folder_id AND c.file_name = o.file_name AND c.version > 0
      WHERE o.id = ? ORDER BY c.version`, [originalId],
   ) as unknown as { id: number; name: string; rating: number; flag: number; color: number }[]
-  return rows.map((r) => ({
-    name: r.name,
-    rating: r.rating,
-    flag: r.flag,
-    color: r.color,
-    develop: getEdit(r.id)?.settings ?? null,
-    keywords: photoKeywords(r.id),
-    collections: photoCollections(r.id),
-  }))
+  const own = setFields(photoMetadata(originalId))
+  return rows.map((r) => {
+    const metadata = setFields(photoMetadata(r.id))
+    return {
+      name: r.name,
+      rating: r.rating,
+      flag: r.flag,
+      color: r.color,
+      develop: getEdit(r.id)?.settings ?? null,
+      keywords: photoKeywords(r.id),
+      collections: photoCollections(r.id),
+      // Only when the copy or its original has some, so sidecars of photos without metadata don't change.
+      ...(Object.keys(metadata).length || Object.keys(own).length ? { metadata } : {}),
+    }
+  })
 }
 
 /**
@@ -873,16 +1030,18 @@ function createVirtualCopy(sourceId: number, name?: string): number {
     conn().exec({
       sql: `INSERT INTO photos (folder_id, file_name, original_name, file_type, file_size, file_modified, captured_at, imported_at,
               camera_make, camera_model, lens, iso, shutter, aperture, focal_length, width, height, orientation,
-              rating, flag, color_label, keywords_read, version, version_name)
+              rating, flag, color_label, keywords_read, metadata_read, version, version_name)
             SELECT folder_id, file_name, original_name, file_type, file_size, file_modified, captured_at, ?,
               camera_make, camera_model, lens, iso, shutter, aperture, focal_length, width, height, orientation,
-              rating, flag, color_label, 1, ?, ? FROM photos WHERE id = ?`,
+              rating, flag, color_label, 1, 1, ?, ? FROM photos WHERE id = ?`,
       bind: [Math.floor(Date.now() / 1000), next, finalName, sourceId],
     })
     const id = Number(conn().selectValue('SELECT last_insert_rowid()'))
     const edit = getEdit(sourceId)
     if (edit) saveEdit(id, edit.settings, edit.history)
     conn().exec({ sql: 'INSERT INTO photo_keywords (photo_id, keyword_id) SELECT ?, keyword_id FROM photo_keywords WHERE photo_id = ?', bind: [id, sourceId] })
+    const cols = META_KEYS.map((k) => META_COLUMNS[k]).join(', ')
+    conn().exec({ sql: `INSERT INTO photo_metadata (photo_id, ${cols}) SELECT ?, ${cols} FROM photo_metadata WHERE photo_id = ?`, bind: [id, sourceId] })
     const sid = conn().selectValue('SELECT stack_id FROM photos WHERE id = ?', [original]) as number | null
     if (sid !== null && sid !== undefined) {
       conn().exec({ sql: 'UPDATE photos SET stack_id = ? WHERE id = ?', bind: [sid, id] })
@@ -929,6 +1088,10 @@ function restoreVersions(originalId: number, versions: VersionData[]): number[] 
     conn().exec({ sql: 'DELETE FROM photo_keywords WHERE photo_id = ?', bind: [id] })
     if (v.keywords?.length) addKeywords([id], v.keywords)
     if (v.collections?.length) addToCollectionsByName(id, v.collections)
+    if (v.metadata) {
+      conn().exec({ sql: 'DELETE FROM photo_metadata WHERE photo_id = ?', bind: [id] })
+      setMetadata([id], v.metadata)
+    }
     made.push(id)
   }
   return made
@@ -1054,8 +1217,11 @@ function sidecarSource(requested: number) {
     [p.folderId, photoId, base],
   ) as unknown as { fileType: string }[]
   const owner = !(isJpeg && twins.some((t) => !/^jpe?g$/i.test(t.fileType)))
-  const keywordsRead = Number(conn().selectValue('SELECT keywords_read FROM photos WHERE id = ?', [photoId])) === 1
-  return { photo: p, settings: edit?.settings ?? null, owner, keywords: photoKeywords(photoId), keywordsRead, collections: photoCollections(photoId), stack: stackOf(photoId), versions: versionsOf(photoId) }
+  const read = conn().selectObject('SELECT keywords_read AS k, metadata_read AS m FROM photos WHERE id = ?', [photoId]) as { k: number; m: number }
+  return {
+    photo: p, settings: edit?.settings ?? null, owner, keywords: photoKeywords(photoId), keywordsRead: read.k === 1, collections: photoCollections(photoId),
+    stack: stackOf(photoId), versions: versionsOf(photoId), metadata: photoMetadata(photoId), metadataRead: read.m === 1,
+  }
 }
 
 function markSidecarWritten(photoId: number, at: number) {
@@ -1103,7 +1269,19 @@ const handlers = {
   deleteKeyword,
   photoKeywords,
   markKeywordsRead,
-  photosWithUnreadKeywords,
+  photosWithUnreadSidecar,
+  metadataOf,
+  photoMetadata,
+  setMetadata,
+  fillMetadata,
+  photoDates,
+  markMetadataRead,
+  listMetadataPresets: () => listNamedPresets('metadata_presets'),
+  saveMetadataPreset: (name: string, preset: string) => saveNamedPreset('metadata_presets', name, preset),
+  deleteMetadataPreset: (id: number) => deleteNamedPreset('metadata_presets', id),
+  listImportPresets: () => listNamedPresets('import_presets'),
+  saveImportPreset: (name: string, preset: string) => saveNamedPreset('import_presets', name, preset),
+  deleteImportPreset: (id: number) => deleteNamedPreset('import_presets', id),
   listCollections,
   countSmart,
   createCollection,

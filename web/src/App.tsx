@@ -5,6 +5,7 @@ import { startNewPhotosPreset } from './develop/presetStore'
 import { DevelopView } from './develop/DevelopView'
 import { isTextEntry } from './lib/keys'
 import { LibraryView } from './library/LibraryView'
+import { startNewPhotosMetadata } from './library/metadataPresets'
 import { launched } from './pwa/launch'
 import { UpdateNotice } from './pwa/UpdateNotice'
 import { SidecarBanner } from './sidecar/SidecarBanner'
@@ -59,6 +60,8 @@ export default function App() {
 
   // Develop new photos (Open folder, Import) with the preset chosen for them.
   useEffect(() => startNewPhotosPreset(), [])
+  // …and fill in their metadata with the metadata preset chosen for them.
+  useEffect(() => startNewPhotosMetadata(), [])
 
   // Photos opened with the installed app are added from the Library, which asks for their folder.
   useEffect(() => launched.subscribe(() => launched.get().length > 0 && go('library')), [go])
