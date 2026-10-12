@@ -29,22 +29,55 @@ export async function loadThumbPreview(photoId: number): Promise<Preview | null>
   return thumb ? { bmp: await createImageBitmap(thumb), rotate: 0, camera: false } : null
 }
 
+/** Scales a bitmap down so its longer side is at most `maxEdge` pixels (closing the original). */
+async function shrink(bmp: ImageBitmap, maxEdge?: number): Promise<ImageBitmap> {
+  const scale = maxEdge ? maxEdge / Math.max(bmp.width, bmp.height) : 1
+  if (scale >= 1) return bmp
+  const small = await createImageBitmap(bmp, {
+    resizeWidth: Math.max(1, Math.round(bmp.width * scale)),
+    resizeHeight: Math.max(1, Math.round(bmp.height * scale)),
+    resizeQuality: 'high',
+  })
+  bmp.close()
+  return small
+}
+
 /**
  * The full-size preview: the JPEG itself, or the camera preview embedded in a RAW (fast; darktable's default
- * for unedited images). Throws with a user-facing message when the file can't be shown.
+ * for unedited images). `maxEdge` scales it down (Survey tiles, many on screen at once). Throws with a
+ * user-facing message when the file can't be shown.
  */
-export async function loadFullPreview(photo: PhotoDetail): Promise<Preview> {
+export async function loadFullPreview(photo: PhotoDetail, maxEdge?: number): Promise<Preview> {
   const file = await openPhotoFile(photo.rootId, photo.folderPath, photo.fileName)
   if (!file) throw new Error('Showing a small preview. Reconnect this photo’s folder to see it full size.')
-  if (isJpeg(photo)) return { bmp: await createImageBitmap(file), rotate: 0, camera: false }
+  if (isJpeg(photo)) return { bmp: await shrink(await createImageBitmap(file), maxEdge), rotate: 0, camera: false }
   decoder ??= new RawDecoder()
   const r = await decoder.decode(file, false)
   if (!r.preview || r.preview.format !== 'jpeg') throw new Error('This file has no full-size preview; open it in Develop to see the RAW.')
-  const bmp = await createImageBitmap(new Blob([r.preview.bytes], { type: 'image/jpeg' }))
+  const bmp = await shrink(await createImageBitmap(new Blob([r.preview.bytes], { type: 'image/jpeg' })), maxEdge)
   let rotate = FLIP_TO_ROTATION[photo.orientation] ?? 0
   // Some cameras store an already-rotated preview; only turn it if it is still landscape.
   if ((rotate === 90 || rotate === 270) && bmp.height > bmp.width) rotate = 0
   return { bmp, rotate, camera: true }
+}
+
+/** Draws a preview fitted (and turned upright) in a canvas of cw × ch device pixels; returns where, in device pixels. */
+export function drawFitted(ctx: CanvasRenderingContext2D, cw: number, ch: number, preview: Preview) {
+  const { bmp, rotate } = preview
+  const sideways = rotate === 90 || rotate === 270
+  const iw = sideways ? bmp.height : bmp.width
+  const ih = sideways ? bmp.width : bmp.height
+  const scale = Math.min(cw / iw, ch / ih)
+  const w = iw * scale
+  const h = ih * scale
+  ctx.imageSmoothingQuality = 'high'
+  ctx.translate(cw / 2, ch / 2)
+  ctx.rotate((rotate * Math.PI) / 180)
+  const dw = sideways ? h : w
+  const dh = sideways ? w : h
+  ctx.drawImage(bmp, -dw / 2, -dh / 2, dw, dh)
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  return { x: (cw - w) / 2, y: (ch - h) / 2, w, h }
 }
 
 /** Small LRU of decoded bitmaps; evicted bitmaps are closed. Concurrent requests for one key share a load. */

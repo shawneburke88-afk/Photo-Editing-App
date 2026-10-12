@@ -415,6 +415,19 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .cull-pane-tags { position: absolute; bottom: 10px; left: 10px; display: flex; align-items: center; gap: 8px; background: rgba(20,21,24,0.85); padding: 3px 8px; border-radius: 4px; }
 .cull-pane-tags .flag { position: static; }
 .cull-hints { margin: 0; padding: 4px 14px; text-align: center; }
+.cull-pane-label { position: absolute; top: 10px; right: 10px; background: rgba(20,21,24,0.85); color: var(--muted); font-size: 0.75rem; padding: 3px 8px; border-radius: 4px; pointer-events: none; }
+.cull-pane.active .cull-pane-label { color: var(--accent); }
+.cull-controls .seg button { padding: 3px 10px; font-size: 0.85rem; }
+.cull-controls .seg button:disabled { opacity: 0.5; cursor: default; }
+/* Survey: the selected photos tiled at the largest size that fits (sizes set from survey.ts) */
+.survey-stage { display: flex; flex-wrap: wrap; justify-content: center; align-content: center; min-height: 0; overflow: hidden; }
+.survey-tile { position: relative; flex: 0 0 auto; border: 2px solid transparent; border-radius: 4px; overflow: hidden; cursor: pointer; background: #000; }
+.survey-tile.active { border-color: var(--accent); }
+.survey-tile.rejected .survey-canvas, .survey-tile.rejected .cull-thumb { opacity: 0.45; }
+.survey-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.survey-drop { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--line); background: rgba(20,21,24,0.85); color: var(--text); font: inherit; font-size: 0.8rem; line-height: 1; cursor: pointer; opacity: 0.7; }
+.survey-drop:hover, .survey-drop:focus-visible, .survey-tile:hover .survey-drop { opacity: 1; }
+.survey-drop:hover { border-color: var(--bad); color: var(--bad); }
 .cull-strip { display: flex; gap: 4px; overflow-x: auto; padding: 6px 10px 10px; background: var(--panel); border-top: 1px solid var(--line); justify-content: center; }
 .strip-cell { position: relative; flex: 0 0 auto; width: 78px; height: 60px; padding: 0; border: 2px solid transparent; border-radius: 3px; background: #000; cursor: pointer; overflow: hidden; }
 .strip-cell img { width: 100%; height: 100%; object-fit: contain; }
