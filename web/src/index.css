@@ -369,6 +369,20 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .dstage.cropping .dbadge { z-index: 2; pointer-events: none; }
 .dbadge.crop-hint { top: auto; bottom: 3px; left: 50%; transform: translateX(-50%); color: var(--text); white-space: nowrap; max-width: calc(100% - 20px); overflow: hidden; text-overflow: ellipsis; }
 
+/* Transform and Upright (TransformPanel.tsx, GuidedOverlay.tsx) */
+.upright-modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 6px; }
+.guided-shade { fill: rgba(0, 0, 0, 0.45); pointer-events: none; }
+.upright-warn { color: var(--warn); margin: 2px 0 4px; }
+.transform-panel .dslider { margin-top: 4px; }
+.guided-overlay .guide line { stroke: #5cc8f0; stroke-width: 2; }
+.guided-overlay .guide.h line { stroke: var(--accent); }
+.guided-overlay .guide line.guide-halo { stroke: rgba(0, 0, 0, 0.6); stroke-width: 4; }
+.guided-overlay .guide circle { fill: #fff; stroke: rgba(0, 0, 0, 0.7); stroke-width: 1.5; }
+.guided-overlay .guide.selected line:not(.guide-halo) { stroke-width: 3; }
+.guided-overlay .guide.selected circle { fill: var(--accent); }
+.guided-overlay .guide.new line { stroke: #fff; stroke-dasharray: 5 4; }
+.dstage.guiding .dbadge { z-index: 2; pointer-events: none; }
+
 @media (max-width: 1100px) {
   .develop { grid-template-columns: 1fr 5px var(--right-w, 280px); }
   .dleft, .develop > .resize-handle.x:first-of-type { display: none; }

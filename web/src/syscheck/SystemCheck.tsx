@@ -4,6 +4,7 @@ import { EnvironmentCheck } from './EnvironmentCheck'
 import { FolderCheck } from './FolderCheck'
 import { RawCheck } from './RawCheck'
 import { ReportProvider, useReport } from './report'
+import { SOURCE_URL } from '../lib/source'
 
 export function SystemCheck() {
   return (
@@ -17,6 +18,10 @@ export function SystemCheck() {
           </p>
           <p className="muted">
             Run each test, then use <strong>Copy report</strong> at the bottom and paste the results back to the developer.
+          </p>
+          <p className="muted small">
+            LightBench is free software (GPL-3.0; parts AGPL-3.0, see THIRD_PARTY_NOTICES.md in the source):{' '}
+            <a href={SOURCE_URL} target="_blank" rel="noreferrer">source code on GitHub</a>.
           </p>
         </div>
         <EnvironmentCheck />

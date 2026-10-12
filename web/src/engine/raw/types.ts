@@ -11,6 +11,8 @@ export interface PhotoInfo {
   shutter: number
   aperture: number
   focalLength: number
+  /** 35 mm-equivalent focal length from the file (EXIF FocalLengthIn35mmFilm), 0 or absent if unknown (Upright). */
+  focal35?: number
   /** Capture time, Unix seconds (0 if unknown). */
   timestamp: number
   /** LibRaw orientation code: 0 none, 3 = 180°, 5 = 90° CCW, 6 = 90° CW. */

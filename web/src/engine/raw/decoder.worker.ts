@@ -55,6 +55,7 @@ async function decode(file: File, full: boolean): Promise<DecodeResult> {
       shutter: other.shutter,
       aperture: other.aperture,
       focalLength: other.focal_len,
+      focal35: lens.FocalLengthIn35mmFormat || lens.makernotes.FocalLengthIn35mmFormat || 0,
       timestamp: Number(other.timestamp),
       flip: lr.getFlip(),
     }
@@ -242,6 +243,7 @@ async function decodeJpeg(file: File): Promise<DecodeResult> {
       shutter: exif?.shutter ?? 0,
       aperture: exif?.aperture ?? 0,
       focalLength: exif?.focalLength ?? 0,
+      focal35: exif?.focal35 ?? 0,
       timestamp: exif?.capturedAt ?? 0,
       flip: 0,
     },

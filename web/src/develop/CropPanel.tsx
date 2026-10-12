@@ -33,6 +33,11 @@ interface Props {
   onApply: () => void
   onCancel: () => void
   onLevel: () => void
+  /** Auto straighten: levels the photo along the lines found (Upright's detector). */
+  onAutoStraighten: () => void
+  /** Auto straighten is looking for lines, and what it said last (a refusal), if anything. */
+  straightening: boolean
+  straightenMessage: string | null
   onOverlay: (o: CropOverlayKind) => void
   onEdit: (e: GeometryEdit) => void
 }
@@ -92,7 +97,7 @@ function orientationText(g: GeometrySettings): string {
   return `${turn}, then flipped horizontally`
 }
 
-export function CropPanel({ geometry: g, frame, cropSize, cropping, leveling, overlay, disabled, showHint, onToggleCrop, onApply, onCancel, onLevel, onOverlay, onEdit }: Props) {
+export function CropPanel({ geometry: g, frame, cropSize, cropping, leveling, overlay, disabled, showHint, onToggleCrop, onApply, onCancel, onLevel, onAutoStraighten, straightening, straightenMessage, onOverlay, onEdit }: Props) {
   const ratio = frame ? lockedRatio(g, frame[0], frame[1]) : null
   const portrait = cropSize ? cropSize[1] > cropSize[0] : false
   return (
@@ -200,12 +205,23 @@ export function CropPanel({ geometry: g, frame, cropSize, cropping, leveling, ov
           >
             {ICON.level} Level
           </button>
+          <button
+            className="button small"
+            disabled={disabled || straightening}
+            onClick={onAutoStraighten}
+            aria-label="Auto straighten"
+            title={withKey('Level the photo along the lines found in it (horizon, walls). With Level on, double-clicking the photo does the same.', 'develop.autoStraighten')}
+          >
+            Auto
+          </button>
           <span className="crop-tools-gap" />
           <button className="button small icon" disabled={disabled} onClick={() => onEdit({ kind: 'rotate', dir: -1 })} title={withKey('Rotate left', 'develop.rotateLeft')} aria-label="Rotate left">{ICON.rotL}</button>
           <button className="button small icon" disabled={disabled} onClick={() => onEdit({ kind: 'rotate', dir: 1 })} title={withKey('Rotate right', 'develop.rotateRight')} aria-label="Rotate right">{ICON.rotR}</button>
           <button className="button small icon" disabled={disabled} onClick={() => onEdit({ kind: 'flip', axis: 'h' })} title="Flip horizontal" aria-label="Flip horizontal">{ICON.flipH}</button>
           <button className="button small icon" disabled={disabled} onClick={() => onEdit({ kind: 'flip', axis: 'v' })} title="Flip vertical" aria-label="Flip vertical">{ICON.flipV}</button>
         </div>
+        {straightening && <p className="muted small crop-note">Looking for straight lines…</p>}
+        {!straightening && straightenMessage && <p className="small crop-note upright-warn" role="status">{straightenMessage}</p>}
         {(g.turns !== 0 || g.mirror) && <p className="muted small crop-note">{orientationText(g)} (on top of the camera’s orientation)</p>}
       </section>
     </div>

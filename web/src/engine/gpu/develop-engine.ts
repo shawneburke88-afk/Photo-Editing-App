@@ -345,6 +345,11 @@ export class DevelopEngine {
     return sideways ? [this.sensor.height, this.sensor.width] : [this.sensor.width, this.sensor.height]
   }
 
+  /** The photo's size in its sensor orientation and the camera's orientation (LibRaw flip code), for Upright. */
+  get sensorLayout(): { width: number; height: number; flip: number } {
+    return { width: this.sensor?.width ?? 0, height: this.sensor?.height ?? 0, flip: this.exifFlip }
+  }
+
   /** The geometry resolved for the loaded photo (`whole`: the uncropped straightened frame). */
   geometry(g: GeometrySettings, whole = false): ResolvedGeometry {
     const s = this.sensor
@@ -954,6 +959,51 @@ export class DevelopEngine {
         }
       }
       return sum.map((s) => s / (w * h)) as Vec3
+    } finally {
+      if (read.mapState === 'mapped') read.unmap()
+      read.destroy()
+    }
+  }
+
+  /**
+   * Upright's line detection input: the scene-linear photo in its sensor orientation, before the perspective,
+   * at most `maxSize` px on its long edge (a level of the scene's mip chain, so nothing new is rendered), as
+   * interleaved RGB, with its scale over the full-size photo.
+   *
+   * darktable's ashift detects lines after its `lens` module, so with lens correction on (`lens`, the photo's
+   * settings) this reads the scene corrected for the lens only (`lensCorrected`, the same size and orientation as
+   * the scene): the lines are found on the photo as it looks before the perspective, in the coordinates the
+   * perspective map ends in (geometry.ts `withLens`).
+   */
+  async analysisImage(lens?: LensSettings, maxSize = 1600): Promise<{ rgb: Float32Array; width: number; height: number; scale: number }> {
+    this.checkAlive()
+    if (!this.scene) throw new Error('No photo processed')
+    const lw = (await this.lensCorrection(lens)).warp
+    const scene = lw ? await this.lensCorrected(lw) : this.scene
+    this.checkAlive()
+    let level = 0
+    while (level < scene.mipLevelCount - 1 && Math.max(scene.width, scene.height) / 2 ** level > maxSize) level++
+    const w = Math.max(1, scene.width >> level)
+    const h = Math.max(1, scene.height >> level)
+    const bytesPerRow = 256 * Math.ceil((w * 8) / 256)
+    const read = this.device.createBuffer({ size: bytesPerRow * h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
+    const enc = this.device.createCommandEncoder()
+    enc.copyTextureToBuffer({ texture: scene, mipLevel: level }, { buffer: read, bytesPerRow }, [w, h])
+    this.device.queue.submit([enc.finish()])
+    try {
+      await read.mapAsync(GPUMapMode.READ)
+      const half = new Uint16Array(read.getMappedRange())
+      const rgb = new Float32Array(w * h * 3)
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const o = (y * bytesPerRow) / 2 + x * 4
+          const i = 3 * (y * w + x)
+          rgb[i] = halfToFloat(half[o])
+          rgb[i + 1] = halfToFloat(half[o + 1])
+          rgb[i + 2] = halfToFloat(half[o + 2])
+        }
+      }
+      return { rgb, width: w, height: h, scale: w / scene.width }
     } finally {
       if (read.mapState === 'mapped') read.unmap()
       read.destroy()

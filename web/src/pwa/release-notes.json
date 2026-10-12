@@ -14,7 +14,12 @@
       "The Lens section (in Crop & Lens) shows which data corrected the photo, lets you pick the camera or lens when the match is wrong, and has Distortion and Vignetting amounts.",
       "Lensfun's lens data is downloaded the first time a photo needs it, then works offline.",
       "Back up the whole library (catalog, thumbnails and settings) to one checked file, and restore it safely.",
-      "LightBench notices when Lightroom, darktable or another app changes a photo's sidecar, and asks before overwriting it."
+      "LightBench notices when Lightroom, darktable or another app changes a photo's sidecar, and asks before overwriting it.",
+      "Transform: Upright Auto, Level, Vertical and Full straighten leaning buildings and tilted horizons in one click, using darktable's line detection and the photo's focal length; when the lines found aren't reliable, the photo is left alone and LightBench says why.",
+      "Guided Upright (Shift+T): draw 2–4 lines along edges that should be vertical or horizontal; drag their ends to adjust, Delete removes one.",
+      "Transform sliders: Vertical, Horizontal, Rotate, Aspect, Scale and X/Y Offset. The photo is enlarged so no empty corners show.",
+      "Auto straighten in the crop group (or double-click with Level on) levels the photo along the lines it finds.",
+      "Paste, Sync and presets: Upright Auto, Level, Vertical and Full are detected again on each photo; the Transform sliders are copied as they are."
     ],
     "bugFixes": [
       "Star ratings changed in Lightroom or Bridge are no longer overridden when LightBench re-reads the sidecar.",

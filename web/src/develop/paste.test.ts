@@ -3,6 +3,7 @@ import { BUILT_IN_TARGETS } from '../engine/develop/auto'
 import { isWithinImage } from '../engine/develop/crop'
 import { DEFAULT_GEOMETRY, rotate90, setAngle, setAspect } from '../engine/develop/geometry'
 import { DEFAULT_RGB_SETTINGS, DEFAULT_SETTINGS } from '../engine/develop/settings'
+import { DEFAULT_TRANSFORM, ZERO_PERSPECTIVE, type TransformSettings } from '../engine/develop/upright'
 import { applyPaste, changedKeys, DEFAULT_PASTE_KEYS, describePaste, type Clipboard } from './paste'
 
 const source = {
@@ -81,5 +82,50 @@ describe('paste', () => {
     expect(angleOnly.angle).toBe(10)
     expect(isWithinImage({ rect: angleOnly.crop, angle: 10 }, 600, 400)).toBe(true)
     expect(changedKeys(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, geometry: turned })).toEqual(['rotate', 'straighten', 'crop'])
+  })
+})
+
+describe('paste: Upright and the Transform sliders', () => {
+  const withT = (t: Partial<TransformSettings>) => ({
+    ...DEFAULT_SETTINGS,
+    geometry: { ...DEFAULT_GEOMETRY, transform: { ...DEFAULT_TRANSFORM, ...t } },
+  })
+  const src = withT({ upright: 'auto', solved: { rotation: 1.2, vertical: 0.3, horizontal: 0, shear: 0 }, vertical: 15, rotate: -2, focal: 50 })
+  const c = (keys: Clipboard['keys']): Clipboard => ({ settings: src, keys, rerunAuto: false, sourceKind: 'raw', sourceName: 'A.NEF' })
+
+  it('are unticked by default, like the crop', () => {
+    expect(DEFAULT_PASTE_KEYS).not.toContain('upright')
+    expect(DEFAULT_PASTE_KEYS).not.toContain('transform')
+  })
+
+  it('Auto travels as a mode to detect again (no numbers copied); the checklist says so', () => {
+    const out = applyPaste(DEFAULT_SETTINGS, c(['upright']), 'raw')
+    expect(out.geometry.transform?.upright).toBe('auto')
+    expect(out.geometry.transform?.solved).toEqual(ZERO_PERSPECTIVE)
+    expect(out.geometry.transform?.vertical).toBe(0)
+    expect(describePaste(c(['upright']), 'raw').join('\n')).toContain('Upright: Auto (detected again on each photo)')
+  })
+
+  it('Guided copies its correction as it is', () => {
+    const g = { ...src, geometry: { ...src.geometry, transform: { ...src.geometry.transform!, upright: 'guided' as const, guides: [[0.1, 0.1, 0.2, 0.9]] as [number, number, number, number][] } } }
+    const out = applyPaste(DEFAULT_SETTINGS, { ...c(['upright']), settings: g }, 'raw')
+    expect(out.geometry.transform?.solved).toEqual(src.geometry.transform!.solved)
+    expect(out.geometry.transform?.guides).toEqual([])
+    expect(out.geometry.transform?.focal).toBe(50)
+  })
+
+  it('the Transform sliders are copied as they are, keeping the target’s Upright', () => {
+    const target = withT({ upright: 'vertical', solved: { rotation: 0, vertical: -0.1, horizontal: 0, shear: 0 } })
+    const out = applyPaste(target, c(['transform']), 'raw')
+    expect(out.geometry.transform?.vertical).toBe(15)
+    expect(out.geometry.transform?.rotate).toBe(-2)
+    expect(out.geometry.transform?.upright).toBe('vertical')
+    expect(out.geometry.transform?.solved.vertical).toBe(-0.1)
+    expect(describePaste(c(['transform']), 'raw').join('\n')).toContain('Transform sliders: Vertical +15, Rotate -2.0 (copied as they are)')
+    // Auto Sync: another change on a photo with Upright Auto doesn't send Upright again; changing the mode does
+    expect(changedKeys(src, { ...src, exposure: 1 })).toEqual(['exposure'])
+    expect(changedKeys(DEFAULT_SETTINGS, src)).toEqual(expect.arrayContaining(['upright', 'transform']))
+    // nothing to copy onto a photo without a transform leaves it without one
+    expect(applyPaste(DEFAULT_SETTINGS, { ...c(['transform']), settings: DEFAULT_SETTINGS }, 'raw').geometry.transform).toBeUndefined()
   })
 })

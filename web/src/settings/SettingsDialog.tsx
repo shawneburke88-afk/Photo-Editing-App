@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { SOURCE_URL } from '../lib/source'
 import { ACTIONS, CONTEXT_NAMES, PRESET_NAMES, type ActionDef, type PresetId } from './actions'
 import { chordText, recordChord, type Chord } from './chords'
 import { allConflicts, assignKey, conflictsFor, removeKey, resetKeys, resolveKeymap } from './keymap'
@@ -39,7 +40,10 @@ export function SettingsDialog({ section: initial = 'keyboard', onClose }: { sec
           </nav>
           <div className="settings-pane">{section === 'keyboard' ? <KeyboardSection onBusy={setBusy} /> : <DisplaySection />}</div>
         </div>
-        <p className="settings-foot muted small">Settings are remembered in this browser (not in the library or your photo folders).</p>
+        <p className="settings-foot muted small">
+          Settings are remembered in this browser (not in the library or your photo folders). LightBench is free software (GPL-3.0):{' '}
+          <a href={SOURCE_URL} target="_blank" rel="noreferrer">source code</a>.
+        </p>
       </div>
     </div>
   )

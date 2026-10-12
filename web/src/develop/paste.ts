@@ -5,12 +5,13 @@
 import type { DevelopSettings, SourceKind } from '../engine/develop/settings'
 import { AUTO_SLIDERS, type AutoKey } from '../engine/develop/auto'
 import { pasteCrop, setAngle, withOrientation, type GeometrySettings } from '../engine/develop/geometry'
+import { DEFAULT_TRANSFORM, normalizeTransform, ZERO_PERSPECTIVE, type TransformSettings } from '../engine/develop/upright'
 
 export type PasteKey =
   | 'whiteBalance'
   | 'exposure' | 'contrast' | 'highlights' | 'shadows' | 'whites' | 'blacks'
   | 'vibrance' | 'saturation'
-  | 'rotate' | 'straighten' | 'crop'
+  | 'rotate' | 'straighten' | 'crop' | 'upright' | 'transform'
   | 'lensProfile' | 'lensAmounts' | 'lensCa'
   | 'process' | 'baseExposure' | 'toneMapper' | 'highlightReconstruction' | 'demosaic'
 
@@ -29,6 +30,8 @@ export interface PasteItem {
    */
   copy: (to: DevelopSettings, from: DevelopSettings, size?: [number, number]) => DevelopSettings
   show: (s: DevelopSettings) => string
+  /** Whether the item differs between two settings (Auto Sync), when copying one onto the other doesn't tell. */
+  changed?: (before: DevelopSettings, after: DevelopSettings) => boolean
 }
 
 /** The straightened frame of a photo whose camera-oriented size is `size`, after the user's turns. */
@@ -39,6 +42,16 @@ const ORIENTATION_TEXT = ['', 'turned right', 'turned 180°', 'turned left']
 const orientationText = (g: GeometrySettings) =>
   !g.mirror ? ORIENTATION_TEXT[g.turns] || 'as shot' : g.turns === 0 ? 'flipped horizontally' : g.turns === 2 ? 'flipped vertically' : `${ORIENTATION_TEXT[g.turns]}, flipped`
 
+
+/** A geometry with transform settings changed (left out when they do nothing). */
+function setTransform(g: GeometrySettings, t: TransformSettings): GeometrySettings {
+  const nt = normalizeTransform(t)
+  const { transform: _old, ...rest } = g
+  void _old
+  return nt ? { ...rest, transform: nt } : rest
+}
+const MANUAL = ['vertical', 'horizontal', 'rotate', 'aspect', 'scale', 'offsetX', 'offsetY'] as const
+const RERUN_MODES = ['auto', 'level', 'vertical', 'full']
 
 const signed = (v: number, digits = 0, unit = '') => `${v > 0 ? '+' : ''}${v.toFixed(digits)}${unit}`
 const slider = (key: 'exposure' | 'contrast' | 'highlights' | 'shadows' | 'whites' | 'blacks' | 'vibrance' | 'saturation', label: string, group: PasteItem['group']): PasteItem => ({
@@ -98,6 +111,54 @@ export const PASTE_ITEMS: PasteItem[] = [
       if (c.x0 === 0 && c.y0 === 0 && c.x1 === 1 && c.y1 === 1) return 'none'
       const aspect = s.geometry.locked ? (s.geometry.aspect === 'original' ? ', original aspect' : s.geometry.aspect === 'custom' ? `, ${s.geometry.custom.join(' : ')}` : `, ${s.geometry.aspect}`) : ''
       return `${Math.round((c.x1 - c.x0) * 100)} × ${Math.round((c.y1 - c.y0) * 100)} % of the photo${aspect}`
+    },
+  },
+  // Upright and the Transform sliders come after the crop: the photo's own Upright replaces its straighten angle.
+  {
+    key: 'upright',
+    label: 'Upright',
+    group: 'Crop',
+    // Auto, Level, Vertical and Full are detected again on each photo (after pasting, where its pixels are
+    // available: uprightRun.ts `rerunUpright`), like Auto tone. Guided lines belong to one photo: their correction
+    // is copied as it is.
+    copy: (to, from) => {
+      const f = from.geometry.transform
+      const t: TransformSettings = { ...DEFAULT_TRANSFORM, ...to.geometry.transform }
+      const mode = f?.upright ?? 'off'
+      const next: TransformSettings =
+        mode === 'guided'
+          ? { ...t, upright: 'guided', solved: f!.solved, guides: [], focal: f!.focal }
+          : { ...t, upright: mode, solved: ZERO_PERSPECTIVE, guides: [] }
+      return { ...to, geometry: setTransform(to.geometry, next) }
+    },
+    show: (s) => {
+      const m = s.geometry.transform?.upright ?? 'off'
+      const name = m[0].toUpperCase() + m.slice(1)
+      return m === 'off' ? 'Off' : RERUN_MODES.includes(m) ? `${name} (detected again on each photo)` : `${name} (its correction is copied as it is)`
+    },
+    // A re-detected mode travels without its numbers, so only a change of mode (or of a Guided result) counts.
+    changed: (a, b) => {
+      const x = a.geometry.transform
+      const y = b.geometry.transform
+      return (x?.upright ?? 'off') !== (y?.upright ?? 'off') || (y?.upright === 'guided' && JSON.stringify(x?.solved) !== JSON.stringify(y.solved))
+    },
+  },
+  {
+    key: 'transform',
+    label: 'Transform sliders',
+    group: 'Crop',
+    copy: (to, from) => {
+      const f: TransformSettings = { ...DEFAULT_TRANSFORM, ...from.geometry.transform }
+      const t: TransformSettings = { ...DEFAULT_TRANSFORM, ...to.geometry.transform }
+      for (const k of MANUAL) t[k] = f[k]
+      return { ...to, geometry: setTransform(to.geometry, t) }
+    },
+    show: (s) => {
+      const t = s.geometry.transform
+      if (!t) return 'none (copied as they are)'
+      const names: Record<(typeof MANUAL)[number], string> = { vertical: 'Vertical', horizontal: 'Horizontal', rotate: 'Rotate', aspect: 'Aspect', scale: 'Scale', offsetX: 'X Offset', offsetY: 'Y Offset' }
+      const parts = MANUAL.filter((k) => t[k] !== DEFAULT_TRANSFORM[k]).map((k) => `${names[k]} ${k === 'scale' ? `${t[k]} %` : signed(t[k], k === 'rotate' || k.startsWith('offset') ? 1 : 0)}`)
+      return `${parts.length ? parts.join(', ') : 'none'} (copied as they are)`
     },
   },
   // Lens corrections (Part 2). The profile travels as a mode, like "As Shot": Auto matches each photo's own lens.
@@ -239,7 +300,7 @@ export function describePaste(c: Clipboard, kind: SourceKind | 'mixed'): string[
 
 /** Which items differ between two settings (for Auto Sync: only what the user just changed travels). */
 export function changedKeys(before: DevelopSettings, after: DevelopSettings): PasteKey[] {
-  return PASTE_ITEMS.filter((i) => JSON.stringify(i.copy(before, after)) !== JSON.stringify(before)).map((i) => i.key)
+  return PASTE_ITEMS.filter((i) => (i.changed ? i.changed(before, after) : JSON.stringify(i.copy(before, after)) !== JSON.stringify(before))).map((i) => i.key)
 }
 
 // ---- the app's settings clipboard (shared by Library and Develop; kept for this visit only)

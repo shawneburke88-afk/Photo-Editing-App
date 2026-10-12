@@ -20,8 +20,12 @@ import { BasicPanel } from './BasicPanel'
 import { CropPanel, type GeometryEdit } from './CropPanel'
 import { CropOverlay } from './CropOverlay'
 import { LensPanel } from './LensPanel'
-import { LEGACY_LENS, type LensStatus } from '../engine/lens/correction'
+import { LEGACY_LENS, lensWarpKey, type LensStatus } from '../engine/lens/correction'
 import { lensfunState, loadLensfun, subscribeLensfun } from '../engine/lens/lens-db'
+import { GuidedOverlay } from './GuidedOverlay'
+import { TransformPanel, type TransformSlider } from './TransformPanel'
+import { autoStraightenGeometry, describeCorrection, detectLines, focalFor, frameMaps, guidedGeometry, ownFocal, rerunUpright, uprightGeometry, wantsUprightRerun, withTransform } from './uprightRun'
+import { DEFAULT_TRANSFORM, guideIsVertical, guidesToSensor, sensorToGuide, type Detection, type Guide, type UprightMode } from '../engine/develop/upright'
 import { ToolStack, type GroupId } from './ToolStack'
 import { CROP_OVERLAYS, GROUP_ICONS, type CropOverlayKind } from './tools'
 import { Histogram } from './Histogram'
@@ -155,6 +159,19 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const cropDragging = useRef(false)
   /** The angle slider works from the crop before it started moving, so moving it back gives the crop back. */
   const angleBase = useRef<{ from: GeometrySettings; last: GeometrySettings } | null>(null)
+  /** Guided Upright: drawing lines on the photo (Shift+T), and the line selected for Delete. */
+  const [guiding, setGuiding] = useState(false)
+  const [selectedGuide, setSelectedGuide] = useState<number | null>(null)
+  /** Upright and Auto straighten: busy, and what they said last. */
+  const [uprightBusy, setUprightBusy] = useState(false)
+  const [uprightMsg, setUprightMsg] = useState<{ text: string; warn: boolean } | null>(null)
+  const [straightenBusy, setStraightenBusy] = useState(false)
+  const [straightenMsg, setStraightenMsg] = useState<string | null>(null)
+  /**
+   * The lines found on the photo shown (detected once per photo and lens correction, on the photo after its lens
+   * correction and before its perspective).
+   */
+  const detection = useRef<{ id: number; lens: string; job: Promise<Detection> } | null>(null)
   /** Groups switched off with their eye (a view only). */
   const [bypass, setBypass] = useState<Bypass>({ crop: false, basic: false })
   const [reveal, setReveal] = useState<{ id: GroupId; n: number } | null>(null)
@@ -240,6 +257,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setView({ zoom: 'fit', center: [0.5, 0.5] })
     setDraft(null)
     setLeveling(false)
+    setGuiding(false)
+    setSelectedGuide(null)
+    setUprightMsg(null)
+    setStraightenMsg(null)
+    detection.current = null
     angleBase.current = null
     builtStage.current = null
     dirty.current = false
@@ -308,8 +330,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     () => ({ clip: clipSettings, showClip: overlay, raw: rawClipSettings, showRaw: rawOverlay }),
     [clipSettings, overlay, rawClipSettings, rawOverlay],
   )
-  const latest = useRef({ settings, info, view, before, indicators, hover, draft, bypass })
-  latest.current = { settings, info, view, before, indicators, hover, draft, bypass }
+  const latest = useRef({ settings, info, view, before, indicators, hover, draft, bypass, guiding })
+  latest.current = { settings, info, view, before, indicators, hover, draft, bypass, guiding }
   /** The settings drawn: Before shows the defaults; a preset hovered, the crop being edited and switched-off groups apply on top. */
   const shownOf = (x: typeof latest.current, inf: SensorInfo): DevelopSettings => {
     // Before is the photo as shot: the defaults without lens corrections.
@@ -367,8 +389,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         const inf = x.info
         if (!engine || !inf) break
         const shown = shownOf(x, inf)
-        // While cropping, the whole straightened photo is shown under the crop box.
-        const v: ViewState = x.draft && !x.before ? { zoom: 'fit', center: [0.5, 0.5], frame: true } : x.view
+        // While cropping (or drawing Guided Upright lines), the whole straightened photo is shown.
+        const v: ViewState = (x.draft || x.guiding) && !x.before ? { zoom: 'fit', center: [0.5, 0.5], frame: true } : x.view
         try {
           const ms = await engine.render(displayUniforms(shown), x.before ? inf.asShotWb : multipliers(shown, inf), v, x.indicators)
           setTiming((t) => ({ ...t, frame: ms }))
@@ -389,7 +411,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   useEffect(() => {
     if (status.kind === 'ready') requestRender()
-  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, requestRender, lensDb])
+  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, guiding, requestRender, lensDb])
 
   useEffect(() => {
     const el = stageRef.current
@@ -562,6 +584,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   // ---- crop, straighten, rotate and flip
   function startCrop(level = false) {
     if (status.kind !== 'ready' || !info) return
+    setGuiding(false)
     setWbPick(false)
     setLoupe(null)
     setPicking(false)
@@ -655,6 +678,137 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   // What the Lens section shows: resolved by the engine with the database as it is now (lensDb re-renders this).
   const lensStatus: LensStatus = status.kind === 'ready' && engineRef.current ? engineRef.current.lensNow(settings.lens).status : { state: info?.lens ? 'loading' : 'not-raw', exifLens: '' }
 
+  // ---- Transform and Upright (engine/develop/upright.ts; uprightRun.ts runs it on the photo shown)
+  /** The lines of the photo shown, detected once per lens correction (after it, before the perspective). */
+  function lines(): Promise<Detection> | null {
+    const engine = engineRef.current
+    if (!engine) return null
+    const lens = lensWarpKey(engine.lensNow(settings.lens).warp)
+    if (!detection.current || detection.current.id !== id || detection.current.lens !== lens) {
+      const job = detectLines(engine, settings.lens)
+      detection.current = { id, lens, job }
+      job.catch(() => {
+        if (detection.current?.job === job) detection.current = null
+      })
+    }
+    return detection.current.job
+  }
+  /** Transform changes work on the photo's settings: a crop being edited is applied first. */
+  function transformBase(): DevelopSettings {
+    if (draft) {
+      endCrop(true)
+      return draft && !sameCropSession(settings.geometry, draft) ? { ...settings, geometry: draft } : settings
+    }
+    return settings
+  }
+  async function applyUpright(mode: UprightMode) {
+    const engine = engineRef.current
+    if (!engine || !info || status.kind !== 'ready') return
+    if (mode === 'guided') {
+      startGuided()
+      return
+    }
+    setGuiding(false)
+    const base = transformBase()
+    let det: Detection | null = null
+    if (mode !== 'off') {
+      setUprightBusy(true)
+      try {
+        det = await lines()
+      } catch (e) {
+        setUprightMsg({ text: `Line detection failed: ${e instanceof Error ? e.message : e}`, warn: true })
+        return
+      } finally {
+        setUprightBusy(false)
+      }
+    }
+    const r = uprightGeometry(engine, base.geometry, mode, det, info)
+    if (!r.ok) {
+      setUprightMsg({ text: r.message, warn: true })
+      return
+    }
+    setUprightMsg(r.note ? { text: r.note, warn: true } : null)
+    const label = mode === 'off' ? 'Upright: Off' : `Upright: ${mode[0].toUpperCase()}${mode.slice(1)}`
+    if (!sameGeometry(r.geometry, base.geometry) || r.geometry.transform?.upright !== base.geometry.transform?.upright) change(label, { ...base, geometry: r.geometry })
+  }
+  function changeTransform(key: TransformSlider, value: number) {
+    const engine = engineRef.current
+    if (!engine || status.kind !== 'ready') return
+    const base = transformBase()
+    const t = { ...DEFAULT_TRANSFORM, focal: focalFor(info), ...base.geometry.transform, [key]: value }
+    const label = `Transform: ${{ vertical: 'Vertical', horizontal: 'Horizontal', rotate: 'Rotate', aspect: 'Aspect', scale: 'Scale', offsetX: 'X Offset', offsetY: 'Y Offset' }[key]}`
+    change(label, { ...base, geometry: withTransform(engine, base.geometry, t, false) })
+  }
+  function resetTransform() {
+    const engine = engineRef.current
+    if (!engine || status.kind !== 'ready' || !settings.geometry.transform) return
+    setGuiding(false)
+    setUprightMsg(null)
+    const base = transformBase()
+    const { transform: _gone, ...rest } = base.geometry
+    void _gone
+    change('Reset transform', { ...base, geometry: rest })
+  }
+  function startGuided() {
+    const engine = engineRef.current
+    if (!engine || !info || status.kind !== 'ready') return
+    const base = transformBase()
+    setBefore(false)
+    setWbPick(false)
+    setLoupe(null)
+    setView((v) => ({ ...v, zoom: 'fit' }))
+    setGuiding(true)
+    setSelectedGuide(null)
+    setBypass((x) => ({ ...x, crop: false }))
+    setReveal({ id: 'crop', n: Date.now() })
+    const t = base.geometry.transform
+    const guides = t?.upright === 'guided' ? t.guides : []
+    const r = guidedGeometry(engine, base.geometry, guides, info)
+    setUprightMsg(r.message ? { text: r.message, warn: false } : null)
+    if (!sameGeometry(r.geometry, base.geometry) || t?.upright !== 'guided') change('Upright: Guided', { ...base, geometry: r.geometry })
+  }
+  function setGuides(guides: Guide[]) {
+    const engine = engineRef.current
+    if (!engine || !info) return
+    const r = guidedGeometry(engine, settings.geometry, guides, info)
+    setUprightMsg(r.message ? { text: r.message, warn: false } : null)
+    const before = settings.geometry.transform?.guides.length ?? 0
+    // Separate names, so adding a line and then moving one are separate steps (same-name steps merge for 1.5 s).
+    change(guides.length > before ? 'Guided Upright: add line' : guides.length < before ? 'Guided Upright: remove line' : 'Guided Upright: move line', { ...settings, geometry: r.geometry })
+  }
+  function deleteGuide() {
+    const t = settings.geometry.transform
+    if (selectedGuide === null || !t) return
+    setGuides(t.guides.filter((_, i) => i !== selectedGuide))
+    setSelectedGuide(null)
+  }
+  async function autoStraightenNow() {
+    const engine = engineRef.current
+    if (!engine || !info || status.kind !== 'ready') return
+    setStraightenBusy(true)
+    let det: Detection
+    try {
+      det = await lines()!
+    } catch (e) {
+      setStraightenMsg(`Line detection failed: ${e instanceof Error ? e.message : e}`)
+      return
+    } finally {
+      setStraightenBusy(false)
+    }
+    const g = draftRef.current ?? latest.current.settings.geometry
+    const r = autoStraightenGeometry(engine, g, det)
+    if (!r.ok) {
+      setStraightenMsg(r.message)
+      return
+    }
+    setStraightenMsg(null)
+    angleBase.current = null
+    if (draftRef.current) {
+      setDraftStep(r.geometry)
+      setLeveling(false)
+    } else if (!sameGeometry(r.geometry, g)) change('Auto straighten', { ...latest.current.settings, geometry: r.geometry })
+  }
+
   const selectedTarget = targets.find((t) => t.id === targetId) ?? BUILT_IN_TARGETS[0]
   const infoLine = photo ? exposureText(photo) : ''
 
@@ -679,7 +833,17 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   async function pasteHere(clip: Clipboard) {
     const engine = engineRef.current
     if (!engine || !info) return
-    let next = applyPaste(settings, clip, info.kind, engine.imageSize)
+    let next = ownFocal(applyPaste(settings, clip, info.kind, engine.imageSize), info)
+    if (clip.keys.includes('upright') && wantsUprightRerun(clip.settings)) {
+      setUprightBusy(true)
+      try {
+        next = await rerunUpright(engine, next, info)
+      } catch (e) {
+        setUprightMsg({ text: `Upright failed: ${e instanceof Error ? e.message : e}`, warn: true })
+      } finally {
+        setUprightBusy(false)
+      }
+    }
     if (clip.rerunAuto && clip.settings.auto) {
       setAutoBusy(true)
       try {
@@ -719,7 +883,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     if (!engine || !info || status.kind !== 'ready') return
     setHoverPreset(null)
     const before = settings
-    let after = applyPaste(before, presetClip(p), info.kind, engine.imageSize)
+    let after = ownFocal(applyPaste(before, presetClip(p), info.kind, engine.imageSize), info)
+    if (p.keys.includes('upright') && wantsUprightRerun(p.settings)) after = await rerunUpright(engine, after, info).catch(() => after)
     if (p.rerunAuto && p.settings.auto) {
       setAutoBusy(true)
       try {
@@ -832,15 +997,39 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'develop.flipH': editGeometry({ kind: 'flip', axis: 'h' }); break
       case 'develop.flipV': editGeometry({ kind: 'flip', axis: 'v' }); break
       case 'develop.level': setLeveling((l) => !l); break
+      case 'develop.autoStraighten': void autoStraightenNow(); break
       default:
         return false
     }
   })
-  useShortcuts(['develop'], !pasting && !draft, (cmd) => {
+  useShortcuts(['guided'], !pasting && !draft && guiding, (cmd) => {
+    switch (cmd) {
+      case 'develop.guided':
+      case 'guided.done':
+        setGuiding(false)
+        setSelectedGuide(null)
+        break
+      case 'guided.delete': deleteGuide(); break
+      case 'develop.undo':
+      case 'develop.redo':
+        dirty.current = true
+        setSelectedGuide(null)
+        setHistory((h) => (h ? (cmd === 'develop.redo' ? redo(h) : undo(h)) : h))
+        break
+      default:
+        return false
+    }
+  })
+  useShortcuts(['develop'], !pasting && !draft && !guiding, (cmd) => {
     switch (cmd) {
       case 'develop.grid': onLibrary(); break
       case 'develop.crop': startCrop(); break
       case 'develop.level': startCrop(true); break
+      case 'develop.autoStraighten': void autoStraightenNow(); break
+      case 'develop.guided': startGuided(); break
+      case 'develop.uprightAuto': void applyUpright('auto'); break
+      case 'develop.uprightOff': void applyUpright('off'); break
+      case 'develop.transformReset': resetTransform(); break
       case 'crop.reset': editGeometry({ kind: 'reset' }); break
       case 'develop.rotateLeft': editGeometry({ kind: 'rotate', dir: -1 }); break
       case 'develop.rotateRight': editGeometry({ kind: 'rotate', dir: 1 }); break
@@ -943,7 +1132,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   }
 
   function onPointerDown(e: React.PointerEvent) {
-    if (status.kind !== 'ready' || wbPick || draft) return
+    // The crop tool and Guided Upright have their own overlays; clicks there don't zoom or pan.
+    if (status.kind !== 'ready' || wbPick || draft || guiding) return
     ;(e.target as Element).setPointerCapture(e.pointerId)
     drag.current = { x: e.clientX, y: e.clientY, center: view.center, moved: false }
   }
@@ -977,7 +1167,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     }
     const d = drag.current
     drag.current = null
-    if (!d || d.moved || draft) return
+    if (!d || d.moved || draft || guiding) return
     const p = canvasPoint(e)
     if (!p) return
     if (view.zoom === 'fit') {
@@ -1084,7 +1274,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           <button className="button small" onClick={() => onExport([id])} title={withKey('Export this photo', 'export')}>Export…</button>
         </div>
         <div
-          className={`dstage ${draft ? 'cropping' : view.zoom === 'fit' ? 'fit' : 'zoomed'} ${wbPick ? 'wb-picking' : ''}`}
+          className={`dstage ${draft ? 'cropping' : guiding ? 'guiding' : view.zoom === 'fit' ? 'fit' : 'zoomed'} ${wbPick ? 'wb-picking' : ''}`}
           ref={stageRef}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -1113,11 +1303,43 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                 scheduleStats()
               }}
               onLevelDone={() => setLeveling(false)}
+              onAutoLevel={() => void autoStraightenNow()}
             />
+          )}
+          {guiding && !draft && !before && frameBox && info && status.kind === 'ready' && engineRef.current && (() => {
+            const m = frameMaps(engineRef.current, settings.geometry)
+            const guides = settings.geometry.transform?.guides ?? []
+            const [fw, fh] = m.frame
+            const toView = (x: number, y: number): [number, number] => {
+              const f = m.toFrame(x, y)
+              return [frameBox.x + (f[0] / fw) * frameBox.w, frameBox.y + (f[1] / fh) * frameBox.h]
+            }
+            const lines = guidesToSensor(guides, m.orient, m.sensor[0], m.sensor[1]).map(([x1, y1, x2, y2]) => [...toView(x1, y1), ...toView(x2, y2)] as [number, number, number, number])
+            const [ow, oh] = m.orient[0] === 0 ? [m.sensor[1], m.sensor[0]] : m.sensor
+            return (
+              <GuidedOverlay
+                box={frameBox}
+                lines={lines}
+                vertical={guides.map((g) => guideIsVertical(g, ow, oh))}
+                guides={guides}
+                selected={selectedGuide}
+                onSelect={setSelectedGuide}
+                fromView={(x, y) => {
+                  const [sx, sy] = m.toSensor(((x - frameBox.x) / frameBox.w) * fw, ((y - frameBox.y) / frameBox.h) * fh)
+                  return sensorToGuide(sx, sy, m.orient, m.sensor[0], m.sensor[1])
+                }}
+                onChange={setGuides}
+              />
+            )
+          })()}
+          {guiding && !draft && (
+            <div className="dbadge crop-hint">
+              Draw 2–4 lines along edges that should be vertical or horizontal · drag the ends to adjust · Delete removes the selected line · Esc finishes
+            </div>
           )}
           {draft && (
             <div className="dbadge crop-hint">
-              {leveling ? 'Draw along something that should be level or upright' : 'Drag corners or edges · drag inside to move · drag outside to turn · Ctrl-drag to level'} · Enter applies · Esc cancels
+              {leveling ? 'Draw along something that should be level or upright · double-click for Auto' : 'Drag corners or edges · drag inside to move · drag outside to turn · Ctrl-drag to level'} · Enter applies · Esc cancels
             </div>
           )}
           {before && <div className="dbadge">Before</div>}
@@ -1191,7 +1413,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
               icon: GROUP_ICONS.crop,
               bypass: isIdentityGeometry(settings.geometry) && lensStatus.state !== 'applied' && !bypass.crop
                 ? undefined
-                : { off: bypass.crop, onToggle: () => setBypass((b) => ({ ...b, crop: !b.crop })), title: bypass.crop ? 'Show the crop and lens corrections again' : 'Show the photo without crop, straighten, rotate, flip and lens corrections (nothing is changed)' },
+                : { off: bypass.crop, onToggle: () => setBypass((b) => ({ ...b, crop: !b.crop })), title: bypass.crop ? 'Show the crop, lens corrections and transform again' : 'Show the photo without crop, straighten, rotate, flip, lens corrections and transform (nothing is changed)' },
               content: (
                 <>
                 <CropPanel
@@ -1207,6 +1429,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   onApply={() => endCrop(true)}
                   onCancel={() => endCrop(false)}
                   onLevel={() => (draft ? setLeveling((l) => !l) : startCrop(true))}
+                  onAutoStraighten={() => void autoStraightenNow()}
+                  straightening={straightenBusy}
+                  straightenMessage={straightenMsg}
                   onOverlay={(kind) => setCropOverlay({ kind })}
                   onEdit={editGeometry}
                 />
@@ -1219,6 +1444,19 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   showHint={hintsPref === 1}
                   onLoadDb={() => void loadLensfun(true)}
                   onChange={(label, lens) => change(label, { ...settings, lens })}
+                />
+                <TransformPanel
+                  transform={settings.geometry.transform}
+                  focal={info ? info.focal35 ?? null : null}
+                  busy={uprightBusy}
+                  message={uprightMsg}
+                  summary={engineRef.current && info ? describeCorrection(engineRef.current, settings.geometry) : null}
+                  guiding={guiding}
+                  disabled={status.kind !== 'ready'}
+                  showHint={hintsPref === 1}
+                  onMode={(m) => (m === 'guided' && guiding ? setGuiding(false) : void applyUpright(m))}
+                  onSlider={changeTransform}
+                  onReset={resetTransform}
                 />
                 </>
               ),
