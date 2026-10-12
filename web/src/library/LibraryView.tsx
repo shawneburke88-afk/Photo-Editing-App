@@ -1,10 +1,12 @@
 import { isSliderKey, isTextEntry } from '../lib/keys'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { getCatalog, requestPersistentStorage } from '../catalog/client'
 import { deleteThumbs, forgetThumbUrl, loadThumb, saveThumb } from '../catalog/thumbs'
 import type { CollectionInfo, ColorLabel, Flag, FolderNode, LibraryRoot, PhotoDetail, PhotoQuery, PhotoRow } from '../catalog/types'
 import type { SmartRules } from '../catalog/smart'
 import { ImportDialog } from '../import/ImportDialog'
+import { joinPath } from '../import/plan'
+import { launched } from '../pwa/launch'
 import { supportsFolderAccess } from '../platform/folders'
 import { getRootHandle } from '../platform/roots'
 import { sidecars } from '../sidecar/sync'
@@ -23,6 +25,7 @@ import { InfoPanel } from './InfoPanel'
 import { KeywordEditor, type KeywordCount } from './KeywordEditor'
 import { KeywordList } from './KeywordList'
 import { Loupe } from './Loupe'
+import { OpenWithDialog } from './OpenWithDialog'
 
 type Filters = Pick<PhotoQuery, 'text' | 'minRating' | 'flag' | 'color' | 'sort' | 'keyword'>
 
@@ -79,6 +82,10 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   const indexing = useIndexStatus()
   const [version, setVersion] = useState(0)
   const anchor = useRef<number | null>(null)
+  /** Photos opened from the OS with the installed app ("Open with LightBench"), waiting for their folder. */
+  const launchFiles = useSyncExternalStore(launched.subscribe, launched.get)
+  /** Those photos once their folder is opened: shown and selected as soon as they are indexed. */
+  const [launchTarget, setLaunchTarget] = useState<{ rootId: number; files: { folderPath: string; name: string }[]; expanded: boolean } | null>(null)
 
   useEffect(() => {
     catalog.open().then(
@@ -135,6 +142,62 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
       setFolderError(`Could not open “${dir.name}”: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
+
+  /**
+   * "Open its folder…" for photos opened from the OS: the folder picker starts at the photo, and the chosen
+   * folder is opened like Open folder. It must contain the photo. Returns an error to show, or ''.
+   */
+  async function openLaunchedFolder(files: FileSystemFileHandle[]): Promise<string> {
+    let dir: FileSystemDirectoryHandle
+    try {
+      dir = await window.showDirectoryPicker!({ id: 'lightbench-open-folder', mode: 'read', startIn: files[0] })
+    } catch (e) {
+      return (e as DOMException).name === 'AbortError' ? '' : e instanceof Error ? e.message : String(e)
+    }
+    const inside = (await Promise.all(files.map((f) => dir.resolve(f)))).filter((p): p is string[] => !!p?.length)
+    if (!inside.length) return `“${files[0].name}” is not in “${dir.name}”. Choose the folder that contains it.`
+    void requestPersistentStorage()
+    try {
+      const { rootId, path } = await indexer.open(dir)
+      const located = inside.map((p) => ({ folderPath: joinPath(path, ...p.slice(0, -1)), name: p[p.length - 1] }))
+      // Show the photo's own folder, so it is in the grid even with Subfolders off.
+      selectFolder({ rootId, path: located[0].folderPath })
+      setLaunchTarget({ rootId, files: located, expanded: false })
+      launched.clear()
+      refresh()
+      return ''
+    } catch (e) {
+      return `Could not open “${dir.name}”: ${e instanceof Error ? e.message : String(e)}`
+    }
+  }
+
+  // Shows the launched photos once indexed: focused and selected (their stack is expanded if needed).
+  useEffect(() => {
+    if (!launchTarget || status !== 'ready') return
+    let live = true
+    void (async () => {
+      const found = await Promise.all(launchTarget.files.map((f) => catalog.findPhoto(launchTarget.rootId, f.folderPath, f.name)))
+      const ids = found.filter((id): id is number => id !== null)
+      if (!live) return
+      const shown = ids.filter((id) => rows.some((r) => r.id === id))
+      if (shown.length) {
+        setFocus(shown[0])
+        setSelected(new Set(shown))
+        anchor.current = shown[0]
+        setLaunchTarget(null)
+      } else if (ids.length && !launchTarget.expanded) {
+        // A JPEG stacked under its RAW is hidden in a collapsed stack.
+        for (const id of ids) await catalog.setStackExpanded(id, true)
+        setLaunchTarget({ ...launchTarget, expanded: true })
+        refresh()
+      } else if (!ids.length && !indexing.active && !indexing.queued) {
+        setLaunchTarget(null) // indexing finished without it (unreadable); the index panel says why
+      }
+    })()
+    return () => {
+      live = false
+    }
+  }, [catalog, status, launchTarget, rows, indexing.active, indexing.queued, refresh])
 
   async function rescan(rootId: number, path: string) {
     setFolderError('')
@@ -424,7 +487,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   // Lightroom-style keyboard shortcuts.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!active || importing || culling || draft || autoStacking || status !== 'ready') return
+      if (!active || importing || culling || draft || autoStacking || launchFiles.length || status !== 'ready') return
       const t = e.target as HTMLElement
       if (isTextEntry(t) || isSliderKey(e)) return
       const idx = focus === null ? -1 : rows.findIndex((r) => r.id === focus)
@@ -707,6 +770,10 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           onSave={saveCollection}
           onClose={() => setDraft(null)}
         />
+      )}
+
+      {launchFiles.length > 0 && (
+        <OpenWithDialog files={launchFiles} onOpenFolder={() => openLaunchedFolder(launchFiles)} onClose={() => launched.clear()} />
       )}
 
       {importing && (

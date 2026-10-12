@@ -486,3 +486,13 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 /* Virtual copies */
 .copy-tag { margin-left: auto; font-size: 0.7rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .copies-section .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+
+/* Installable app: update notice, Open with LightBench */
+.update-notice { position: fixed; right: 16px; bottom: 16px; z-index: 90; width: min(400px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); padding: 14px 16px; }
+.update-notice h3 { margin: 8px 0 0; font-size: 0.95rem; }
+.update-notice h4 { margin: 8px 0 2px; font-size: 0.85rem; font-weight: 600; color: var(--muted); }
+.update-notice ul { margin: 0; padding-left: 18px; font-size: 0.9rem; }
+.update-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.dialog-backdrop.open-with { z-index: 80; }
+.dialog.open-with { width: min(520px, 100%); padding: 20px 20px 0; gap: 10px; }
+.dialog.open-with .dialog-actions { margin: 0 -20px; }

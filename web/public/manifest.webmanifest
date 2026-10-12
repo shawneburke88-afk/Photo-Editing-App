@@ -1,0 +1,80 @@
+{
+  "name": "LightBench",
+  "short_name": "LightBench",
+  "description": "Photo editor for RAW and JPEG files. Runs in your browser; your photos stay on your computer.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#17181b",
+  "theme_color": "#17181b",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "file_handlers": [
+    {
+      "action": "./",
+      "accept": {
+        "image/jpeg": [
+          ".jpg",
+          ".jpeg"
+        ],
+        "image/x-dcraw": [
+          ".nef",
+          ".nrw",
+          ".arw",
+          ".srf",
+          ".sr2",
+          ".cr2",
+          ".cr3",
+          ".crw",
+          ".raf",
+          ".orf",
+          ".rw2",
+          ".pef",
+          ".dng",
+          ".srw",
+          ".x3f",
+          ".3fr",
+          ".iiq",
+          ".erf",
+          ".mef",
+          ".mos",
+          ".mrw",
+          ".kdc",
+          ".dcr",
+          ".rwl"
+        ]
+      }
+    }
+  ],
+  "launch_handler": {
+    "client_mode": [
+      "focus-existing",
+      "auto"
+    ]
+  }
+}

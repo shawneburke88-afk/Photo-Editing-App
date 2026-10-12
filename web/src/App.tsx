@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { DevelopView } from './develop/DevelopView'
 import { isTextEntry } from './lib/keys'
 import { LibraryView } from './library/LibraryView'
+import { launched } from './pwa/launch'
+import { UpdateNotice } from './pwa/UpdateNotice'
 import { SidecarBanner } from './sidecar/SidecarBanner'
 import { sidecars } from './sidecar/sync'
 import { SystemCheck } from './syscheck/SystemCheck'
@@ -30,6 +32,9 @@ export default function App() {
     [go],
   )
   const onEdited = useCallback(() => setLibraryVersion((v) => v + 1), [])
+
+  // Photos opened with the installed app are added from the Library, which asks for their folder.
+  useEffect(() => launched.subscribe(() => launched.get().length > 0 && go('library')), [go])
 
   // Write any queued sidecars before the tab closes.
   useEffect(() => {
@@ -104,6 +109,7 @@ export default function App() {
         {module === 'syscheck' && <SystemCheck />}
       </main>
       {exporting && <ExportDialog ids={exporting} onClose={() => setExporting(null)} />}
+      <UpdateNotice />
     </div>
   )
 }

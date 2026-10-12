@@ -153,7 +153,7 @@ metadata presets, import presets, stacks, virtual copies, compare and survey vie
 copy/paste/sync settings across many photos, **Lightroom catalog/XMP import (ratings, keywords,
 collections)**.
 
-**Installable, offline website (PWA)** (owner, after round 2): works without a connection after the first visit.
+**Installable, offline website (PWA)** (owner, after round 2): works without a connection after the first visit — _built, see [PHASE2.md](PHASE2.md#part-9-installable-offline-app-pwa)_.
 **+0.7 EV base exposure shown and configurable** (owner, after round 2): a note under Exposure for RAW files, and a preference for the default used on photos not yet edited.
 
 ### Phase 3 — Editing depth
