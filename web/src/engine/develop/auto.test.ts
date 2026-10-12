@@ -75,4 +75,29 @@ describe('solveAuto', () => {
     const r = await solveAuto(DEFAULT_SETTINGS, BUILT_IN_TARGETS.find((t) => t.id === 'natural')!, hazy)
     expect(r.settings.blacks).toBe(0)
   })
+
+  it('only moves the sliders it is allowed to, and records how it ran', async () => {
+    const start = { ...DEFAULT_SETTINGS, contrast: 33 }
+    const target = BUILT_IN_TARGETS.find((t) => t.id === 'vivid')!
+    const r = await solveAuto(start, target, fakeMeasure(0.12), 12, { sliders: ['exposure'] })
+    expect(r.settings.contrast).toBe(33)
+    expect(r.settings.vibrance).toBe(0)
+    expect(r.settings.exposure).toBeGreaterThan(0)
+    expect(r.settings.auto).toMatchObject({ sliders: ['exposure'], strength: 1, target: { id: 'vivid' } })
+  })
+
+  it('resets Shadows only on a full Auto', async () => {
+    const start = { ...DEFAULT_SETTINGS, shadows: 40 }
+    const target = BUILT_IN_TARGETS.find((t) => t.id === 'natural')!
+    expect((await solveAuto(start, target, fakeMeasure(0.12))).settings.shadows).toBe(0)
+    expect((await solveAuto(start, target, fakeMeasure(0.12), 12, { sliders: ['exposure'] })).settings.shadows).toBe(40)
+  })
+
+  it('scales its result by the strength', async () => {
+    const target = BUILT_IN_TARGETS.find((t) => t.id === 'natural')!
+    const full = await solveAuto(DEFAULT_SETTINGS, target, fakeMeasure(0.12))
+    const half = await solveAuto(DEFAULT_SETTINGS, target, fakeMeasure(0.12), 12, { strength: 0.5 })
+    expect(half.settings.exposure).toBeCloseTo(full.settings.exposure / 2, 1)
+    expect(half.settings.auto?.strength).toBe(0.5)
+  })
 })

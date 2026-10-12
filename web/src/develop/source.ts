@@ -57,3 +57,12 @@ export function savedSettings(saved: { settings: string } | null, kind: SourceKi
     return defaultsFor(kind)
   }
 }
+
+/** The library thumbnail of a developed photo (JPEG, 512 px), for after its settings change. */
+export async function renderThumbnail(engine: DevelopEngine, s: DevelopSettings, info: SensorInfo): Promise<Uint8Array<ArrayBuffer>> {
+  const img = await engine.renderImage(displayUniforms(s), multipliers(s, info), 512)
+  const c = new OffscreenCanvas(img.width, img.height)
+  c.getContext('2d')!.putImageData(img, 0, 0)
+  const blob = await c.convertToBlob({ type: 'image/jpeg', quality: 0.82 })
+  return new Uint8Array(await blob.arrayBuffer())
+}

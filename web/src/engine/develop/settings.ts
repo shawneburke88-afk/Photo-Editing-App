@@ -7,6 +7,7 @@
 
 import { SIGMOID_DEFAULTS, sigmoidCurve, type SigmoidCurve } from '../color/sigmoid'
 import { toneEqualizerFactors } from '../color/tone-equalizer'
+import type { AutoRecord } from './auto'
 
 export interface DevelopSettings {
   version: 1
@@ -36,6 +37,11 @@ export interface DevelopSettings {
     highlightClip: number
     demosaic: 'rcd' | 'bilinear'
   }
+  /**
+   * Set when the tone sliders came from Auto (cleared when one of its sliders is then moved by hand), so pasting
+   * can re-run Auto on each photo rather than copying the numbers.
+   */
+  auto?: AutoRecord | null
 }
 
 export const DEFAULT_SETTINGS: DevelopSettings = {

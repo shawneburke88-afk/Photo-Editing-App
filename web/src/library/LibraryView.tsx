@@ -1,9 +1,15 @@
 import { isSliderKey, isTextEntry } from '../lib/keys'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { getCatalog, requestPersistentStorage } from '../catalog/client'
 import { deleteThumbs, forgetThumbUrl, loadThumb, saveThumb } from '../catalog/thumbs'
 import type { CollectionInfo, ColorLabel, Flag, FolderNode, LibraryRoot, PhotoDetail, PhotoQuery, PhotoRow } from '../catalog/types'
 import type { SmartRules } from '../catalog/smart'
+import { batch } from '../develop/batch'
+import { rememberedChoice, settingsClipboard, type Clipboard } from '../develop/paste'
+import { PasteDialog } from '../develop/PasteDialog'
+import { savedSettings } from '../develop/source'
+import type { SourceKind } from '../engine/develop/settings'
+import { isRawFile } from '../engine/raw/decoder'
 import { ImportDialog } from '../import/ImportDialog'
 import { supportsFolderAccess } from '../platform/folders'
 import { getRootHandle } from '../platform/roots'
@@ -62,6 +68,9 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   const [targetCollections, setTargetCollections] = useState<{ id: number; name: string; count: number }[]>([])
   const [draft, setDraft] = useState<CollectionDraft | null>(null)
   const [autoStacking, setAutoStacking] = useState(false)
+  /** Copy / Paste / Sync settings dialog, with the photos it applies to. */
+  const [pasting, setPasting] = useState<{ mode: 'copy' | 'sync' | 'paste'; clip: Clipboard; ids: number[] } | null>(null)
+  const hasClip = useSyncExternalStore(settingsClipboard.subscribe, () => !!settingsClipboard.get())
   const [filters, setFilters] = useState<Filters>({ sort: 'captureDesc' })
   const [rows, setRows] = useState<PhotoRow[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -402,6 +411,40 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     refresh()
   }
 
+  // ---- develop settings: copy, paste, sync (Lightroom: Ctrl+Shift+C / Ctrl+Shift+V / Ctrl+Shift+S)
+  /** RAW, JPEG, or both, for the photos shown (undefined if some aren't in the grid). */
+  function kindOf(ids: number[]): SourceKind | 'mixed' | undefined {
+    const names = ids.map((id) => rows.find((r) => r.id === id)?.fileName)
+    if (names.some((n) => n === undefined)) return undefined
+    const kinds = new Set(names.map((n) => (isRawFile(n!) ? 'raw' : 'rgb')))
+    return kinds.size === 1 ? [...kinds][0] : 'mixed'
+  }
+
+  async function openCopy(mode: 'copy' | 'sync') {
+    if (focus === null) return
+    const ids = targets().filter((x) => x !== focus)
+    if (mode === 'sync' && !ids.length) return
+    const p = await catalog.getPhoto(focus)
+    if (!p) return
+    const kind: SourceKind = isRawFile(p.fileName) ? 'raw' : 'rgb'
+    const { keys, rerunAuto } = rememberedChoice()
+    const sourceName = p.version > 0 ? `${p.fileName} (${p.versionName ?? `Copy ${p.version}`})` : p.fileName
+    setPasting({ mode, ids, clip: { settings: savedSettings(await catalog.getEdit(focus), kind), keys, rerunAuto, sourceKind: kind, sourceName } })
+  }
+
+  function openPaste() {
+    const clip = settingsClipboard.get()
+    const ids = targets()
+    if (clip && ids.length) setPasting({ mode: 'paste', clip, ids })
+  }
+
+  function confirmPaste(clip: Clipboard) {
+    if (!pasting) return
+    setPasting(null)
+    if (pasting.mode === 'copy') settingsClipboard.set(clip)
+    else batch.run({ label: pasting.mode === 'sync' ? 'Sync settings' : 'Paste settings', ids: pasting.ids, clip })
+  }
+
   function clickCell(id: number, e: React.MouseEvent) {
     if (e.shiftKey && anchor.current !== null) {
       const a = rows.findIndex((r) => r.id === anchor.current)
@@ -424,7 +467,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   // Lightroom-style keyboard shortcuts.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!active || importing || culling || draft || autoStacking || status !== 'ready') return
+      if (!active || importing || culling || draft || autoStacking || pasting || status !== 'ready') return
       const t = e.target as HTMLElement
       if (isTextEntry(t) || isSliderKey(e)) return
       const idx = focus === null ? -1 : rows.findIndex((r) => r.id === focus)
@@ -462,6 +505,16 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           // Lightroom: Ctrl+Shift+E opens Export.
           onExport(targets())
           e.preventDefault()
+        } else if (k === 'c' && focus !== null) {
+          // Ctrl+C (and Lightroom's Ctrl+Shift+C) always asks which develop settings to copy.
+          e.preventDefault()
+          void openCopy('copy')
+        } else if (k === 'v') {
+          e.preventDefault()
+          openPaste()
+        } else if (k === 's' && e.shiftKey) {
+          e.preventDefault()
+          void openCopy('sync')
         }
         return
       }
@@ -637,7 +690,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
               <Loupe photo={detail} />
             )}
             <p className="hint muted small">
-              Keys: arrows move · P pick · X reject · U unflag · 0–5 stars · 6–9 colour labels · Ctrl+K keywords · B Quick Collection · S stack · E loupe · F cull · G grid · D develop · Delete removes from {activeCollection && activeCollection.kind !== 'smart' ? 'this collection' : 'library'}
+              Keys: arrows move · P pick · X reject · U unflag · 0–5 stars · 6–9 colour labels · Ctrl+K keywords · B Quick Collection · S stack · Ctrl+C / Ctrl+V settings · E loupe · F cull · G grid · D develop · Delete removes from {activeCollection && activeCollection.kind !== 'smart' ? 'this collection' : 'library'}
             </p>
           </>
         )}
@@ -669,6 +722,21 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           onRemove={(id) => void removeFromCollection(id, targets())}
           onNew={() => setDraft({ mode: 'new', kind: 'manual', withPhotos: targets().length })}
         />
+        <section className="keywords" aria-label="Develop settings">
+          <h3 className="panel-title">Develop settings</h3>
+          <div className="dleft-actions">
+            <button className="button small" onClick={() => void openCopy('copy')} title="Choose develop settings to copy from this photo (Ctrl+C)">Copy…</button>
+            <button className="button small" disabled={!hasClip} onClick={openPaste} title="Paste the copied settings onto the selected photos (Ctrl+V)">Paste…</button>
+            <button
+              className="button small"
+              disabled={targets().filter((x) => x !== focus).length === 0}
+              onClick={() => void openCopy('sync')}
+              title="Apply settings from the photo with the focus to the other selected photos (Ctrl+Shift+S)"
+            >
+              Sync…
+            </button>
+          </div>
+        </section>
       </InfoPanel>
 
       {culling && (
@@ -682,6 +750,16 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
             endCulling(id)
             onDevelop(id, ids)
           }}
+        />
+      )}
+
+      {pasting && (
+        <PasteDialog
+          mode={pasting.mode}
+          clip={pasting.clip}
+          targets={pasting.mode === 'copy' ? undefined : { count: pasting.ids.length, kind: kindOf(pasting.ids) }}
+          onConfirm={confirmPaste}
+          onClose={() => setPasting(null)}
         />
       )}
 
