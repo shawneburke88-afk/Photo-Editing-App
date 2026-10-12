@@ -32,3 +32,5 @@ export const loadHandle = (key: string) =>
   tx<FileSystemDirectoryHandle | undefined>('readonly', (s) => s.get(key))
 
 export const deleteHandle = (key: string) => tx('readwrite', (s) => s.delete(key)).then(() => undefined)
+
+export const handleKeys = () => tx<IDBValidKey[]>('readonly', (s) => s.getAllKeys()).then((keys) => keys.map(String))

@@ -13,6 +13,8 @@ import {
 } from '../engine/develop/indicators'
 import type { ImageStats } from '../engine/gpu/develop-engine'
 import { Slider } from './Slider'
+import { keyText, withKey } from '../settings/shortcuts'
+import { useSettings } from '../settings/store'
 
 interface Props {
   stats: ImageStats | null
@@ -48,12 +50,14 @@ export function Histogram(p: Props) {
   const { stats, log } = p
   const ref = useRef<HTMLCanvasElement>(null)
   const [menu, setMenu] = useState(false)
+  const scale = useSettings().display.scale
 
   useEffect(() => {
     const canvas = ref.current
     if (!canvas) return
     const draw = () => {
-      const dpr = window.devicePixelRatio || 1
+      // Device pixels per CSS pixel, including the interface size (CSS zoom), so the histogram stays sharp.
+      const dpr = (window.devicePixelRatio || 1) * (canvas.currentCSSZoom || 1)
       const w = Math.max(1, Math.round(canvas.clientWidth * dpr))
       const h = Math.max(1, Math.round(canvas.clientHeight * dpr))
       canvas.width = w
@@ -103,7 +107,7 @@ export function Histogram(p: Props) {
     const ro = new ResizeObserver(draw)
     ro.observe(canvas)
     return () => ro.disconnect()
-  }, [stats, log])
+  }, [stats, log, scale])
 
   const shadowFrac = stats && stats.pixels ? stats.shadowClipped / stats.pixels : 0
   const highFrac = stats && stats.pixels ? stats.highlightClipped / stats.pixels : 0
@@ -117,14 +121,14 @@ export function Histogram(p: Props) {
         <canvas ref={ref} className="histo-canvas" aria-label="Histogram" role="img" />
         <button
           className={`clip-tri shadow ${shadowFrac > CLIP_WARN ? 'warn' : ''} ${p.overlay ? 'on' : ''}`}
-          title={`Shadow clipping: ${pct(shadowFrac)}. Click or press J to show clipped areas.`}
+          title={`Shadow clipping: ${pct(shadowFrac)}. ${keyText('develop.clipping') ? `Click or press ${keyText('develop.clipping')}` : 'Click'} to show clipped areas.`}
           aria-label="Show shadow clipping"
           aria-pressed={p.overlay}
           onClick={p.onToggleOverlay}
         />
         <button
           className={`clip-tri highlight ${highFrac > CLIP_WARN ? 'warn' : ''} ${p.overlay ? 'on' : ''}`}
-          title={`Highlight clipping: ${pct(highFrac)}. Click or press J to show clipped areas.`}
+          title={`Highlight clipping: ${pct(highFrac)}. ${keyText('develop.clipping') ? `Click or press ${keyText('develop.clipping')}` : 'Click'} to show clipped areas.`}
           aria-label="Show highlight clipping"
           aria-pressed={p.overlay}
           onClick={p.onToggleOverlay}
@@ -171,7 +175,7 @@ export function Histogram(p: Props) {
             format={(v) => `${v.toFixed(2)} EV`} onChange={(v) => p.onClip({ ...c, lowerEv: v })} />
 
           <h4>
-            <label><input type="checkbox" checked={p.rawOverlay} onChange={p.onToggleRawOverlay} /> Sensor clipping (Shift+O)</label>
+            <label><input type="checkbox" checked={p.rawOverlay} onChange={p.onToggleRawOverlay} /> {withKey('Sensor clipping', 'develop.sensorClipping')}</label>
           </h4>
           <p className="muted small">Marks pixels where the camera sensor itself was saturated. Editing can’t recover detail there.</p>
           <label className="adv-row">

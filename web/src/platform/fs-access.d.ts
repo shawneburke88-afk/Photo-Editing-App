@@ -21,6 +21,14 @@ interface DirectoryPickerOptions {
   startIn?: 'desktop' | 'documents' | 'downloads' | 'music' | 'pictures' | 'videos' | FileSystemHandle
 }
 
+interface SaveFilePickerOptions {
+  id?: string
+  suggestedName?: string
+  startIn?: DirectoryPickerOptions['startIn']
+  types?: { description?: string; accept: Record<string, string[]> }[]
+}
+
 interface Window {
   showDirectoryPicker?(options?: DirectoryPickerOptions): Promise<FileSystemDirectoryHandle>
+  showSaveFilePicker?(options?: SaveFilePickerOptions): Promise<FileSystemFileHandle>
 }

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { PhotoRow } from '../catalog/types'
 import { Stars } from './Stars'
 import { Thumb } from './Thumb'
+import { keyText, withKey } from '../settings/shortcuts'
 
 interface Props {
   rows: PhotoRow[]
@@ -79,11 +80,11 @@ export function Grid({ rows, selected, focus, cellSize, onClick, onOpen, onDragS
             {row.flag === 1 && <span className="flag pick" title="Picked">⚑</span>}
             {row.flag === -1 && <span className="flag reject" title="Rejected">✕</span>}
             {row.edited && <span className="edited-badge" title="Edited in Develop">✎</span>}
-            {row.quick && <span className="quick-badge" title="In the Quick Collection (B)">●</span>}
+            {row.quick && <span className="quick-badge" title={withKey('In the Quick Collection', 'photo.quick')}>●</span>}
             {row.stackId !== null && (
               <button
                 className={`stack-badge ${row.stackExpanded ? 'open' : ''}`}
-                title={row.stackExpanded ? 'Collapse this stack (S)' : `Stack of ${row.stackSize}: click or press S to show all`}
+                title={row.stackExpanded ? withKey('Collapse this stack', 'library.stackToggle') : `Stack of ${row.stackSize}: click${keyText('library.stackToggle') ? ` or press ${keyText('library.stackToggle')}` : ''} to show all`}
                 onClick={(e) => {
                   e.stopPropagation()
                   onToggleStack?.(row.id)

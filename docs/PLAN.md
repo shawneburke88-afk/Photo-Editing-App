@@ -166,7 +166,7 @@ and noise reduction, lens profile corrections (lensfun), chromatic aberration, t
 vignette and grain, dehaze, camera profiles, masking (brush, linear, radial, color/luminance range),
 heal and clone, snapshots, soft proofing. Develop tools in **one scrolling stack in workflow order, Crop & Lens first, with a jump bar of group buttons** (owner, after round 2; replaces the earlier tabs plan; see USABILITY.md). **Tool search** comes at the end of this phase, once most tools exist.
 
-**Keyboard and display** (owner, after round 2; can land in any phase): remappable shortcuts with a Lightroom-compatible preset, UI scaling, every core action reachable by keyboard.
+**Keyboard and display** (owner, after round 2; can land in any phase): remappable shortcuts with a Lightroom-compatible preset, UI scaling, every core action reachable by keyboard. **Built** in Phase 2 ([PHASE2.md, Part 12](PHASE2.md#part-12-keyboard-and-display-settings)): Settings with shortcut sets, the ? list, command search, slider keys, interface size and photo background.
 **Later in Phase 3 or after:** read and write darktable XMP develop edits (R2 18), once more darktable tools exist in LightBench.
 
 ### Phase 4 — Local AI

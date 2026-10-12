@@ -1,5 +1,21 @@
 [
   {
+    "version": "0.2.0",
+    "date": "2026-10-12",
+    "newFeatures": [
+      "Compare (C): the photo you like best stays on the left while the arrow keys bring in others to compare with it.",
+      "Survey (N): the selected photos side by side, to flag, rate and drop them until the best are left.",
+      "Metadata: edit title, caption, creator, copyright and location on one photo or many. They are saved in sidecars and included in exports.",
+      "Metadata presets (“© {year} Your Name” becomes each photo's year) that can fill in new photos, and import presets for the Import window's options.",
+      "Settings (the gear, or Ctrl+,): change any keyboard shortcut, or switch to Lightroom Classic's keys.",
+      "Press ? for the shortcuts of the current view, or Ctrl+Shift+P to find any action by name.",
+      "Interface size from 90 % to 150 % (Ctrl+Alt+= and Ctrl+Alt+−). Photos stay sharp.",
+      "Choose the background behind photos: black, dark grey or mid grey.",
+      "Develop sliders: arrow keys nudge, Shift+arrows take bigger steps, Home resets."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.1.0",
     "date": "2026-10-12",
     "newFeatures": [
@@ -9,9 +25,7 @@
       "Open RAW and JPEG files with the installed app from your file manager (Chrome and Edge).",
       "Copy, paste and sync develop settings between photos, choosing which settings go. Auto can re-run on each photo.",
       "Auto options: a strength slider and a choice of which sliders Auto may change.",
-      "Presets: save chosen settings, preview on hover, apply with an Amount, and develop new photos with one automatically.",
-      "Metadata: edit title, caption, creator, copyright and location on one photo or many. They are saved in sidecars and included in exports.",
-      "Metadata presets (“© {year} Your Name” becomes each photo's year) that can fill in new photos, and import presets for the Import window's options."
+      "Presets: save chosen settings, preview on hover, apply with an Amount, and develop new photos with one automatically."
     ],
     "bugFixes": []
   }
