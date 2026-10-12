@@ -2,6 +2,7 @@ import type { ColorLabel, PhotoQuery } from '../catalog/types'
 import { COLOR_NAMES } from './format'
 import { showKeyword } from './keywords'
 import { useState } from 'react'
+import { withKey } from '../settings/shortcuts'
 
 type Filters = Pick<PhotoQuery, 'text' | 'minRating' | 'flag' | 'color' | 'sort' | 'keyword'>
 
@@ -30,11 +31,11 @@ export function FilterBar({ value, onChange, view, onView, onCull, onCompare, on
   return (
     <div className="filterbar">
       <div className="seg" role="group" aria-label="View">
-        <button className={view === 'grid' ? 'on' : ''} onClick={() => onView('grid')} title="Grid (G)">Grid</button>
-        <button className={view === 'loupe' ? 'on' : ''} onClick={() => onView('loupe')} title="Loupe (E)">Loupe</button>
-        <button onClick={onCull} disabled={!shown} title="Full-screen culling: flag and rate one photo at a time (F)">Cull</button>
-        <button onClick={onCompare} disabled={shown < 2} title="Compare the focused photo (Select) with the next one (Candidate) (C)">Compare</button>
-        <button onClick={onSurvey} disabled={!shown} title="Survey: the selected photos side by side (N)">Survey</button>
+        <button className={view === 'grid' ? 'on' : ''} onClick={() => onView('grid')} title={withKey('Grid', 'library.grid')}>Grid</button>
+        <button className={view === 'loupe' ? 'on' : ''} onClick={() => onView('loupe')} title={withKey('Loupe', 'library.loupe')}>Loupe</button>
+        <button onClick={onCull} disabled={!shown} title={withKey('Full-screen culling: flag and rate one photo at a time', 'library.cull')}>Cull</button>
+        <button onClick={onCompare} disabled={shown < 2} title={withKey('Compare the focused photo (Select) with the next one (Candidate)', 'library.compare')}>Compare</button>
+        <button onClick={onSurvey} disabled={!shown} title={withKey('Survey: the selected photos side by side', 'library.survey')}>Survey</button>
       </div>
       <input
         type="search"

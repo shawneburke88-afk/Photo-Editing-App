@@ -1,4 +1,4 @@
-import { isSliderKey, isTextEntry } from '../lib/keys'
+import { useKeymapVersion, useShortcuts, withKey } from '../settings/shortcuts'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { getCatalog } from '../catalog/client'
 import { forgetThumbUrl, loadThumb, saveThumb, thumbUrl } from '../catalog/thumbs'
@@ -605,56 +605,48 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   // ---- keyboard
   const index = ids.indexOf(id)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (isTextEntry(e.target) || isSliderKey(e) || pasting) return
-      const k = e.key.toLowerCase()
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && k === 'e') {
-        e.preventDefault()
-        onExport([id])
-      } else if ((e.ctrlKey || e.metaKey) && k === 'c') {
-        // Ctrl+C (and Lightroom's Ctrl+Shift+C) always asks which settings to copy.
-        e.preventDefault()
-        openCopy('copy')
-      } else if ((e.ctrlKey || e.metaKey) && k === 'v') {
-        e.preventDefault()
-        openPaste()
-      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && k === 's') {
-        // Lightroom: Ctrl+Shift+S syncs settings to the selected photos.
-        e.preventDefault()
-        openCopy('sync')
-      } else if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) {
-        e.preventDefault()
+  useShortcuts(['develop'], !pasting, (cmd) => {
+    switch (cmd) {
+      case 'export': onExport([id]); break
+      // Copy always asks which settings to copy.
+      case 'settings.copy': openCopy('copy'); break
+      case 'settings.paste': openPaste(); break
+      case 'settings.sync': openCopy('sync'); break
+      case 'develop.undo':
+      case 'develop.redo':
         dirty.current = true
-        setHistory((h) => (h ? (k === 'y' || e.shiftKey ? redo(h) : undo(h)) : h))
-      } else if (k === '\\') {
-        setBefore((b) => !b)
-      } else if (k === 'o' && e.shiftKey) {
-        // darktable: Shift+O toggles the raw (sensor) clipping indicator.
-        setRawOverlay((o) => !o)
-      } else if (k === 'j' || k === 'o') {
-        // J as in Lightroom, O as in darktable.
-        setOverlay((o) => !o)
-      } else if (k === 'z') {
-        setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center }))
-      } else if (k === 'arrowright' && index < ids.length - 1) {
+        setHistory((h) => (h ? (cmd === 'develop.redo' ? redo(h) : undo(h)) : h))
+        break
+      case 'develop.before': setBefore((b) => !b); break
+      // darktable: Shift+O toggles the raw (sensor) clipping indicator.
+      case 'develop.sensorClipping': setRawOverlay((o) => !o); break
+      // J as in Lightroom, O as in darktable.
+      case 'develop.clipping': setOverlay((o) => !o); break
+      case 'develop.zoom': setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center })); break
+      case 'develop.next':
+        if (index >= ids.length - 1) return false
         pick(ids[index + 1])
-      } else if (k === 'arrowleft' && index > 0) {
+        break
+      case 'develop.prev':
+        if (index <= 0) return false
         pick(ids[index - 1])
-      } else if (k === 'w' && !e.ctrlKey && !e.metaKey) {
-        // Lightroom: W selects the white balance picker.
+        break
+      // Lightroom: W selects the white balance picker.
+      case 'develop.whiteBalance':
         setWbPick((p) => !p)
         setLoupe(null)
-      } else if (k === 'escape') {
+        break
+      case 'develop.cancel':
         setPicking(false)
         setWbPick(false)
         setLoupe(null)
         setView((v) => ({ ...v, zoom: 'fit' }))
-      }
+        break
+      default:
+        return false
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
   })
+  useKeymapVersion()
 
   // ---- click to zoom, drag to pan
   const drag = useRef<{ x: number; y: number; center: [number, number]; moved: boolean } | null>(null)
@@ -808,13 +800,13 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             ))}
         </ol>
         <div className="dleft-actions">
-          <button className="button small" disabled={!history || !canUndo(history)} onClick={() => { dirty.current = true; setHistory((h) => (h ? undo(h) : h)) }} title="Undo (Ctrl+Z)">Undo</button>
-          <button className="button small" disabled={!history || !canRedo(history)} onClick={() => { dirty.current = true; setHistory((h) => (h ? redo(h) : h)) }} title="Redo (Ctrl+Shift+Z)">Redo</button>
+          <button className="button small" disabled={!history || !canUndo(history)} onClick={() => { dirty.current = true; setHistory((h) => (h ? undo(h) : h)) }} title={withKey('Undo', 'develop.undo')}>Undo</button>
+          <button className="button small" disabled={!history || !canRedo(history)} onClick={() => { dirty.current = true; setHistory((h) => (h ? redo(h) : h)) }} title={withKey('Redo', 'develop.redo')}>Redo</button>
           <button className="button small" disabled={status.kind !== 'ready'} onClick={reset}>Reset all</button>
         </div>
         <div className="dleft-actions">
-          <button className="button small" disabled={status.kind !== 'ready'} onClick={() => openCopy('copy')} title="Choose settings to copy (Ctrl+C)">Copy…</button>
-          <button className="button small" disabled={status.kind !== 'ready' || !hasClip} onClick={openPaste} title="Paste settings onto this photo (Ctrl+V)">Paste…</button>
+          <button className="button small" disabled={status.kind !== 'ready'} onClick={() => openCopy('copy')} title={withKey('Choose settings to copy', 'settings.copy')}>Copy…</button>
+          <button className="button small" disabled={status.kind !== 'ready' || !hasClip} onClick={openPaste} title={withKey('Paste settings onto this photo', 'settings.paste')}>Paste…</button>
         </div>
         {timing.stage !== undefined && (
           <p className="muted small pad">
@@ -827,10 +819,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       <section className="dcenter">
         <div className="dtoolbar">
           <span className="dtitle">{photo ? photo.fileName : ''}</span>
-          <button className={`button small ${before ? 'on' : ''}`} onClick={() => setBefore(!before)} disabled={status.kind !== 'ready'} title="Before / after (\)">
+          <button className={`button small ${before ? 'on' : ''}`} onClick={() => setBefore(!before)} disabled={status.kind !== 'ready'} title={withKey('Before / after', 'develop.before')}>
             {before ? 'Showing before' : 'Before / after'}
           </button>
-          <button className="button small" onClick={() => setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center }))} disabled={status.kind !== 'ready'} title="Zoom (Z)">
+          <button className="button small" onClick={() => setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center }))} disabled={status.kind !== 'ready'} title={withKey('Zoom', 'develop.zoom')}>
             {view.zoom === 'fit' ? 'Fit' : '100 %'}
           </button>
           <span className="sync-group">
@@ -838,7 +830,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
               className="button small"
               disabled={status.kind !== 'ready' || !others.length}
               onClick={() => openCopy('sync')}
-              title={others.length ? `Apply settings from this photo to the ${others.length} other selected (Ctrl+Shift+S)` : 'Ctrl+click photos in the filmstrip to select them, then sync'}
+              title={others.length ? withKey(`Apply settings from this photo to the ${others.length} other selected`, 'settings.sync') : 'Ctrl+click photos in the filmstrip to select them, then sync'}
             >
               Sync…{others.length ? ` (${others.length})` : ''}
             </button>
@@ -847,7 +839,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
               Auto Sync
             </label>
           </span>
-          <button className="button small" onClick={() => onExport([id])} title="Export this photo (Ctrl+Shift+E)">Export…</button>
+          <button className="button small" onClick={() => onExport([id])} title={withKey('Export this photo', 'export')}>Export…</button>
         </div>
         <div
           className={`dstage ${view.zoom === 'fit' ? 'fit' : 'zoomed'} ${wbPick ? 'wb-picking' : ''}`}
@@ -865,7 +857,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           {!before && hoverPreset && <div className="dbadge">Preview: {hoverPreset.name}</div>}
           {(overlay || rawOverlay) && (
             <div className="dbadge right">
-              {[overlay && 'Clipping shown (J)', rawOverlay && 'Sensor clipping shown (Shift+O)'].filter(Boolean).join(' · ')}
+              {[overlay && withKey('Clipping shown', 'develop.clipping'), rawOverlay && withKey('Sensor clipping shown', 'develop.sensorClipping')].filter(Boolean).join(' · ')}
             </div>
           )}
           {wbPick && <div className="dbadge pick">Click something that should be neutral grey or white · Esc to cancel</div>}
