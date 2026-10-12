@@ -486,3 +486,35 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 /* Virtual copies */
 .copy-tag { margin-left: auto; font-size: 0.7rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .copies-section .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+
+/* Copy / paste / sync settings */
+.paste-dialog { width: min(640px, calc(100vw - 32px)); padding: 20px 20px 0; gap: 10px; max-height: min(860px, 100%); }
+.paste-dialog h2 { margin: 0; font-size: 1.1rem; }
+.paste-dialog p { margin: 0; }
+.paste-dialog .dialog-actions { margin: 6px -20px 0; }
+.paste-preview { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.paste-dialog > .linklike { align-self: flex-start; }
+.paste-auto { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); cursor: pointer; }
+.paste-auto input, .paste-groups input { accent-color: var(--accent); }
+.paste-groups { overflow: auto; min-height: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 4px 16px; }
+.paste-groups fieldset { border: 0; margin: 0; padding: 6px 0; display: flex; flex-direction: column; gap: 4px; }
+.paste-groups legend { font-weight: 600; padding: 0; margin-bottom: 4px; }
+.paste-groups label { display: flex; align-items: baseline; gap: 6px; cursor: pointer; }
+.paste-groups fieldset > label { padding-left: 20px; }
+.paste-groups label .muted { margin-left: auto; text-align: right; }
+.paste-groups label.via-auto > span:first-of-type { color: var(--muted); }
+.paste-all { display: inline-flex; gap: 4px; align-items: baseline; }
+.batch-progress { position: fixed; right: 16px; bottom: 16px; z-index: 40; width: min(360px, calc(100vw - 32px)); padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: 0 10px 30px rgba(0,0,0,0.4); display: flex; flex-direction: column; gap: 6px; }
+.batch-progress p { margin: 0; }
+.batch-progress .button { align-self: flex-start; }
+.batch-progress details ul { margin: 4px 0 0; padding-left: 16px; max-height: 120px; overflow: auto; }
+.sync-group { display: inline-flex; align-items: center; gap: 6px; }
+.fs-cell.selected:not(.on) { border-color: rgba(232, 176, 74, 0.45); }
+.auto-options { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.auto-options summary { cursor: pointer; color: var(--muted); font-size: 0.8rem; }
+.auto-options .auto-strength { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; }
+.auto-options .auto-strength input { flex: 1; }
+.auto-options .auto-sliders { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.85rem; }
+.auto-options .auto-sliders label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+.auto-note { font-size: 0.78rem; color: var(--muted); margin: 4px 0 0; }
+.dbadge.sync { top: auto; bottom: 10px; color: var(--text); }

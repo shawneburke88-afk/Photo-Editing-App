@@ -146,11 +146,10 @@ Non-destructive editing: originals are never modified. Edits are settings re-app
     standard fields above.
 
 ### Phase 2 — Library depth
-**Open folder (browse before import)**, **full-screen culling**, **hierarchical keywords**, **collections / smart collections / Quick Collection**, **stacks** and **virtual copies** — _built, see [PHASE2.md](PHASE2.md)_ — owner's choice 2026-10-11: open any folder and start culling (flags, stars, labels) at once. **One library model** (owner, after the round-2 research): opening a folder adds it to the library in place (no copying), it is indexed in the background, and every library feature works on it; there is no separate browse mode. Removing a folder from LightBench never deletes files.
-**Auto, tunable** (owner, after round 2): a strength slider, a choice of which sliders Auto may touch, and Auto re-run per photo when applied to many photos.
+**Open folder (browse before import)**, **full-screen culling**, **hierarchical keywords**, **collections / smart collections / Quick Collection**, **stacks**, **virtual copies** and **copy / paste / sync settings with a tunable Auto** — _built, see [PHASE2.md](PHASE2.md)_ — owner's choice 2026-10-11: open any folder and start culling (flags, stars, labels) at once. **One library model** (owner, after the round-2 research): opening a folder adds it to the library in place (no copying), it is indexed in the background, and every library feature works on it; there is no separate browse mode. Removing a folder from LightBench never deletes files.
+**Auto, tunable** (owner, after round 2): a strength slider, a choice of which sliders Auto may touch, and Auto re-run per photo when applied to many photos — _built (PHASE2.md, Part 7)_.
 Collections, smart collections, collection sets, hierarchical keywords, EXIF/IPTC editing,
-metadata presets, import presets, stacks, virtual copies, compare and survey views, presets,
-copy/paste/sync settings across many photos, **Lightroom catalog/XMP import (ratings, keywords,
+metadata presets, import presets, compare and survey views, presets, **Lightroom catalog/XMP import (ratings, keywords,
 collections)**.
 
 **Installable, offline website (PWA)** (owner, after round 2): works without a connection after the first visit.

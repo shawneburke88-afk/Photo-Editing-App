@@ -133,7 +133,33 @@ export function targetFromMetrics(id: string, name: string, m: Metrics): AutoTar
   }
 }
 
-type Key = 'exposure' | 'contrast' | 'highlights' | 'whites' | 'blacks' | 'vibrance'
+/** Sliders Auto can set. */
+export type AutoKey = 'exposure' | 'contrast' | 'highlights' | 'whites' | 'blacks' | 'vibrance'
+type Key = AutoKey
+
+export const AUTO_SLIDERS: { key: AutoKey; label: string }[] = [
+  { key: 'exposure', label: 'Exposure' },
+  { key: 'contrast', label: 'Contrast' },
+  { key: 'highlights', label: 'Highlights' },
+  { key: 'whites', label: 'Whites' },
+  { key: 'blacks', label: 'Blacks' },
+  { key: 'vibrance', label: 'Vibrance' },
+]
+
+/** Options the user sets on Auto (owner's decision after the round-2 research: tunable, not a black box). */
+export interface AutoOptions {
+  /** Sliders Auto may change; the others keep their current values. Default: all. */
+  sliders?: AutoKey[]
+  /** 0…1.5: how far Auto moves the sliders from 0 (1 = its full result). */
+  strength?: number
+}
+
+/** What a photo's Auto was, so pasting can re-run it on each photo instead of copying its numbers. */
+export interface AutoRecord {
+  target: AutoTarget
+  sliders: AutoKey[]
+  strength: number
+}
 
 /** Search range and "cost scale" of each slider: moving it by `scale` costs as much as missing by one tolerance. */
 const SLIDERS: Record<Key, { range: [number, number]; scale: number; step: number }> = {
@@ -180,13 +206,20 @@ export async function solveAuto(
   target: AutoTarget,
   measure: (s: DevelopSettings) => Promise<Metrics>,
   iterations = 12,
+  options: AutoOptions = {},
 ): Promise<AutoResult> {
   let count = 0
-  // Start from neutral tone settings so repeated Auto presses give the same result.
-  let s: DevelopSettings = { ...start, exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, vibrance: 0 }
+  const allowed = new Set<AutoKey>(options.sliders ?? AUTO_SLIDERS.map((x) => x.key))
+  const strength = Math.max(0, Math.min(1.5, options.strength ?? 1))
+  // Start from neutral values for the sliders Auto may change, so repeated presses give the same result.
+  // Shadows has no Auto rule; a full Auto resets it with the others, as before. With a choice of sliders, the
+  // unticked ones and Shadows keep their values.
+  let s: DevelopSettings = allowed.size === AUTO_SLIDERS.length ? { ...start, shadows: 0 } : start
+  for (const k of allowed) s = { ...s, [k]: 0 }
 
   /** Golden-section search for the slider value with the lowest cost. */
   const fit = async (key: Key, miss: (x: Metrics) => number) => {
+    if (!allowed.has(key)) return
     const { range, scale, step } = SLIDERS[key]
     const cache = new Map<number, number>()
     const cost = async (v: number) => {
@@ -227,8 +260,8 @@ export async function solveAuto(
 
   const band = target.builtIn ? BANDS.look : BANDS.match
   // A look's fixed amounts are applied first; the solver works around them.
-  if (target.contrast !== undefined) s = { ...s, contrast: target.contrast }
-  if (target.vibrance !== undefined) s = { ...s, vibrance: target.vibrance }
+  if (target.contrast !== undefined && allowed.has('contrast')) s = { ...s, contrast: target.contrast }
+  if (target.vibrance !== undefined && allowed.has('vibrance')) s = { ...s, vibrance: target.vibrance }
   const spread = target.spread
   for (let pass = 0; pass < 2; pass++) {
     await fit('exposure', (x) => outside(x.median, target.median, band.median) / LUMA_TOL)
@@ -243,6 +276,13 @@ export async function solveAuto(
   }
   const chroma = target.chroma
   if (chroma !== null) await fit('vibrance', (x) => outside(x.chroma, chroma, band.chroma) / CHROMA_TOL)
+  if (strength !== 1) {
+    for (const k of allowed) {
+      const { step, range } = SLIDERS[k]
+      s = { ...s, [k]: Math.min(range[1], Math.max(range[0], Math.round((s[k] * strength) / step) * step)) }
+    }
+  }
   count++
-  return { settings: s, measurements: count, final: await measure(s) }
+  const auto: AutoRecord = { target, sliders: [...allowed], strength }
+  return { settings: { ...s, auto }, measurements: count, final: await measure(s) }
 }
