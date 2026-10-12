@@ -1,26 +1,36 @@
-// Full-screen culling: one photo (or two side by side) with keys that always act on the photo shown, so a
-// stray mouse pointer or an old selection can't receive the rating (a darktable complaint: its keys act on
-// the hovered image by default, `plugins/lighttable/act_on`). Previews come from the camera's embedded JPEG;
-// 100 % renders the RAW itself, as Export does, so focus can be judged on real pixels.
+// Full-screen culling: one photo, Compare (a Select and a Candidate side by side) or Survey (the selected
+// photos tiled), with keys that always act on the photo shown or the active pane/tile, so a stray mouse
+// pointer or an old selection can't receive the rating (a darktable complaint: its keys act on the hovered
+// image by default, `plugins/lighttable/act_on`). Previews come from the camera's embedded JPEG; 100 %
+// renders the RAW itself, as Export does, so focus can be judged on real pixels.
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { getCatalog } from '../catalog/client'
 import type { PhotoDetail, PhotoRow } from '../catalog/types'
 import { isSliderKey, isTextEntry } from '../lib/keys'
+import { makeSelect, startCompare, stepCandidate, swapCompare, type CompareState } from './compare'
 import { CullPane, type ZoomCenter } from './CullPane'
 import { captureText, COLOR_NAMES, exposureText } from './format'
 import { BitmapCache, FullRenderer, loadFullPreview, type Preview } from './preview'
 import { Stars } from './Stars'
+import { activeAfterDrop, guessAspect, surveyGrid } from './survey'
+import { SurveyTile } from './SurveyTile'
 import { Thumb } from './Thumb'
 
 export type CullField = 'rating' | 'flag' | 'color'
+export type CullLayout = 'one' | 'compare' | 'survey'
 
 interface Props {
-  /** The photos to cull, in grid order (a snapshot, so rejecting one doesn't make it vanish mid-cull). */
+  /** The photos to cull, in grid order (a snapshot, so rejecting one doesn't make it vanish mid-cull). For Survey, the selected photos. */
   rows: PhotoRow[]
   startId: number
+  /** How the view opens: one photo (F), Compare with `startId` as the Select (C), or Survey (N). */
+  layout?: CullLayout
+  /** Compare: the first Candidate. */
+  candidateId?: number
   onApply: (ids: number[], field: CullField, value: number) => void
-  onExit: (id: number) => void
+  /** Back to the grid, focused on `id`; from Survey, `selection` is the photos still in the survey. */
+  onExit: (id: number, selection?: number[]) => void
   /** B: Quick Collection in/out; resolves true when added. */
   onToggleQuick: (id: number) => Promise<boolean>
   onDevelop: (id: number, ids: number[]) => void
@@ -28,6 +38,8 @@ interface Props {
 
 const ADVANCE_KEY = 'cull:advance'
 const FILMSTRIP_SPAN = 20
+const SURVEY_GAP = 8
+const SURVEY_PAD = 8
 
 function loadAdvance(): boolean {
   try {
@@ -37,12 +49,36 @@ function loadAdvance(): boolean {
   }
 }
 
-export function CullView({ rows, startId, onApply, onExit, onDevelop, onToggleQuick }: Props) {
+/** Longest side of the Survey previews: smaller when many photos share the screen, to keep memory down. */
+function surveyEdge(n: number): number {
+  return n <= 6 ? 2048 : n <= 16 ? 1280 : n <= 40 ? 768 : 512
+}
+
+/** Width / height of a preview as shown (upright). */
+function previewAspect(p: Preview): number {
+  const sideways = p.rotate === 90 || p.rotate === 270
+  return sideways ? p.bmp.height / p.bmp.width : p.bmp.width / p.bmp.height
+}
+
+export function CullView({ rows, startId, layout: openAs = 'one', candidateId, onApply, onExit, onDevelop, onToggleQuick }: Props) {
   const catalog = getCatalog()
+  /** Opened as Survey: Esc goes back to it from one photo or Compare, and leaving keeps the survey as the selection. */
+  const survey = openAs === 'survey'
+  const startIndex = Math.max(0, rows.findIndex((r) => r.id === startId))
   const [items, setItems] = useState(rows)
-  const [index, setIndex] = useState(() => Math.max(0, rows.findIndex((r) => r.id === startId)))
-  const [twoUp, setTwoUp] = useState(false)
+  const [index, setIndex] = useState(startIndex)
+  const [layout, setLayout] = useState<CullLayout>(openAs === 'compare' && rows.length < 2 ? 'one' : openAs)
+  const [cmp, setCmp] = useState<CompareState>(
+    () =>
+      startCompare(startIndex, rows.length, candidateId === undefined ? undefined : rows.findIndex((r) => r.id === candidateId)) ?? {
+        select: startIndex,
+        candidate: startIndex,
+      },
+  )
+  /** Compare: the pane that receives the keys (0 Select, 1 Candidate). */
   const [active, setActive] = useState<0 | 1>(0)
+  /** Survey: the active tile. */
+  const [tile, setTile] = useState(startIndex)
   const [zoom, setZoom] = useState<ZoomCenter | null>(null)
   const [advance, setAdvance] = useState(loadAdvance)
   const [showInfo, setShowInfo] = useState(true)
@@ -72,6 +108,16 @@ export function CullView({ rows, startId, onApply, onExit, onDevelop, onToggleQu
       }),
     [getDetail],
   )
+  // Survey tiles: every surveyed photo at once, scaled down.
+  const tiles = useMemo(
+    () =>
+      new BitmapCache<Preview>(Math.max(8, rows.length), async (id) => {
+        const d = await getDetail(id)
+        if (!d) throw new Error('This photo is no longer in the library.')
+        return loadFullPreview(d, surveyEdge(rows.length))
+      }),
+    [getDetail, rows.length],
+  )
   const renderer = useMemo(() => new FullRenderer(), [])
   /** Photos whose 100 % render is still wanted: those on screen and the next one. */
   const wanted = useRef(new Set<number>())
@@ -86,21 +132,24 @@ export function CullView({ rows, startId, onApply, onExit, onDevelop, onToggleQu
   )
   useEffect(() => {
     previews.open()
+    tiles.open()
     fulls.open()
     renderer.open()
     return () => {
       previews.dispose()
+      tiles.dispose()
       fulls.dispose()
       renderer.dispose()
     }
-  }, [previews, fulls, renderer])
+  }, [previews, tiles, fulls, renderer])
 
-  const shown = twoUp ? [items[index], items[index + 1]].filter(Boolean) : [items[index]].filter(Boolean)
-  const target = shown[Math.min(active, shown.length - 1)]
+  const n = items.length
+  const shown = layout === 'compare' ? [items[cmp.select], items[cmp.candidate]].filter(Boolean) : layout === 'one' ? [items[index]].filter(Boolean) : []
+  const target = layout === 'survey' ? items[tile] : shown[Math.min(active, shown.length - 1)]
 
   // Load what is on screen first, then prefetch the neighbours.
   useEffect(() => {
-    const request = (cache: BitmapCache<{ bmp: ImageBitmap }>, id: number, kind: 'preview' | 'full') =>
+    const request = (cache: BitmapCache<{ bmp: ImageBitmap }>, id: number, kind: 'preview' | 'full' | 'tile') =>
       cache.get(id).then(
         () => bump(),
         (e: Error) => {
@@ -109,19 +158,29 @@ export function CullView({ rows, startId, onApply, onExit, onDevelop, onToggleQu
           bump()
         },
       )
+    if (layout === 'survey') {
+      wanted.current = new Set()
+      for (const r of items) void request(tiles, r.id, 'tile')
+      return
+    }
     const ids = shown.map((r) => r.id)
-    const next = items[index + shown.length]?.id
+    // The photos the arrow keys go to next: after the photo (1-up) or the Candidate (Compare).
+    const after =
+      layout === 'compare'
+        ? [stepCandidate(cmp, 1, n), stepCandidate(stepCandidate(cmp, 1, n), 1, n), stepCandidate(cmp, -1, n)].map((s) => s.candidate)
+        : [index + 1, index + 2, index - 1]
+    const ahead = after.map((i) => items[i]?.id).filter((x): x is number => x !== undefined && !ids.includes(x))
+    const next = ids.includes(items[after[0]]?.id) ? undefined : items[after[0]]?.id
     wanted.current = new Set(next === undefined ? ids : [...ids, next])
     void (async () => {
       for (const id of ids) void request(previews, id, 'preview')
       if (zoom) for (const id of ids) await request(fulls, id, 'full')
-      const ahead = [index + shown.length, index + shown.length + 1, index - 1].map((i) => items[i]?.id).filter((x): x is number => x !== undefined)
       for (const id of ahead) void previews.get(id).catch(() => {})
       // While zoomed, the next photo will also be wanted at 100 %.
       if (zoom && next !== undefined) void fulls.get(next).then(bump, () => {})
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, twoUp, zoom !== null, items.length, previews, fulls])
+  }, [index, layout, cmp.select, cmp.candidate, zoom !== null, n, previews, tiles, fulls])
 
   useEffect(() => {
     let live = true
@@ -131,6 +190,26 @@ export function CullView({ rows, startId, onApply, onExit, onDevelop, onToggleQu
     }
   }, [target, getDetail])
 
+  // Survey: the stage's size, for tiling.
+  const stageRef = useRef<HTMLDivElement>(null)
+  const [stage, setStage] = useState({ w: 0, h: 0 })
+  useEffect(() => {
+    const el = stageRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setStage({ w: el.clientWidth, h: el.clientHeight }))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [layout])
+  const grid = surveyGrid(
+    items.map((r) => {
+      const p = tiles.peek(r.id)
+      return p ? previewAspect(p) : guessAspect(r.orientation)
+    }),
+    stage.w - 2 * SURVEY_PAD,
+    stage.h - 2 * SURVEY_PAD,
+    SURVEY_GAP,
+  )
+
   const move = useCallback(
     (delta: number) => {
       setIndex((i) => Math.min(Math.max(0, items.length - 1), Math.max(0, i + delta)))
@@ -138,14 +217,23 @@ export function CullView({ rows, startId, onApply, onExit, onDevelop, onToggleQu
     [items.length],
   )
 
+  /** ←/→: the next photo (1-up) or the next Candidate (Compare). */
+  function step(delta: number) {
+    if (layout === 'compare') setCmp((s) => stepCandidate(s, delta, n))
+    else move(delta)
+  }
+
   const apply = useCallback(
     (field: CullField, value: number, auto: boolean) => {
       if (!target) return
       setItems((list) => list.map((r) => (r.id === target.id ? { ...r, [field]: value } : r)))
       onApply([target.id], field, value)
-      if (auto) move(1)
+      if (!auto) return
+      // Compare: a key on the Candidate moves the Candidate on; the Select stays put.
+      if (layout === 'one') move(1)
+      else if (layout === 'compare' && active === 1) setCmp((s) => stepCandidate(s, 1, n))
     },
-    [target, onApply, move],
+    [target, onApply, move, layout, active, n],
   )
 
   function toggleAdvance() {
@@ -159,16 +247,59 @@ export function CullView({ rows, startId, onApply, onExit, onDevelop, onToggleQu
     })
   }
 
+  /** One photo: photo `i`. */
+  function showOne(i: number) {
+    setIndex(i)
+    setLayout('one')
+    setActive(0)
+  }
+
+  /** C (or the 1-up button): from Compare, the photo in the active pane; from Survey, the active tile. */
+  function toOne() {
+    if (layout === 'compare') showOne(active ? cmp.candidate : cmp.select)
+    else if (layout === 'survey') showOne(tile)
+  }
+
+  /** Compare with photo `i` as the Select and the photo after it as the Candidate. */
+  function showCompare(i: number) {
+    const s = startCompare(i, n)
+    if (!s) return
+    setCmp(s)
+    setLayout('compare')
+    setActive(0)
+  }
+
+  function showSurvey() {
+    if (target) setTile(items.indexOf(target))
+    setLayout('survey')
+    setZoom(null)
+  }
+
+  function swap() {
+    setCmp(swapCompare)
+  }
+
+  function promote() {
+    setCmp((s) => makeSelect(s, n))
+  }
+
+  /** Survey ✕: out of the survey (never out of the library or a collection). */
+  function drop(i: number) {
+    if (n <= 1) return
+    setItems((list) => list.filter((_, j) => j !== i))
+    setTile((t) => activeAfterDrop(t, i, n))
+  }
+
+  function exit() {
+    onExit(target?.id ?? startId, survey ? items.map((r) => r.id) : undefined)
+  }
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isTextEntry(e.target) || isSliderKey(e) || e.ctrlKey || e.metaKey || e.altKey) return
       const k = e.key.toLowerCase()
-      const auto = advance || e.getModifierState('CapsLock')
-      if (k === 'arrowright' || k === 'arrowdown' || k === ' ') move(1)
-      else if (k === 'arrowleft' || k === 'arrowup') move(-1)
-      else if (k === 'home') move(-items.length)
-      else if (k === 'end') move(items.length)
-      else if (k >= '0' && k <= '5') apply('rating', Number(k), auto)
+      const auto = layout !== 'survey' && (advance || e.getModifierState('CapsLock'))
+      if (k >= '0' && k <= '5') apply('rating', Number(k), auto)
       else if (k >= '6' && k <= '9') apply('color', Number(k) - 5, auto)
       else if (k === 'p') apply('flag', 1, auto)
       else if (k === 'x') apply('flag', -1, auto)
@@ -176,16 +307,40 @@ export function CullView({ rows, startId, onApply, onExit, onDevelop, onToggleQu
       else if (k === 'b' && target) {
         const id = target.id
         void onToggleQuick(id).then((added) => setItems((list) => list.map((r) => (r.id === id ? { ...r, quick: added } : r))))
-      } else if (k === 'z') setZoom((z) => (z ? null : { u: 0.5, v: 0.5 }))
-      else if (k === 'c') {
-        setTwoUp((t) => !t)
-        setActive(0)
-      } else if (k === 'tab' && twoUp) setActive((a) => (a ? 0 : 1))
-      else if (k === 'a') toggleAdvance()
-      else if (k === 'i') setShowInfo((s) => !s)
+      } else if (k === 'i') setShowInfo((s) => !s)
       else if (k === 'd' && target) onDevelop(target.id, items.map((r) => r.id))
-      else if (k === 'escape' || k === 'g' || k === 'e' || k === 'f') onExit(target?.id ?? startId)
-      else return
+      else if (layout === 'survey') {
+        const moveTile = (d: number) => setTile((t) => Math.min(n - 1, Math.max(0, t + d)))
+        if (k === 'arrowright' || k === ' ' || (k === 'tab' && !e.shiftKey)) moveTile(1)
+        else if (k === 'arrowleft' || k === 'tab') moveTile(-1)
+        else if (k === 'arrowdown') moveTile(grid.cols)
+        else if (k === 'arrowup') moveTile(-grid.cols)
+        else if (k === 'home') moveTile(-n)
+        else if (k === 'end') moveTile(n)
+        else if (k === 'enter') showOne(tile)
+        else if (k === 'delete' || k === 'backspace') drop(tile)
+        else if (k === 'c') showCompare(tile)
+        else if (k === 'escape' || k === 'g' || k === 'n' || k === 'e' || k === 'f') exit()
+        else return
+      } else {
+        const compare = layout === 'compare'
+        if (k === 'arrowright' || k === ' ' || (!compare && k === 'arrowdown')) step(1)
+        else if (k === 'arrowleft' || (!compare && k === 'arrowup')) step(-1)
+        // Lightroom's Compare keys: ↑ Make Select, ↓ Swap.
+        else if (k === 'arrowup') promote()
+        else if (k === 'arrowdown') swap()
+        else if (k === 'home') step(-n)
+        else if (k === 'end') step(n)
+        else if (k === 'z') setZoom((z) => (z ? null : { u: 0.5, v: 0.5 }))
+        else if (k === 'c') {
+          if (compare) toOne()
+          else showCompare(index)
+        } else if (k === 'tab' && compare) setActive((a) => (a ? 0 : 1))
+        else if (k === 'a') toggleAdvance()
+        else if (survey && (k === 'escape' || k === 'n')) showSurvey()
+        else if (k === 'escape' || k === 'g' || k === 'e' || k === 'f') exit()
+        else return
+      }
       e.preventDefault()
     }
     window.addEventListener('keydown', onKey)
@@ -194,11 +349,14 @@ export function CullView({ rows, startId, onApply, onExit, onDevelop, onToggleQu
 
   if (!target) return null
   const d = shownDetail?.id === target.id ? shownDetail : null
-  const lo = Math.max(0, index - FILMSTRIP_SPAN)
-  const strip = items.slice(lo, index + FILMSTRIP_SPAN + 1)
+  const focusAt = layout === 'compare' ? cmp.candidate : index
+  const lo = Math.max(0, focusAt - FILMSTRIP_SPAN)
+  const strip = items.slice(lo, focusAt + FILMSTRIP_SPAN + 1)
+  const escText = survey ? 'Esc survey · G grid' : 'Esc close'
+  const keysText = 'P pick · X reject · U unflag · 0–5 stars · 6–9 labels · B Quick Collection'
 
   return (
-    <div className="cull" role="dialog" aria-label="Culling view">
+    <div className="cull" role="dialog" aria-label={layout === 'survey' ? 'Survey view' : layout === 'compare' ? 'Compare view' : 'Culling view'}>
       <header className="cull-top">
         {showInfo ? (
           <div className="cull-info">
@@ -218,58 +376,118 @@ export function CullView({ rows, startId, onApply, onExit, onDevelop, onToggleQu
           <span />
         )}
         <div className="cull-controls">
-          <span className="muted small">{index + 1 + active} of {items.length}</span>
-          <button className={`button small ${twoUp ? 'on' : ''}`} onClick={() => { setTwoUp(!twoUp); setActive(0) }} title="Show the next photo beside this one (C)">
-            {twoUp ? '2-up' : '1-up'}
-          </button>
-          <label className="check small" title="Move to the next photo after a flag, star or label key (A). Caps Lock also does this.">
-            <input type="checkbox" checked={advance} onChange={toggleAdvance} />
-            Auto-advance
-          </label>
-          <button className="button small" onClick={() => onExit(target.id)} title="Back to the grid (Esc)">✕ Close</button>
+          <span className="muted small">
+            {layout === 'survey'
+              ? `${n} photos`
+              : layout === 'compare'
+                ? `Select ${cmp.select + 1} · Candidate ${cmp.candidate + 1} of ${n}`
+                : `${index + 1} of ${n}`}
+          </span>
+          {layout === 'compare' && (
+            <>
+              <button className="button small" onClick={swap} title="Swap the Select and the Candidate (↓)">⇄ Swap</button>
+              <button className="button small" onClick={promote} title="The Candidate wins: it becomes the Select and the next photo becomes the Candidate (↑)">Make Select</button>
+            </>
+          )}
+          <div className="seg" role="group" aria-label="Layout">
+            <button className={layout === 'one' ? 'on' : ''} onClick={toOne} title="One photo (C)">
+              1-up
+            </button>
+            <button className={layout === 'compare' ? 'on' : ''} disabled={n < 2} onClick={() => layout !== 'compare' && showCompare(layout === 'survey' ? tile : index)} title="Compare: the Select stays on the left, the Candidate on the right changes (C)">
+              Compare
+            </button>
+            {survey && (
+              <button className={layout === 'survey' ? 'on' : ''} onClick={() => layout !== 'survey' && showSurvey()} title="Survey: the selected photos side by side (N)">
+                Survey
+              </button>
+            )}
+          </div>
+          {layout !== 'survey' && (
+            <label className="check small" title="Move to the next photo (in Compare, the next Candidate) after a flag, star or label key (A). Caps Lock also does this.">
+              <input type="checkbox" checked={advance} onChange={toggleAdvance} />
+              Auto-advance
+            </label>
+          )}
+          <button className="button small" onClick={exit} title="Back to the grid (Esc)">✕ Close</button>
         </div>
       </header>
 
-      <div className={`cull-stage ${twoUp ? 'two' : ''}`}>
-        {shown.map((row, i) => (
-          <CullPane
-            key={row.id}
-            row={row}
-            preview={previews.peek(row.id) ?? null}
-            full={zoom ? (fulls.peek(row.id)?.bmp ?? null) : null}
-            zoom={zoom}
-            zoomNote={notes.current.get(`full:${row.id}`) ?? 'Rendering at 100 %… (a few seconds)'}
-            previewNote={notes.current.get(`preview:${row.id}`) ?? ''}
-            active={i === active}
-            twoUp={twoUp}
-            onActivate={() => setActive(i as 0 | 1)}
-            onToggleZoom={(at) => setZoom((z) => (z ? null : at))}
-            onPan={setZoom}
-          />
-        ))}
-      </div>
+      {layout === 'survey' ? (
+        <div className="survey-stage" ref={stageRef} style={{ padding: SURVEY_PAD, gap: SURVEY_GAP }}>
+          {stage.w > 0 &&
+            items.map((row, i) => (
+              <SurveyTile
+                key={row.id}
+                row={row}
+                preview={tiles.peek(row.id) ?? null}
+                note={notes.current.get(`tile:${row.id}`) ?? ''}
+                width={Math.floor(grid.tileW)}
+                height={Math.floor(grid.tileH)}
+                active={i === tile}
+                onOpen={() => showOne(i)}
+                onDrop={n > 1 ? () => drop(i) : undefined}
+              />
+            ))}
+        </div>
+      ) : (
+        <div className={`cull-stage ${layout === 'compare' ? 'two' : ''}`}>
+          {shown.map((row, i) => (
+            <CullPane
+              key={row.id}
+              row={row}
+              preview={previews.peek(row.id) ?? null}
+              full={zoom ? (fulls.peek(row.id)?.bmp ?? null) : null}
+              zoom={zoom}
+              zoomNote={notes.current.get(`full:${row.id}`) ?? 'Rendering at 100 %… (a few seconds)'}
+              previewNote={notes.current.get(`preview:${row.id}`) ?? ''}
+              active={i === active}
+              twoUp={layout === 'compare'}
+              label={layout === 'compare' ? (i === 0 ? 'Select' : 'Candidate') : undefined}
+              onActivate={() => setActive(i as 0 | 1)}
+              onToggleZoom={(at) => setZoom((z) => (z ? null : at))}
+              onPan={setZoom}
+            />
+          ))}
+        </div>
+      )}
 
       <p className="cull-hints muted small">
-        P pick · X reject · U unflag · 0–5 stars · 6–9 labels · B Quick Collection · ←/→ move · Z or click: 100 % · C 1-up/2-up{twoUp ? ' · Tab switch photo' : ''} · A auto-advance · I info · D develop · Esc close
+        {layout === 'survey'
+          ? `${keysText} · arrows or Tab move · Enter or click: 1-up · Delete or ✕ drop from survey · C compare · I info · D develop · Esc grid`
+          : layout === 'compare'
+            ? `${keysText} · ←/→ next Candidate · ↑ Make Select · ↓ Swap · Tab switch photo · Z or click: 100 % · C 1-up · A auto-advance · I info · D develop · ${escText}`
+            : `${keysText} · ←/→ move · Z or click: 100 % · C compare · A auto-advance · I info · D develop · ${escText}`}
       </p>
 
-      <nav className="cull-strip" aria-label="Filmstrip">
-        {strip.map((r, i) => {
-          const at = lo + i
-          const on = at >= index && at < index + shown.length
-          return (
-            <button key={r.id} className={`strip-cell ${on ? 'on' : ''} ${r.flag === -1 ? 'rejected' : ''}`} onClick={() => { setIndex(at); setActive(0) }} title={r.fileName}>
-              <Thumb id={r.id} alt="" />
-              <span className="strip-tags">
-                {r.flag === 1 && <span className="flag pick">⚑</span>}
-                {r.flag === -1 && <span className="flag reject">✕</span>}
-                {r.rating > 0 && <span className="strip-stars">{'★'.repeat(r.rating)}</span>}
-                {r.color > 0 && <span className={`label label-${r.color}`} />}
-              </span>
-            </button>
-          )
-        })}
-      </nav>
+      {layout !== 'survey' && (
+        <nav className="cull-strip" aria-label="Filmstrip">
+          {strip.map((r, i) => {
+            const at = lo + i
+            const on = layout === 'compare' ? at === cmp.select || at === cmp.candidate : at === index
+            return (
+              <button
+                key={r.id}
+                className={`strip-cell ${on ? 'on' : ''} ${r.flag === -1 ? 'rejected' : ''}`}
+                onClick={() => {
+                  // Compare: a filmstrip click picks the Candidate.
+                  if (layout === 'compare') {
+                    if (at !== cmp.select) setCmp((s) => ({ ...s, candidate: at }))
+                  } else setIndex(at)
+                }}
+                title={layout === 'compare' && at === cmp.select ? `${r.fileName} (Select)` : r.fileName}
+              >
+                <Thumb id={r.id} alt="" />
+                <span className="strip-tags">
+                  {r.flag === 1 && <span className="flag pick">⚑</span>}
+                  {r.flag === -1 && <span className="flag reject">✕</span>}
+                  {r.rating > 0 && <span className="strip-stars">{'★'.repeat(r.rating)}</span>}
+                  {r.color > 0 && <span className={`label label-${r.color}`} />}
+                </span>
+              </button>
+            )
+          })}
+        </nav>
+      )}
     </div>
   )
 }
