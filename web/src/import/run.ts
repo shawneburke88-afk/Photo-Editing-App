@@ -69,10 +69,11 @@ export async function findAtDestination(dest: FileSystemDirectoryHandle, items: 
  * Finds an existing sidecar for a photo: Lightroom-style `name.xmp` (what LightBench writes), or darktable's
  * `name.ext.xmp`. Returns its file name and text, or null.
  */
-export async function findSidecar(dir: FileSystemDirectoryHandle, photoName: string): Promise<{ name: string; text: string } | null> {
+export async function findSidecar(dir: FileSystemDirectoryHandle, photoName: string): Promise<{ name: string; text: string; modified: number; size: number } | null> {
   for (const name of [sidecarName(photoName), `${photoName}.xmp`]) {
     try {
-      return { name, text: await (await (await dir.getFileHandle(name)).getFile()).text() }
+      const file = await (await dir.getFileHandle(name)).getFile()
+      return { name, text: await file.text(), modified: file.lastModified, size: file.size }
     } catch {
       // not there; try the next naming style
     }

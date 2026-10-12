@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PhotoDetail } from '../catalog/types'
+import { checkPhoto } from '../sidecar/watch'
 import { loadFullPreview, loadThumbPreview, type Preview } from './preview'
 
 /**
@@ -10,6 +11,9 @@ export function Loupe({ photo }: { photo: PhotoDetail }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [bitmap, setBitmap] = useState<Preview | null>(null)
   const [note, setNote] = useState('')
+
+  // Has another app changed this photo's sidecar? (One file date; the notice asks what to do.)
+  useEffect(() => void checkPhoto(photo.id), [photo.id])
 
   useEffect(() => {
     let live = true

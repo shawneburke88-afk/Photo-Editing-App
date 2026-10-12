@@ -2,12 +2,17 @@
 // changes are batched (like darktable's background sidecar queue) and a file is rewritten only when its content
 // changes.
 //
+// Before writing, LightBench checks that no other app changed the sidecar since LightBench last read or wrote it
+// (external.ts). If one did, the photo is held, and the user is asked whether to read the changes or ignore them.
+//
 // Writing needs read-write permission on the photo's library folder. The browser only lets LightBench ask
 // for it after a click, so photos waiting for permission are held per folder until the user allows it.
 
 import { getCatalog } from '../catalog/client'
 import { QUIET_MS } from '../catalog/storage'
 import { getDirAt, getRootHandle } from '../platform/roots'
+import { fieldsFromRead } from './changes'
+import { externalChanges, inspectSidecar, locateSidecar } from './external'
 import { readXmp, sidecarName, writeXmp } from './xmp'
 
 export interface SidecarStatus {
@@ -90,12 +95,15 @@ class SidecarSync {
     const dir = await getDirAt(root, photo.folderPath).catch((e: Error) => {
       throw new Error(`${where}: ${e.name === 'NotFoundError' ? 'the folder can’t be found (was it moved or renamed?)' : e.message}`, { cause: e })
     })
-    let existing: string | null = null
-    try {
-      existing = await (await (await dir.getFileHandle(name)).getFile()).text()
-    } catch {
-      existing = null
+    // Changed by another app since LightBench last read or wrote it: don't overwrite it, ask (SidecarBanner).
+    const located = await locateSidecar(dir, photo.fileName)
+    if (src.sidecar.external || (located && (await inspectSidecar(catalog, src, located.file)) === 'external')) {
+      externalChanges.add([photo.id])
+      externalChanges.hold(photo.id)
+      return
     }
+    // darktable's name.ext.xmp is read but never written: LightBench writes its own name.xmp.
+    const existing = located?.name === name ? await located.file.text() : null
     let keywords = src.keywords
     if (!src.keywordsRead) {
       // Added before LightBench had keywords: take the sidecar's keywords into the library first, so
@@ -122,14 +130,18 @@ class SidecarSync {
       throw new Error(`${where}: ${e instanceof Error ? e.message : e}`, { cause: e })
     }
     if (text === null) return
+    let written: File
     try {
-      const w = await (await dir.getFileHandle(name, { create: true })).createWritable()
+      const handle = await dir.getFileHandle(name, { create: true })
+      const w = await handle.createWritable()
       await w.write(text)
       await w.close()
+      written = await handle.getFile()
     } catch (e) {
       throw new Error(`${where}: ${e instanceof Error ? e.message : e}`, { cause: e })
     }
-    await catalog.markSidecarWritten(id, Math.floor(Date.now() / 1000))
+    // Remember the file as written (date, size, fields), so a later change by another app can be told apart.
+    await catalog.recordSidecar(photo.id, written.lastModified, written.size, JSON.stringify(fieldsFromRead(readXmp(text))), Math.floor(Date.now() / 1000))
     this.status = { ...this.status, written: this.status.written + 1 }
     this.emit()
   }

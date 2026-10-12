@@ -13,9 +13,11 @@ import { saveThumb } from '../catalog/thumbs'
 import { ProbePool } from '../import/probe'
 import { applySidecar, findSidecar } from '../import/run'
 import { joinPath } from '../import/plan'
-import { scanSource, type ScannedFile } from '../import/scan'
+import { scanSource, sidecarKey, type ScannedFile } from '../import/scan'
 import { getDirAt, getRootHandle, resolveRoot } from '../platform/roots'
 import { filesToAdd } from './index-plan'
+import { fieldsFromRead } from '../sidecar/changes'
+import { checkFolder } from '../sidecar/watch'
 import { readXmp } from '../sidecar/xmp'
 import { sidecars } from '../sidecar/sync'
 import type { ProbeResult } from '../import/probe'
@@ -125,7 +127,8 @@ class FolderIndexer {
     const catalog = getCatalog()
     const name = dir.name
     this.set({ active: { name, phase: 'scanning', found: 0, total: 0, done: 0 } })
-    const files = await scanSource(dir, (found) => this.set({ active: { name, phase: 'scanning', found, total: 0, done: 0 } }))
+    const xmpFiles = new Map<string, FileSystemFileHandle>()
+    const files = await scanSource(dir, (found) => this.set({ active: { name, phase: 'scanning', found, total: 0, done: 0 } }), xmpFiles)
     if (this.stopped) return
     const todo = filesToAdd(files, new Set(await catalog.listFiles(rootId, subPath)), subPath)
     let done = 0
@@ -165,6 +168,8 @@ class FolderIndexer {
           const sidecar = folder ? await findSidecar(folder, file.name) : null
           const xmpText = sidecar?.text ?? result.xmp
           if (xmpText) await applySidecar(catalog, id, xmpText).catch(() => {})
+          // Remember the sidecar as read, so a later change by another app is noticed (sidecar/changes.ts).
+          if (sidecar) await catalog.recordSidecar(id, sidecar.modified, sidecar.size, JSON.stringify(fieldsFromRead(readXmp(sidecar.text))))
           // Like darktable, the camera's Artist, Copyright and ImageDescription fill what the sidecar leaves empty.
           if (result.camera) await catalog.fillMetadata([id], result.camera)
         }
@@ -218,6 +223,10 @@ class FolderIndexer {
       if (!p.metadataRead) await catalog.markMetadataRead(p.id)
       if (kws?.length || meta) this.set({ changes: this.status.changes + 1 })
     }
+
+    // Photos already in the library whose sidecar another app changed: the notice asks what to do (SidecarBanner).
+    const check = await checkFolder(rootId, subPath, (folderPath, file) => xmpFiles.get(sidecarKey(relativeTo(subPath, folderPath), file)), () => this.stopped)
+    if (check.external) this.set({ changes: this.status.changes + 1 })
 
     const where = `“${name}”`
     const result = this.stopped

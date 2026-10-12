@@ -497,7 +497,7 @@ A review comparing LightBench with LightCraft (an MIT/Apache Rust editor) found 
 
 **Limitations:**
 - A catalog write failing because storage failed was **not seen end to end**. Shrinking the quota made sidecar writes fail, but not the catalog's, because SQLite's files in the browser's storage didn't need to grow. Only the unit tests (error classification, notice) and the type-checked worker → page plumbing cover it.
-- When a sidecar changes outside LightBench, photos already in the library still don't re-read it, because ⟳ only adds new photos. In the test, A kept 2 stars after ⟳ until it was removed and added again. Catalog v4's `sidecar_written_at` is there for this but isn't used yet.
+- When a sidecar changes outside LightBench, photos already in the library still don't re-read it, because ⟳ only adds new photos. In the test, A kept 2 stars after ⟳ until it was removed and added again. Catalog v4's `sidecar_written_at` is there for this but isn't used yet. (Since fixed: see [Sidecars changed by other apps](#sidecars-changed-by-other-apps).)
 - The check reads the copy back through the browser, which may be served from the operating system's cache rather than the disk itself. So it catches a bad write path (browser, cable or card reader errors that change bytes), but not necessarily a disk that loses data later. Each file is read from the card once, so a reader that returns the same wrong bytes every time can't be detected.
 - The Import window's “Already imported” badge still compares only name and size, because reading every file to mark it would be slow. Importing then checks the content.
 - Not checked here: whether installing the app makes Chrome or Edge grant persistent storage (Chrome decides by its own rules). The notice only says it may.
@@ -545,3 +545,110 @@ A review comparing LightBench with LightCraft (an MIT/Apache Rust editor) found 
 - A restored catalog doesn't read the sidecars: if photos were rated or edited after the backup was made, their sidecars hold the newer values, and LightBench overwrites them the next time it writes that photo's sidecar.
 - Folder access can't be backed up: after restoring in another browser every folder needs Reconnect, and import presets' folders must be chosen again.
 - Back up and Restore aren't in command search or the shortcut list (Part 12). The release notes are unchanged (no version bump).
+
+## Sidecars changed by other apps
+
+**What it does.** When Lightroom, Bridge, darktable or another copy of LightBench changes the `.xmp` sidecar of a photo that is already in the library, LightBench notices and asks what to do. It no longer overwrites such changes without asking. Before, ⟳ and Open folder only added new photos, and the next sidecar write could replace another app's stars or keywords. The owner approved this on 2026-10-12, with these choices:
+- **Detect** when a folder is opened or looked at again (⟳), and when a photo is shown in the Loupe or Develop.
+- **Check before every write.**
+- **Offer, don't surprise.** A plain notice: “1 photo was changed by another app … **Read changes** / **Ignore** / **Show photos**”. There is no setting; LightBench always asks.
+- LightBench edits and history are never lost, and unsaved Develop changes are kept.
+
+| Behaviour | Detail | Source |
+|---|---|---|
+| What is remembered | After each read or write of a sidecar, the catalog stores the file's date (`lastModified`, ms), its size, and the fields LightBench compares, as they were in the file then. These fields are stars, pick/reject, label, keywords, the nine metadata fields and LightBench's develop settings. | LightBench. darktable compares only dates: its optional “look for updated XMP files on startup” (`run_crawler_on_start`, off by default) compares each XMP file's modification time with the time it last wrote it (`src/control/crawler.c`, `write_timestamp`). It then offers to sync XMP → database or database → XMP. |
+| Cheap check | A sidecar whose date and size are unchanged isn't read. Only a changed one is read and compared field by field. Changes to fields LightBench doesn't use don't count, for example Lightroom's `crs:` develop settings or `xmp:MetadataDate`. Those fields are kept anyway when LightBench rewrites the file. | LightBench |
+| When it is “another app's change” | The file's fields differ from what LightBench last read or wrote, and also from LightBench's current values. If the other app made the same change LightBench has, nothing is asked. | LightBench |
+| When it checks | **⟳ / Open folder:** the scan that finds new photos also lists the `.xmp` files. LightBench then asks the browser for each one's date and size. **Loupe and Develop:** the photo shown (one file). **Before writing:** every sidecar write. Nothing runs at launch. | Owner's list |
+| Pending writes | If another app changed the file since LightBench's last write, the write is held back and the notice appears. The other app's change stays in the file. LightBench's own change stays in the library and is written after the user answers. | Owner |
+| **Read changes** | Takes only the fields the other app changed since LightBench last read or wrote the file. LightBench keeps its own changes to other fields, such as stars set in LightBench but not yet written. Keywords are merged as sets: added ones are added, removed ones removed, and keywords LightBench added meanwhile stay. A field changed in both takes the other app's value, because the user chose to read its changes. The file is then rewritten if LightBench has changes of its own to add. | LightBench (a three-way merge) |
+| Develop settings | Only another LightBench writes `lightbench:Develop`. A changed value is added to the photo's history as a new step, “Read from sidecar”, through the same background job as Paste, which also refreshes the thumbnail. The earlier edit can be undone back to. If Develop has unsaved changes on that photo, Develop keeps its own (the existing Paste rule). An app that drops LightBench's namespace never removes LightBench's edits or picks. | LightBench |
+| Rejected / picked | A rejection is always written as `xmp:Rating` −1. So a file without −1 and without `lightbench:Flag` isn't rejected, and a pick stays as it was. This is the same rule `readXmp` uses. | As fix 1 of the LightCraft review |
+| **Ignore** | Keeps LightBench's values and remembers the file as it is now, so the notice doesn't come back for it. The notice says that LightBench's values replace the other app's in the file the next time LightBench saves the photo. A write held back by the change is made straight away. | Owner |
+| **Show photos** | The grid shows just those photos (“Showing the photo whose .xmp file another app changed.”). **Back** returns to the folder or collection. | LightBench |
+| After a reload | Photos waiting for an answer are marked in the catalog, so the notice comes back after a reload. | LightBench |
+| Older libraries | Photos added before this version have no record. Their sidecar counts as changed by another app only if its date is more than 2 s after LightBench's last write of it (`sidecar_written_at`), or after the photo was added. Otherwise it is read once and remembered. | The 2 s allowance is darktable's `MAX_TIME_SKEW` (`src/control/crawler.c`) |
+| Storage | Catalog schema **v11**, added without rebuilding any table: `photos.sidecar_modified`, `sidecar_size`, `sidecar_fields` (JSON) and `sidecar_external` (0/1). A version-10 LightBench refuses a v11 catalog, as the newer-catalog fix intends. | — |
+| Lightroom's equivalent | Lightroom Classic shows a “metadata was changed externally” badge, and its dialog offers **Import Settings from Disk** or **Overwrite Settings**. LightBench's version is the notice above. **Not verified:** this wording comes from web-search summaries of Adobe's help page (“Advanced metadata actions”) and Adobe community threads. The pages themselves couldn't be opened from the build environment. | Adobe (unverified) |
+
+**Files (`web/src/`):**
+- New: `sidecar/changes.ts` (comparisons and merge, unit-tested), `sidecar/external.ts` (finding and judging a sidecar, and the list waiting for an answer), `sidecar/watch.ts` (folder and photo checks, Read changes, Ignore).
+- `sidecar/sync.ts`: checks before writing, and records each write.
+- `sidecar/SidecarBanner.tsx`: the notice, so `App.tsx` is unchanged.
+- `catalog/catalog.worker.ts`: schema v11, and the `sidecarStates`, `sidecarCompare`, `recordSidecar`, `setSidecarExternal` and `externalSidecars` requests.
+- `catalog/types.ts`: the `ids` query.
+- `import/scan.ts`: lists `.xmp` files while scanning. `import/run.ts`: `findSidecar` also returns the date and size.
+- `library/indexer.ts`: records new photos' sidecars and checks the folder.
+- One-line checks in `library/Loupe.tsx` and `develop/DevelopView.tsx`.
+- `library/LibraryView.tsx`: Show photos and refreshing.
+- `sidecar/xmp.ts`: `isValidXmp`.
+
+**Verified:**
+- **Checks:** `npx vitest run` (226 tests pass, 24 of them new), `npx tsc -b`, `npx oxlint` (only the two existing warnings) and `npm run build`.
+- **New unit tests:**
+  - `sidecar/changes.test.ts` (19):
+    - a file is read only when its date or size changed;
+    - LightBench's own sidecar reads back as its own values;
+    - a Lightroom-style change (5 stars, a keyword, a title, a `crs:` value) is another app's change, naming the fields;
+    - `crs:` and `MetadataDate` changes alone are not;
+    - the same change made in both places is not;
+    - fields changed in both places are named as conflicts;
+    - older photos are judged by `sidecar_written_at` or the add time, with a 2 s margin;
+    - a file without LightBench's namespace doesn't remove picks or edits;
+    - stars given elsewhere un-reject;
+    - merge: takes the other app's fields, keeps LightBench's other changes, merges keywords as sets (with case), clears a cleared field, and takes develop settings from another LightBench;
+    - stored fields round-trip, and a damaged record is ignored.
+  - `catalog/catalog.worker.test.ts` (5), on SQLite in Node:
+    - a new catalog is created at v11;
+    - a v10 catalog with a photo is upgraded, keeping it, with no record and `sidecar_external` 0;
+    - a v12 catalog is refused and left at 12;
+    - opening an up-to-date catalog changes nothing;
+    - `sidecarStates` leaves out a JPEG whose RAW twin is there, and virtual copies;
+    - records, marks and the `ids` query work.
+- **In the browser** (headless Chromium with software WebGPU; scratch script `e2e-watch`, 26 of 26 checks passed). The folder `Photos` held A.NEF (D700), B.NEF (D80) and C.JPG:
+  - **Writing:** A was given 2 stars and the keyword `Places|USA|Philadelphia`, B 3 stars and C 1 star; all three sidecars were written.
+  - **⟳ with nothing changed:** no notice, and 3 sidecar dates looked at, 0 files read.
+  - **Changes in “Lightroom”:** A.xmp was rewritten with `xmp:Rating` 5, the keyword “Sunset” in both keyword lists, the title “Fountain” and `crs:Exposure2012`. B.xmp only had a `crs:` value changed.
+    - ⟳ read the 2 changed files and showed “1 photo was changed by another app…”, for A only.
+    - A still had 2 stars.
+    - **Show photos** showed only A; **Back** returned to the folder.
+  - **Read changes:** A had 5 stars, Philadelphia and Sunset, and the title Fountain. A.xmp kept the `crs:` value. A second ⟳ found nothing.
+  - **Ignore:** A.xmp was changed again (1 star, the keyword “Ignored”, the title “Other title”) and ⟳ showed the notice. After Ignore:
+    - A kept 5 stars, and the file still said 1 star;
+    - ⟳ didn't report it again;
+    - pressing 4 rewrote the file with 4 stars and the title Fountain, without “Ignored”, and kept the `crs:` value.
+  - **Pending write:** B was given 5 stars, and before LightBench's write (~0.8 s later) B.xmp was changed to add the keyword “Pending” and the title “Pending title”. 3 s later:
+    - the file still had the other app's change and 3 stars;
+    - the notice had appeared without ⟳.
+    - After Read changes, B had LightBench's 5 stars and the keyword and title, and B.xmp had all of them.
+  - **Loupe:** C.xmp was changed to 3 stars. Opening C in the Loupe showed the notice, and Read changes gave C 3 stars.
+  - **Develop with unsaved changes:** A was open in Develop and Exposure was moved to +0.25. Before Develop's save, A.xmp was changed (2 stars, the keyword “FromDevelop”).
+    - Develop's save didn't overwrite the file, and the notice appeared.
+    - After Read changes, A.xmp had 2 stars, FromDevelop and `lightbench:Develop` with exposure 0.25.
+    - Develop still showed +0.25, with the history “Exposure | Import”.
+  - **Develop settings from another LightBench:** A.xmp's `lightbench:Develop` was set to exposure −1.25. Opening A in Develop showed the notice. Read changes moved Exposure to −1.25 with the history “Read from sidecar | Exposure | Import”.
+  - **Reload:** a notice not yet answered came back in a new tab of the same profile.
+  - **Timing:** in the browser's private storage on this machine's disk; not measured on the owner's PC or on a real folder.
+
+    | Run | Time |
+    |---|---|
+    | ⟳ on `Photos` (3 photos, 5 runs) | 150–222 ms in all. The sidecar check was 1.4–7.1 ms of that. |
+    | 1,000 photos with sidecars, unchanged (2 runs) | 22–45 ms listing the folder, 72–84 ms checking. No file read. |
+    | The same, 50 of them changed | 630–745 ms; all 50 read and reported. |
+    | The same, first check with no records (as after the upgrade) | 2.6–3.2 s, reading all 1,000 once. |
+
+    So a ⟳ costs roughly 0.1 s per 1,000 unchanged photos here, plus about 13 ms per changed sidecar. The first ⟳ after upgrading reads every sidecar of the folder once, about 3 s per 1,000 here.
+- Screenshots of the notice, Show photos, the Develop notice and the Develop history after reading were checked by eye.
+
+**Limitations:**
+- No file written by Lightroom, Bridge or darktable was used. The test edits imitate them: `xmp:Rating`, both keyword lists, `dc:title` and a `crs:` value.
+- Real folders (File System Access on Windows, network drives) weren't measured. There, asking for a file's date may be slower than in the browser's private storage.
+- Only the sidecar LightBench reads is watched: `name.xmp`, or darktable's `name.ext.xmp` while there is no `name.xmp`. darktable keeps writing its own `name.ext.xmp`, so its later changes aren't seen once LightBench has written `name.xmp`.
+- A JPEG whose RAW twin is in the library isn't checked: the RAW owns the shared sidecar, and changes are read into the RAW only.
+- Collections, stacks and virtual copies stored in `lightbench:` aren't compared or read back. LightBench's own values are written.
+- A sidecar deleted by another app isn't reported. LightBench writes a new one next time.
+- Browsers can't lock files. A change made in the moment between LightBench's check and its write could still be overwritten.
+- For photos from before this version, the 2 s date rule assumes the computer's clock and the drive's file dates agree. That may not hold on network drives.
+- When both LightBench and the other app changed the same field, Read changes takes the other app's value. The notice doesn't say which fields those were.
+- Reading develop settings while Develop has unsaved changes on that photo relies on the existing Paste rule. This wasn't seen end to end: in the test, Develop's save had already happened when Read changes was clicked.
+- Ignore remembers which photos had a write held back only until the page is reloaded. After a reload, their LightBench values are written at the next change.
