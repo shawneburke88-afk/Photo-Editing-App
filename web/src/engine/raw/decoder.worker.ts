@@ -1,12 +1,16 @@
 /// <reference lib="webworker" />
 import { LibRaw } from '@colorhythm/libraw-wasm'
 import wasmUrl from '@colorhythm/libraw-wasm/libraw.wasm?url'
+import { asShotWhite, dngMultipliers, dngTransform, hasColorMatrix, type DngColor } from '../color/dng'
 import { chooseInputProfile, extractJpegIcc, linearizationLut, profileToRec2020 } from '../color/icc'
+import { mul, REC2020_TO_SRGB } from '../color/matrix'
 import { readJpegExif } from '../meta/exif'
 import { readLensMeta, type LensMeta } from '../lens/meta'
 import { embeddedPreviewColorSpace, tagPreview, type PreviewSpace } from '../meta/preview-space'
 import { databaseWhiteLevel } from './camera-db'
+import { readDngColor } from './dng-tags'
 import { whiteLevel } from './white-level'
+import { isXtransPattern } from './xtrans'
 import type { DecodeRequest, DecodeResponse, DecodeResult, EmbeddedPreview, RgbImage, SensorData } from './types'
 
 const ready = LibRaw.initialize(fetch(wasmUrl))
@@ -73,7 +77,7 @@ async function decode(file: File, full: boolean): Promise<DecodeResult> {
     if (full) {
       t = performance.now()
       lr.unpack()
-      const result = extractSensor(lr)
+      const result = extractSensor(lr, buffer)
       unpack = performance.now() - t
       if (typeof result === 'string') sensorUnsupported = result
       else sensor = result
@@ -129,16 +133,25 @@ function extractPreview(lr: LibRaw, space: PreviewSpace | null): EmbeddedPreview
   return null
 }
 
-/** Returns sensor data, or a reason string when the layout isn't supported yet. */
-function extractSensor(lr: LibRaw): SensorData | string {
+/**
+ * Returns sensor data, or a reason string when the layout isn't supported yet. LibRaw's `filters` tells the layouts
+ * apart: 0 = no colour filter array (linear DNGs, monochrome sensors), 9 = Fujifilm X-Trans, larger = a 2×2 Bayer
+ * pattern (dcraw's encoding), 1…8 = other layouts (Leaf CatchLight and similar).
+ */
+function extractSensor(lr: LibRaw, file: ArrayBuffer): SensorData | string {
   if (lr.getIsFoveon()) return 'Foveon sensors are not supported yet'
   const filters = lr.getFilters() >>> 0
-  if (filters === 0) return 'Non-Bayer (linear/demosaiced) RAW files are not supported yet'
-  if (filters === 9) return 'Fujifilm X-Trans sensors are not supported yet'
-  if (filters < 1000) return `Unsupported CFA layout (filters=${filters})`
+  const isDng = lr.getIParams().dng_version > 0
+  if (filters === 0) {
+    if (lr.getIParams().colors !== 3) return 'Monochrome RAW files are not supported yet'
+    if (!isDng) return 'Linear (already demosaiced) RAW files are only supported as DNG'
+    return extractLinear(lr, file)
+  }
+  const xtrans = filters === 9
+  if (!xtrans && filters < 1000) return `Unsupported CFA layout (filters=${filters})`
 
   const raw = lr.getRawImage()
-  if (!raw) return 'LibRaw did not expose Bayer sensor data for this file'
+  if (!raw) return 'LibRaw did not expose the sensor data for this file'
 
   const rawWidth = lr.getRawWidth()
   const left = lr.getLeftMargin()
@@ -202,7 +215,90 @@ function extractSensor(lr: LibRaw): SensorData | string {
   const white = fromDb?.white ?? whiteLevel(data, width, nominal, linearMax)
   const whiteSource = fromDb?.source ?? 'detected (camera not in darktable database)'
 
-  return { width, height, data, cfa, black, white, whiteSource, wb, camToRgb, xyzToCam }
+  const sensor: SensorData = { width, height, data, layout: 'bayer', cfa, black, white, whiteSource, wb, camToRgb, xyzToCam }
+  if (xtrans) {
+    // LibRaw's COLOR() gives the 6×6 pattern relative to the visible area, where `data` starts.
+    const pattern: number[] = []
+    for (let r = 0; r < 6; r++) for (let c = 0; c < 6; c++) pattern.push(colorAt(r, c))
+    if (!isXtransPattern(pattern)) return `Unexpected X-Trans colour pattern (${pattern.join('')})`
+    sensor.layout = 'xtrans'
+    sensor.xtrans = pattern
+  }
+  // A DNG for which LibRaw has no colour matrix (e.g. phone DNGs of cameras missing from its tables) couldn't be
+  // developed before: it gets the DNG colour model from its own tags.
+  if (isDng && !validMatrix(xyzToCam)) {
+    const dng = readDngColor(file)
+    if (hasColorMatrix(dng)) applyDngColor(sensor, dng)
+  }
+  return sensor
+}
+
+function validMatrix(m: number[]): boolean {
+  if (m.length !== 9 || !m.every(Number.isFinite)) return false
+  const det = m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6])
+  return Math.abs(det) > 1e-9
+}
+
+/** Colour from the DNG's own tags (engine/color/dng.ts): as-shot white balance, camera matrix, temperature matrix. */
+function applyDngColor(sensor: SensorData, dng: DngColor) {
+  const wb = dngMultipliers(dng, asShotWhite(dng, sensor.wb))
+  const t = dngTransform(dng, wb)
+  sensor.dng = dng
+  sensor.wb = wb
+  sensor.camToRgb = mul(REC2020_TO_SRGB, t.camToRec2020)
+  sensor.xyzToCam = t.xyzToCam
+}
+
+/**
+ * Linear DNGs (Apple ProRAW, phone and converter DNGs): LibRaw unpacks them as 3 or 4 colours per pixel. Kept as
+ * camera RGB, 3 values per pixel, for the raw steps (black/white, white balance, highlight reconstruction) and the
+ * DNG colour model; there is nothing to demosaic. darktable reads them the same way (rawspeed's 3-channel image,
+ * src/imageio/imageio_rawspeed.cc dt_imageio_open_rawspeed_sraw).
+ */
+function extractLinear(lr: LibRaw, file: ArrayBuffer): SensorData | string {
+  const c3 = lr.getColor3Image()
+  const img = c3 ?? lr.getColor4Image()
+  if (!img) return 'LibRaw did not expose the image data of this linear DNG'
+  const ch = c3 ? 3 : 4
+  const rawWidth = lr.getRawWidth()
+  const left = lr.getLeftMargin()
+  const top = lr.getTopMargin()
+  const width = lr.getActiveWidth()
+  const height = lr.getActiveHeight()
+  const data = new Uint16Array(width * height * 3)
+  for (let y = 0; y < height; y++) {
+    let src = ((y + top) * rawWidth + left) * ch
+    let dst = y * width * 3
+    for (let x = 0; x < width; x++, src += ch, dst += 3) {
+      data[dst] = img[src]
+      data[dst + 1] = img[src + 1]
+      data[dst + 2] = img[src + 2]
+    }
+  }
+
+  // Black per colour: the global black plus the colour's own (and a 1×1 pattern's, if any).
+  const base = lr.getBlack()
+  const flat = lr.getCblack(4) * lr.getCblack(5) === 1 ? lr.getCblack(6) : 0
+  const bl = [0, 1, 2].map((c) => base + lr.getCblack(c) + flat)
+  const black: SensorData['black'] = [bl[0], bl[1], bl[2], bl[1]]
+  const white = lr.getColorMaximum()
+
+  const mul4 = [lr.getCamMul(0), lr.getCamMul(1), lr.getCamMul(2)]
+  const pre = [lr.getPreMul(0), lr.getPreMul(1), lr.getPreMul(2)]
+  const src = mul4[0] > 0 && mul4[1] > 0 && mul4[2] > 0 ? mul4 : pre
+  const wb: SensorData['wb'] = [src[0] / src[1], 1, src[2] / src[1]]
+  const camToRgb: number[] = []
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) camToRgb.push(lr.getRgbCam(i, j))
+  const xyzToCam: number[] = []
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) xyzToCam.push(lr.getCamXyz(i, j))
+
+  const sensor: SensorData = {
+    width, height, data, layout: 'linear', cfa: [0, 1, 1, 2], black, white, whiteSource: 'file (DNG)', wb, camToRgb, xyzToCam,
+  }
+  const dng = readDngColor(file)
+  if (hasColorMatrix(dng)) applyDngColor(sensor, dng)
+  else if (!validMatrix(xyzToCam)) return 'This linear DNG has no colour matrix'
+  return sensor
 }
 
 /**

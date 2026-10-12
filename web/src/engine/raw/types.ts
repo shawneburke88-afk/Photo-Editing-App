@@ -1,5 +1,6 @@
 /** Data extracted from a camera RAW file by the decoder worker. */
 
+import type { DngColor } from '../color/dng'
 import type { LensMeta } from '../lens/meta'
 
 export interface PhotoInfo {
@@ -27,14 +28,30 @@ export interface EmbeddedPreview {
   height: number
 }
 
-/** Undemosaiced Bayer sensor data, cropped to the visible area. */
+/**
+ * How the sensor data is laid out:
+ *  - 'bayer': one value per photosite, colours from the 2×2 `cfa` tile;
+ *  - 'xtrans': one value per photosite, colours from the 6×6 `xtrans` pattern (Fujifilm X-Trans);
+ *  - 'linear': three values (R, G, B) per pixel, already demosaiced (linear DNGs: Apple ProRAW, phone DNGs).
+ */
+export type SensorLayout = 'bayer' | 'xtrans' | 'linear'
+
+/** Undemosaiced sensor data (or a linear DNG's camera RGB), cropped to the visible area. */
 export interface SensorData {
   width: number
   height: number
+  /** One uint16 per photosite; for the 'linear' layout three per pixel (R, G, B). */
   data: Uint16Array<ArrayBuffer>
-  /** Colour (0 = R, 1 = G, 2 = B) of the 2×2 CFA tile: [(0,0), (0,1), (1,0), (1,1)]. */
+  /** Absent means 'bayer' (also for the engine's stand-in sensor of a JPEG). */
+  layout?: SensorLayout
+  /** Colour (0 = R, 1 = G, 2 = B) of the 2×2 CFA tile: [(0,0), (0,1), (1,0), (1,1)]. X-Trans: the pattern's top-left 2×2. */
   cfa: [number, number, number, number]
-  /** Black level per CFA position, same order as `cfa`. */
+  /** X-Trans only: colour of each photosite of the 6×6 pattern, row-major, from the visible area's top-left. */
+  xtrans?: number[]
+  /**
+   * Black level per CFA position, same order as `cfa` (X-Trans too: darktable's rawprepare subtracts black per 2×2
+   * position whatever the pattern). 'linear': per colour [R, G, B, G].
+   */
   black: [number, number, number, number]
   white: number
   /** Where the white level came from (shown in System Check). */
@@ -45,6 +62,11 @@ export interface SensorData {
   camToRgb: number[]
   /** Row-major 3×3 Adobe matrix XYZ → camera RGB (LibRaw cam_xyz), for temperature/tint. */
   xyzToCam: number[]
+  /**
+   * Set when LightBench uses the DNG colour model (engine/color/dng.ts) instead of LibRaw's matrix: linear DNGs, and
+   * Bayer DNGs for which LibRaw has no matrix (they couldn't be developed before, so no saved edit changes).
+   */
+  dng?: DngColor
 }
 
 /** A display-referred RGB image (JPEG), upright, with its input colour profile. */
@@ -77,7 +99,7 @@ export interface DecodeResult {
   sensor: SensorData | null
   /** Set instead of `sensor` for JPEGs. */
   rgb?: RgbImage
-  /** Set when the file decoded but its sensor layout is not supported yet (e.g. X-Trans, Foveon). */
+  /** Set when the file decoded but its sensor layout is not supported yet (e.g. Foveon, monochrome). */
   sensorUnsupported?: string
   /** RAW files: what lens corrections need (engine/lens/meta.ts). */
   lens?: LensMeta

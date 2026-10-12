@@ -14,6 +14,10 @@
 // Edits saved before process versions existed are version 1 (that rendering). New edits get the current
 // version. An edit from a newer LightBench (a version this build doesn't know) is rendered with the newest
 // version known here and is never changed unless the user asks.
+//
+// Formats added later that couldn't be developed before (Fujifilm X-Trans, linear DNGs, Bayer DNGs that LibRaw
+// has no colour matrix for; PHASE3.md Part 5) render with version 1 too: no saved edit could change. Changing how
+// they render from now on needs a new version like any other rendering change.
 
 /** Tone-equalizer band weights of the four tone sliders (−8 … 0 EV, 9 bands). */
 export interface BandWeights {

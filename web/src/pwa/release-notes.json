@@ -24,7 +24,9 @@
       "Thumbnails and previews of RAWs shot in Adobe RGB show their real colours instead of looking washed out.",
       "Where a photo was taken (GPS) is read from RAWs and JPEGs and shown in the Library's info panel.",
       "Title, caption, creator, copyright, location and keywords written by older apps (IPTC) are read from JPEGs.",
-      "On wide-gamut (Display P3) screens, Develop shows colours beyond sRGB."
+      "On wide-gamut (Display P3) screens, Develop shows colours beyond sRGB.",
+      "Fujifilm X-Trans RAW files (RAF) now open, develop and export, with darktable's Markesteijn demosaic.",
+      "Linear DNGs (Apple ProRAW and other phone or converter DNGs) now open, develop and export, using the colour matrices stored in the file."
     ],
     "bugFixes": [
       "Star ratings changed in Lightroom or Bridge are no longer overridden when LightBench re-reads the sidecar.",
@@ -32,7 +34,8 @@
       "Photos copied from a card are now checked byte-for-byte; a bad copy is reported instead of being added.",
       "A library saved by a newer LightBench is refused untouched, with a Reload button.",
       "Notices when the browser may clear the library, or when a save fails.",
-      "Extreme Tint or Temp settings on a JPEG no longer turn its colours inside out (e.g. Tint +150)."
+      "Extreme Tint or Temp settings on a JPEG no longer turn its colours inside out (e.g. Tint +150).",
+      "Phone DNGs whose camera LibRaw doesn't know (e.g. Google Pixel) no longer fail with “Matrix is not invertible”."
     ]
   },
   {

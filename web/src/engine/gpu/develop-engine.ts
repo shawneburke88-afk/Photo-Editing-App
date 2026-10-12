@@ -19,9 +19,12 @@ import type { LensMeta } from '../lens/meta'
 import type { DisplayUniforms } from '../develop/settings'
 import { inverseLoglogistic, type SigmoidCurve } from '../color/sigmoid'
 import type { RgbImage, SensorData } from '../raw/types'
+import { MARKESTEIJN_BORDER, MARKESTEIJN_OVERLAP, markesteijnHexagons, markesteijnStrips, packXtrans } from '../raw/xtrans'
 import displayWgsl from './develop-display.wgsl?raw'
 import mipWgsl from './mip.wgsl?raw'
 import rawWgsl from './raw-pipeline.wgsl?raw'
+import rawLinearWgsl from './raw-linear.wgsl?raw'
+import xtransWgsl from './demosaic-xtrans.wgsl?raw'
 import rgbInputWgsl from './rgb-input.wgsl?raw'
 import exportWgsl from './export.wgsl?raw'
 import { currentDisplaySpace, REC2020_TO_DISPLAY_P3, srgbColourIn, watchDisplaySpace, type DisplaySpace } from './display-space'
@@ -34,7 +37,14 @@ export interface RawStageOptions {
   highlightMode: 'opposed' | 'clip'
   /** darktable "clipping threshold", default 1. */
   highlightClip: number
+  /**
+   * 'rcd': the sensor's high-quality method (RCD for Bayer, Markesteijn 1-pass for X-Trans, as darktable picks a
+   * Bayer method's X-Trans counterpart in src/iop/demosaic.c, lines 1505-1506); 'bilinear': the fast one (bilinear,
+   * or linear interpolation for X-Trans). Linear DNGs aren't demosaiced.
+   */
   demosaic: 'rcd' | 'bilinear'
+  /** White-balanced camera RGB → Rec.2020 for this white balance (the DNG colour model); else the sensor's matrix. */
+  camToWorking?: Mat3
 }
 
 export interface ViewState {
@@ -106,8 +116,16 @@ export interface ImageStats {
 const STATS_WORDS = 1028
 
 const IDENTITY: Mat3 = [1, 0, 0, 0, 1, 0, 0, 0, 1]
-const RAW_PARAMS_SIZE = 160
-const VIEW_SIZE = 416
+const RAW_PARAMS_SIZE = 176
+const VIEW_SIZE = 432
+/** demosaic-xtrans.wgsl's Const: 4 ints, the pattern, 3 matrix rows, 36 × vec4i of hexagon offsets. */
+const XTRANS_CONST_SIZE = 16 + 16 + 48 + 36 * 16
+/** Memory for one X-Trans demosaic strip (its working buffers). */
+const XTRANS_STRIP_BUDGET = 192 * 1024 * 1024
+
+type Res = GPUBindingResource
+type ShaderSet = 'raw' | 'rawX' | 'linear' | 'xtrans'
+const B = (b: GPUBuffer): Res => ({ buffer: b })
 
 // Without explicit indicators (e.g. for Auto), clipping is counted on screen values only: sensor
 // clipping can't be fixed by moving sliders.
@@ -134,6 +152,10 @@ export class DevelopEngine {
   private readonly gpuCtx: GPUCanvasContext | null = null
   private readonly ctx2d: CanvasRenderingContext2D | null = null
   private readonly rawModule: GPUShaderModule
+  private linearModule: GPUShaderModule | null = null
+  private xtransModule: GPUShaderModule | null = null
+  /** Testing: output rows per X-Trans demosaic strip (null = chosen from the photo's width and a memory budget). */
+  xtransStripRows: number | null = null
   private readonly rawPipes = new Map<string, GPUComputePipeline>()
   private readonly displayPipe: GPURenderPipeline
   private readonly offscreenPipe: GPURenderPipeline
@@ -274,11 +296,22 @@ export class DevelopEngine {
     if (this.lost) throw new Error('The graphics device was lost (driver reset). Reload the page to continue.')
   }
 
-  private pipe(entryPoint: string): GPUComputePipeline {
-    let p = this.rawPipes.get(entryPoint)
+  /**
+   * A compute pipeline of the raw stage: raw-pipeline.wgsl (Bayer; 'rawX' = its X-Trans variant), raw-linear.wgsl
+   * (linear DNGs) or demosaic-xtrans.wgsl.
+   */
+  private pipe(entryPoint: string, set: ShaderSet = 'raw'): GPUComputePipeline {
+    const key = `${set}:${entryPoint}`
+    let p = this.rawPipes.get(key)
     if (!p) {
-      p = this.device.createComputePipeline({ layout: 'auto', compute: { module: this.rawModule, entryPoint } })
-      this.rawPipes.set(entryPoint, p)
+      const module = set === 'linear'
+        ? (this.linearModule ??= this.device.createShaderModule({ code: rawLinearWgsl }))
+        : set === 'xtrans'
+          ? (this.xtransModule ??= this.device.createShaderModule({ code: xtransWgsl }))
+          : this.rawModule
+      const compute: GPUProgrammableStage = set === 'rawX' ? { module, entryPoint, constants: { XTRANS: 1 } } : { module, entryPoint }
+      p = this.device.createComputePipeline({ layout: 'auto', compute })
+      this.rawPipes.set(key, p)
     }
     return p
   }
@@ -290,7 +323,8 @@ export class DevelopEngine {
     if (sensor.width > max || sensor.height > max) {
       throw new Error(`Image is ${sensor.width}×${sensor.height}; this GPU allows at most ${max}×${max}`)
     }
-    const needed = sensor.width * sensor.height * 4
+    // The raw stage's float buffers take 4 bytes per pixel; a linear DNG's data 6 (three uint16 values).
+    const needed = Math.max(sensor.width * sensor.height * 4, sensor.data.byteLength)
     if (needed > this.device.limits.maxStorageBufferBindingSize) {
       throw new Error(`Image is too large for this GPU's buffers (${Math.round(needed / 1e6)} MB needed)`)
     }
@@ -508,6 +542,10 @@ export class DevelopEngine {
     if (!s || !this.rawBuf) throw new Error('No photo loaded')
     const { device } = this
     const t0 = performance.now()
+    const layout = s.layout ?? 'bayer'
+    const xtrans = layout === 'xtrans'
+    // The DNG colour model's matrix follows the white balance (develop/source.ts stageOptions).
+    if (opts.camToWorking) this.camToWorking = opts.camToWorking
     const { width: w, height: h } = s
     const mw = Math.ceil(w / 3)
     const mh = Math.ceil(h / 3)
@@ -516,9 +554,7 @@ export class DevelopEngine {
 
     const buf = (n: number, extra = 0) =>
       device.createBuffer({ size: Math.max(16, n * 4), usage: GPUBufferUsage.STORAGE | extra })
-    const cfa = buf(px)
-    const hl = buf(px)
-    const temps: GPUBuffer[] = [cfa, hl]
+    const temps: GPUBuffer[] = []
 
     const maxMul = Math.max(...opts.wb)
     const clip = OPPOSED_CLIP_MAGIC * opts.highlightClip
@@ -536,6 +572,7 @@ export class DevelopEngine {
     i32.set([w, h, mw, mh], 32)
     f32.set([s.white, 1 / maxMul], 36)
     u32.set([opts.highlightMode === 'opposed' ? 1 : 0, 0], 38)
+    if (xtrans && s.xtrans) u32.set(packXtrans(s.xtrans), 40)
     const paramBuf = device.createBuffer({ size: RAW_PARAMS_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     device.queue.writeBuffer(paramBuf, 0, params)
 
@@ -546,35 +583,17 @@ export class DevelopEngine {
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     })
 
-    type Res = GPUBindingResource
-    const run = (enc: GPUCommandEncoder, entry: string, bindings: Record<number, Res>, x: number, y: number, wgX = 16, wgY = 16) => {
-      const p = this.pipe(entry)
-      const pass = enc.beginComputePass()
-      pass.setPipeline(p)
-      pass.setBindGroup(0, device.createBindGroup({
-        layout: p.getBindGroupLayout(0),
-        entries: Object.entries(bindings).map(([b, resource]) => ({ binding: Number(b), resource })),
-      }))
-      pass.dispatchWorkgroups(Math.ceil(Math.max(1, x) / wgX), Math.ceil(Math.max(1, y) / wgY))
-      pass.end()
-    }
-    const B = (b: GPUBuffer): Res => ({ buffer: b })
+    // Bayer photos use raw-pipeline.wgsl as it always was; X-Trans photos the same kernels with the XTRANS override.
+    const mod: ShaderSet = xtrans ? 'rawX' : 'raw'
+    const run = (enc: GPUCommandEncoder, entry: string, bindings: Record<number, Res>, x: number, y: number, wgX = 16, wgY = 16, set: ShaderSet = mod) =>
+      this.dispatch(enc, this.pipe(entry, set), bindings, x, y, wgX, wgY)
     const P = B(paramBuf)
+    const out: Res = scene.createView({ baseMipLevel: 0, mipLevelCount: 1 })
 
-    // 1. Normalise + white balance
-    let enc = device.createCommandEncoder()
-    run(enc, 'prepare', { 0: P, 1: B(this.rawBuf), 2: B(cfa) }, w, h)
-
-    // 2. Highlight reconstruction
-    if (opts.highlightMode === 'opposed') {
-      const maskIn = buf(mw * mh)
-      const maskOut = buf(mw * mh)
-      const accu = buf(h * 8, GPUBufferUsage.COPY_SRC)
+    /** The opposed-colour chrominance correction: measured by the GPU per row, summed here. Returns a new encoder. */
+    const measureChroma = async (enc: GPUCommandEncoder, accu: GPUBuffer, minCount: number): Promise<GPUCommandEncoder> => {
       const read = device.createBuffer({ size: h * 8 * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
-      temps.push(maskIn, maskOut, accu, read)
-      run(enc, 'hlInitMask', { 0: P, 2: B(cfa), 4: B(maskIn) }, mw, mh)
-      run(enc, 'hlDilateMask', { 0: P, 4: B(maskIn), 5: B(maskOut) }, mw, mh)
-      run(enc, 'hlChroma', { 0: P, 2: B(cfa), 5: B(maskOut), 6: B(accu) }, h, 1, 64, 1)
+      temps.push(read)
       enc.copyBufferToBuffer(accu, 0, read, 0, h * 8 * 4)
       device.queue.submit([enc.finish()])
       await read.mapAsync(GPUMapMode.READ)
@@ -588,36 +607,77 @@ export class DevelopEngine {
         }
       }
       read.unmap()
-      const chroma = sums.map((sum, c) => (cnts[c] > 100 ? sum / cnts[c] : 0))
+      const chroma = sums.map((sum, c) => (cnts[c] > minCount ? sum / cnts[c] : 0))
       device.queue.writeBuffer(paramBuf, 48, new Float32Array([...chroma, 0]))
-      enc = device.createCommandEncoder()
-      run(enc, 'hlOpposed', { 0: P, 2: B(cfa), 3: B(hl) }, w, h)
-    } else {
-      run(enc, 'hlClip', { 0: P, 2: B(cfa), 3: B(hl) }, w, h)
+      return device.createCommandEncoder()
     }
 
-    // 3. Demosaic → scene-linear Rec.2020
-    const out: Res = scene.createView({ baseMipLevel: 0, mipLevelCount: 1 })
-    if (opts.demosaic === 'rcd' && w > 32 && h > 32) {
-      const rgb0 = buf(px)
-      const rgb1 = buf(px)
-      const rgb2 = buf(px)
-      const vh = buf(px)
-      const pq = buf(half)
-      const pd = buf(half)
-      const qd = buf(half)
-      temps.push(rgb0, rgb1, rgb2, vh, pq, pd, qd)
-      run(enc, 'rcdPopulate', { 0: P, 2: B(cfa), 3: B(hl), 7: B(rgb0), 8: B(rgb1), 9: B(rgb2) }, w, h)
-      run(enc, 'rcdStep1', { 0: P, 2: B(cfa), 10: B(vh) }, w - 8, h - 8)
-      run(enc, 'rcdStep2', { 0: P, 2: B(cfa), 11: B(pq) }, w / 2, h)
-      run(enc, 'rcdStep3', { 0: P, 2: B(cfa), 8: B(rgb1), 10: B(vh), 11: B(pq) }, w / 2, h)
-      run(enc, 'rcdStep40', { 0: P, 2: B(cfa), 12: B(pd), 13: B(qd) }, w / 2, h)
-      run(enc, 'rcdStep41', { 0: P, 11: B(pq), 12: B(pd), 13: B(qd) }, w / 2, h)
-      run(enc, 'rcdStep42', { 0: P, 7: B(rgb0), 8: B(rgb1), 9: B(rgb2), 11: B(pq) }, w / 2, h)
-      run(enc, 'rcdStep43', { 0: P, 7: B(rgb0), 8: B(rgb1), 9: B(rgb2), 10: B(vh) }, w / 2, h)
-      run(enc, 'writeRcd', { 0: P, 3: B(hl), 7: B(rgb0), 8: B(rgb1), 9: B(rgb2), 14: out }, w, h)
+    let enc = device.createCommandEncoder()
+    if (layout === 'linear') {
+      // Linear DNG (raw-linear.wgsl): black/white per colour + white balance → highlights → Rec.2020. No demosaic.
+      const lin = [buf(px), buf(px), buf(px)]
+      temps.push(...lin)
+      const L = { 2: B(lin[0]), 3: B(lin[1]), 7: B(lin[2]) }
+      run(enc, 'linPrepare', { 0: P, 1: B(this.rawBuf), ...L }, w, h, 16, 16, 'linear')
+      if (opts.highlightMode === 'opposed') {
+        const maskIn = buf(mw * mh)
+        const maskOut = buf(mw * mh)
+        const accu = buf(h * 8, GPUBufferUsage.COPY_SRC)
+        temps.push(maskIn, maskOut, accu)
+        run(enc, 'linInitMask', { 0: P, ...L, 4: B(maskIn) }, mw, mh, 16, 16, 'linear')
+        run(enc, 'hlDilateMask', { 0: P, 4: B(maskIn), 5: B(maskOut) }, mw, mh, 16, 16, 'raw')
+        run(enc, 'linChroma', { 0: P, ...L, 5: B(maskOut), 6: B(accu) }, h, 1, 64, 1, 'linear')
+        // darktable's linear variant needs more than 30 samples (src/iop/hlreconstruct/opposed.c, line 193).
+        enc = await measureChroma(enc, accu, 30)
+      }
+      run(enc, 'linWrite', { 0: P, ...L, 14: out }, w, h, 16, 16, 'linear')
     } else {
-      run(enc, 'writeBilinear', { 0: P, 3: B(hl), 14: out }, w, h)
+      const cfa = buf(px)
+      const hl = buf(px)
+      temps.push(cfa, hl)
+
+      // 1. Normalise + white balance
+      run(enc, 'prepare', { 0: P, 1: B(this.rawBuf), 2: B(cfa) }, w, h)
+
+      // 2. Highlight reconstruction
+      if (opts.highlightMode === 'opposed') {
+        const maskIn = buf(mw * mh)
+        const maskOut = buf(mw * mh)
+        const accu = buf(h * 8, GPUBufferUsage.COPY_SRC)
+        temps.push(maskIn, maskOut, accu)
+        run(enc, 'hlInitMask', { 0: P, 2: B(cfa), 4: B(maskIn) }, mw, mh)
+        run(enc, 'hlDilateMask', { 0: P, 4: B(maskIn), 5: B(maskOut) }, mw, mh)
+        run(enc, 'hlChroma', { 0: P, 2: B(cfa), 5: B(maskOut), 6: B(accu) }, h, 1, 64, 1)
+        enc = await measureChroma(enc, accu, 100)
+        run(enc, 'hlOpposed', { 0: P, 2: B(cfa), 3: B(hl) }, w, h)
+      } else {
+        run(enc, 'hlClip', { 0: P, 2: B(cfa), 3: B(hl) }, w, h)
+      }
+
+      // 3. Demosaic → scene-linear Rec.2020
+      if (xtrans) {
+        this.encodeXtrans(enc, hl, out, opts.demosaic, temps)
+      } else if (opts.demosaic === 'rcd' && w > 32 && h > 32) {
+        const rgb0 = buf(px)
+        const rgb1 = buf(px)
+        const rgb2 = buf(px)
+        const vh = buf(px)
+        const pq = buf(half)
+        const pd = buf(half)
+        const qd = buf(half)
+        temps.push(rgb0, rgb1, rgb2, vh, pq, pd, qd)
+        run(enc, 'rcdPopulate', { 0: P, 2: B(cfa), 3: B(hl), 7: B(rgb0), 8: B(rgb1), 9: B(rgb2) }, w, h)
+        run(enc, 'rcdStep1', { 0: P, 2: B(cfa), 10: B(vh) }, w - 8, h - 8)
+        run(enc, 'rcdStep2', { 0: P, 2: B(cfa), 11: B(pq) }, w / 2, h)
+        run(enc, 'rcdStep3', { 0: P, 2: B(cfa), 8: B(rgb1), 10: B(vh), 11: B(pq) }, w / 2, h)
+        run(enc, 'rcdStep40', { 0: P, 2: B(cfa), 12: B(pd), 13: B(qd) }, w / 2, h)
+        run(enc, 'rcdStep41', { 0: P, 11: B(pq), 12: B(pd), 13: B(qd) }, w / 2, h)
+        run(enc, 'rcdStep42', { 0: P, 7: B(rgb0), 8: B(rgb1), 9: B(rgb2), 11: B(pq) }, w / 2, h)
+        run(enc, 'rcdStep43', { 0: P, 7: B(rgb0), 8: B(rgb1), 9: B(rgb2), 10: B(vh) }, w / 2, h)
+        run(enc, 'writeRcd', { 0: P, 3: B(hl), 7: B(rgb0), 8: B(rgb1), 9: B(rgb2), 14: out }, w, h)
+      } else {
+        run(enc, 'writeBilinear', { 0: P, 3: B(hl), 14: out }, w, h)
+      }
     }
 
     // 4. Mip chain
@@ -630,6 +690,102 @@ export class DevelopEngine {
     this.newScene(scene)
     this.builtWb = [...opts.wb] as Vec3
     return performance.now() - t0
+  }
+
+  private dispatch(enc: GPUCommandEncoder, p: GPUComputePipeline, bindings: Record<number, Res>, x: number, y: number, wgX = 16, wgY = 16) {
+    const pass = enc.beginComputePass()
+    pass.setPipeline(p)
+    pass.setBindGroup(0, this.device.createBindGroup({
+      layout: p.getBindGroupLayout(0),
+      entries: Object.entries(bindings).map(([b, resource]) => ({ binding: Number(b), resource })),
+    }))
+    pass.dispatchWorkgroups(Math.ceil(Math.max(1, x) / wgX), Math.ceil(Math.max(1, y) / wgY))
+    pass.end()
+  }
+
+  /**
+   * X-Trans demosaic (demosaic-xtrans.wgsl): linear interpolation everywhere (darktable's border and its fast
+   * method), then, for the default method, Markesteijn 1-pass inside a 12-pixel border, strip by strip.
+   */
+  private encodeXtrans(enc: GPUCommandEncoder, hl: GPUBuffer, out: Res, method: RawStageOptions['demosaic'], temps: GPUBuffer[]) {
+    const { device } = this
+    const s = this.sensor!
+    const { width: w, height: h } = s
+    const pattern = s.xtrans!
+    const { allhex, sgreen } = markesteijnHexagons(pattern)
+    const c = new ArrayBuffer(XTRANS_CONST_SIZE)
+    const ci = new Int32Array(c)
+    const cu = new Uint32Array(c)
+    const cf = new Float32Array(c)
+    ci.set([w, h, sgreen[0], sgreen[1]], 0)
+    cu.set(packXtrans(pattern), 4)
+    const m = this.camToWorking
+    cf.set([m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0], 8)
+    ci.set(allhex, 20)
+    const constBuf = device.createBuffer({ size: XTRANS_CONST_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    device.queue.writeBuffer(constBuf, 0, c)
+    temps.push(constBuf)
+    const C = B(constBuf)
+    const run = (entry: string, bindings: Record<number, Res>, x: number, y: number) =>
+      this.dispatch(enc, this.pipe(entry, 'xtrans'), bindings, x, y)
+
+    run('xtLinear', { 0: C, 2: B(hl), 13: out }, w, h)
+    if (method !== 'rcd' || w <= 2 * MARKESTEIJN_BORDER + 6 || h <= 2 * MARKESTEIJN_BORDER + 6) return
+
+    // About 120 bytes per strip pixel: four RGB directions (64), min/max green (8), YPbPr (16), derivatives (16,
+    // later the homogeneity sums) and homogeneity (16).
+    const lim = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize)
+    const byBudget = Math.floor(XTRANS_STRIP_BUDGET / (120 * w))
+    const byLimit = Math.floor(lim / (16 * w)) - 2 * MARKESTEIJN_OVERLAP
+    const strips = markesteijnStrips(h, Math.max(6, this.xtransStripRows ?? Math.min(byBudget, byLimit)))
+    const n = w * Math.max(...strips.map((x) => x.inRows))
+    const sb = (bytesPerPixel: number) => {
+      const b = device.createBuffer({ size: Math.max(16, n * bytesPerPixel), usage: GPUBufferUsage.STORAGE })
+      temps.push(b)
+      return b
+    }
+    const rgb = [sb(16), sb(16), sb(16), sb(16)]
+    const gminmax = sb(8)
+    const aux = sb(16)
+    const drv = sb(16) // also the homogeneity sums, once the derivatives have been used
+    const homo = sb(16)
+
+    // Per strip and pass: the strip's rows and the pass's direction (solitary green, d = 0…5: direction (1, 0) or
+    // (0, 1) and colour complement 0 or 2, as the host loop of process_markesteijn_cl sets them, xtrans.c line 1808).
+    const SLOT = 256
+    const vary = new Int32Array((strips.length * 6 * SLOT) / 4)
+    strips.forEach((st, k) => {
+      for (let d = 0; d < 6; d++) {
+        const i = d % 2 === 0 ? 1 : 0
+        vary.set([st.inStart, st.inRows, st.outStart, st.outEnd, d, i, i ^ 1, d % 2 === 0 ? 0 : 2], ((k * 6 + d) * SLOT) / 4)
+      }
+    })
+    const varyBuf = device.createBuffer({ size: vary.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    device.queue.writeBuffer(varyBuf, 0, vary)
+    temps.push(varyBuf)
+
+    const RGB = { 4: B(rgb[0]), 5: B(rgb[1]), 6: B(rgb[2]), 7: B(rgb[3]) }
+    // Solitary-green passes 0 and 1 write rgb 0 and 1; passes 2-3 and 4-5 (the better of each pair) rgb 2 and 3.
+    const solitaryTarget = [0, 1, 2, 2, 3, 3]
+    strips.forEach((st, k) => {
+      const V = (d: number): Res => ({ buffer: varyBuf, offset: (k * 6 + d) * SLOT, size: 32 })
+      const sh = st.inRows
+      run('xtCopy', { 0: C, 1: V(0), 2: B(hl), ...RGB }, w, sh)
+      run('xtGreenMinMax', { 0: C, 1: V(0), 4: B(rgb[0]), 8: B(gminmax) }, w, sh)
+      run('xtGreen', { 0: C, 1: V(0), ...RGB, 8: B(gminmax) }, w, sh)
+      for (let d = 0; d < 6; d++) run('xtSolitary', { 0: C, 1: V(d), 3: B(rgb[solitaryTarget[d]]), 9: B(aux) }, w, sh)
+      for (let d = 0; d < 4; d++) run('xtRedBlue', { 0: C, 1: V(d), 3: B(rgb[d]) }, w, sh)
+      // 1 pass: the 2×2 green blocks for d = 0 and 2, into rgb 0 and 1 (as darktable and dcraw do).
+      run('xtTwoByTwo', { 0: C, 1: V(0), 3: B(rgb[0]) }, w, sh)
+      run('xtTwoByTwo', { 0: C, 1: V(2), 3: B(rgb[1]) }, w, sh)
+      for (let d = 0; d < 4; d++) {
+        run('xtYuv', { 0: C, 1: V(d), 3: B(rgb[d]), 9: B(aux) }, w, sh)
+        run('xtDiff', { 0: C, 1: V(d), 9: B(aux), 10: B(drv) }, w, sh)
+      }
+      run('xtHomoSet', { 0: C, 1: V(0), 10: B(drv), 11: B(homo) }, w, sh)
+      run('xtHomoSum', { 0: C, 1: V(0), 11: B(homo), 12: B(drv) }, w, sh)
+      run('xtFinal', { 0: C, 1: V(0), ...RGB, 12: B(drv), 13: out }, w, sh)
+    })
   }
 
   /** Fills the scene texture's mip levels (for zoomed-out viewing) from level 0. */
@@ -849,6 +1005,8 @@ export class DevelopEngine {
     ui[62] = s.height
     ui[63] = s.cfa.reduce((acc, c, i) => acc | (c << (i * 2)), 0)
     ui[64] = pass
+    ui[66] = s.layout === 'xtrans' ? 1 : s.layout === 'linear' ? 2 : 0
+    if (s.layout === 'xtrans' && s.xtrans) ui.set(packXtrans(s.xtrans), 104)
     const t = src.texMap
     const r = src.rawMap
     f.set([t[0], t[1], t[2], 0, t[3], t[4], t[5], 0, t[6], t[7], t[8], 0], 68)

@@ -7,6 +7,11 @@
 //   RCD demosaicing by Luis Sanz Rodríguez; step 1 tiling idea from Ansel (Aurélien Pierre).
 // Differences from darktable: the outer 9 px border is filled with bilinear interpolation instead of
 // PPG, and RCD step 1 reads global memory directly instead of a workgroup tile.
+//
+// Fujifilm X-Trans photos run `prepare` and the highlight reconstruction kernels with the XTRANS override set:
+// darktable's kernels take the colour from the 6×6 pattern there (FCxtrans in data/kernels/basic.cl,
+// highlights_initmask / highlights_chroma / highlights_opposed), and rawprepare still subtracts the black level
+// of the photosite's 2×2 position (src/iop/rawprepare.c _BL). The X-Trans demosaic is in demosaic-xtrans.wgsl.
 
 struct Params {
   black: vec4f,      // black level per CFA position (0,0),(0,1),(1,0),(1,1)
@@ -25,7 +30,11 @@ struct Params {
   scale: f32,        // RCD normalisation (1 / max multiplier)
   highlightMode: u32, // 0 clip, 1 inpaint opposed
   pad: u32,
+  xt: vec4u,         // X-Trans 6×6 pattern, 2 bits per photosite (engine/raw/xtrans.ts packXtrans)
 }
+
+/** Set for Fujifilm X-Trans photos: colours come from the 6×6 pattern `xt` instead of the 2×2 `cfa`. */
+override XTRANS: bool = false;
 
 @group(0) @binding(0) var<uniform> P: Params;
 @group(0) @binding(1) var<storage, read> raw: array<u32>;              // packed uint16 sensor data
@@ -47,6 +56,10 @@ const EPS: f32 = 1e-5;
 const EPSSQ: f32 = 1e-10;
 
 fn fc(row: i32, col: i32) -> u32 {
+  if (XTRANS) {
+    let i = u32((((row % 6) + 6) % 6) * 6 + (((col % 6) + 6) % 6));
+    return (P.xt[i >> 4u] >> ((i & 15u) * 2u)) & 3u;
+  }
   return P.cfa[u32((row & 1) * 2 + (col & 1))];
 }
 
