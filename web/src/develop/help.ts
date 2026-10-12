@@ -97,6 +97,22 @@ export const HELP: Record<string, ControlHelp> = {
     pitfalls: 'Strong colours lose detail and can go out of the screen’s range first; skin turns orange.',
     engine: 'simple chroma scaling for now; darktable colour balance rgb (saturation) is planned',
   },
+  lensDistortion: {
+    hint: 'How much of the lens profile’s distortion fix',
+    what: 'Straightens lines the lens bends (barrel or pincushion), by the amount the lens profile gives. 100 is the profile.',
+    left: 'Less correction; 0 leaves the distortion as shot.',
+    right: 'More than the profile, up to twice.',
+    pitfalls: 'The photo is enlarged a little so no empty edges show, so the edges are trimmed. Fisheye lenses are not turned into ordinary ones.',
+    engine: 'darktable lens correction (Lensfun, or the camera’s own data); the amount is LightBench’s, like darktable’s fine-tune for camera data',
+  },
+  lensVignetting: {
+    hint: 'How much of the profile’s corner brightening',
+    what: 'Brightens the dark corners the lens causes, by the amount the lens profile gives. 100 is the profile.',
+    left: 'Less correction; 0 keeps the dark corners.',
+    right: 'More than the profile, up to twice.',
+    pitfalls: 'Brightening the corners also brightens their noise. For a deliberate dark-corner look, lower this instead of adding a vignette.',
+    engine: 'darktable lens correction (Lensfun “pa” vignetting, or the camera’s own data)',
+  },
   angle: {
     hint: 'Levels a tilted horizon',
     what: 'Turns the photo under the crop, in degrees. The crop stays level and shrinks if needed so it stays inside the photo.',

@@ -22,8 +22,8 @@
 // the largest rectangle of the photo's own shape inside the corrected photo). The crop then lives in that frame.
 //
 // Line detection input: the photo before the perspective, at most 1600 px on its long edge (LightBench's choice).
-// When lens correction exists it must be the lens-corrected photo, as darktable's ashift sees it after `lens`;
-// the engine's `analysisImage` is where that happens (see the note there).
+// With lens correction on, it is the lens-corrected photo, as darktable's ashift sees it after `lens` (the
+// engine's `analysisImage`).
 
 import { ashiftHomography, cropFit, DEFAULT_F_LENGTH, drawnLine, FIT, FIT_BOTH_SHEAR, FIT_HORIZONTALLY, FIT_VERTICALLY, halfDiagonal2, imageEdges, LINE, LSD_ANG_TH, LSD_DENSITY_TH, LSD_GAMMA, LSD_LOG_EPS, LSD_N_BINS, LSD_QUANT, LSD_SCALE, LSD_SIGMA_SCALE, mat3inv, mat3mul, mat3mulv, nmsfit, removeOutliers, shiftAngles, classifyLines, type AshiftLens, type AshiftLine, type AshiftParams, type LineSet, type M3, type RawSegment } from './ashift'
 import { lineSegmentDetection } from './lsd'

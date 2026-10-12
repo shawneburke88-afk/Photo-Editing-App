@@ -12,12 +12,13 @@ export type PasteKey =
   | 'exposure' | 'contrast' | 'highlights' | 'shadows' | 'whites' | 'blacks'
   | 'vibrance' | 'saturation'
   | 'rotate' | 'straighten' | 'crop' | 'upright' | 'transform'
+  | 'lensProfile' | 'lensAmounts' | 'lensCa'
   | 'process' | 'baseExposure' | 'toneMapper' | 'highlightReconstruction' | 'demosaic'
 
 export interface PasteItem {
   key: PasteKey
   label: string
-  group: 'White balance' | 'Tone' | 'Presence' | 'Crop' | 'Advanced (darktable modules)'
+  group: 'White balance' | 'Tone' | 'Presence' | 'Crop' | 'Lens' | 'Advanced (darktable modules)'
   /**
    * Only pasted between photos of the same kind (RAW to RAW, JPEG to JPEG): a RAW's +0.7 EV base exposure or its
    * camera white balance would be wrong on a JPEG, which is already rendered.
@@ -160,6 +161,39 @@ export const PASTE_ITEMS: PasteItem[] = [
       return `${parts.length ? parts.join(', ') : 'none'} (copied as they are)`
     },
   },
+  // Lens corrections (Part 2). The profile travels as a mode, like "As Shot": Auto matches each photo's own lens.
+  // A Lensfun lens picked by hand travels too, but is used only on photos whose camera and lens (as their files
+  // name them) are the same as the photo it was picked for; the others match their own (correction.ts `pickedFor`).
+  {
+    key: 'lensProfile',
+    label: 'Lens corrections',
+    group: 'Lens',
+    copy: (to, from) => ({
+      ...to,
+      lens: { ...to.lens, enabled: from.lens.enabled, source: from.lens.source, camera: from.lens.camera, lens: from.lens.lens, pickedFor: from.lens.pickedFor },
+    }),
+    show: (s) => {
+      const l = s.lens
+      if (!l.enabled) return 'off'
+      // The key is maker + model; Lensfun's model names already start with the maker.
+      const picked = l.lens ? `, ${l.lens.split('\u001f')[1] ?? l.lens} on photos with the same lens` : ''
+      return `${l.source === 'lensfun' ? 'on, Lensfun' : 'on, Auto'} (each photo’s own lens${picked})`
+    },
+  },
+  {
+    key: 'lensAmounts',
+    label: 'Distortion & vignetting amounts',
+    group: 'Lens',
+    copy: (to, from) => ({ ...to, lens: { ...to.lens, distortion: from.lens.distortion, vignetting: from.lens.vignetting } }),
+    show: (s) => `distortion ${s.lens.distortion}, vignetting ${s.lens.vignetting}`,
+  },
+  {
+    key: 'lensCa',
+    label: 'Chromatic aberration',
+    group: 'Lens',
+    copy: (to, from) => ({ ...to, lens: { ...to.lens, ca: from.lens.ca } }),
+    show: (s) => (s.lens.ca ? 'removed' : 'left'),
+  },
   {
     key: 'process',
     label: 'Process version',
@@ -209,9 +243,10 @@ export const PASTE_GROUPS = [...new Set(PASTE_ITEMS.map((i) => i.group))]
 /**
  * Default choice: everything except the crop items and the advanced darktable modules. Lightroom leaves its expert
  * items to the user; not copying the crop unless ticked is Lightroom's default as the owner described it
- * (2026-10-12; not checked against Lightroom here), and LightBench's choice either way.
+ * (2026-10-12; not checked against Lightroom here), and LightBench's choice either way. The Lens items are unticked
+ * too (LightBench's choice), so copying tone from an edit made before lens corrections doesn't turn them off.
  */
-export const DEFAULT_PASTE_KEYS: PasteKey[] = PASTE_ITEMS.filter((i) => i.group !== 'Advanced (darktable modules)' && i.group !== 'Crop').map((i) => i.key)
+export const DEFAULT_PASTE_KEYS: PasteKey[] = PASTE_ITEMS.filter((i) => i.group !== 'Advanced (darktable modules)' && i.group !== 'Crop' && i.group !== 'Lens').map((i) => i.key)
 
 /** What a copy carries. */
 export interface Clipboard {

@@ -42,7 +42,8 @@ export function serviceWorker(build: SwBuildInfo): Plugin {
         const outDir = resolve(config.root, config.build.outDir)
         const precache = filesIn(outDir)
           .map((file) => relative(outDir, file).split(sep).join('/'))
-          .filter((url) => url !== 'sw.js')
+          // The Lensfun database is downloaded only when a photo needs it (lensfun-plugin.ts), not with every install.
+          .filter((url) => url !== 'sw.js' && !url.startsWith('lensfun/'))
           .sort()
           .map((url) => ({ url, rev: revision(readFileSync(join(outDir, url))) }))
         const cache = `lightbench-${revision(JSON.stringify({ precache, build }))}`
