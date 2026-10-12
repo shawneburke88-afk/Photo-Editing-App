@@ -31,6 +31,8 @@ interface Props {
   onEnd: () => void
   /** A level line was drawn (the Level tool switches itself off). */
   onLevelDone: () => void
+  /** Double-click with the Level tool on: Auto straighten (LightCraft's idea; LightBench's choice to include it). */
+  onAutoLevel: () => void
 }
 
 type Drag =
@@ -55,7 +57,7 @@ const CURSORS: Record<CropHandle, string> = {
 // A curved double arrow for "turn" (CSS has no rotate cursor).
 const ROTATE_CURSOR = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M5 9a8 8 0 0 1 14 0" fill="none" stroke="#000" stroke-width="4"/><path d="M5 9a8 8 0 0 1 14 0" fill="none" stroke="#fff" stroke-width="2"/><path d="M2 6l3 5 4-3zM22 6l-3 5-4-3z" fill="#fff" stroke="#000"/></svg>')}") 12 12, crosshair`
 
-export function CropOverlay({ box, frame, geometry: g, overlay, leveling, onBegin, onChange, onEnd, onLevelDone }: Props) {
+export function CropOverlay({ box, frame, geometry: g, overlay, leveling, onBegin, onChange, onEnd, onLevelDone, onAutoLevel }: Props) {
   const drag = useRef<Drag | null>(null)
   const [cursor, setCursor] = useState('default')
   const [live, setLive] = useState<{ kind: Drag['kind']; handle?: CropHandle; line?: [Point, Point] } | null>(null)
@@ -141,11 +143,13 @@ export function CropOverlay({ box, frame, geometry: g, overlay, leveling, onBegi
     if (d.kind === 'level') {
       // Screen and frame pixels differ only by a uniform scale, so the line's tilt is the same in both.
       const a = levelAngle(g.angle, d.p0, d.p1)
-      if (a !== null && Math.hypot(d.p1.x - d.p0.x, d.p1.y - d.p0.y) > 8) {
+      const drawn = Math.hypot(d.p1.x - d.p0.x, d.p1.y - d.p0.y) > 8
+      if (a !== null && drawn) {
         onBegin()
         onChange(setAngle(g, a, fw, fh))
       }
-      onLevelDone()
+      // A click without a line keeps the tool on (a double-click runs Auto straighten).
+      if (drawn) onLevelDone()
     }
     onEnd()
   }
@@ -191,6 +195,7 @@ export function CropOverlay({ box, frame, geometry: g, overlay, leveling, onBegi
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onDoubleClick={() => leveling && onAutoLevel()}
       role="application"
       aria-label="Crop: drag a corner or edge to resize, inside to move, outside to turn the photo; Ctrl-drag to draw a level line"
     >

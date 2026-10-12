@@ -12,6 +12,8 @@ export interface ExifInfo {
   shutter: number
   aperture: number
   focalLength: number
+  /** FocalLengthIn35mmFilm (0xA405), 0 if absent. */
+  focal35?: number
   width: number
   height: number
   /** EXIF interoperability index, e.g. "R98" (sRGB) or "R03" (Adobe RGB); '' if absent. */
@@ -129,6 +131,7 @@ function readTiff(v: DataView, base: number, end: number): ExifInfo | null {
     else if (tag === 0x829d) info.aperture = num(type, o)
     else if (tag === 0x8827) info.iso = num(type, o)
     else if (tag === 0x920a) info.focalLength = num(type, o)
+    else if (tag === 0xa405) info.focal35 = num(type, o)
     else if (tag === 0xa434) info.lens = str(o, count)
     else if (tag === 0xa002) info.width = num(type, o)
     else if (tag === 0xa003) info.height = num(type, o)

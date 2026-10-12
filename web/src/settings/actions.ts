@@ -9,7 +9,7 @@
 import type { Chord } from './chords'
 
 /** Where an action works. A view uses `global` plus one or more of the others (see `VIEWS`). */
-export type Context = 'global' | 'library' | 'cull' | 'cull-one' | 'compare' | 'survey' | 'develop' | 'crop'
+export type Context = 'global' | 'library' | 'cull' | 'cull-one' | 'compare' | 'survey' | 'develop' | 'crop' | 'guided'
 
 export const CONTEXT_NAMES: Record<Context, string> = {
   global: 'Everywhere',
@@ -20,6 +20,7 @@ export const CONTEXT_NAMES: Record<Context, string> = {
   survey: 'Survey',
   develop: 'Develop',
   crop: 'Develop: cropping',
+  guided: 'Develop: Guided Upright',
 }
 
 /** The contexts that are active together. Two actions can't share a key if one view has both. */
@@ -31,6 +32,8 @@ export const VIEWS: Context[][] = [
   ['global', 'develop'],
   // While cropping, Develop listens to 'crop' instead, so O can cycle the crop overlay and Esc cancel the crop.
   ['global', 'crop'],
+  // While drawing Guided Upright lines, Develop listens to 'guided' instead (Delete removes a line, Esc finishes).
+  ['global', 'guided'],
 ]
 
 export type PresetId = 'lightbench' | 'lightroom'
@@ -137,8 +140,8 @@ export const ACTIONS: ActionDef[] = [
   { id: 'survey.close', label: 'Back to the grid', contexts: ['survey'], keys: ['Escape', 'G', 'N', 'E', 'F'] },
 
   // Develop
-  { id: 'develop.undo', label: 'Undo', contexts: DEVELOP_ANY, keys: ['Ctrl+Z'] },
-  { id: 'develop.redo', label: 'Redo', contexts: DEVELOP_ANY, keys: ['Ctrl+Y', 'Ctrl+Shift+Z'] },
+  { id: 'develop.undo', label: 'Undo', contexts: [...DEVELOP_ANY, 'guided'], keys: ['Ctrl+Z'] },
+  { id: 'develop.redo', label: 'Redo', contexts: [...DEVELOP_ANY, 'guided'], keys: ['Ctrl+Y', 'Ctrl+Shift+Z'] },
   { id: 'develop.before', label: 'Before / after', contexts: ['develop'], keys: ['\\'] },
   { id: 'develop.clipping', label: 'Show clipping', contexts: ['develop'], keys: ['J', 'O'], lightroom: ['J'] },
   { id: 'develop.sensorClipping', label: 'Show sensor clipping', contexts: ['develop'], keys: ['Shift+O'] },
@@ -154,6 +157,16 @@ export const ACTIONS: ActionDef[] = [
   { id: 'develop.flipH', label: 'Flip horizontal', contexts: DEVELOP_ANY, keys: [] },
   { id: 'develop.flipV', label: 'Flip vertical', contexts: DEVELOP_ANY, keys: [] },
   { id: 'develop.level', label: 'Straighten: draw a level line', contexts: DEVELOP_ANY, keys: [] },
+  { id: 'develop.autoStraighten', label: 'Straighten: Auto (level along the lines found)', contexts: DEVELOP_ANY, keys: [] },
+  // Shift+T is LightBench's choice (Lightroom Classic's key for its Guided Upright tool is not checked here).
+  { id: 'develop.guided', label: 'Transform: Guided Upright (draw lines on the photo)', contexts: ['develop', 'guided'], keys: ['Shift+T'] },
+  { id: 'develop.uprightAuto', label: 'Transform: Upright Auto', contexts: ['develop'], keys: [] },
+  { id: 'develop.uprightOff', label: 'Transform: Upright off', contexts: ['develop'], keys: [] },
+  { id: 'develop.transformReset', label: 'Transform: reset Upright and the sliders', contexts: ['develop'], keys: [] },
+
+  // Develop, while drawing Guided Upright lines
+  { id: 'guided.done', label: 'Finish Guided Upright', contexts: ['guided'], keys: ['Enter', 'Escape'] },
+  { id: 'guided.delete', label: 'Remove the selected guide', contexts: ['guided'], keys: ['Delete', 'Backspace'] },
 
   // Develop, while cropping
   { id: 'crop.apply', label: 'Apply the crop', contexts: ['crop'], keys: ['Enter'] },
