@@ -3,7 +3,7 @@
 // Order (darktable's pixelpipe order, src/common/iop_order.c, v5.0: lens 13 → ashift 15 → flip 16 → crop 24.5):
 //   lens correction → rotate and perspective (Transform/Upright, straighten) → flip (camera orientation, the user's
 //   rotate 90° and flips) → crop.
-// Lens correction is identity for now; the perspective (Transform/Upright, upright.ts) exists. All of them are combined into
+// Lens correction (engine/lens, `withLens`) and the perspective (Transform/Upright, upright.ts) included, all of them are combined into
 // one map from an output pixel back to a sensor position (`resolveGeometry`), so a photo is resampled once
 // whatever tools are used, never once per tool. darktable's own modules each resample (each calls
 // `dt_interpolation_new(DT_INTERPOLATION_USERPREF_WARP)`); combining them is LightBench's choice.
@@ -14,13 +14,14 @@
 // coordinates (and later mask coordinates) therefore stay on the same content when lens or Upright settings
 // change. Rotating 90° or flipping moves the crop with the photo (`rotate90`, `flip`).
 //
-// Resampling: when the map is a whole-pixel one (no straighten angle, no perspective, and later no lens), the
+// Resampling: when the map is a whole-pixel one (no straighten angle, no perspective and no lens correction), the
 // pixels are copied exactly and nothing is resampled. Otherwise the engine warps the photo once with bicubic
 // (Catmull-Rom) interpolation, darktable's default for warps (`plugins/lighttable/export/pixel_interpolator_warp`
 // = bicubic in data/darktableconfig.xml.in; DT_INTERPOLATION_DEFAULT_WARP = BICUBIC in src/common/interpolation.h;
 // its kernel `_maketaps_bicubic` is the a = −0.5 cubic), and caches the result.
 
 import type { Mat3 } from '../color/matrix'
+import type { LensWarp } from '../lens/correction'
 import { constrained, cropFitAngle, fitAbout, fromCenter, rectCenter, rectHeight, rectWidth, scaleRect, UNIT_RECT, withAngle, type CropGeometry, type Rect } from './crop'
 import { isIdentityTransform, normalizeTransform, perspectiveMap, transformKey, turnTransform, type Orient, type TransformSettings } from './upright'
 
@@ -297,6 +298,11 @@ export interface ResolvedGeometry {
   exact: boolean
   /** Identifies the map, for caching a warped image. */
   key: string
+  /**
+   * Lens correction (Part 2, `withLens`): when set, `toSensor` ends in the corrected image (sensor orientation,
+   * the sensor's size) and this function takes that position to the sensor; `uvToSensor` ignores it.
+   */
+  lens?: LensWarp
 }
 
 /**
@@ -347,7 +353,7 @@ export function resolveGeometry(g: GeometrySettings, sw: number, sh: number, exi
     uvToSensor = IDENTITY_MAP // replaced below
   }
   // Output pixel → frame pixel → (inverse flip) sensor-oriented pixel about the centre → (inverse straighten) sensor pixel.
-  // Lens correction will join here, before `translate(sw / 2, sh / 2)`; the perspective (Upright) is in place.
+  // The perspective (Upright) comes last in this map; lens correction follows it, outside the 3×3 map (`withLens`).
   const toSensor = mul3(
     mul3(perspective ? mul3(translate(sw / 2, sh / 2), perspective) : translate(sw / 2, sh / 2), rotation(-sensorAngle)),
     mul3(mul3(linear(transpose2(A)), translate(-fw / 2, -fh / 2)), translate(x0, y0)),
@@ -362,6 +368,17 @@ export function resolveGeometry(g: GeometrySettings, sw: number, sh: number, exi
     exact,
     key: `${sw}x${sh}/${exifFlip}/${g.turns}/${g.mirror}/${g.angle}/${x0},${y0},${x1},${y1}${perspective ? `/t${transformKey(g.transform)}` : ''}`,
   }
+}
+
+/**
+ * Lens correction joins the map (Phase 3, Part 2; engine/lens/correction.ts): darktable's lens module comes first
+ * in the pipe, so in the inverse map (output → sensor) it comes last, after the 3×3 map above, which then ends in
+ * the corrected image. The corrected image has the sensor image's size (the automatic scale keeps it filled), so
+ * crops stay where they are. Still one resample (engine/gpu/warp.wgsl); the map is no longer whole-pixel.
+ */
+export function withLens(r: ResolvedGeometry, lens: LensWarp | null, lensKey: string): ResolvedGeometry {
+  if (!lens) return r
+  return { ...r, exact: false, lens, key: `${r.key}/lens:${lensKey}` }
 }
 
 export type { Rect } from './crop'

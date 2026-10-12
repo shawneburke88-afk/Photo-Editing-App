@@ -6,6 +6,7 @@ import { DEFAULT_F_LENGTH, mat3inv, mat3mulv, shiftAngles, type RawSegment } fro
 import { autoStraighten, DEFAULT_TRANSFORM, normalizeTransform, solveGuided, solveUpright, ZERO_PERSPECTIVE, type Detection, type Guide, type TransformSettings, type UprightMode } from '../engine/develop/upright'
 import type { DevelopSettings } from '../engine/develop/settings'
 import type { DevelopEngine } from '../engine/gpu/develop-engine'
+import type { LensSettings } from '../engine/lens/correction'
 import type { SensorInfo } from './source'
 
 let worker: Worker | null = null
@@ -35,9 +36,12 @@ function detectInWorker(rgb: Float32Array, width: number, height: number): Promi
   })
 }
 
-/** Finds the straight lines of the photo loaded in `engine` (before its perspective; see `analysisImage`). */
-export async function detectLines(engine: DevelopEngine): Promise<Detection> {
-  const a = await engine.analysisImage()
+/**
+ * Finds the straight lines of the photo loaded in `engine`: after its lens correction (`lens`, the photo's
+ * settings), before its perspective (see `analysisImage`).
+ */
+export async function detectLines(engine: DevelopEngine, lens?: LensSettings): Promise<Detection> {
+  const a = await engine.analysisImage(lens)
   const segments = await detectInWorker(a.rgb, a.width, a.height)
   return { segments, width: a.width, height: a.height, scale: a.scale }
 }
@@ -123,7 +127,7 @@ export function frameMaps(engine: DevelopEngine, g: GeometrySettings) {
 export async function rerunUpright(engine: DevelopEngine, s: DevelopSettings, info: SensorInfo): Promise<DevelopSettings> {
   const t = s.geometry.transform
   if (!t || !['auto', 'level', 'vertical', 'full'].includes(t.upright)) return s
-  const det = await detectLines(engine)
+  const det = await detectLines(engine, s.lens)
   const r = uprightGeometry(engine, s.geometry, t.upright as 'auto', det, info)
   // A photo where Upright finds nothing reliable keeps the mode but no correction (as Upright does in Develop).
   const geometry = r.ok ? r.geometry : withTransform(engine, s.geometry, { ...t, focal: focalFor(info), solved: ZERO_PERSPECTIVE }, false)

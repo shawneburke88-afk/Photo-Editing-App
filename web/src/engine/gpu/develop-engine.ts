@@ -12,6 +12,10 @@
 import { apply, invert, mul, SRGB_TO_REC2020, type Mat3, type Vec3 } from '../color/matrix'
 import { clipUniforms, DEFAULT_CLIP, DEFAULT_RAW_CLIP, RAW_COLOURS, rawModeCode, rawThresholds, type Indicators } from '../develop/indicators'
 import { applyMap, DEFAULT_GEOMETRY, IDENTITY_MAP, resolveGeometry, type GeometrySettings, type ResolvedGeometry } from '../develop/geometry'
+import { withLens } from '../develop/geometry'
+import { lensSourcePoint, lensWarpKey, needsLensfun, resolveLens, type LensSettings, type LensStatus, type LensWarp } from '../lens/correction'
+import { lensfunState, loadLensfun } from '../lens/lens-db'
+import type { LensMeta } from '../lens/meta'
 import type { DisplayUniforms } from '../develop/settings'
 import { inverseLoglogistic, type SigmoidCurve } from '../color/sigmoid'
 import type { RgbImage, SensorData } from '../raw/types'
@@ -56,6 +60,8 @@ interface Source {
   w: number
   h: number
   frame: boolean
+  /** Lens correction between `rawMap` and the sensor, if any. */
+  lens?: LensWarp
 }
 
 export type PresentMode = 'canvas' | 'readback'
@@ -154,7 +160,13 @@ export class DevelopEngine {
   /** Warps run one at a time. */
   private warpChain: Promise<unknown> = Promise.resolve()
   /** Size and sensor map of the last rendering on the canvas (for `layout` and the white balance picker). */
-  private shown: { w: number; h: number; rawMap: Mat3 } | null = null
+  private shown: { w: number; h: number; rawMap: Mat3; lens?: LensWarp } | null = null
+  /** The loaded RAW's lens metadata (engine/lens/meta.ts); null for JPEGs. */
+  private lensMeta: LensMeta | null = null
+  /** The last resolved lens correction (settings and database state → warp). */
+  private lensResolved: { key: string; warp: LensWarp | null; status: LensStatus } | null = null
+  /** The scene corrected for the lens only, for the crop tool's view (kept apart from `warp`). */
+  private lensOnly: { key: string; gen: number; tex: GPUTexture } | null = null
   private lost = false
   private probing = false
   /** The white balance the scene texture was built with (for live previews of WB changes). */
@@ -294,6 +306,8 @@ export class DevelopEngine {
     this.sensor = sensor
     this.exifFlip = flip
     this.shown = null
+    this.lensMeta = null
+    this.lensResolved = null
     this.camToWorking = mul(SRGB_TO_REC2020, sensor.camToRgb as Mat3)
     this.rgbInput?.texture.destroy()
     this.rgbInput = null
@@ -365,12 +379,58 @@ export class DevelopEngine {
     return this.sensor ? this.geometry(g).size : [0, 0]
   }
 
+  /** Sets the loaded RAW's lens metadata (develop/source.ts `loadIntoEngine`). */
+  setLensMeta(meta: LensMeta | null) {
+    this.lensMeta = this.rgbInput ? null : meta
+    this.lensResolved = null
+  }
+
+  /** The lens correction for these settings, with what to show; loads the Lensfun database when needed. */
+  async lensCorrection(s: LensSettings | undefined): Promise<{ warp: LensWarp | null; status: LensStatus }> {
+    if (s && needsLensfun(this.lensMeta, s)) await loadLensfun()
+    return this.lensNow(s)
+  }
+
+  /** The same with the database as it is now (no waiting). */
+  lensNow(s: LensSettings | undefined): { warp: LensWarp | null; status: LensStatus } {
+    const sensor = this.sensor
+    if (!s || !sensor) return { warp: null, status: { state: 'not-raw', exifLens: '' } }
+    const db = lensfunState()
+    const key = `${JSON.stringify(s)}|${db && typeof db === 'object' ? 'db' : String(db)}`
+    if (this.lensResolved?.key === key) return this.lensResolved
+    const r = resolveLens(this.rgbInput ? null : this.lensMeta, s, sensor.width, sensor.height, db)
+    this.lensResolved = { key, ...r }
+    return r
+  }
+
   /** What to sample for a geometry: the scene itself (whole-pixel maps, and the crop tool's view) or its warped copy. */
-  private async source(g: GeometrySettings, whole = false): Promise<Source> {
-    const r = this.geometry(g, whole)
+  private async source(g: GeometrySettings, whole = false, lens?: LensSettings): Promise<Source> {
+    const lw = (await this.lensCorrection(lens)).warp
+    const r = withLens(this.geometry(g, whole), lw, lensWarpKey(lw))
+    if (whole && lw) {
+      // The crop tool draws the lens-corrected scene directly through the 3×3 map, so turning the photo doesn't warp again.
+      const tex = await this.lensCorrected(lw)
+      return { tex, texMap: r.uvToSensor, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: true, lens: lw }
+    }
     if (whole || r.exact) return { tex: this.scene!, texMap: r.uvToSensor, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: whole }
     const tex = await this.warped(r)
-    return { tex, texMap: IDENTITY_MAP, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: false }
+    return { tex, texMap: IDENTITY_MAP, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: false, lens: r.lens }
+  }
+
+  /** The whole scene corrected for the lens only (same size as the scene), cached apart from the full warp. */
+  private lensCorrected(lw: LensWarp): Promise<GPUTexture> {
+    const s = this.sensor!
+    const r = withLens(resolveGeometry(DEFAULT_GEOMETRY, s.width, s.height, 0, true), lw, lensWarpKey(lw))
+    const job = this.warpChain.then(() => {
+      if (this.lensOnly && this.lensOnly.key === r.key && this.lensOnly.gen === this.sceneGen) return this.lensOnly.tex
+      this.checkAlive()
+      const tex = this.buildWarp(r)
+      this.lensOnly?.tex.destroy()
+      this.lensOnly = { key: r.key, gen: this.sceneGen, tex }
+      return tex
+    })
+    this.warpChain = job.catch(() => {})
+    return job
   }
 
   /** The scene warped through a geometry map, from the cache when the same map was warped last. */
@@ -399,6 +459,9 @@ export class DevelopEngine {
     new Uint32Array(params).set([w, h], 12)
     const paramBuf = device.createBuffer({ size: params.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     device.queue.writeBuffer(paramBuf, 0, params)
+    const lens = lensUniforms(r.lens ?? null, this.camToWorking)
+    const lensBuf = device.createBuffer({ size: lens.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    device.queue.writeBuffer(lensBuf, 0, lens)
     const tex = device.createTexture({
       size: [w, h],
       format: 'rgba16float',
@@ -414,6 +477,7 @@ export class DevelopEngine {
         { binding: 0, resource: { buffer: paramBuf } },
         { binding: 1, resource: this.scene!.createView({ baseMipLevel: 0, mipLevelCount: 1 }) },
         { binding: 2, resource: tex.createView({ baseMipLevel: 0, mipLevelCount: 1 }) },
+        { binding: 3, resource: { buffer: lensBuf } },
       ],
     }))
     pass.dispatchWorkgroups(Math.ceil(w / 16), Math.ceil(h / 16))
@@ -421,6 +485,7 @@ export class DevelopEngine {
     this.encodeMips(enc, tex)
     device.queue.submit([enc.finish()])
     paramBuf.destroy()
+    lensBuf.destroy()
     return tex
   }
 
@@ -431,6 +496,8 @@ export class DevelopEngine {
     this.sceneGen++
     this.warp?.tex.destroy()
     this.warp = null
+    this.lensOnly?.tex.destroy()
+    this.lensOnly = null
   }
 
   /** Stage A. Resolves with the GPU time in ms. */
@@ -645,7 +712,7 @@ export class DevelopEngine {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
     const { device } = this
-    const src = await this.source(u.geometry)
+    const src = await this.source(u.geometry, false, u.lens)
     const { w: iw, h: ih } = src
     const max = device.limits.maxTextureDimension2D
     if (o.width > max || o.height > max) throw new Error(`The export size is larger than this GPU allows (${max} px)`)
@@ -825,9 +892,9 @@ export class DevelopEngine {
       this.canvas.height = ch
     }
     this.lastRender = [u, wb, view, indicators]
-    const src = await this.source(u.geometry, !!view.frame)
+    const src = await this.source(u.geometry, !!view.frame, u.lens)
     const l = this.layout(view, cw, ch, [src.w, src.h])
-    this.shown = { w: src.w, h: src.h, rawMap: src.rawMap }
+    this.shown = { w: src.w, h: src.h, rawMap: src.rawMap, lens: src.lens }
     this.writeView(u, wb, src, l, l.lod, indicators, 0, this.displaySpace)
     const target = this.gpuCtx
       ? this.gpuCtx.getCurrentTexture()
@@ -844,7 +911,7 @@ export class DevelopEngine {
   async renderImage(u: DisplayUniforms, wb: Vec3, maxSize: number): Promise<ImageData> {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
-    const src = await this.source(u.geometry)
+    const src = await this.source(u.geometry, false, u.lens)
     const { w: iw, h: ih } = src
     const scale = Math.min(1, maxSize / Math.max(iw, ih))
     const w = Math.max(1, Math.round(iw * scale))
@@ -875,9 +942,14 @@ export class DevelopEngine {
     }
   }
 
-  /** Maps uv on the image last drawn on the canvas to sensor-image uv (through its orientation, crop and angle). */
+  /** Maps uv on the image last drawn on the canvas to sensor-image uv (through its orientation, crop, angle and lens). */
   private sourceUv(u: number, v: number): [number, number] {
-    return applyMap(this.shown ? this.shown.rawMap : this.geometry(DEFAULT_GEOMETRY).uvToSensor, u, v)
+    const uv = applyMap(this.shown ? this.shown.rawMap : this.geometry(DEFAULT_GEOMETRY).uvToSensor, u, v)
+    const lens = this.shown?.lens
+    const s = this.sensor
+    if (!lens || !s) return uv
+    const [x, y] = lensSourcePoint(lens, uv[0] * s.width - 0.5, uv[1] * s.height - 0.5)
+    return [(x + 0.5) / s.width, (y + 0.5) / s.height]
   }
 
   /**
@@ -921,15 +993,17 @@ export class DevelopEngine {
    * at most `maxSize` px on its long edge (a level of the scene's mip chain, so nothing new is rendered), as
    * interleaved RGB, with its scale over the full-size photo.
    *
-   * Lens correction note: darktable's ashift detects lines after its `lens` module. Until LightBench has a lens
-   * stage, the scene itself is the photo before the perspective. Once lens correction joins the geometry map, this
-   * must read the scene warped through the lens correction only (the map up to, not including, the perspective),
-   * so the lines are found on the photo as it looks after lens correction.
+   * darktable's ashift detects lines after its `lens` module, so with lens correction on (`lens`, the photo's
+   * settings) this reads the scene corrected for the lens only (`lensCorrected`, the same size and orientation as
+   * the scene): the lines are found on the photo as it looks before the perspective, in the coordinates the
+   * perspective map ends in (geometry.ts `withLens`).
    */
-  async analysisImage(maxSize = 1600): Promise<{ rgb: Float32Array; width: number; height: number; scale: number }> {
+  async analysisImage(lens?: LensSettings, maxSize = 1600): Promise<{ rgb: Float32Array; width: number; height: number; scale: number }> {
     this.checkAlive()
-    const scene = this.scene
-    if (!scene) throw new Error('No photo processed')
+    if (!this.scene) throw new Error('No photo processed')
+    const lw = (await this.lensCorrection(lens)).warp
+    const scene = lw ? await this.lensCorrected(lw) : this.scene
+    this.checkAlive()
     let level = 0
     while (level < scene.mipLevelCount - 1 && Math.max(scene.width, scene.height) / 2 ** level > maxSize) level++
     const w = Math.max(1, scene.width >> level)
@@ -981,7 +1055,7 @@ export class DevelopEngine {
   async renderLoupe(u: DisplayUniforms, wb: Vec3, cu: number, cv: number, size: number): Promise<ImageData> {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
-    const src = await this.source(u.geometry)
+    const src = await this.source(u.geometry, false, u.lens)
     const { w: iw, h: ih } = src
     const cx = Math.floor(cu * iw) + 0.5
     const cy = Math.floor(cv * ih) + 0.5
@@ -999,7 +1073,7 @@ export class DevelopEngine {
     const statsPipe = (this.statsPipe ??= device.createComputePipeline({ layout: 'auto', compute: { module: this.statsModule, entryPoint: 'histogram' } }))
     const bins = device.createBuffer({ size: STATS_WORDS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST })
     const read = device.createBuffer({ size: STATS_WORDS * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
-    const src = await this.source(u.geometry)
+    const src = await this.source(u.geometry, false, u.lens)
     const enc = device.createCommandEncoder()
     const { w: iw, h: ih } = src
     const scale = Math.min(1, maxSize / Math.max(iw, ih))
@@ -1073,9 +1147,61 @@ export class DevelopEngine {
     this.lastRender = null
     this.rgbInput?.texture.destroy()
     this.warp?.tex.destroy()
+    this.lensOnly?.tex.destroy()
     this.scene?.destroy()
     this.rawBuf?.destroy()
     this.viewBuf.destroy()
     this.device.destroy()
   }
+}
+
+/**
+ * The warp shader's lens uniforms (engine/gpu/warp.wgsl, `struct Lens`, 576 bytes): mode 0 (all zero) without a
+ * lens correction. `camToWorking` turns camera RGB into the scene's working space, for correcting chromatic
+ * aberration on camera RGB.
+ */
+export function lensUniforms(w: LensWarp | null, camToWorking: Mat3): ArrayBuffer {
+  const buf = new ArrayBuffer(576)
+  if (!w) return buf
+  const u = new Uint32Array(buf)
+  const f = new Float32Array(buf)
+  const toCam = invert(camToWorking)
+  f.set([toCam[0], toCam[1], toCam[2], 0, toCam[3], toCam[4], toCam[5], 0, toCam[6], toCam[7], toCam[8], 0], 24)
+  const m = camToWorking
+  f.set([m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0], 36)
+  if (w.kind === 'lensfun') {
+    u[0] = 1
+    u[1] = (w.tca ? 1 : 0) | (w.vignetting ? 2 : 0)
+    u[2] = w.distortion ? { poly3: 1, poly5: 2, ptlens: 3 }[w.distortion.model] : 0
+    u[3] = w.tca ? (w.tca.model === 'linear' ? 1 : 2) : 0
+    f.set([w.normScale, w.center[0], w.center[1], w.scale], 4)
+    if (w.distortion) {
+      const t = w.distortion.terms
+      f.set([t[0] ?? 0, t[1] ?? 0, t[2] ?? 0, w.distortion.amount], 8)
+    }
+    if (w.tca) {
+      const k = w.tca.terms
+      if (w.tca.model === 'linear') {
+        f.set([k[0], 0, 0, 0], 12)
+        f.set([k[1], 0, 0, 0], 16)
+      } else {
+        f.set([k[0], k[2], k[4], 0], 12)
+        f.set([k[1], k[3], k[5], 0], 16)
+      }
+    }
+    if (w.vignetting) f.set([...w.vignetting.terms, w.vignetting.amount], 20)
+  } else {
+    u[0] = 2
+    u[1] = (w.done.tca ? 1 : 0) | (w.done.vignetting ? 2 : 0)
+    const w2 = w.width / 2
+    const h2 = w.height / 2
+    f.set([w2, h2, 1 / Math.hypot(w2, h2), w.nc], 4)
+    f.set(w.knotsDist.slice(0, 16), 48)
+    f.set(w.cor[0].slice(0, 16), 64)
+    f.set(w.cor[1].slice(0, 16), 80)
+    f.set(w.cor[2].slice(0, 16), 96)
+    f.set(w.knotsVig.slice(0, 16), 112)
+    f.set(w.vig.slice(0, 16), 128)
+  }
+  return buf
 }

@@ -3,6 +3,7 @@ import { LibRaw } from '@colorhythm/libraw-wasm'
 import wasmUrl from '@colorhythm/libraw-wasm/libraw.wasm?url'
 import { chooseInputProfile, extractJpegIcc, linearizationLut, profileToRec2020 } from '../color/icc'
 import { readJpegExif } from '../meta/exif'
+import { readLensMeta, type LensMeta } from '../lens/meta'
 import { embeddedPreviewColorSpace, tagPreview, type PreviewSpace } from '../meta/preview-space'
 import { databaseWhiteLevel } from './camera-db'
 import { whiteLevel } from './white-level'
@@ -34,6 +35,8 @@ async function decode(file: File, full: boolean): Promise<DecodeResult> {
   let t = performance.now()
   const buffer = await file.arrayBuffer()
   const read = performance.now() - t
+  // Read before LibRaw takes the buffer.
+  const fileLens = readLensMeta(new Uint8Array(buffer))
   // What the RAW says about its preview's colours (Adobe RGB previews are tagged so they aren't shown as sRGB).
   const previewSpace = embeddedPreviewColorSpace(new Uint8Array(buffer))
 
@@ -83,11 +86,25 @@ async function decode(file: File, full: boolean): Promise<DecodeResult> {
       preview,
       sensor,
       sensorUnsupported,
+      lens: lensMeta(fileLens, info),
       timings: { read, open, preview: previewMs, unpack },
     }
   } finally {
     lr.dispose()
   }
+}
+
+/** The lens metadata of a RAW file (engine/lens/meta.ts), completed from LibRaw where the file's tags lack it. */
+function lensMeta(m: LensMeta, info: DecodeResult['info']): LensMeta {
+  if (!m.make) m.make = info.make
+  if (!m.model) m.model = info.model
+  if (!m.lens && info.lens) {
+    m.lens = info.lens
+    m.lensFrom = 'libraw'
+  }
+  if (!(m.focal > 0)) m.focal = info.focalLength
+  if (!(m.aperture > 0)) m.aperture = info.aperture
+  return m
 }
 
 /** LibRaw sometimes returns undecoded makernote bytes as text; keep only plausible names. */

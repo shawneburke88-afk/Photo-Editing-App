@@ -348,6 +348,14 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .button.icon { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 4px 7px; }
 .crop-tools .button.small { display: inline-flex; align-items: center; gap: 5px; }
 
+/* The Lens section of the Crop & Lens group (LensPanel.tsx) */
+.lens-panel section { border-top: 1px solid var(--line); }
+.lens-check { display: flex; align-items: center; gap: 6px; margin: 6px 0; font-size: 0.86rem; }
+.lens-status { margin: 4px 0; }
+.lens-label { width: 56px; flex-shrink: 0; }
+.lens-about { margin: 8px 0 0; }
+.lens-about a { color: inherit; }
+
 /* The crop tool on the photo (CropOverlay.tsx) */
 .dstage.cropping { cursor: default; }
 .crop-overlay { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; z-index: 1; }

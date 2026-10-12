@@ -5,6 +5,7 @@ import { multipliersToTemperature, RAW_MULTIPLIER_LIMIT, RGB_MULTIPLIER_LIMIT, t
 import { defaultsFor, displayUniforms, normalizeSettings, type DevelopSettings, type SourceKind } from '../engine/develop/settings'
 import type { DevelopEngine, RawStageOptions } from '../engine/gpu/develop-engine'
 import type { DecodeResult } from '../engine/raw/types'
+import type { LensMeta } from '../engine/lens/meta'
 
 export interface SensorInfo {
   kind: SourceKind
@@ -13,6 +14,8 @@ export interface SensorInfo {
   asShot: { temperature: number; tint: number }
   /** Input colour profile of a JPEG, and a note when it had to be assumed. */
   profile?: { name: string; note?: string }
+  /** A RAW's lens metadata, for lens corrections (null for JPEGs). */
+  lens?: LensMeta | null
   /**
    * 35 mm-equivalent focal length for Upright, as darktable's ashift takes it: the EXIF focal length times the
    * crop factor (FocalLengthIn35mmFilm / focal length; 1 when unknown); null when the file has no focal length.
@@ -40,8 +43,10 @@ export function loadIntoEngine(engine: DevelopEngine, r: DecodeResult): SensorIn
   }
   if (!r.sensor) throw new Error(r.sensorUnsupported ?? 'This RAW file can’t be developed yet.')
   engine.loadSensor(r.sensor, r.info.flip)
+  // Lens corrections then apply to everything this engine renders (engine/lens/correction.ts).
+  engine.setLensMeta(r.lens ?? null)
   const xyzToCam = r.sensor.xyzToCam as Mat3
-  return { kind: 'raw', asShotWb: r.sensor.wb, xyzToCam, asShot: multipliersToTemperature(r.sensor.wb, xyzToCam), focal35: focalOf(r) }
+  return { kind: 'raw', asShotWb: r.sensor.wb, xyzToCam, asShot: multipliersToTemperature(r.sensor.wb, xyzToCam), lens: r.lens ?? null, focal35: focalOf(r) }
 }
 
 export function multipliers(s: DevelopSettings, info: SensorInfo): Vec3 {

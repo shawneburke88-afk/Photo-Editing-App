@@ -161,3 +161,123 @@ function readTiff(v: DataView, base: number, end: number): ExifInfo | null {
   info.gps = gpsFromDms(g.lat, g.latRef, g.lon, g.lonRef, g.alt, g.altRef)
   return info
 }
+
+// ---- A general TIFF reader, for camera RAW files (TIFF-based: NEF, ARW, DNG, ORF, RW2, PEF, CR2…) and the maker
+// notes inside them. Used by the lens corrections (engine/lens/meta.ts) to read the lens name and the camera's own
+// correction data, which LibRaw's WebAssembly binding doesn't expose.
+
+export interface TiffEntry {
+  tag: number
+  type: number
+  count: number
+  /** Absolute position of the value in the file. */
+  at: number
+}
+
+const TIFF_TYPE_SIZE: Record<number, number> = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4 }
+
+/** Reads IFDs of a TIFF structure whose offsets count from `base` (the TIFF header, or a maker note's start). */
+export class TiffReader {
+  readonly view: DataView
+  readonly base: number
+  readonly le: boolean
+
+  constructor(view: DataView, base: number, le: boolean) {
+    this.view = view
+    this.base = base
+    this.le = le
+  }
+
+  /**
+   * A TIFF header at `at`: "II" or "MM", then 42, or the variants of Panasonic RW2 (0x55) and Olympus ORF
+   * ("IIRO", "IIRS", "MMOR"). Returns the reader and the offset of IFD0, or null.
+   */
+  static open(bytes: Uint8Array, at = 0): { tiff: TiffReader; ifd0: number } | null {
+    if (at < 0 || at + 8 > bytes.length) return null
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    const order = view.getUint16(at)
+    if (order !== 0x4949 && order !== 0x4d4d) return null
+    const le = order === 0x4949
+    const magic = view.getUint16(at + 2, le)
+    if (![42, 0x55, 0x4f52, 0x5352].includes(magic)) return null
+    return { tiff: new TiffReader(view, at, le), ifd0: view.getUint32(at + 4, le) }
+  }
+
+  u16(o: number) {
+    return this.view.getUint16(o, this.le)
+  }
+
+  u32(o: number) {
+    return this.view.getUint32(o, this.le)
+  }
+
+  /** The entries of the IFD at `offset` (relative to the base); empty when it lies outside the file. */
+  ifd(offset: number): Map<number, TiffEntry> {
+    const out = new Map<number, TiffEntry>()
+    const v = this.view
+    const start = this.base + offset
+    if (offset <= 0 || start + 2 > v.byteLength) return out
+    const n = this.u16(start)
+    for (let i = 0; i < n; i++) {
+      const e = start + 2 + i * 12
+      if (e + 12 > v.byteLength) break
+      const type = this.u16(e + 2)
+      const count = this.u32(e + 4)
+      const size = (TIFF_TYPE_SIZE[type] ?? 1) * count
+      const at = size <= 4 ? e + 8 : this.base + this.u32(e + 8)
+      if (at + size > v.byteLength) continue
+      const tag = this.u16(e)
+      if (!out.has(tag)) out.set(tag, { tag, type, count, at })
+    }
+    return out
+  }
+
+  /** A numeric value as numbers (integers, rationals, floats; signed types read as signed). */
+  numbers(e: TiffEntry | undefined, max = 1 << 16): number[] {
+    if (!e) return []
+    const v = this.view
+    const n = Math.min(e.count, max)
+    const out: number[] = []
+    for (let i = 0; i < n; i++) {
+      const o = e.at + i * (TIFF_TYPE_SIZE[e.type] ?? 1)
+      switch (e.type) {
+        case 1: case 7: out.push(v.getUint8(o)); break
+        case 6: out.push(v.getInt8(o)); break
+        case 3: out.push(v.getUint16(o, this.le)); break
+        case 8: out.push(v.getInt16(o, this.le)); break
+        case 4: case 13: out.push(v.getUint32(o, this.le)); break
+        case 9: out.push(v.getInt32(o, this.le)); break
+        case 5: { const d = v.getUint32(o + 4, this.le); out.push(d ? v.getUint32(o, this.le) / d : 0); break }
+        case 10: { const d = v.getInt32(o + 4, this.le); out.push(d ? v.getInt32(o, this.le) / d : 0); break }
+        case 11: out.push(v.getFloat32(o, this.le)); break
+        case 12: out.push(v.getFloat64(o, this.le)); break
+        default: return out
+      }
+    }
+    return out
+  }
+
+  /** The first value of a numeric entry (0 when missing). */
+  number(e: TiffEntry | undefined): number {
+    return this.numbers(e, 1)[0] ?? 0
+  }
+
+  /** An ASCII value, up to its first NUL, trimmed. */
+  text(e: TiffEntry | undefined): string {
+    if (!e) return ''
+    let s = ''
+    for (let i = 0; i < e.count; i++) {
+      const c = this.view.getUint8(e.at + i)
+      if (c === 0) break
+      s += String.fromCharCode(c)
+    }
+    return s.trim()
+  }
+
+  /** The raw bytes of a value. */
+  bytes(e: TiffEntry | undefined): Uint8Array {
+    if (!e) return new Uint8Array(0)
+    const size = (TIFF_TYPE_SIZE[e.type] ?? 1) * e.count
+    return new Uint8Array(this.view.buffer, this.view.byteOffset + e.at, size)
+  }
+}

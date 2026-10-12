@@ -8,6 +8,7 @@
 import { SIGMOID_DEFAULTS, sigmoidCurve, type SigmoidCurve } from '../color/sigmoid'
 import { toneEqualizerFactors } from '../color/tone-equalizer'
 import type { AutoRecord } from './auto'
+import { DEFAULT_LENS, LEGACY_LENS, normalizeLens, type LensSettings } from '../lens/correction'
 import { DEFAULT_GEOMETRY, normalizeGeometry, type GeometrySettings } from './geometry'
 import { CURRENT_PROCESS, processParams, validProcess } from './process'
 
@@ -52,6 +53,11 @@ export interface DevelopSettings {
    * can re-run Auto on each photo rather than copying the numbers.
    */
   auto?: AutoRecord | null
+  /**
+   * Lens corrections (engine/lens/correction.ts). Edits saved before they existed have none and read as off, so
+   * they render as before; new edits get Auto.
+   */
+  lens: LensSettings
 }
 
 export const DEFAULT_SETTINGS: DevelopSettings = {
@@ -77,6 +83,7 @@ export const DEFAULT_SETTINGS: DevelopSettings = {
     highlightClip: 1,
     demosaic: 'rcd',
   },
+  lens: DEFAULT_LENS,
 }
 
 /** What kind of source a photo is: camera RAW, or an already-rendered (display-referred) RGB image. */
@@ -105,6 +112,7 @@ export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined
     ...s,
     whiteBalance: { ...d.whiteBalance, ...s?.whiteBalance },
     advanced: { ...d.advanced, ...s?.advanced },
+    lens: normalizeLens(s?.lens),
     version: 1,
     process: validProcess(s?.process),
     geometry: normalizeGeometry(s?.geometry),
@@ -131,6 +139,8 @@ export function toneBands(s: Pick<DevelopSettings, 'highlights' | 'shadows' | 'w
 
 /** Everything the display shader needs, derived from the settings. */
 export interface DisplayUniforms {
+  /** Lens corrections; the engine resolves them against the photo's metadata and size. */
+  lens: LensSettings
   exposureGain: number
   toneFactors: number[]
   toneEnabled: boolean
@@ -145,6 +155,7 @@ export interface DisplayUniforms {
 export function displayUniforms(s: DevelopSettings): DisplayUniforms {
   const bands = toneBands(s)
   return {
+    lens: s.lens ?? LEGACY_LENS,
     exposureGain: 2 ** (s.advanced.baseExposure + s.exposure),
     toneFactors: toneEqualizerFactors(bands),
     toneEnabled: bands.some((b) => Math.abs(b) > 1e-6),
