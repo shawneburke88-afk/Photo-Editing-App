@@ -17,7 +17,7 @@ See [PLAN.md](PLAN.md#phase-2--library-depth) for the whole phase and [USABILITY
 | Opening a parent folder | If the new folder contains folders already in the library, they become part of it (their photos, ratings and edits move with them), so no photo is listed twice. | LightBench |
 | Permissions | Open folder asks only to read. Writing sidecars asks for write permission once per folder, through the existing banner. | Part 3 |
 
-**Import** now only copies (from cards, with an optional backup). Its old "add in place" mode is replaced by Open folder.
+**Import** now only copies (from cards, with an optional backup). Its old "add in place" mode is replaced by Open folder. Every copy and backup copy is read back and checked against the card (see [Fixes from the LightCraft review](#fixes-from-the-lightcraft-review)).
 
 **Not yet:**
 - Photos deleted or moved outside LightBench stay in the library until removed (Lightroom marks them "missing"; planned).
@@ -62,12 +62,12 @@ See [PLAN.md](PLAN.md#phase-2--library-depth) for the whole phase and [USABILITY
 | Several photos | Applies to the selection. Keywords on only some photos show as dashed chips with a count (“Glarus 1/2”); click to add to all. × removes from all selected. | Lightroom |
 | Keyword list | Left panel, under Folders: a tree with photo counts. Click shows every photo with that keyword or one below it; the filter bar shows it with × to clear. Hover × deletes a keyword (and those below it) from the library and from the photos' sidecars, after a confirmation. | Lightroom keyword list; darktable tagging dictionary |
 | Search | The search box also matches keywords. | LightBench |
-| Sidecars | Written as `dc:subject` (every level, once each) and `lr:hierarchicalSubject` (full paths). Read from `lr:hierarchicalSubject`, else `dc:subject`; darktable's internal `darktable|…` tags are ignored. | darktable `src/common/exif.cc` (`_exif_xmp_read_data` writes, `_exif_import_tags` reads), `omit_tag_hierarchy` default off |
+| Sidecars | Written as `dc:subject` (every level, once each) and `lr:hierarchicalSubject` (full paths). Read from both: every `lr:hierarchicalSubject` path, plus each `dc:subject` keyword that isn't a level of any of those paths, as a top-level keyword (so a keyword another app wrote only to `dc:subject` isn't lost). darktable's internal `darktable|…` tags are ignored, and their levels (“darktable”, “format”…) aren't added from `dc:subject`. Until the LightCraft-review fixes, `dc:subject` was read only when there was no hierarchy. | darktable `src/common/exif.cc` (`_exif_xmp_read_data` writes, `_exif_import_tags` reads), `omit_tag_hierarchy` default off |
 | JPEGs | Keywords (and ratings, labels) embedded in a JPEG's own XMP are read when there is no sidecar. | Lightroom/Bridge write XMP into JPEGs |
 | Older libraries | Photos added before keywords existed keep their sidecar keywords: they are read in before LightBench first rewrites the sidecar, and **⟳** (Look for new photos) reads them for a whole folder. | LightBench (schema v5 `keywords_read`) |
 | Export | Keywords included by default as a flat list; **Include the keyword hierarchy** adds `lr:hierarchicalSubject`. | darktable export defaults: `DT_META_TAG` on, `DT_META_HIERARCHICAL_TAG` off (`src/common/metadata_export.c`) |
 
-**Not yet:** renaming or moving a keyword, synonyms, "don't export" (darktable's category/private flags), keyword sets, and IPTC-IIM keywords inside JPEGs.
+**Not yet:** renaming or moving a keyword, synonyms, "don't export" (darktable's category/private flags), keyword sets, and IPTC-IIM keywords inside JPEGs. If another app writes keyword synonyms into `dc:subject` (Lightroom can, as far as known; not checked with a Lightroom-written file), LightBench reads them as top-level keywords.
 
 **Verified** (headless Chromium, `e2e-keywords`): a Lightroom sidecar's `Places|USA|Philadelphia` and a JPEG's embedded “Embedded” keyword were read; `Places > Switzerland > Glarus, Lake` plus a suggestion picked from “phila” were added; the sidecar got `dc:subject` [Lake, Places, Switzerland, Glarus, USA, Philadelphia] and `lr:hierarchicalSubject` [Lake, Places|Switzerland|Glarus, Places|USA|Philadelphia]; multi-select showed “Glarus 1/2”; the “Places” filter showed 2 photos; search found the JPEG by keyword; deleting “Lake” removed it from the sidecar.
 
@@ -429,3 +429,226 @@ Lightroom sources: Adobe's help site (helpx.adobe.com) could not be opened from 
 - Interface size uses CSS `zoom`, so it relies on the browser's `zoom` behaving as Chromium 141's did; only Chromium was tested (not Firefox or Safari). The photo areas measure their own size, so other layouts that read sizes in a zoomed area (none known now) would need the same care.
 - Real non-US keyboards weren't used: the layouts were imitated with synthetic key events (`key` and `code` as Chrome reports them on those layouts). AltGr handling and macOS ⌘/Option were covered by unit tests only.
 - Screen readers weren't tested with the Settings window, the list or command search.
+
+## Fixes from the LightCraft review
+
+A review comparing LightBench with LightCraft (an MIT/Apache Rust editor) found six problems in parts already built. Each was confirmed in LightBench's code, and the owner approved the fixes (2026-10-12).
+
+| Fix | What changed | Files (`web/src/`) |
+|---|---|---|
+| 1. Rating precedence | When a sidecar is read, `xmp:Rating` now wins over `lightbench:Rating`, so stars changed in Lightroom or Bridge are no longer overridden. `lightbench:Rating` is used only when `xmp:Rating` is missing or −1 (rejected, which hides the stars). `lightbench:Flag` still keeps picks. A photo LightBench rejected that another app has since given stars (`xmp:Rating` 0 or more) is read as not rejected. Writing is unchanged. | `sidecar/xmp.ts` |
+| 2. Keywords | Both `lr:hierarchicalSubject` and `dc:subject` are read (see the Part 3 table). | `sidecar/xmp.ts` (`readKeywords`) |
+| 3. Newer catalogs | A catalog whose `user_version` is above this version's schema (10) is refused before anything is written. The Library shows “This library was saved by a newer version of LightBench. Reload to get the latest version. Nothing in the library was changed.” with a **Reload** button. Reload uses a waiting update if there is one (Part 9), and LightBench checks for one straight away. Before, it opened such a catalog as if it were its own. | `catalog/catalog.worker.ts`, `catalog/errors.ts`, `catalog/OpenError.tsx`, `pwa/register.ts`, `library/LibraryView.tsx` (one line) |
+| 4. Verified card copies | Import copies each file in 8 MiB pieces, hashing each piece (SHA-256 with `crypto.subtle`) as it is read from the card. It then reads the copy back and compares. The backup copy is checked against the same digest. A file's digest is the SHA-256 of its pieces' digests, so memory stays at about one piece. On a mismatch, the bad copy is deleted, the photo is listed under “Show problems” (“The copy in … didn't match the original, so it was deleted. The original wasn't changed…”), and it isn't added to the library. The card is only ever read. A file with the same name at the destination counts as “already copied” only if its content matches; otherwise the copy gets the existing numbered name (`-1`). | `import/copy.ts` (new), `import/run.ts` |
+| 5. Storage notices | LightBench asks for persistent storage when a folder is opened or imported. If the browser doesn't grant it, a notice says the library may be cleared when disk space runs low, and suggests installing the app or allowing storage. **OK** hides the notice in this browser for 30 days. When a catalog request fails because storage failed, a notice says “LightBench couldn't save a change to its library…”. This covers SQLite's read-only, I/O error, corrupt, disk full, can't-open and not-a-database errors, and the browser's quota. Sidecar failures were already shown, but a folder the browser had forgotten was skipped silently: that is now reported. Messages name the file and folder, and repeated failures update one notice (“and 2 more”). After **OK**, failures within the next minute don't bring a notice back. | `catalog/storage.ts` (new), `catalog/client.ts`, `catalog/catalog.worker.ts`, `lib/rpc.ts` (keeps the error's name), `sidecar/sync.ts`, `sidecar/SidecarBanner.tsx` (shows the new notices too, so `App.tsx` is unchanged) |
+| 6. Tint direction | Test only. It goes through the conversion used for rendering (`develop/source.ts` `multipliers` → `temperatureToMultipliers`). Moving Tint towards magenta lowers green relative to red and blue, and moving it towards green raises it, for a D700 RAW and an sRGB JPEG. The direction was already right. | `engine/develop/settings.test.ts` |
+
+**Verified:**
+- **Checks:** `npx vitest run` (202 tests pass), `npx tsc -b`, `npx oxlint` (only the two existing warnings) and `npm run build`.
+- **New unit tests:**
+  - `xmp.test.ts`:
+    - every rating and flag LightBench writes round-trips;
+    - stars changed elsewhere win, and a pick survives a star change made elsewhere;
+    - a LightBench rejection keeps its stars, and a rejection made elsewhere keeps the LightBench stars;
+    - stars given elsewhere un-reject the photo;
+    - fallback without `xmp:Rating`, and clamping;
+    - a sidecar that was read is written back without a rewrite;
+    - Lightroom, darktable, mixed and one-list keyword sidecars.
+  - `copy.test.ts`:
+    - the digest doesn't depend on the piece size;
+    - a copy corrupted on write is deleted and reported;
+    - a backup that differs from the first reading is reported;
+    - an identical file with the same name counts as copied;
+    - a different file of the same size keeps its name, and the copy is numbered.
+  - `storage.test.ts`: which errors count as storage failures, and the notices' show, hide and quiet rules.
+  - `settings.test.ts`: the Tint direction.
+- **In the browser** (headless Chromium with software WebGPU; scratch scripts `e2e-fixes`, 27 of 27 checks passed, and `e2e-quota`):
+  - **Ratings:**
+    - A.NEF, rated 2 in LightBench, wrote `xmp:Rating="2" lightbench:Rating="2"`.
+    - B.NEF, given 3 stars and rejected, wrote `xmp:Rating="-1" lightbench:Rating="3" lightbench:Flag="-1"`.
+    - A.xmp's `xmp:Rating` was then changed to 5 (as Lightroom would). After removing the photos and opening the folder again, A had 5 stars and B had 3 stars and was rejected.
+  - **Keywords:**
+    - A Lightroom-style C.xmp had the hierarchy `Places|USA|Philadelphia`, and a flat list with its levels plus `Sunset` and `Dog`. It gave Philadelphia (under Places › USA), Sunset and Dog.
+    - A darktable-style `B.NEF.xmp` had `darktable|format|nef`, `darktable|changed`, `Trips|Glarus` and `Lake`, with those levels also in the flat list. It gave Glarus (under Trips) and Lake, with no “darktable”, “format” or “nef”.
+    - A flat-only D.xmp gave both its keywords.
+  - **Newer catalog:**
+    - `user_version` was set to 99 through SQLite, from a page of the same origin.
+    - Reloading showed the message and the Reload button.
+    - Afterwards `user_version` was still 99, the rows were the same, and every file in the catalog's storage folder was byte-identical.
+    - With `user_version` set back to 10, the library opened again.
+  - **Card import** (DSC_0001.NEF from a D700, DSC_0002.NEF from a D80 and DSC_0003.JPG, with a backup folder):
+    - Writes of DSC_0003.JPG into the destination were corrupted (one bit flipped). The summary showed “2 imported · 1 failed”, with the message.
+    - The bad copy was gone, DSC_0003 wasn't in the library, and the card's files were byte-identical.
+    - A different file with DSC_0002's name and size was already in `2010/2010-07-20`. It was left alone, and the photo was copied as `DSC_0002-1.NEF` (identical to the card's file).
+    - Importing again without corruption gave “1 imported · 2 were already in the library”, with no extra numbered copies.
+  - **Time cost of checking** (medians of 3 runs, in the browser's private storage on this machine's disk):
+
+    | Photo | Plain copy | Checked copy | Extra |
+    |---|---|---|---|
+    | D700 NEF, 15.1 MB | 57–124 ms | 221–308 ms | +164–184 ms |
+    | D80 NEF, 8.6 MB | 39–66 ms | 122–185 ms | +83–119 ms |
+
+    Hashing alone runs at about 120–200 MB/s here, so checking adds roughly 1–1.4 s per 100 MB to the copy. Copying from a real card is usually slower than this, so checking is a smaller share of the total. Not measured on the owner's PC.
+  - **Storage notices:**
+    - With `navigator.storage.persist()` stubbed to resolve false, the notice appeared after Open folder (not before), appeared only once, and stayed hidden after OK. With it resolving true, the notice never appeared.
+    - With `.xmp` writes made to fail, rating D.JPG showed “Sidecar not saved: D.xmp: …”. A second failure (C.JPG) updated the same notice to “(and 1 more)”, and after OK another failure within the minute didn't bring it back.
+    - In `e2e-quota`, shrinking the site's quota through the DevTools protocol made a real sidecar write fail with the browser's quota message. It was shown the same way.
+- **Screenshots** of the storage notice, the sidecar notice, the newer-catalog screen and the import summary were checked by eye.
+
+**Limitations:**
+- A catalog write failing because storage failed was **not seen end to end**. Shrinking the quota made sidecar writes fail, but not the catalog's, because SQLite's files in the browser's storage didn't need to grow. Only the unit tests (error classification, notice) and the type-checked worker → page plumbing cover it.
+- When a sidecar changes outside LightBench, photos already in the library still don't re-read it, because ⟳ only adds new photos. In the test, A kept 2 stars after ⟳ until it was removed and added again. Catalog v4's `sidecar_written_at` is there for this but isn't used yet. (Since fixed: see [Sidecars changed by other apps](#sidecars-changed-by-other-apps).)
+- The check reads the copy back through the browser, which may be served from the operating system's cache rather than the disk itself. So it catches a bad write path (browser, cable or card reader errors that change bytes), but not necessarily a disk that loses data later. Each file is read from the card once, so a reader that returns the same wrong bytes every time can't be detected.
+- The Import window's “Already imported” badge still compares only name and size, because reading every file to mark it would be slow. Importing then checks the content.
+- Not checked here: whether installing the app makes Chrome or Edge grant persistent storage (Chrome decides by its own rules). The notice only says it may.
+- Found while writing the Tint test and **not changed**: on an sRGB JPEG at its as-shot 6500 K, Tint +150 asks for a white outside sRGB, and the red multiplier comes out negative (about −7.9; +100 gives about 9.5). For RAW files (D700) the multipliers stay positive across the whole range.
+
+## Library backup and restore
+
+**What it does.** Saves the whole library (not the photos) to one file and puts it back, in this browser or another. The idea is LightCraft's web build's (one checked ZIP, restored into a new place before switching; `docs/research/lightcraft/CATALOG_LIBRARY_AI_APPS.md`); the code is LightBench's own. Owner's choices (2026-10-12):
+- One action, **Back up library…**, at the bottom of the Library's left panel next to **Restore…** (not in the Settings window). An empty library also offers **Restore library…**.
+- The backup holds the catalog, the thumbnails, LightBench's settings and a manifest; **not** the photos or their sidecars, which stay in the user's folders. The dialogs say so.
+- The file is saved with the browser's save dialog where there is one (Chrome, Edge), otherwise downloaded. It is read back and checked after writing, and the result is reported plainly.
+- Restoring checks the backup first, shows what it holds, says clearly that it **replaces** the library in this browser, offers to back up the current library first, and switches only after everything has been written and checked. All local: nothing is sent anywhere.
+
+| Behaviour | Detail | Source |
+|---|---|---|
+| What is in the file | `catalog.sqlite3` (deflated), `settings.json`, `thumbnails/<photo id>.jpg` (stored: JPEGs don't shrink), `README.txt` (what the file is and isn't) and `manifest.json`: format `lightbench-library-backup` version 1, app version, catalog schema version, date (UTC), counts (photos, thumbnails, folders, collections, keywords, edited photos, presets, settings) and every file's size and SHA-256. Only thumbnails of photos in the catalog are included. File name `LightBench backup YYYY-MM-DD HHMM.zip`. | LightBench's format; LightCraft's idea |
+| Catalog copy | `sqlite3.capi.sqlite3_js_db_export` (a wrapper of `sqlite3_serialize`, https://sqlite.org/wasm/doc/trunk/api-c-style.md#sqlite3_js_db_export), checked in `@sqlite.org/sqlite-wasm` 3.53.4-build2's `index.d.mts` and `index.mjs`. It runs in the catalog worker, which handles one request at a time and commits every change within its request, so the copy is consistent. | sqlite-wasm |
+| Settings | localStorage keys starting `lightbench.`, `library:` or `cull:` (the prefixes LightBench's keys use; this includes the Settings window's `lightbench.settings`). Browser-only notices (`storage:`) are left out. Restoring replaces these keys and removes ones the backup doesn't have. | LightBench's choice |
+| ZIP writing | `backup/zip.ts`: stored and deflated entries (deflate by the browser's `CompressionStream('deflate-raw')`), UTF-8 names, CRC-32, and Zip64 records whenever a size, an offset or the number of entries needs them. Written in 4 MB pieces straight to the file; only the central directory (about 80 bytes per entry) is kept in memory. No library was added: fflate 0.8.3 (MIT) was checked and its writer has no Zip64 (only the classic end record, `wzf` in `esm/browser.js`), so it stops at 65,535 entries and 4 GB, which a library of 100,000 photos passes. | PKWARE APPNOTE.TXT 6.3.10 (4.3.14, 4.3.15, 4.4.7, 4.5.3) |
+| Where it is saved | Chrome/Edge: `showSaveFilePicker` (suggested name, starts in Documents) and a writable stream; a failure aborts the write. Elsewhere: written to a temporary file in the browser's private storage, checked, then downloaded; the temporary copy is removed after two minutes or the next time the library opens. If private storage can't be written, the file is built in memory. | File System Access API |
+| Check after saving | The saved file is read back from disk: the ZIP's central directory, `manifest.json` (CRC-32), the exact file list and sizes, every file's SHA-256, the catalog's SQLite header and version, and the catalog opened in memory (`sqlite3_deserialize`, read-only) with SQLite's `PRAGMA integrity_check` and its photo count. Then “Backup saved and checked: name, size, photos, thumbnails, time” or “Backup failed: …”. | LightCraft's idea; SQLite |
+| Checking a backup to restore | The same checks, before anything changes. Refused with a plain message: not a ZIP or cut short (“not a LightBench library backup”), any file that doesn't match its checksum, missing or extra files (“This backup is damaged (…). Nothing in the library was changed.”), and a backup from a newer format or catalog schema (“This backup was made by a newer version of LightBench. Reload to get the latest version, then try again. Nothing in the library was changed.”, the same rule as the newer-catalog guard in “Fixes from the LightCraft review”, item 3). Older schemas are accepted and upgraded when the catalog opens. | LightBench |
+| Confirmation | Date, LightBench version, photos, folders, thumbnails, edited photos, collections, keywords, presets and settings; “The backup was checked”; a warning that restoring **replaces the library in this browser** and loses changes made since the backup, that photos and sidecars aren't changed, and that folders need Reconnect afterwards. Buttons: Cancel, Choose another…, **Back up current library first…**, **Replace library**. Back up and Restore wait while folders are being read. | Owner's choice |
+| Restoring safely | Two library “slots” in the browser's storage (`catalog/slot.ts`): slot a is today's catalog and `thumbnails` folder, slot b `/lightbench-catalog-b.sqlite3` and `thumbnails-b`; `lightbench-library-slot.json` names the one in use (none = a, so existing libraries need no change). The backup goes into the unused slot: the catalog with the SQLite pool's `importDb`, then opened there for the integrity check; the thumbnails written, and every one read back and hashed. Only then is the slot file replaced (the browser replaces it when the write closes). Any failure before that removes what was written and leaves the library as it was. The page then reloads; the old slot is removed once the restored catalog has opened. | LightCraft's idea (new folder, switch last) |
+| Folders after a restore | Folder access lives in the browser, not the catalog, under the catalog's folder ids. A folder record is kept only when the backup has a folder with the same id and name (restoring in the same browser); others are forgotten, as are import presets' folders. **Reconnect** now asks the user to choose the folder when the browser has no record of it (a folder with a different name asks for a confirmation first). | LightBench |
+| Keys | Library shortcuts pause while the dialog is open. | Part 12 |
+
+**Verified** (headless Chromium via Playwright with software WebGPU, `npx vite` dev server, scratch scripts `e2e-backup`, `e2e-scale` and `check_backup.py`; the folder picker and the save dialog were replaced by stand-ins returning folders and files in the browser's private storage):
+- **Round trip, 29 of 29 checks passed** (run again after rebasing on `main` with the fixes: same results). A library of A.NEF (D700), B.NEF (D80) and C.JPG with A 3 stars, B 5 stars, keyword “Places > Switzerland > Glarus” on B, collection “Portfolio” (A, B), an edit on A (Saturation −30), a preset “Muted” and two settings. Backup with the save dialog: “Backup saved and checked: “B1.zip”, 0.1 MB, 3 photos and 3 thumbnails, in 0.1 s” (89,978 bytes: catalog 245,760 → 3,307 bytes deflated, thumbnails 84,234 bytes). The downloaded backup (no save dialog) was the same size and said “It is in your downloads.” Outside the browser, `unzip -t` found no errors, and Python's `zipfile` and `sqlite3` read both files: every SHA-256 matched, `integrity_check` ok, user_version 10, tables and settings as in the library.
+- **Refusals, library untouched:** after rating C 2 stars, a backup with one flipped byte was refused (“This backup is damaged (thumbnails/1.jpg doesn't match its checksum). Nothing in the library was changed.”, no Replace button), as were the backup with its manifest's schema version set to 11 (“…made by a newer version of LightBench…”) and a file that isn't a ZIP. C still had 2 stars.
+- **Failure while restoring:** a simulated “disk full” on the second thumbnail written into the new slot gave “Restore failed: Simulated: disk full Nothing in the library was changed.”; no `thumbnails-b` and no slot file were left, and after a reload the library was unchanged (C still 2 stars, Portfolio still 2).
+- **Restore in the same browser:** Replace library reloaded the page within about 1 s with the backup's ratings (C back to none); the folder stayed connected (no Reconnect needed); the slot file named slot b, `thumbnails-b` held 3 files, and the old `thumbnails` folder and the temporary download copy were gone.
+- **Restore into a wiped browser** (catalog, thumbnails, localStorage and the folder store deleted): the empty library offered **Restore library…**; the downloaded backup was checked in 0.16 s and showed “3 photos in 1 folder, 3 thumbnails … 1 edited photo, 1 collection, 1 keyword, 1 preset, 2 settings”; restoring and reloading took 0.9 s. Afterwards: 3 photos, the same ratings, keyword tree, collections (Quick Collection 0, Portfolio 2) and the two settings; all 3 thumbnails shown without folder access; **Reconnect “Photos”** shown, and clicking it (choosing the folder) connected it. A.NEF opened in Develop with Saturation −30, and “Muted” was under My presets. A new backup of the restored library matched the first: identical catalog rows (Python `iterdump`), thumbnail checksums, settings and counts.
+- **Scale** (run before that rebase; 20,000 synthetic photos with 34,586-byte JPEG thumbnails; memory is the whole test browser's resident size, sampled every 0.2 s): the backup, 698 MB (697,935,594 bytes, 20,004 entries; catalog 4.4 MB → 1.1 MB), was written and checked in 38.6 s, with browser memory going from 747 MB to at most 1,026 MB. `unzip -t` and Python found no errors. Restore into a wiped browser: check 7.7 s (596 → 696 MB at most); write, read back, switch and reload 103 s (639 → 718 MB at most); 20,000 photos and their thumbnails shown afterwards.
+- **ZIP format:** files from the writer (normal, with Zip64 records forced, and 70,000 entries, which needs the Zip64 end record) passed `unzip -t`, `zipinfo` and Python's `zipfile.testzip`. A ZIP written by Python (the newer-schema test file) was read by LightBench.
+- **Unit tests** (`npx vitest run`, 253 passing, 23 of them new): `backup/zip.test.ts` (CRC-32 check value; round trips of stored, deflated, empty and UTF-8-named entries with and without Zip64 records; 300 entries read through a 1,000-byte window in file order; 70,000 entries with the Zip64 end record; duplicate names; refusing a non-ZIP, a cut-short file, a damaged local header and damaged deflate data) and `backup/manifest.test.ts` (SHA-256 test vector; manifest accepted, older schema accepted, newer schema or format refused, damaged file lists refused; missing, extra and wrong-size files; one flipped bit; the SQLite header; a whole backup archive round trip with a flipped byte caught; settings picked and replaced).
+- `npx tsc -b`, `npx oxlint` (only the two existing warnings), `npm run build`. Screenshots of both dialogs, the confirmation, a refusal and the restored library were checked by eye; the first showed “Back up library…” wrapping in the left panel, which was fixed.
+
+**Limitations:**
+- Not tested with the real save dialog or in a real installed app: headless Chromium was used with stand-ins (the download path used the browser's real download). Not tested in Firefox or Safari.
+- Not tested with a backup larger than 4 GB or an entry over 4 GB (the Zip64 records were forced and checked on small files; the 70,000-entry file needed them for real).
+- The catalog is copied and checked in memory (in the worker, briefly about twice its size), so a catalog of several hundred MB needs that much free memory. Thumbnails are streamed.
+- Restoring writes every thumbnail as its own file and reads it back: about 100 s for 20,000 here.
+- Restoring an older catalog schema relies on the normal upgrade when the catalog opens; no backup made by an older LightBench was restored in the tests (there is only one backup format so far).
+- A restored catalog doesn't read the sidecars: if photos were rated or edited after the backup was made, their sidecars hold the newer values, and LightBench overwrites them the next time it writes that photo's sidecar.
+- Folder access can't be backed up: after restoring in another browser every folder needs Reconnect, and import presets' folders must be chosen again.
+- Back up and Restore aren't in command search or the shortcut list (Part 12). The release notes are unchanged (no version bump).
+
+## Sidecars changed by other apps
+
+**What it does.** When Lightroom, Bridge, darktable or another copy of LightBench changes the `.xmp` sidecar of a photo that is already in the library, LightBench notices and asks what to do. It no longer overwrites such changes without asking. Before, ⟳ and Open folder only added new photos, and the next sidecar write could replace another app's stars or keywords. The owner approved this on 2026-10-12, with these choices:
+- **Detect** when a folder is opened or looked at again (⟳), and when a photo is shown in the Loupe or Develop.
+- **Check before every write.**
+- **Offer, don't surprise.** A plain notice: “1 photo was changed by another app … **Read changes** / **Ignore** / **Show photos**”. There is no setting; LightBench always asks.
+- LightBench edits and history are never lost, and unsaved Develop changes are kept.
+
+| Behaviour | Detail | Source |
+|---|---|---|
+| What is remembered | After each read or write of a sidecar, the catalog stores the file's date (`lastModified`, ms), its size, and the fields LightBench compares, as they were in the file then. These fields are stars, pick/reject, label, keywords, the nine metadata fields and LightBench's develop settings. | LightBench. darktable compares only dates: its optional “look for updated XMP files on startup” (`run_crawler_on_start`, off by default) compares each XMP file's modification time with the time it last wrote it (`src/control/crawler.c`, `write_timestamp`). It then offers to sync XMP → database or database → XMP. |
+| Cheap check | A sidecar whose date and size are unchanged isn't read. Only a changed one is read and compared field by field. Changes to fields LightBench doesn't use don't count, for example Lightroom's `crs:` develop settings or `xmp:MetadataDate`. Those fields are kept anyway when LightBench rewrites the file. | LightBench |
+| When it is “another app's change” | The file's fields differ from what LightBench last read or wrote, and also from LightBench's current values. If the other app made the same change LightBench has, nothing is asked. | LightBench |
+| When it checks | **⟳ / Open folder:** the scan that finds new photos also lists the `.xmp` files. LightBench then asks the browser for each one's date and size. **Loupe and Develop:** the photo shown (one file). **Before writing:** every sidecar write. Nothing runs at launch. | Owner's list |
+| Pending writes | If another app changed the file since LightBench's last write, the write is held back and the notice appears. The other app's change stays in the file. LightBench's own change stays in the library and is written after the user answers. | Owner |
+| **Read changes** | Takes only the fields the other app changed since LightBench last read or wrote the file. LightBench keeps its own changes to other fields, such as stars set in LightBench but not yet written. Keywords are merged as sets: added ones are added, removed ones removed, and keywords LightBench added meanwhile stay. A field changed in both takes the other app's value, because the user chose to read its changes. The file is then rewritten if LightBench has changes of its own to add. | LightBench (a three-way merge) |
+| Develop settings | Only another LightBench writes `lightbench:Develop`. A changed value is added to the photo's history as a new step, “Read from sidecar”, through the same background job as Paste, which also refreshes the thumbnail. The earlier edit can be undone back to. If Develop has unsaved changes on that photo, Develop keeps its own (the existing Paste rule). An app that drops LightBench's namespace never removes LightBench's edits or picks. | LightBench |
+| Rejected / picked | A rejection is always written as `xmp:Rating` −1. So a file without −1 and without `lightbench:Flag` isn't rejected, and a pick stays as it was. This is the same rule `readXmp` uses. | As fix 1 of the LightCraft review |
+| **Ignore** | Keeps LightBench's values and remembers the file as it is now, so the notice doesn't come back for it. The notice says that LightBench's values replace the other app's in the file the next time LightBench saves the photo. A write held back by the change is made straight away. | Owner |
+| **Show photos** | The grid shows just those photos (“Showing the photo whose .xmp file another app changed.”). **Back** returns to the folder or collection. | LightBench |
+| After a reload | Photos waiting for an answer are marked in the catalog, so the notice comes back after a reload. | LightBench |
+| Older libraries | Photos added before this version have no record. Their sidecar counts as changed by another app only if its date is more than 2 s after LightBench's last write of it (`sidecar_written_at`), or after the photo was added. Otherwise it is read once and remembered. | The 2 s allowance is darktable's `MAX_TIME_SKEW` (`src/control/crawler.c`) |
+| Storage | Catalog schema **v11**, added without rebuilding any table: `photos.sidecar_modified`, `sidecar_size`, `sidecar_fields` (JSON) and `sidecar_external` (0/1). A version-10 LightBench refuses a v11 catalog, as the newer-catalog fix intends. | — |
+| Lightroom's equivalent | Lightroom Classic shows a “metadata was changed externally” badge, and its dialog offers **Import Settings from Disk** or **Overwrite Settings**. LightBench's version is the notice above. **Not verified:** this wording comes from web-search summaries of Adobe's help page (“Advanced metadata actions”) and Adobe community threads. The pages themselves couldn't be opened from the build environment. | Adobe (unverified) |
+
+**Files (`web/src/`):**
+- New: `sidecar/changes.ts` (comparisons and merge, unit-tested), `sidecar/external.ts` (finding and judging a sidecar, and the list waiting for an answer), `sidecar/watch.ts` (folder and photo checks, Read changes, Ignore).
+- `sidecar/sync.ts`: checks before writing, and records each write.
+- `sidecar/SidecarBanner.tsx`: the notice, so `App.tsx` is unchanged.
+- `catalog/catalog.worker.ts`: schema v11, and the `sidecarStates`, `sidecarCompare`, `recordSidecar`, `setSidecarExternal` and `externalSidecars` requests.
+- `catalog/types.ts`: the `ids` query.
+- `import/scan.ts`: lists `.xmp` files while scanning. `import/run.ts`: `findSidecar` also returns the date and size.
+- `library/indexer.ts`: records new photos' sidecars and checks the folder.
+- One-line checks in `library/Loupe.tsx` and `develop/DevelopView.tsx`.
+- `library/LibraryView.tsx`: Show photos and refreshing.
+- `sidecar/xmp.ts`: `isValidXmp`.
+
+**Verified:**
+- **Checks:** `npx vitest run` (226 tests pass, 24 of them new), `npx tsc -b`, `npx oxlint` (only the two existing warnings) and `npm run build`.
+- **New unit tests:**
+  - `sidecar/changes.test.ts` (19):
+    - a file is read only when its date or size changed;
+    - LightBench's own sidecar reads back as its own values;
+    - a Lightroom-style change (5 stars, a keyword, a title, a `crs:` value) is another app's change, naming the fields;
+    - `crs:` and `MetadataDate` changes alone are not;
+    - the same change made in both places is not;
+    - fields changed in both places are named as conflicts;
+    - older photos are judged by `sidecar_written_at` or the add time, with a 2 s margin;
+    - a file without LightBench's namespace doesn't remove picks or edits;
+    - stars given elsewhere un-reject;
+    - merge: takes the other app's fields, keeps LightBench's other changes, merges keywords as sets (with case), clears a cleared field, and takes develop settings from another LightBench;
+    - stored fields round-trip, and a damaged record is ignored.
+  - `catalog/catalog.worker.test.ts` (5), on SQLite in Node:
+    - a new catalog is created at v11;
+    - a v10 catalog with a photo is upgraded, keeping it, with no record and `sidecar_external` 0;
+    - a v12 catalog is refused and left at 12;
+    - opening an up-to-date catalog changes nothing;
+    - `sidecarStates` leaves out a JPEG whose RAW twin is there, and virtual copies;
+    - records, marks and the `ids` query work.
+- **In the browser** (headless Chromium with software WebGPU; scratch script `e2e-watch`, 26 of 26 checks passed). The folder `Photos` held A.NEF (D700), B.NEF (D80) and C.JPG:
+  - **Writing:** A was given 2 stars and the keyword `Places|USA|Philadelphia`, B 3 stars and C 1 star; all three sidecars were written.
+  - **⟳ with nothing changed:** no notice, and 3 sidecar dates looked at, 0 files read.
+  - **Changes in “Lightroom”:** A.xmp was rewritten with `xmp:Rating` 5, the keyword “Sunset” in both keyword lists, the title “Fountain” and `crs:Exposure2012`. B.xmp only had a `crs:` value changed.
+    - ⟳ read the 2 changed files and showed “1 photo was changed by another app…”, for A only.
+    - A still had 2 stars.
+    - **Show photos** showed only A; **Back** returned to the folder.
+  - **Read changes:** A had 5 stars, Philadelphia and Sunset, and the title Fountain. A.xmp kept the `crs:` value. A second ⟳ found nothing.
+  - **Ignore:** A.xmp was changed again (1 star, the keyword “Ignored”, the title “Other title”) and ⟳ showed the notice. After Ignore:
+    - A kept 5 stars, and the file still said 1 star;
+    - ⟳ didn't report it again;
+    - pressing 4 rewrote the file with 4 stars and the title Fountain, without “Ignored”, and kept the `crs:` value.
+  - **Pending write:** B was given 5 stars, and before LightBench's write (~0.8 s later) B.xmp was changed to add the keyword “Pending” and the title “Pending title”. 3 s later:
+    - the file still had the other app's change and 3 stars;
+    - the notice had appeared without ⟳.
+    - After Read changes, B had LightBench's 5 stars and the keyword and title, and B.xmp had all of them.
+  - **Loupe:** C.xmp was changed to 3 stars. Opening C in the Loupe showed the notice, and Read changes gave C 3 stars.
+  - **Develop with unsaved changes:** A was open in Develop and Exposure was moved to +0.25. Before Develop's save, A.xmp was changed (2 stars, the keyword “FromDevelop”).
+    - Develop's save didn't overwrite the file, and the notice appeared.
+    - After Read changes, A.xmp had 2 stars, FromDevelop and `lightbench:Develop` with exposure 0.25.
+    - Develop still showed +0.25, with the history “Exposure | Import”.
+  - **Develop settings from another LightBench:** A.xmp's `lightbench:Develop` was set to exposure −1.25. Opening A in Develop showed the notice. Read changes moved Exposure to −1.25 with the history “Read from sidecar | Exposure | Import”.
+  - **Reload:** a notice not yet answered came back in a new tab of the same profile.
+  - **Timing:** in the browser's private storage on this machine's disk; not measured on the owner's PC or on a real folder.
+
+    | Run | Time |
+    |---|---|
+    | ⟳ on `Photos` (3 photos, 5 runs) | 150–222 ms in all. The sidecar check was 1.4–7.1 ms of that. |
+    | 1,000 photos with sidecars, unchanged (2 runs) | 22–45 ms listing the folder, 72–84 ms checking. No file read. |
+    | The same, 50 of them changed | 630–745 ms; all 50 read and reported. |
+    | The same, first check with no records (as after the upgrade) | 2.6–3.2 s, reading all 1,000 once. |
+
+    So a ⟳ costs roughly 0.1 s per 1,000 unchanged photos here, plus about 13 ms per changed sidecar. The first ⟳ after upgrading reads every sidecar of the folder once, about 3 s per 1,000 here.
+- Screenshots of the notice, Show photos, the Develop notice and the Develop history after reading were checked by eye.
+
+**Limitations:**
+- No file written by Lightroom, Bridge or darktable was used. The test edits imitate them: `xmp:Rating`, both keyword lists, `dc:title` and a `crs:` value.
+- Real folders (File System Access on Windows, network drives) weren't measured. There, asking for a file's date may be slower than in the browser's private storage.
+- Only the sidecar LightBench reads is watched: `name.xmp`, or darktable's `name.ext.xmp` while there is no `name.xmp`. darktable keeps writing its own `name.ext.xmp`, so its later changes aren't seen once LightBench has written `name.xmp`.
+- A JPEG whose RAW twin is in the library isn't checked: the RAW owns the shared sidecar, and changes are read into the RAW only.
+- Collections, stacks and virtual copies stored in `lightbench:` aren't compared or read back. LightBench's own values are written.
+- A sidecar deleted by another app isn't reported. LightBench writes a new one next time.
+- Browsers can't lock files. A change made in the moment between LightBench's check and its write could still be overwritten.
+- For photos from before this version, the 2 s date rule assumes the computer's clock and the drive's file dates agree. That may not hold on network drives.
+- When both LightBench and the other app changed the same field, Read changes takes the other app's value. The notice doesn't say which fields those were.
+- Reading develop settings while Develop has unsaved changes on that photo relies on the existing Paste rule. This wasn't seen end to end: in the test, Develop's save had already happened when Read changes was clicked.
+- Ignore remembers which photos had a write held back only until the page is reloaded. After a reload, their LightBench values are written at the next change.

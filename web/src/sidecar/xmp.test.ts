@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { readXmp, sidecarName, writeXmp, type SidecarData } from './xmp'
+import { readKeywords, readXmp, sidecarName, writeXmp, type SidecarData } from './xmp'
 
 const LIGHTROOM = `<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 7.0-c000 1.000000, 0000/00/00-00:00:00        ">
  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
@@ -64,6 +64,49 @@ describe('XMP sidecars', () => {
     expect(readXmp(LIGHTROOM.replace('xmp:Rating="4"', 'xmp:Rating="-1"'))).toMatchObject({ flag: -1, rating: 0 })
   })
 
+  describe('rating precedence: xmp:Rating (changed by other apps) wins over lightbench:Rating', () => {
+    const lb = (rating: number, flag: number) => writeXmp(null, data({ rating, flag }))!
+    const setXmpRating = (text: string, v: string | null) =>
+      v === null ? text.replace(/ ?xmp:Rating="[^"]*"/, '') : text.replace(/xmp:Rating="[^"]*"/, `xmp:Rating="${v}"`)
+
+    it('round-trips every rating and flag LightBench writes', () => {
+      for (const flag of [-1, 0, 1]) for (let rating = 0; rating <= 5; rating++) expect(readXmp(lb(rating, flag))).toMatchObject({ rating, flag })
+    })
+    it('takes stars changed in Lightroom or Bridge', () => {
+      expect(readXmp(setXmpRating(lb(2, 0), '5'))).toMatchObject({ rating: 5, flag: 0 })
+      expect(readXmp(setXmpRating(lb(4, 0), '0'))).toMatchObject({ rating: 0, flag: 0 })
+    })
+    it('keeps a pick (which xmp:Rating can’t hold) when the stars change elsewhere', () => {
+      expect(readXmp(setXmpRating(lb(2, 1), '3'))).toMatchObject({ rating: 3, flag: 1 })
+    })
+    it('recovers the stars of a photo rejected in LightBench', () => {
+      const text = lb(4, -1)
+      expect(text).toContain('xmp:Rating="-1"')
+      expect(readXmp(text)).toMatchObject({ rating: 4, flag: -1 })
+    })
+    it('rejects a photo rejected in another app, keeping its LightBench stars', () => {
+      expect(readXmp(setXmpRating(lb(3, 0), '-1'))).toMatchObject({ rating: 3, flag: -1 })
+      expect(readXmp(setXmpRating(lb(3, 1), '-1'))).toMatchObject({ rating: 3, flag: -1 })
+    })
+    it('un-rejects a photo given stars in another app', () => {
+      expect(readXmp(setXmpRating(lb(4, -1), '2'))).toMatchObject({ rating: 2, flag: 0 })
+    })
+    it('falls back to lightbench:Rating and Flag when xmp:Rating is absent', () => {
+      expect(readXmp(setXmpRating(lb(3, 1), null))).toMatchObject({ rating: 3, flag: 1 })
+      expect(readXmp(setXmpRating(lb(3, -1), null))).toMatchObject({ rating: 3, flag: -1 })
+    })
+    it('clamps out-of-range values', () => {
+      expect(readXmp(setXmpRating(lb(1, 0), '7')).rating).toBe(5)
+      expect(readXmp(setXmpRating(lb(1, 0), '-5'))).toMatchObject({ rating: 1, flag: -1 })
+    })
+    it('writes the reading back unchanged (no rewrite)', () => {
+      const changed = setXmpRating(lb(2, 1), '5')
+      const r = readXmp(changed)
+      expect(writeXmp(writeXmp(changed, data({ rating: r.rating!, flag: r.flag! }))!, data({ rating: r.rating!, flag: r.flag! }))).toBeNull()
+      expect(writeXmp(changed, data({ rating: r.rating!, flag: r.flag! }))!).toContain('lightbench:Rating="5"')
+    })
+  })
+
   it('returns null when nothing changed, so the file is not rewritten', () => {
     const first = writeXmp(LIGHTROOM, data({ rating: 2 }))!
     expect(writeXmp(first, data({ rating: 2 }))).toBeNull()
@@ -92,10 +135,42 @@ describe('XMP sidecars', () => {
     expect(readXmp(text).keywords).toEqual(['Places|Canada|Ottawa', 'Places|Canada', 'Family'])
   })
 
-  it('prefers the hierarchy, ignores darktable internal tags, and falls back to dc:subject', () => {
+  it('reads the hierarchy and the flat list, ignoring darktable internal tags', () => {
     const dt = LIGHTROOM.replace('</dc:subject>', `</dc:subject><lr:hierarchicalSubject xmlns:lr="http://ns.adobe.com/lightroom/1.0/"><rdf:Bag>
       <rdf:li>Trips|Glarus</rdf:li><rdf:li>darktable|format|nef</rdf:li><rdf:li> Lake | </rdf:li></rdf:Bag></lr:hierarchicalSubject>`)
     expect(readXmp(dt).keywords).toEqual(['Trips|Glarus', 'Lake'])
+  })
+
+  describe('keywords from both lr:hierarchicalSubject and dc:subject', () => {
+    const sidecar = (flat: string[] | null, hier: string[] | null) => `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+      <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:lr="http://ns.adobe.com/lightroom/1.0/">
+      ${flat ? `<dc:subject><rdf:Bag>${flat.map((k) => `<rdf:li>${k}</rdf:li>`).join('')}</rdf:Bag></dc:subject>` : ''}
+      ${hier ? `<lr:hierarchicalSubject><rdf:Bag>${hier.map((k) => `<rdf:li>${k}</rdf:li>`).join('')}</rdf:Bag></lr:hierarchicalSubject>` : ''}
+      </rdf:Description></rdf:RDF></x:xmpmeta>`
+
+    it('Lightroom style: flat list = every level of the hierarchy → just the paths', () => {
+      expect(readXmp(sidecar(['Places', 'USA', 'Philadelphia', 'Family'], ['Places|USA|Philadelphia', 'Family'])).keywords).toEqual(['Places|USA|Philadelphia', 'Family'])
+    })
+    it('darktable style: internal tags dropped, their levels not added as keywords', () => {
+      const flat = ['darktable', 'format', 'nef', 'Trips', 'Glarus', 'Lake']
+      const hier = ['darktable|format|nef', 'darktable|changed', 'Trips|Glarus', 'Lake']
+      expect(readXmp(sidecar(flat, hier)).keywords).toEqual(['Trips|Glarus', 'Lake'])
+    })
+    it('mixed: flat keywords that aren’t any level of a path are kept as top-level keywords', () => {
+      expect(readXmp(sidecar(['Places', 'USA', 'philadelphia', 'Sunset', ' Dog ', 'usa'], ['Places|USA|Philadelphia'])).keywords).toEqual(['Places|USA|Philadelphia', 'Sunset', 'Dog'])
+    })
+    it('only one of the two present', () => {
+      expect(readXmp(sidecar(['A', 'B'], null)).keywords).toEqual(['A', 'B'])
+      expect(readXmp(sidecar(null, ['A|B'])).keywords).toEqual(['A|B'])
+      expect(readXmp(sidecar(null, null)).keywords).toBeUndefined()
+    })
+    it('a mixed reading is written back without a rewrite', () => {
+      const text = sidecar(['Places', 'USA', 'Philadelphia', 'Sunset'], ['Places|USA|Philadelphia'])
+      const kws = readKeywords(['Places|USA|Philadelphia'], ['Places', 'USA', 'Philadelphia', 'Sunset'])
+      const once = writeXmp(text, data({ keywords: kws }))!
+      expect(readXmp(once).keywords).toEqual(kws)
+      expect(writeXmp(once, data({ keywords: kws }))).toBeNull()
+    })
   })
 
   it('replaces keywords only when they change, and leaves them alone when not given', () => {

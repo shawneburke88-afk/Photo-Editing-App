@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { getCatalog, requestPersistentStorage } from '../catalog/client'
+import { CatalogOpenError } from '../catalog/OpenError'
 import { deleteThumbs, forgetThumbUrl, loadThumb, saveThumb } from '../catalog/thumbs'
 import type { CollectionInfo, ColorLabel, Flag, FolderNode, LibraryRoot, PhotoDetail, PhotoQuery, PhotoRow } from '../catalog/types'
 import type { SmartRules } from '../catalog/smart'
@@ -15,7 +16,9 @@ import { ImportDialog } from '../import/ImportDialog'
 import { joinPath } from '../import/plan'
 import { launched } from '../pwa/launch'
 import { supportsFolderAccess } from '../platform/folders'
-import { getRootHandle } from '../platform/roots'
+import { getRootHandle, reconnectRoot } from '../platform/roots'
+import { externalChanges } from '../sidecar/external'
+import { BackupDialog } from '../backup/BackupDialog'
 import { sidecars } from '../sidecar/sync'
 import { hintLine, keyText, rangeText, useKeymapVersion, useShortcuts, withKey } from '../settings/shortcuts'
 import { FilterBar } from './FilterBar'
@@ -71,6 +74,8 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   const [folder, setFolder] = useState<FolderSelection>(null)
   /** The collection shown instead of a folder (undefined: a folder or All Photographs). */
   const [collection, setCollection] = useState<number | undefined>(undefined)
+  /** "Show photos" for sidecars changed by another app: just these photos, instead of a folder or collection. */
+  const [only, setOnly] = useState<{ ids: number[]; back: { folder: FolderSelection; collection: number | undefined } } | null>(null)
   const [collections, setCollections] = useState<CollectionInfo[]>([])
   const [targetCollections, setTargetCollections] = useState<{ id: number; name: string; count: number }[]>([])
   const [draft, setDraft] = useState<CollectionDraft | null>(null)
@@ -86,6 +91,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   const [view, setView] = useState<'grid' | 'loupe'>('grid')
   const [cellSize, setCellSize] = useState(170)
   const [importing, setImporting] = useState(false)
+  const [backupMode, setBackupMode] = useState<'backup' | 'restore' | null>(null)
   const [culling, setCulling] = useState<{ rows: PhotoRow[]; start: number; layout?: CullLayout; candidate?: number } | null>(null)
   /** A short message above the grid (e.g. why Survey didn't open); clears itself. */
   const [notice, setNotice] = useState('')
@@ -125,10 +131,24 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     })
   }, [refresh])
 
+  // Sidecars changed by another app: refresh when changes are read, and "Show photos" shows just those photos.
+  useEffect(() => externalChanges.subscribe(refresh), [refresh])
+  useEffect(
+    () =>
+      externalChanges.onShow((ids) => {
+        setOnly((o) => ({ ids, back: o?.back ?? { folder, collection } }))
+        setFolder(null)
+        setCollection(undefined)
+        setView('grid')
+      }),
+    [folder, collection],
+  )
+
   /** Shows a folder (or All Photographs for null), leaving any collection. */
   function selectFolder(s: FolderSelection) {
     setFolder(s)
     setCollection(undefined)
+    setOnly(null)
   }
 
   function toggleSubfolders(on: boolean) {
@@ -244,7 +264,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   useEffect(() => {
     if (status !== 'ready') return
     let live = true
-    void catalog.queryPhotos({ ...filters, collection, folder: folder ? { ...folder, recursive: subfolders } : undefined }).then((r) => {
+    void catalog.queryPhotos({ ...filters, collection, folder: folder ? { ...folder, recursive: subfolders } : undefined, ids: only?.ids, ungrouped: only ? true : undefined }).then((r) => {
       if (!live) return
       setRows(r)
       setSelected((s) => new Set([...s].filter((id) => r.some((x) => x.id === id))))
@@ -253,7 +273,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     return () => {
       live = false
     }
-  }, [catalog, status, folder, collection, filters, subfolders, version, externalVersion])
+  }, [catalog, status, folder, collection, filters, subfolders, version, externalVersion, only])
 
   // Details of the focused photo.
   useEffect(() => {
@@ -558,7 +578,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
 
   // Keyboard shortcuts (Lightroom's keys by default; see settings/actions.ts). Paused while a dialog or
   // the culling view is open.
-  const keysOn = active && !importing && !culling && !draft && !autoStacking && !launchFiles.length && !pasting && status === 'ready'
+  const keysOn = active && !importing && !culling && !draft && !autoStacking && !launchFiles.length && !pasting && !backupMode && status === 'ready'
   useShortcuts(['library'], keysOn, (id, e) => {
     const idx = focus === null ? -1 : rows.findIndex((r) => r.id === focus)
     const move = (delta: number) => {
@@ -647,8 +667,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   const total = useMemo(() => folders.reduce((n, f) => n + f.count, 0), [folders])
 
   async function reconnect(rootId: number) {
-    const h = await getRootHandle(rootId)
-    if (h && (await h.requestPermission({ mode: 'read' })) === 'granted') refresh()
+    if (await reconnectRoot(rootId, roots.find((r) => r.id === rootId)?.name ?? '')) refresh()
   }
 
   function openImport() {
@@ -657,7 +676,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   }
 
   if (status === 'opening') return <div className="center muted">Opening your library…</div>
-  if (status === 'error') return <div className="center error">{openError}</div>
+  if (status === 'error') return <CatalogOpenError message={openError} />
 
   const empty = total === 0 && !indexing.active
   const offRoots = roots.filter((r) => disconnected.has(r.id))
@@ -688,7 +707,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           folders={folders}
           total={total}
           selection={folder}
-          allActive={folder === null && collection === undefined}
+          allActive={folder === null && collection === undefined && !only}
           disconnected={disconnected}
           onSelect={selectFolder}
           onRescan={(rootId, path) => void rescan(rootId, path)}
@@ -700,6 +719,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
               onSelect={(id) => {
                 setFolder(null)
                 setCollection(id)
+                setOnly(null)
               }}
               onNew={(kind) => setDraft(kind === 'manual' ? { mode: 'new', kind, withPhotos: targets().length } : { mode: 'new', kind })}
               onEdit={(c) => setDraft(c.kind === 'smart' ? { mode: 'edit', kind: 'smart', id: c.id, name: c.name, rules: c.rules! } : { mode: 'edit', kind: 'manual', id: c.id, name: c.name })}
@@ -719,6 +739,10 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
             onDelete={(path) => void deleteKeyword(path)}
           />
         </FolderPanel>
+        <div className="backup-row">
+          <button className="button small" onClick={() => setBackupMode('backup')} title="Save the catalog, thumbnails and settings to one file (not the photos)">Back up library…</button>
+          <button className="button small" onClick={() => setBackupMode('restore')} title="Replace this library with one from a backup file">Restore…</button>
+        </div>
       </aside>
 
       <section className="center-pane">
@@ -726,6 +750,21 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           <div className="banner" role="status">
             <span>{notice}</span>
             <button className="button small" onClick={() => setNotice('')} aria-label="Dismiss">✕</button>
+          </div>
+        )}
+        {only && (
+          <div className="banner" role="status">
+            <span>Showing the {only.ids.length === 1 ? 'photo' : `${only.ids.length} photos`} whose .xmp file another app changed.</span>
+            <button
+              className="button small"
+              onClick={() => {
+                setFolder(only.back.folder)
+                setCollection(only.back.collection)
+                setOnly(null)
+              }}
+            >
+              Back
+            </button>
           </div>
         )}
         {offRoots.length > 0 && (
@@ -744,6 +783,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
                 <p className="muted">Open a folder of photos to start: they stay where they are, nothing is copied.</p>
                 <button className="button primary large" onClick={() => void openFolder()}>Open folder…</button>
                 <p className="muted small">Photos on a memory card? <button className="linklike" onClick={openImport}>Import from card…</button> copies them into your photo folder first.</p>
+                <p className="muted small">Have a LightBench backup? <button className="linklike" onClick={() => setBackupMode('restore')}>Restore library…</button></p>
                 {folderError && <p className="error">{folderError}</p>}
               </>
             ) : (
@@ -922,6 +962,8 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
       {launchFiles.length > 0 && (
         <OpenWithDialog files={launchFiles} onOpenFolder={() => openLaunchedFolder(launchFiles)} onClose={() => launched.clear()} />
       )}
+
+      {backupMode && <BackupDialog mode={backupMode} onClose={() => setBackupMode(null)} />}
 
       {importing && (
         <ImportDialog

@@ -18,6 +18,7 @@ export type UpdateState =
 let state: UpdateState = { kind: 'none' }
 let waiting: ServiceWorker | null = null
 let applying = false
+let registration: ServiceWorkerRegistration | null = null
 const listeners = new Set<() => void>()
 
 function set(next: UpdateState) {
@@ -40,6 +41,10 @@ export const updates = {
     } else {
       location.reload()
     }
+  },
+  /** Looks for a new version now (e.g. when the library was saved by a newer one); "Update ready" follows if found. */
+  check() {
+    void registration?.update().catch(() => {})
   },
 }
 
@@ -88,6 +93,7 @@ export function startServiceWorker() {
 
   sw.register(url, { scope: import.meta.env.BASE_URL, updateViaCache: 'none' }).then(
     (reg) => {
+      registration = reg
       if (reg.active && !sw.controller && !window.crossOriginIsolated) return reload()
       if (reg.waiting) void offer(reg.waiting)
       reg.addEventListener('updatefound', () => {
