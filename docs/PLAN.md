@@ -150,7 +150,7 @@ Non-destructive editing: originals are never modified. Edits are settings re-app
 **Auto, tunable** (owner, after round 2): a strength slider, a choice of which sliders Auto may touch, and Auto re-run per photo when applied to many photos — _built (PHASE2.md, Part 7)_.
 Collections, smart collections, collection sets, hierarchical keywords, EXIF/IPTC editing (_IPTC core fields built:
 title, caption, creator, copyright, location, see [PHASE2.md](PHASE2.md#part-11-metadata-metadata-presets-and-import-presets); EXIF fields not editable yet_),
-metadata presets and import presets (_built, PHASE2.md Part 11_), compare and survey views.
+metadata presets and import presets (_built, PHASE2.md Part 11_), compare and survey views (_built, see [PHASE2.md](PHASE2.md#part-10-compare-and-survey)_).
 
 **Presets** — _built (PHASE2.md, Part 8)_ — owner's choices 2026-10-12: a preset holds chosen settings (the Copy checklist) with an Amount slider (0–200 %), previews on hover, a few labelled starters, and one preset can be picked to develop new photos on Open folder / Import. darktable-style rules by camera, lens or ISO were not chosen for now.
 

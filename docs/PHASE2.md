@@ -37,17 +37,17 @@ See [PLAN.md](PLAN.md#phase-2--library-depth) for the whole phase and [USABILITY
 
 | Behaviour | Detail | Source |
 |---|---|---|
-| Keys | P pick · X reject · U unflag · 0–5 stars · 6–9 labels · ←/→ (or Space) move · Home/End · Z or click: 100 % · C 1-up/2-up · Tab switch photo in 2-up · A auto-advance · I info · D develop · Esc/G/E/F close | Lightroom keys, as in the grid |
+| Keys | P pick · X reject · U unflag · 0–5 stars · 6–9 labels · ←/→ (or Space) move · Home/End · Z or click: 100 % · C 1-up/Compare · Tab switch photo in Compare · A auto-advance · I info · D develop · Esc/G/E/F close | Lightroom keys, as in the grid |
 | Auto-advance | On by default (owner's choice), with an on-screen toggle that is remembered; Caps Lock also advances, as in Lightroom. | Lightroom's Caps Lock auto-advance |
-| 2-up (C) | The photo and the next one side by side (owner's choice). The active one has a gold outline and receives the keys; Tab or a click switches. | darktable's culling layout shows 2 images by default (`plugins/lighttable/culling_num_images = 2`) |
+| Compare (C) | Was a plain 2-up (the photo and the next one); now Compare, see [Part 10](#part-10-compare-and-survey): a Select that stays on the left and a Candidate that the arrow keys change. The active one still has a gold outline and receives the keys; Tab or a click switches. | Lightroom Compare (owner's choice, Part 10). darktable's culling layout shows 2 images by default (`plugins/lighttable/culling_num_images = 2`) |
 | Previews | The camera's embedded JPEG (badge "Camera preview"), with the grid thumbnail shown until it loads. The next two photos and the previous one are loaded in advance. | darktable's default for unedited images |
-| 100 % | Always the photo itself, rendered at full resolution with its Develop settings by the same path as Export (owner's choice), so focus is judged on real pixels. Badge "100 % · full rendering". Click to zoom on a point, drag to pan, click again to fit. In 2-up both photos zoom to the same spot. While the render runs (a few seconds) the fitted preview stays with a note. Renders for photos already passed are skipped. | darktable culling zoom-to-100 % (`src/dtgtk/culling.c`) |
+| 100 % | Always the photo itself, rendered at full resolution with its Develop settings by the same path as Export (owner's choice), so focus is judged on real pixels. Badge "100 % · full rendering". Click to zoom on a point, drag to pan, click again to fit. In Compare both photos zoom to the same spot. While the render runs (a few seconds) the fitted preview stays with a note. Renders for photos already passed are skipped. | darktable culling zoom-to-100 % (`src/dtgtk/culling.c`) |
 | Filmstrip, info line, key hints | Bottom filmstrip (±20 photos) with flags, stars and labels; top line with file name, stars, flag, label, exposure, lens and capture time (I hides it); a key reminder line. | Owner's choice |
 | Stable list | The photos are fixed when culling starts, so rejecting a photo while "Hide rejected" is on doesn't make it vanish mid-cull. | LightBench |
 
 **Verified** (headless Chromium, `e2e-cull`, two NEFs and a JPEG):
 - P on the first photo picked it and moved to the second; 3 rated the second and moved on; with auto-advance off, X rejected the third and stayed.
-- In 2-up, Tab then 7 put the Yellow label on the right-hand photo only.
+- In 2-up, Tab then 7 put the Yellow label on the right-hand photo only (re-run in Compare for Part 10: same result).
 - Z rendered the D700 NEF at 100 % in 16–18 s on the software GPU used for testing; a hardware GPU is much faster (owner's GPU still to be measured). Panning works.
 - After Esc the grid shows the same flags, stars and labels.
 
@@ -227,6 +227,49 @@ Catalog schema v8: `photos.version` (0 = original) and `photos.version_name`; un
 - A window still on the old version after another window updated may fail to load parts it hadn't used yet if it is offline (the old cache is gone). Its notice asks it to reload.
 - GitHub Pages lets browsers reuse a page for up to 10 minutes, so a user moving from coi-serviceworker may get the old page during those minutes; the move then happens on a later visit.
 - “Rollback: the previous website version stays one click away” (PLAN.md) is not part of this.
+
+## Part 10: Compare and Survey
+
+**What it does.** Two more ways to choose between photos, both inside the culling view. Owner's choices (2026-10-12):
+- **Compare** replaces culling's 2-up (one place, not two). The left photo is the **Select** (the current best) and stays put; the right is the **Candidate**, and the arrow keys step it through the other photos. **Swap** exchanges them; **Make Select** (the Candidate wins) makes the Candidate the new Select and moves the Candidate on.
+- **C** in the grid opens culling straight in Compare, with the focused photo as the Select and the next photo as the Candidate (the next *selected* photo when several are selected). Inside culling, C still switches between one photo and Compare.
+- **Survey (N)** shows only the **selected photos**, tiled at the largest size that fits. Each tile has its flag, stars and label and an **✕** that drops it from the survey (never from the library or a collection). Clicking a tile (or Enter) shows it 1-up; Esc goes back to the survey; Esc or G from the survey goes back to the grid with the photos still in the survey selected.
+- Culling's guarantees stay: keys go to the photo on screen, the active pane or the active tile (never the photo under the mouse), and the list of photos is fixed when the view opens.
+
+| Behaviour | Detail | Source |
+|---|---|---|
+| Compare keys | ←/→ (or Space) next / previous Candidate, Home/End first / last; **↑ Make Select**, **↓ Swap**; Tab switches the active pane; Z or click 100 %; C one photo (the active pane's photo); Esc closes. Buttons **⇄ Swap** and **Make Select** in the top bar. The panes are labelled Select and Candidate. | Lightroom Classic's Compare keys as given by third-party shortcut lists and Julieanne Kost's blog (↑ “make next photos select and candidate”, ↓ “swap select and candidate”). Adobe's own pages could not be opened from the build environment, so this is **not checked against Adobe directly**. |
+| Stepping | The Candidate steps over the Select and stops at either end of the list (no wrap-round). Make Select takes the photo after the new Select as the Candidate (the one before it at the end of the list), which can be the old Select. | LightBench (`compare.ts`, unit-tested) |
+| Which photos | Compare steps through the photos the culling view opened with (the photos shown in the grid, as F does). With several selected, only the first Candidate comes from the selection. | Owner's choice for the first Candidate; stepping through all photos is LightBench's choice |
+| Keys go to the active pane | Flags, stars, labels and B go to the photo in the gold-outlined pane (the Select at first). Auto-advance: a key on the Candidate moves the Candidate on; a key on the Select moves nothing (the Select stays put). Caps Lock as before. | LightBench's choice (Lightroom's behaviour here not checked) |
+| Filmstrip in Compare | Both photos are marked; clicking another photo makes it the Candidate. | LightBench's choice |
+| 100 % in Compare | Unchanged from Part 2: both panes zoom to the same spot and pan together, each rendered at full resolution (`FullRenderer`). | Part 2 |
+| Survey (N) | The selected photos, in grid order, with the focused one active. A **Survey** button in the filter bar too (and **Compare** next to **Cull**). With fewer than 2 selected, nothing opens and a message says “Survey shows the selected photos: select two or more (Ctrl+click or Shift+click), then press N.” C with fewer than 2 photos shown says “Compare needs at least two photos.” | Owner's choice (Lightroom Survey). darktable's “culling dynamic mode” (Ctrl+X) also shows exactly the selected images and logs “no image selected!” without a selection (`src/dtgtk/culling.c`, `dt_culling_init`; shortcut in `src/libs/tools/lighttable.c`) |
+| Tiling | Equal tiles; every column count is tried and the one that shows the most image area wins (each photo fitted in its tile, using its preview's shape, or 3:2 / 2:3 from its orientation until loaded). A shorter last row is centred. | LightBench (`survey.ts`, unit-tested). darktable packs tiles by aspect ratio instead, stacking short images beside tall ones (`_thumbs_compute_positions` in `src/dtgtk/culling.c`) |
+| Survey keys | Arrows, Tab and Shift+Tab move the active tile (↑/↓ by a row); P/X/U, 0–5, 6–9 and B apply to it (no auto-advance in Survey); Enter or click: 1-up; **Delete** or **✕** drops the active tile from the survey (the last tile can't be dropped); C: Compare with the active tile as the Select; D develop; I info; Esc, G or N (also E, F): back to the grid. | Flag/star/label keys as in the grid. Delete for “drop” is LightBench's choice. |
+| Dropping | ✕ only takes the photo out of the survey, so it is not selected when going back to the grid. | Owner's choice. darktable's dynamic mode likewise follows the selection (`_dt_selection_changed_callback` in `src/dtgtk/culling.c`) |
+| From the survey | 1-up and Compare work on the photos still in the survey; Esc (or N) goes back to the survey; G, E, F and ✕ Close go straight to the grid with the survey's photos selected. Develop (D) keeps that selection too. | LightBench |
+| Previews | Tiles use the same preview path as culling (the camera JPEG or the JPEG itself, with the grid thumbnail until it loads), scaled down to 2048 px on the long side for up to 6 photos, 1280 px up to 16, 768 px up to 40 and 512 px beyond, to keep memory down. | LightBench |
+
+**Verified** (headless Chromium with software WebGPU, scratch script `e2e-compare-survey`, with A.NEF (D700), B.NEF and D.NEF (D80), C.jpg and E.jpg sorted by name; 37 of 37 checks passed):
+- **C from the grid** with A focused and C also selected opened Compare with Select A and Candidate C, labelled. → gave D; ←← gave B; another ← stayed on B (A is the Select).
+- **↓** swapped to B / A and the **⇄ Swap** button swapped back. **↑** (Make Select) gave B / C and the **Make Select** button gave C / D (“Select 3 · Candidate 4 of 5”).
+- **Active pane:** Tab, then P picked D and auto-advance moved the Candidate to E; Tab back, then 2 rated C and the Candidate stayed on E. After Esc the grid showed D picked, C with 2 stars, and A, B and E untouched.
+- **Synced 100 %:** with C.jpg as the Select and D.NEF as the Candidate, clicking a point on the Select rendered both panes at 100 % (“100 % · full rendering” on both) in 16 s on the software GPU; dragging on the right pane panned both.
+- C with only B selected opened B / C; C inside switched to 1-up on B and back to Compare.
+- **N with 1 selected** opened nothing and showed the message.
+- **Survey** of A, B, D and E (E focused) showed 4 tiles, 2 × 2 at 708 × 401 px in a 1440 × 900 window, with E active. **✕** on B left A, D and E, E still active; ← then 4 gave D 4 stars, on its tile only. Clicking A showed it 1-up (“1 of 3”); Esc returned to the 3-tile survey with A active; Enter showed A 1-up again and N went back; Esc gave the grid with A, D and E selected (not B), D with 4 stars and still picked.
+- The **Survey** button reopened it; Home then Delete dropped A; G gave the grid with D and E selected and all 5 photos still in the library.
+- Screenshots of Compare, Compare at 100 % and Survey were checked by eye.
+- Part 2's culling script, re-run: auto-advance, X without advance, Tab + 7 in Compare on the right-hand photo, the 100 % render (17 s) and the grid afterwards all as before.
+- Unit tests: `compare.test.ts` (start, stepping over the Select and at the ends, Swap, Make Select, the first Candidate from the grid's selection) and `survey.test.ts` (column choice for wide and tall screens, portrait photos and gaps; orientation guess; active tile after a drop).
+
+**Limitations:**
+- The Lightroom key mapping (↑ Make Select, ↓ Swap) comes from secondary sources, not Adobe's own page (see the table).
+- Compare always shows two photos.
+- Survey previews are sized for the number of photos when it opens; after dropping many tiles the remaining ones can look slightly soft until the survey is opened again.
+- Survey was tested with 4 photos. With dozens, the tiles are small and a preview is loaded for each.
+- Not tested on the owner's GPU or with a touch screen.
 
 ## Part 11: Metadata, metadata presets and import presets
 

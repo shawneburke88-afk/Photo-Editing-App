@@ -20,7 +20,8 @@ import { getRootHandle } from '../platform/roots'
 import { sidecars } from '../sidecar/sync'
 import { FilterBar } from './FilterBar'
 import { FolderPanel, type FolderSelection } from './FolderPanel'
-import { CullView, type CullField } from './CullView'
+import { gridCandidate } from './compare'
+import { CullView, type CullField, type CullLayout } from './CullView'
 import { CollectionChips } from './CollectionChips'
 import { CollectionDialog, type CollectionDraft } from './CollectionDialog'
 import { CollectionList, PHOTOS_DRAG_TYPE } from './CollectionList'
@@ -85,7 +86,10 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   const [view, setView] = useState<'grid' | 'loupe'>('grid')
   const [cellSize, setCellSize] = useState(170)
   const [importing, setImporting] = useState(false)
-  const [culling, setCulling] = useState<{ rows: PhotoRow[]; start: number } | null>(null)
+  const [culling, setCulling] = useState<{ rows: PhotoRow[]; start: number; layout?: CullLayout; candidate?: number } | null>(null)
+  /** A short message above the grid (e.g. why Survey didn't open); clears itself. */
+  const [notice, setNotice] = useState('')
+  const noticeTimer = useRef(0)
   const [subfolders, setSubfolders] = useState(loadSubfolders)
   const [allKeywords, setAllKeywords] = useState<KeywordCount[]>([])
   const [targetKeywords, setTargetKeywords] = useState<KeywordCount[]>([])
@@ -455,10 +459,32 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     if (rows.length) setCulling({ rows, start: focus ?? rows[0].id })
   }, [rows, focus])
 
-  function endCulling(id: number) {
+  function showNotice(text: string) {
+    setNotice(text)
+    window.clearTimeout(noticeTimer.current)
+    noticeTimer.current = window.setTimeout(() => setNotice(''), 6000)
+  }
+
+  /** Compare (C): the focused photo as the Select, the next selected photo (or the next photo) as the Candidate. */
+  const startCompare = useCallback(() => {
+    if (rows.length < 2) return showNotice('Compare needs at least two photos.')
+    const start = focus ?? rows[0].id
+    const at = gridCandidate(rows.map((r) => r.id), start, selected)
+    setCulling({ rows, start, layout: 'compare', candidate: at === undefined ? undefined : rows[at].id })
+  }, [rows, focus, selected])
+
+  /** Survey (N): the selected photos only, tiled. */
+  const startSurvey = useCallback(() => {
+    const picks = rows.filter((r) => selected.has(r.id))
+    if (picks.length < 2) return showNotice('Survey shows the selected photos: select two or more (Ctrl+click or Shift+click), then press N.')
+    setCulling({ rows: picks, start: focus !== null && selected.has(focus) ? focus : picks[0].id, layout: 'survey' })
+  }, [rows, focus, selected])
+
+  /** Back from culling: the photo last shown is focused; from Survey, the photos still in it stay selected. */
+  function endCulling(id: number, selection?: number[]) {
     setCulling(null)
     setFocus(id)
-    setSelected(new Set([id]))
+    setSelected(new Set(selection ?? [id]))
     anchor.current = id
     setView('grid')
   }
@@ -597,6 +623,8 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
       else if (k === 'u') void apply('flag', 0)
       else if (k === 'e' || k === 'enter') setView('loupe')
       else if (k === 'f') startCulling()
+      else if (k === 'c') startCompare()
+      else if (k === 'n') startSurvey()
       else if (k === 'd' && focus !== null) onDevelop(focus, rows.map((r) => r.id))
       else if (k === 'g' || k === 'escape') setView('grid')
       else if (k === 'b') void toggleQuick(targets())
@@ -691,6 +719,12 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
       </aside>
 
       <section className="center-pane">
+        {notice && (
+          <div className="banner" role="status">
+            <span>{notice}</span>
+            <button className="button small" onClick={() => setNotice('')} aria-label="Dismiss">✕</button>
+          </div>
+        )}
         {offRoots.length > 0 && (
           <div className="banner">
             <span>Some folders need permission again before full-size previews can be shown:</span>
@@ -723,6 +757,8 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
               view={view}
               onView={setView}
               onCull={startCulling}
+              onCompare={startCompare}
+              onSurvey={startSurvey}
               stacks={{
                 stack: () => void stackSelected(),
                 unstack: () => void unstackSelected(),
@@ -758,7 +794,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
               <Loupe photo={detail} />
             )}
             <p className="hint muted small">
-              Keys: arrows move · P pick · X reject · U unflag · 0–5 stars · 6–9 colour labels · Ctrl+K keywords · B Quick Collection · S stack · Ctrl+C / Ctrl+V settings · E loupe · F cull · G grid · D develop · Delete removes from {activeCollection && activeCollection.kind !== 'smart' ? 'this collection' : 'library'}
+              Keys: arrows move · P pick · X reject · U unflag · 0–5 stars · 6–9 colour labels · Ctrl+K keywords · B Quick Collection · S stack · Ctrl+C / Ctrl+V settings · E loupe · F cull · C compare · N survey · G grid · D develop · Delete removes from {activeCollection && activeCollection.kind !== 'smart' ? 'this collection' : 'library'}
             </p>
           </>
         )}
@@ -816,11 +852,13 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
         <CullView
           rows={culling.rows}
           startId={culling.start}
+          layout={culling.layout}
+          candidateId={culling.candidate}
           onApply={(ids, field, value) => void applyTo(ids, field, value)}
           onToggleQuick={(id) => toggleQuick([id])}
           onExit={endCulling}
           onDevelop={(id, ids) => {
-            endCulling(id)
+            endCulling(id, culling.layout === 'survey' ? ids : undefined)
             onDevelop(id, ids)
           }}
         />

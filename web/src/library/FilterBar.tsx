@@ -12,6 +12,9 @@ interface Props {
   onView: (v: 'grid' | 'loupe') => void
   /** Opens the full-screen culling view. */
   onCull: () => void
+  /** Opens culling in Compare (C) or Survey (N). */
+  onCompare: () => void
+  onSurvey: () => void
   /** Stack commands, for the Stacks menu. */
   stacks: { stack: () => void; unstack: () => void; auto: () => void; expandAll: () => void; collapseAll: () => void; canStack: boolean }
   cellSize: number
@@ -22,7 +25,7 @@ interface Props {
   onSubfolders: (on: boolean) => void
 }
 
-export function FilterBar({ value, onChange, view, onView, onCull, stacks, cellSize, onCellSize, shown, subfolders, onSubfolders }: Props) {
+export function FilterBar({ value, onChange, view, onView, onCull, onCompare, onSurvey, stacks, cellSize, onCellSize, shown, subfolders, onSubfolders }: Props) {
   const set = (patch: Partial<Filters>) => onChange({ ...value, ...patch })
   return (
     <div className="filterbar">
@@ -30,6 +33,8 @@ export function FilterBar({ value, onChange, view, onView, onCull, stacks, cellS
         <button className={view === 'grid' ? 'on' : ''} onClick={() => onView('grid')} title="Grid (G)">Grid</button>
         <button className={view === 'loupe' ? 'on' : ''} onClick={() => onView('loupe')} title="Loupe (E)">Loupe</button>
         <button onClick={onCull} disabled={!shown} title="Full-screen culling: flag and rate one photo at a time (F)">Cull</button>
+        <button onClick={onCompare} disabled={shown < 2} title="Compare the focused photo (Select) with the next one (Candidate) (C)">Compare</button>
+        <button onClick={onSurvey} disabled={!shown} title="Survey: the selected photos side by side (N)">Survey</button>
       </div>
       <input
         type="search"

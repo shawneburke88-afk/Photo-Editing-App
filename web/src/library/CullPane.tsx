@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { PhotoRow } from '../catalog/types'
-import type { Preview } from './preview'
+import { drawFitted, type Preview } from './preview'
 import { Stars } from './Stars'
 import { Thumb } from './Thumb'
 
@@ -23,6 +23,8 @@ interface Props {
   previewNote: string
   active: boolean
   twoUp: boolean
+  /** Compare: "Select" or "Candidate", shown on the photo. */
+  label?: string
   onActivate: () => void
   /** Click: zoom to 100 % centred on the clicked point, or back to fit. */
   onToggleZoom: (at: ZoomCenter) => void
@@ -38,7 +40,7 @@ function clampCenter(c: ZoomCenter, viewW: number, viewH: number, imgW: number, 
 }
 
 /** One photo in the culling view: fitted preview, or the RAW at 100 % (one image pixel per screen pixel). */
-export function CullPane({ row, preview, full, zoom, zoomNote, previewNote, active, twoUp, onActivate, onToggleZoom, onPan }: Props) {
+export function CullPane({ row, preview, full, zoom, zoomNote, previewNote, active, twoUp, label, onActivate, onToggleZoom, onPan }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   // Where the fitted image sits, for turning a click into image coordinates.
   const fitRect = useRef({ x: 0, y: 0, w: 1, h: 1 })
@@ -63,21 +65,8 @@ export function CullPane({ row, preview, full, zoom, zoomNote, previewNote, acti
         return
       }
       if (!preview) return
-      const { bmp, rotate } = preview
-      const sideways = rotate === 90 || rotate === 270
-      const iw = sideways ? bmp.height : bmp.width
-      const ih = sideways ? bmp.width : bmp.height
-      const scale = Math.min(cw / iw, ch / ih)
-      const w = iw * scale
-      const h = ih * scale
-      fitRect.current = { x: (cw - w) / 2 / dpr, y: (ch - h) / 2 / dpr, w: w / dpr, h: h / dpr }
-      ctx.imageSmoothingQuality = 'high'
-      ctx.translate(cw / 2, ch / 2)
-      ctx.rotate((rotate * Math.PI) / 180)
-      const dw = sideways ? h : w
-      const dh = sideways ? w : h
-      ctx.drawImage(bmp, -dw / 2, -dh / 2, dw, dh)
-      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      const f = drawFitted(ctx, cw, ch, preview)
+      fitRect.current = { x: f.x / dpr, y: f.y / dpr, w: f.w / dpr, h: f.h / dpr }
     }
     draw()
     const ro = new ResizeObserver(draw)
@@ -137,6 +126,7 @@ export function CullPane({ row, preview, full, zoom, zoomNote, previewNote, acti
         onPointerUp={onPointerUp}
         onPointerCancel={() => (drag.current = null)}
       />
+      {label && <span className="cull-pane-label">{label}</span>}
       {twoUp && (
         <div className="cull-pane-tags">
           <Stars value={row.rating} size="small" />
