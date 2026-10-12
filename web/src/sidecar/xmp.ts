@@ -338,6 +338,22 @@ export function writeXmp(existing: string | null, data: SidecarData, now = new D
   return decl + body.replace(/^<\?xml[^>]*\?>\s*/, '') + (body.endsWith('\n') ? '' : '\n')
 }
 
+/**
+ * Keyword paths from lr:hierarchicalSubject and dc:subject together. Each hierarchy path is kept; a flat dc:subject
+ * keyword that isn't any level of any path (e.g. one added by an app that writes only dc:subject, next to a
+ * Lightroom hierarchy) is kept as a top-level keyword. darktable's internal tags ("darktable|format|nef", …) are
+ * not keywords, but their levels still count as covered, so "darktable", "format" and "nef" aren't added.
+ * (LightBench used to read only the hierarchy when there was one, following darktable's src/common/exif.cc; that
+ * lost flat keywords added by other apps.)
+ */
+export function readKeywords(hierarchical: string[] | null, flat: string[] | null): string[] {
+  const paths = (hierarchical ?? []).map(normalizeKeyword).filter((k): k is string => !!k)
+  const covered = new Set(paths.flatMap((p) => p.split(KEYWORD_SEP).map((l) => l.toLowerCase())))
+  const extra = (flat ?? []).map(normalizeKeyword).filter((k): k is string => !!k && !covered.has(k.toLowerCase()))
+  const all = [...paths, ...extra].filter((k) => !k.toLowerCase().startsWith('darktable|'))
+  return [...new Map(all.map((k) => [k.toLowerCase(), k])).values()]
+}
+
 /** What a sidecar says about a photo. Fields are undefined when the sidecar doesn't say. */
 export interface SidecarRead {
   rating?: number
@@ -363,21 +379,24 @@ export function readXmp(text: string): SidecarRead {
   const xmpRating = num(getProp(doc, NS.xmp, 'Rating'))
   const lbRating = num(getProp(doc, NS.lightbench, 'Rating'))
   const lbFlag = num(getProp(doc, NS.lightbench, 'Flag'))
-  if (lbRating !== undefined) out.rating = Math.max(0, Math.min(5, Math.round(lbRating)))
-  else if (xmpRating !== undefined) out.rating = Math.max(0, Math.min(5, Math.round(xmpRating)))
-  if (lbFlag !== undefined && [-1, 0, 1].includes(lbFlag)) out.flag = lbFlag
-  else if (xmpRating !== undefined && xmpRating < 0) out.flag = -1
+  const stars = (v: number) => Math.max(0, Math.min(5, Math.round(v)))
+  // xmp:Rating is the field Lightroom, Bridge and darktable change, so it wins over LightBench's copy. A rejected
+  // photo has xmp:Rating -1 (darktable, Bridge), which hides its stars: those come from lightbench:Rating.
+  const rejected = xmpRating !== undefined && xmpRating < 0
+  if (xmpRating !== undefined && !rejected) out.rating = stars(xmpRating)
+  else if (lbRating !== undefined) out.rating = stars(lbRating)
+  else if (rejected) out.rating = 0
+  // lightbench:Flag also keeps picks, which xmp:Rating can't hold. A rejection is always written as xmp:Rating -1,
+  // so if another app has since given the photo stars (xmp:Rating 0 or more), it is no longer rejected.
+  if (rejected) out.flag = -1
+  else if (lbFlag !== undefined && [-1, 0, 1].includes(lbFlag)) out.flag = lbFlag === -1 && xmpRating !== undefined ? 0 : lbFlag
   const label = getProp(doc, NS.xmp, 'Label')
   if (label !== null) {
     const i = LABEL_NAMES.findIndex((n) => n && n.toLowerCase() === label.trim().toLowerCase())
     out.color = i > 0 ? i : 0
   }
-  // Like darktable (src/common/exif.cc), prefer the hierarchy and fall back to the flat list. darktable's own
-  // internal tags ("darktable|format|nef", …) are not keywords.
-  const kws = (getBag(doc, NS.lr, 'hierarchicalSubject') ?? getBag(doc, NS.dc, 'subject'))
-    ?.map(normalizeKeyword)
-    .filter((k): k is string => !!k && !k.toLowerCase().startsWith('darktable|'))
-  if (kws?.length) out.keywords = [...new Map(kws.map((k) => [k.toLowerCase(), k])).values()]
+  const kws = readKeywords(getBag(doc, NS.lr, 'hierarchicalSubject'), getBag(doc, NS.dc, 'subject'))
+  if (kws.length) out.keywords = kws
   const versions = getProp(doc, NS.lightbench, 'Versions')
   if (versions) {
     try {

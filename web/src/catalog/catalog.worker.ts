@@ -2,6 +2,7 @@
 // The library catalog: one SQLite database stored in the browser's private storage (OPFS).
 import sqlite3InitModule, { type Database } from '@sqlite.org/sqlite-wasm'
 import { exposeRpc } from '../lib/rpc'
+import { isStorageFailure, NEWER_CATALOG_MESSAGE } from './errors'
 import { compileSmart, type SmartRules } from './smart'
 import { burstGroups, collapseStacks } from './stacks'
 import type { CollectionInfo, DuplicateKey, FolderNode, LibraryRoot, MetadataKey, NewPhoto, PhotoDetail, PhotoMetadata, PhotoQuery, PhotoRow } from './types'
@@ -45,14 +46,22 @@ async function openOnce(options: { inMemory?: boolean }): Promise<{ persistent: 
       )
     }
   }
-  migrate(db)
+  try {
+    migrate(db)
+  } catch (err) {
+    db.close()
+    db = null
+    throw err
+  }
   return { persistent }
 }
 
 function migrate(d: Database) {
-  d.exec('PRAGMA foreign_keys = ON')
   const version = Number(d.selectValue('PRAGMA user_version'))
-  if (version >= SCHEMA_VERSION) return
+  // A newer version may have changed tables this one would misread or overwrite: refuse, before writing anything.
+  if (version > SCHEMA_VERSION) throw new Error(NEWER_CATALOG_MESSAGE)
+  d.exec('PRAGMA foreign_keys = ON')
+  if (version === SCHEMA_VERSION) return
   // Version 8 rebuilds the photos table. SQLite's procedure for that (https://sqlite.org/lang_altertable.html,
   // "Making Other Kinds Of Table Schema Changes") needs foreign keys off, outside the transaction.
   d.exec('PRAGMA foreign_keys = OFF')
@@ -1311,4 +1320,21 @@ const handlers = {
 
 export type CatalogApi = typeof handlers
 
-exposeRpc(handlers)
+// Storage failures are passed on as `StorageError`, so the UI can tell the user that changes aren't being saved.
+exposeRpc(
+  Object.fromEntries(
+    Object.entries(handlers).map(([name, fn]) => [
+      name,
+      async (...args: unknown[]) => {
+        try {
+          return await (fn as (...a: unknown[]) => unknown)(...args)
+        } catch (err) {
+          if (!isStorageFailure(err)) throw err
+          const e = new Error(err instanceof Error ? err.message : String(err), { cause: err })
+          e.name = 'StorageError'
+          throw e
+        }
+      },
+    ]),
+  ),
+)

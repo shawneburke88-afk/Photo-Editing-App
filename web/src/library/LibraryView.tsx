@@ -1,6 +1,7 @@
 import { isSliderKey, isTextEntry } from '../lib/keys'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { getCatalog, requestPersistentStorage } from '../catalog/client'
+import { CatalogOpenError } from '../catalog/OpenError'
 import { deleteThumbs, forgetThumbUrl, loadThumb, saveThumb } from '../catalog/thumbs'
 import type { CollectionInfo, ColorLabel, Flag, FolderNode, LibraryRoot, PhotoDetail, PhotoQuery, PhotoRow } from '../catalog/types'
 import type { SmartRules } from '../catalog/smart'
@@ -654,7 +655,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   }
 
   if (status === 'opening') return <div className="center muted">Opening your library…</div>
-  if (status === 'error') return <div className="center error">{openError}</div>
+  if (status === 'error') return <CatalogOpenError message={openError} />
 
   const empty = total === 0 && !indexing.active
   const offRoots = roots.filter((r) => disconnected.has(r.id))

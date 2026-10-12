@@ -1,13 +1,15 @@
 import { useSyncExternalStore } from 'react'
+import { storageProblems } from '../catalog/storage'
 import { sidecars } from './sync'
 
-/** Asks for permission to write .xmp sidecars, and reports sidecar problems. */
+/** Asks for permission to write .xmp sidecars, and reports sidecar and library storage problems. */
 export function SidecarBanner() {
   const status = useSyncExternalStore(
     (fn) => sidecars.subscribe(fn),
     () => sidecars.status,
   )
-  if (!status.needsPermission.length && !status.lastError) return null
+  const storage = useSyncExternalStore(storageProblems.subscribe, storageProblems.get)
+  if (!status.needsPermission.length && !status.lastError && !storage.notPersistent && !storage.catalogError) return null
   return (
     <div className="sidecar-banner" role="status">
       {status.needsPermission.map((r) => (
@@ -23,8 +25,30 @@ export function SidecarBanner() {
       ))}
       {status.lastError && (
         <div className="banner warn-banner">
-          <span>Sidecar not saved: {status.lastError}</span>
+          <span>
+            Sidecar not saved: {status.lastError}
+            {status.failed > 1 && ` (and ${status.failed - 1} more)`}
+          </span>
           <button className="button small" onClick={() => sidecars.clearError()}>OK</button>
+        </div>
+      )}
+      {storage.catalogError && (
+        <div className="banner warn-banner">
+          <span>
+            LightBench couldn’t save {storage.catalogError.count > 1 ? `${storage.catalogError.count} changes` : 'a change'} to its
+            library. The disk may be full: free up space, then reload the page. (Details: {storage.catalogError.message})
+          </span>
+          <button className="button small" onClick={() => storageProblems.hideCatalogError()}>OK</button>
+        </div>
+      )}
+      {storage.notPersistent && (
+        <div className="banner warn-banner">
+          <span>
+            This browser may clear LightBench’s library (ratings, keywords, edits, thumbnails) if the disk runs low on space.
+            To keep it, install LightBench as an app (the install button in the address bar), or allow it to store data if
+            the browser asks. Where you allow it, ratings and edits are also saved in .xmp files next to your photos.
+          </span>
+          <button className="button small" onClick={() => storageProblems.hidePersistNotice()}>OK</button>
         </div>
       )}
     </div>
