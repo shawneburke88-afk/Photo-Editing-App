@@ -85,6 +85,8 @@ export interface PhotoDetail extends PhotoMeta {
 }
 
 export interface PhotoQuery {
+  /** Only these photos (e.g. those whose sidecar another app changed). */
+  ids?: number[]
   /** Limit to one folder of a root ("" = the root itself); subfolders are included unless `recursive` is false. */
   folder?: { rootId: number; path: string; recursive?: boolean }
   minRating?: number

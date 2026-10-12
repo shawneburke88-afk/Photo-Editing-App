@@ -133,6 +133,9 @@ function parse(text: string): Document | null {
   return doc
 }
 
+/** True when `text` is an XMP packet LightBench can read (and would rewrite rather than leave alone). */
+export const isValidXmp = (text: string) => parse(text) !== null
+
 const descriptions = (doc: Document) => Array.from(doc.getElementsByTagNameNS(NS.rdf, 'Description'))
 
 /** A simple property, written either as an attribute or as a child element of an rdf:Description. */

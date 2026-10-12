@@ -18,6 +18,7 @@ import { joinPath } from '../import/plan'
 import { launched } from '../pwa/launch'
 import { supportsFolderAccess } from '../platform/folders'
 import { getRootHandle } from '../platform/roots'
+import { externalChanges } from '../sidecar/external'
 import { sidecars } from '../sidecar/sync'
 import { FilterBar } from './FilterBar'
 import { FolderPanel, type FolderSelection } from './FolderPanel'
@@ -72,6 +73,8 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   const [folder, setFolder] = useState<FolderSelection>(null)
   /** The collection shown instead of a folder (undefined: a folder or All Photographs). */
   const [collection, setCollection] = useState<number | undefined>(undefined)
+  /** "Show photos" for sidecars changed by another app: just these photos, instead of a folder or collection. */
+  const [only, setOnly] = useState<{ ids: number[]; back: { folder: FolderSelection; collection: number | undefined } } | null>(null)
   const [collections, setCollections] = useState<CollectionInfo[]>([])
   const [targetCollections, setTargetCollections] = useState<{ id: number; name: string; count: number }[]>([])
   const [draft, setDraft] = useState<CollectionDraft | null>(null)
@@ -126,10 +129,24 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     })
   }, [refresh])
 
+  // Sidecars changed by another app: refresh when changes are read, and "Show photos" shows just those photos.
+  useEffect(() => externalChanges.subscribe(refresh), [refresh])
+  useEffect(
+    () =>
+      externalChanges.onShow((ids) => {
+        setOnly((o) => ({ ids, back: o?.back ?? { folder, collection } }))
+        setFolder(null)
+        setCollection(undefined)
+        setView('grid')
+      }),
+    [folder, collection],
+  )
+
   /** Shows a folder (or All Photographs for null), leaving any collection. */
   function selectFolder(s: FolderSelection) {
     setFolder(s)
     setCollection(undefined)
+    setOnly(null)
   }
 
   function toggleSubfolders(on: boolean) {
@@ -245,7 +262,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   useEffect(() => {
     if (status !== 'ready') return
     let live = true
-    void catalog.queryPhotos({ ...filters, collection, folder: folder ? { ...folder, recursive: subfolders } : undefined }).then((r) => {
+    void catalog.queryPhotos({ ...filters, collection, folder: folder ? { ...folder, recursive: subfolders } : undefined, ids: only?.ids, ungrouped: only ? true : undefined }).then((r) => {
       if (!live) return
       setRows(r)
       setSelected((s) => new Set([...s].filter((id) => r.some((x) => x.id === id))))
@@ -254,7 +271,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     return () => {
       live = false
     }
-  }, [catalog, status, folder, collection, filters, subfolders, version, externalVersion])
+  }, [catalog, status, folder, collection, filters, subfolders, version, externalVersion, only])
 
   // Details of the focused photo.
   useEffect(() => {
@@ -686,7 +703,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           folders={folders}
           total={total}
           selection={folder}
-          allActive={folder === null && collection === undefined}
+          allActive={folder === null && collection === undefined && !only}
           disconnected={disconnected}
           onSelect={selectFolder}
           onRescan={(rootId, path) => void rescan(rootId, path)}
@@ -698,6 +715,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
               onSelect={(id) => {
                 setFolder(null)
                 setCollection(id)
+                setOnly(null)
               }}
               onNew={(kind) => setDraft(kind === 'manual' ? { mode: 'new', kind, withPhotos: targets().length } : { mode: 'new', kind })}
               onEdit={(c) => setDraft(c.kind === 'smart' ? { mode: 'edit', kind: 'smart', id: c.id, name: c.name, rules: c.rules! } : { mode: 'edit', kind: 'manual', id: c.id, name: c.name })}
@@ -724,6 +742,21 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           <div className="banner" role="status">
             <span>{notice}</span>
             <button className="button small" onClick={() => setNotice('')} aria-label="Dismiss">✕</button>
+          </div>
+        )}
+        {only && (
+          <div className="banner" role="status">
+            <span>Showing the {only.ids.length === 1 ? 'photo' : `${only.ids.length} photos`} whose .xmp file another app changed.</span>
+            <button
+              className="button small"
+              onClick={() => {
+                setFolder(only.back.folder)
+                setCollection(only.back.collection)
+                setOnly(null)
+              }}
+            >
+              Back
+            </button>
           </div>
         )}
         {offRoots.length > 0 && (

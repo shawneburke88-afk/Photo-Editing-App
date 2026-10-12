@@ -20,6 +20,7 @@ import { ResizeHandle } from './ResizeHandle'
 import { WbLoupe } from './WbLoupe'
 import { loadIntoEngine, multipliers, renderThumbnail, stageOptions, type SensorInfo } from './source'
 import { sidecars } from '../sidecar/sync'
+import { checkPhoto } from '../sidecar/watch'
 import { canRedo, canUndo, current, jump, loadHistory, record, redo, replaceCurrent, savedForm, undo, type History } from './history'
 import { batch, rerunAuto } from './batch'
 import { applyPaste, changedKeys, rememberedChoice, settingsClipboard, type Clipboard, type PasteKey } from './paste'
@@ -185,6 +186,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       const d = await catalog.getPhoto(id)
       if (stale() || !d) return
       setPhoto(d)
+      void checkPhoto(id)
       const file = await openPhotoFile(d.rootId, d.folderPath, d.fileName)
       if (!file) throw new Error('This photo’s folder isn’t connected. Go to the Library and click “Reconnect”.')
       decoder ??= new RawDecoder()

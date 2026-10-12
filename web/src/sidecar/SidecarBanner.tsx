@@ -1,17 +1,64 @@
-import { useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { storageProblems } from '../catalog/storage'
+import { externalChanges } from './external'
 import { sidecars } from './sync'
+import { ignoreChanges, loadExternalChanges, readChanges, type Answer } from './watch'
 
-/** Asks for permission to write .xmp sidecars, and reports sidecar and library storage problems. */
+/**
+ * Asks for permission to write .xmp sidecars, asks what to do with sidecars changed by other apps, and reports
+ * sidecar and library storage problems.
+ */
 export function SidecarBanner() {
   const status = useSyncExternalStore(
     (fn) => sidecars.subscribe(fn),
     () => sidecars.status,
   )
   const storage = useSyncExternalStore(storageProblems.subscribe, storageProblems.get)
-  if (!status.needsPermission.length && !status.lastError && !storage.notPersistent && !storage.catalogError) return null
+  const changed = useSyncExternalStore(externalChanges.subscribe, externalChanges.get)
+  const [answering, setAnswering] = useState(false)
+  const [answered, setAnswered] = useState('')
+  useEffect(() => void loadExternalChanges(), [])
+
+  async function answer(read: boolean) {
+    setAnswering(true)
+    setAnswered('')
+    try {
+      const n = changed.length
+      const r: Answer = await (read ? readChanges(changed) : ignoreChanges(changed))
+      const what = r.done === n ? '' : `${r.done} of ${n}: `
+      setAnswered(
+        r.skipped
+          ? `${what}${r.skipped} couldn’t be read now (folder not connected, or the file isn’t valid XMP). They are still listed.`
+          : read
+            ? `Read the other app’s changes into ${r.done === 1 ? '1 photo' : `${r.done} photos`}.`
+            : 'Kept LightBench’s values. They will replace the other app’s in the .xmp files the next time LightBench saves these photos.',
+      )
+    } finally {
+      setAnswering(false)
+    }
+  }
+
+  if (!status.needsPermission.length && !status.lastError && !storage.notPersistent && !storage.catalogError && !changed.length && !answered) return null
   return (
     <div className="sidecar-banner" role="status">
+      {changed.length > 0 && (
+        <div className="banner">
+          <span>
+            {changed.length === 1 ? '1 photo was' : `${changed.length} photos were`} changed by another app (its .xmp file changed
+            since LightBench last saved it). <strong>Read changes</strong> takes that app’s stars, labels, keywords and metadata.{' '}
+            <strong>Ignore</strong> keeps LightBench’s, which then replace the other app’s in the files the next time LightBench saves them.
+          </span>
+          <button className="button small primary" disabled={answering} onClick={() => void answer(true)}>Read changes</button>
+          <button className="button small" disabled={answering} onClick={() => void answer(false)}>Ignore</button>
+          <button className="button small" onClick={() => externalChanges.show(changed)}>Show photos</button>
+        </div>
+      )}
+      {answered && (
+        <div className="banner">
+          <span>{answered}</span>
+          <button className="button small" onClick={() => setAnswered('')}>OK</button>
+        </div>
+      )}
       {status.needsPermission.map((r) => (
         <div key={r.rootId} className="banner">
           <span>

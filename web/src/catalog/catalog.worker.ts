@@ -5,10 +5,11 @@ import { exposeRpc } from '../lib/rpc'
 import { isStorageFailure, NEWER_CATALOG_MESSAGE } from './errors'
 import { compileSmart, type SmartRules } from './smart'
 import { burstGroups, collapseStacks } from './stacks'
+import type { SidecarState } from '../sidecar/changes'
 import type { CollectionInfo, DuplicateKey, FolderNode, LibraryRoot, MetadataKey, NewPhoto, PhotoDetail, PhotoMetadata, PhotoQuery, PhotoRow } from './types'
 
 const DB_FILE = '/lightbench-catalog.sqlite3'
-const SCHEMA_VERSION = 10
+const SCHEMA_VERSION = 11
 
 let db: Database | null = null
 let persistent = false
@@ -56,7 +57,7 @@ async function openOnce(options: { inMemory?: boolean }): Promise<{ persistent: 
   return { persistent }
 }
 
-function migrate(d: Database) {
+export function migrate(d: Database) {
   const version = Number(d.selectValue('PRAGMA user_version'))
   // A newer version may have changed tables this one would misread or overwrite: refuse, before writing anything.
   if (version > SCHEMA_VERSION) throw new Error(NEWER_CATALOG_MESSAGE)
@@ -280,6 +281,17 @@ function migrate(d: Database) {
         );
       `)
     }
+    if (version < 11) {
+      // Sidecars changed by other apps (sidecar/changes.ts): the sidecar's file date (ms) and size when LightBench last
+      // read or wrote it, its fields then (JSON), and whether another app changed it and the user hasn't answered yet.
+      // Photos added earlier have no record; their sidecars are judged against sidecar_written_at and imported_at.
+      d.exec(`
+        ALTER TABLE photos ADD COLUMN sidecar_modified INTEGER;
+        ALTER TABLE photos ADD COLUMN sidecar_size INTEGER;
+        ALTER TABLE photos ADD COLUMN sidecar_fields TEXT;
+        ALTER TABLE photos ADD COLUMN sidecar_external INTEGER NOT NULL DEFAULT 0;
+      `)
+    }
     d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     d.exec('COMMIT')
   } catch (err) {
@@ -411,6 +423,10 @@ function queryPhotos(q: PhotoQuery): PhotoRow[] {
     where.push(`p.folder_id IN (SELECT id FROM folders WHERE root_id = ?1
       AND (?2 = '' OR path = ?2 OR substr(path, 1, length(?2) + 1) = ?2 || '/'))`)
     bind.push(q.folder.rootId, q.folder.path)
+  }
+  if (q.ids) {
+    where.push(`p.id IN (${q.ids.map(() => '?').join(',') || 'NULL'})`)
+    bind.push(...q.ids)
   }
   if (q.minRating) {
     where.push('p.rating >= ?')
@@ -1230,11 +1246,79 @@ function sidecarSource(requested: number) {
   return {
     photo: p, settings: edit?.settings ?? null, owner, keywords: photoKeywords(photoId), keywordsRead: read.k === 1, collections: photoCollections(photoId),
     stack: stackOf(photoId), versions: versionsOf(photoId), metadata: photoMetadata(photoId), metadataRead: read.m === 1,
+    sidecar: sidecarState(photoId),
   }
 }
 
 function markSidecarWritten(photoId: number, at: number) {
   conn().exec({ sql: 'UPDATE photos SET sidecar_written_at = ? WHERE id = ?', bind: [at, photoId] })
+}
+
+// ---- sidecars changed by other apps (sidecar/changes.ts)
+
+const SIDECAR_STATE = `p.sidecar_modified AS modified, p.sidecar_size AS size, p.sidecar_external AS external,
+  p.sidecar_written_at AS writtenAt, p.imported_at AS importedAt`
+
+type StateRow = Omit<SidecarState, 'external' | 'fields'> & { external: number }
+
+function sidecarState(photoId: number): SidecarState {
+  const r = conn().selectObject(`SELECT ${SIDECAR_STATE}, p.sidecar_fields AS fields FROM photos p WHERE p.id = ?`, [photoId]) as unknown as StateRow & { fields: string | null }
+  return { ...r, external: !!r.external }
+}
+
+/** What comparing a photo with its sidecar needs (a lighter sidecarSource, for checking many photos). */
+function sidecarCompare(photoId: number) {
+  const p = getPhoto(photoId)
+  if (!p) return null
+  return { photo: p, settings: getEdit(photoId)?.settings ?? null, keywords: photoKeywords(photoId), metadata: photoMetadata(photoId), sidecar: sidecarState(photoId) }
+}
+
+/**
+ * The sidecar records of the photos under a folder that own their sidecar: originals only (virtual copies live in
+ * their original's sidecar), and not a JPEG whose RAW twin is in the same folder (the RAW owns the shared sidecar).
+ */
+function sidecarStates(rootId: number, path: string): (Omit<SidecarState, 'fields'> & { id: number; folderPath: string; fileName: string })[] {
+  const rows = conn().selectObjects(
+    `SELECT p.id, f.path AS folderPath, p.file_name AS fileName, p.file_type AS fileType, ${SIDECAR_STATE}
+     FROM photos p JOIN folders f ON f.id = p.folder_id
+     WHERE p.version = 0 AND f.root_id = ?1 AND (?2 = '' OR f.path = ?2 OR substr(f.path, 1, length(?2) + 1) = ?2 || '/')`,
+    [rootId, path],
+  ) as unknown as (StateRow & { id: number; folderPath: string; fileName: string; fileType: string })[]
+  const isJpeg = (t: string) => /^jpe?g$/i.test(t)
+  const base = (r: { folderPath: string; fileName: string }) => {
+    const dot = r.fileName.lastIndexOf('.')
+    return `${r.folderPath}/${(dot > 0 ? r.fileName.slice(0, dot) : r.fileName).toLowerCase()}`
+  }
+  const rawBases = new Set(rows.filter((r) => !isJpeg(r.fileType)).map(base))
+  return rows
+    .filter((r) => !(isJpeg(r.fileType) && rawBases.has(base(r))))
+    .map(({ fileType: _t, ...r }) => ({ ...r, external: !!r.external }))
+}
+
+/**
+ * Remembers a sidecar as LightBench last read or wrote it (file date in ms, size, fields as JSON) and clears the
+ * "changed by another app" mark. `writtenAt` (Unix seconds) is given when LightBench wrote it.
+ */
+function recordSidecar(photoId: number, modified: number, size: number, fields: string, writtenAt?: number) {
+  conn().exec({
+    sql: `UPDATE photos SET sidecar_modified = ?, sidecar_size = ?, sidecar_fields = ?, sidecar_external = 0,
+            sidecar_written_at = COALESCE(?, sidecar_written_at) WHERE id = ?`,
+    bind: [modified, size, fields, writtenAt ?? null, photoId],
+  })
+}
+
+/** Marks photos whose sidecar another app changed (or clears the mark, keeping the old record). */
+function setSidecarExternal(ids: number[], on: boolean) {
+  inTransaction(() => {
+    const stmt = conn().prepare('UPDATE photos SET sidecar_external = ? WHERE id = ?')
+    for (const id of ids) stmt.bind([on ? 1 : 0, id]).stepReset()
+    stmt.finalize()
+  })
+}
+
+/** Photos whose sidecar another app changed, waiting for the user's answer. */
+function externalSidecars(): number[] {
+  return (conn().selectObjects('SELECT id FROM photos WHERE sidecar_external = 1 ORDER BY id') as unknown as { id: number }[]).map((r) => r.id)
 }
 
 function stats() {
@@ -1244,7 +1328,7 @@ function stats() {
   }
 }
 
-const handlers = {
+export const handlers = {
   open,
   addRoot,
   adoptRoot,
@@ -1315,6 +1399,11 @@ const handlers = {
   originalOf,
   versionCount,
   markSidecarWritten,
+  sidecarStates,
+  sidecarCompare,
+  recordSidecar,
+  setSidecarExternal,
+  externalSidecars,
   stats,
 }
 
