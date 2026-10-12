@@ -175,7 +175,7 @@ export class FullRenderer {
     const info = loadIntoEngine(engine, decoded)
     const settings = savedSettings(await getCatalog().getEdit(photo.id), info.kind)
     await engine.process(stageOptions(settings, info))
-    const [width, height] = engine.imageSize
+    const [width, height] = engine.outputSize(settings.geometry)
     const out = await engine.renderOutput(displayUniforms(settings), multipliers(settings, info), {
       width,
       height,

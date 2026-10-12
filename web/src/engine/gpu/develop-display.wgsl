@@ -19,7 +19,7 @@ struct View {
   lod: f32,           // mip level to sample
   exposure: f32,      // linear gain
   toneEnabled: u32,
-  flip: u32,          // LibRaw orientation code
+  frame: u32,         // 1 = the crop tool's view: outside the photo shows the background
   vibrance: f32,
   saturation: f32,
   sgWhite: f32,
@@ -45,6 +45,13 @@ struct View {
   pad0: f32,
   pad1: f32,
   pad2: f32,
+  // The geometry stage (engine/develop/geometry.ts) as projective 3×3 maps from the shown image's uv, rows padded:
+  texMap0: vec4f,     // → uv of the bound texture (the scene, or its warped copy: then identity)
+  texMap1: vec4f,
+  texMap2: vec4f,
+  rawMap0: vec4f,     // → sensor uv (sensor clipping)
+  rawMap1: vec4f,
+  rawMap2: vec4f,
 }
 
 @group(0) @binding(0) var img: texture_2d<f32>;
@@ -60,13 +67,10 @@ fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
   return vec4f(p * 2.0 - 1.0, 0.0, 1.0);
 }
 
-fn sourceUv(uv: vec2f) -> vec2f {
-  switch V.flip {
-    case 3u: { return vec2f(1.0 - uv.x, 1.0 - uv.y); }
-    case 5u: { return vec2f(1.0 - uv.y, uv.x); }
-    case 6u: { return vec2f(uv.y, 1.0 - uv.x); }
-    default: { return uv; }
-  }
+fn applyMap(m0: vec4f, m1: vec4f, m2: vec4f, uv: vec2f) -> vec2f {
+  let p = vec3f(uv, 1.0);
+  let q = vec3f(dot(m0.xyz, p), dot(m1.xyz, p), dot(m2.xyz, p));
+  return q.xy / q.z;
 }
 
 // ---- tone equalizer (darktable toneequal.c pixel_correction)
@@ -281,9 +285,12 @@ fn rawOverexposed(uv: vec2f, out: vec3f) -> vec3f {
 @fragment
 fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let uv = (pos.xy - V.offset) / V.size;
-  if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) { return V.background; }
-  let suv = sourceUv(uv);
-  let scene = textureSampleLevel(img, samp, suv, V.lod).rgb;
+  // The crop tool's view also draws the turned photo's corners in the margin around the frame.
+  if (V.frame == 0u && (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0)))) { return V.background; }
+  let tuv = applyMap(V.texMap0, V.texMap1, V.texMap2, uv);
+  if (V.frame == 1u && (any(tuv < vec2f(0.0)) || any(tuv > vec2f(1.0)))) { return V.background; }
+  let suv = applyMap(V.rawMap0, V.rawMap1, V.rawMap2, uv);
+  let scene = textureSampleLevel(img, samp, tuv, V.lod).rgb;
   if (V.statsPass == 2u) {
     // Export: the output colour profile, resizing and encoding happen afterwards (export.wgsl).
     return vec4f(developRec2020(scene), 1.0);

@@ -97,4 +97,12 @@ export const HELP: Record<string, ControlHelp> = {
     pitfalls: 'Strong colours lose detail and can go out of the screen’s range first; skin turns orange.',
     engine: 'simple chroma scaling for now; darktable colour balance rgb (saturation) is planned',
   },
+  angle: {
+    hint: 'Levels a tilted horizon',
+    what: 'Turns the photo under the crop, in degrees. The crop stays level and shrinks if needed so it stays inside the photo.',
+    left: 'Turns the photo anticlockwise.',
+    right: 'Turns the photo clockwise.',
+    pitfalls: 'Every degree trims a little more from the edges. To level along something in the photo, use Level (or Ctrl-drag while cropping) and draw along the horizon or a wall.',
+    engine: 'the rotation of darktable rotate and perspective (ashift), applied in one resample with the crop',
+  },
 }

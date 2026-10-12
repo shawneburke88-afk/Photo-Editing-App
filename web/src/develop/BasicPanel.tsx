@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { HIGHEST_TEMPERATURE, LOWEST_TEMPERATURE } from '../engine/color/temperature'
 import { sliderFromTint, tintFromSlider, type DevelopSettings, type SourceKind } from '../engine/develop/settings'
-import { useStoredNumber } from '../lib/useStoredNumber'
 import { AutoControls, type AutoProps } from './AutoControls'
 import { HELP } from './help'
 import { Slider } from './Slider'
@@ -20,6 +19,9 @@ interface Props {
   /** White balance picker (W) is active. */
   pickingWb: boolean
   onPickWb: () => void
+  /** Hints next to each slider's name (shared with the other groups of the tool stack). */
+  hints: boolean
+  onHints: (on: boolean) => void
 }
 
 const signed = (v: number) => (v > 0 ? `+${Math.round(v)}` : `${Math.round(v)}`)
@@ -33,11 +35,8 @@ const TINT_TRACK = 'linear-gradient(90deg, #4caf50, #ddd 50%, #c050c0)'
 const toMired = (k: number) => -1e6 / k
 const fromMired = (m: number) => Math.round(-1e6 / m)
 
-export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, defaults, auto, pickingWb, onPickWb }: Props) {
+export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, defaults, auto, pickingWb, onPickWb, hints, onHints }: Props) {
   const [advanced, setAdvanced] = useState(false)
-  // Sublabels under each slider: 1 = shown, 2 = hidden (tooltips are always available on hover).
-  const [hintsPref, setHintsPref] = useStoredNumber('lightbench.develop.hints', 1)
-  const hints = hintsPref === 1
   const guide = (key: string) => ({ help: HELP[key], showHint: hints })
   const set = (label: string, patch: Partial<DevelopSettings>) => onChange(label, { ...s, ...patch })
   const setAdv = (label: string, patch: Partial<DevelopSettings['advanced']>) =>
@@ -55,7 +54,7 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, defa
         <div className="dpanel-head">
           <h3>White balance</h3>
           <label className="hints-toggle" title="Show a short description next to each slider’s name when the panel is wide enough. Hover a slider’s name for full details.">
-            <input type="checkbox" checked={hints} onChange={(e) => setHintsPref(e.target.checked ? 1 : 2)} /> Hints
+            <input type="checkbox" checked={hints} onChange={(e) => onHints(e.target.checked)} /> Hints
           </label>
         </div>
         <div className="wb-mode">

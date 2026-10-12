@@ -92,8 +92,6 @@ export default function App() {
       settings.update((s) => ({ ...s, display: { ...s.display, scale: stepScale(s.display.scale, id === 'app.scaleUp' ? 1 : -1) } }))
     } else return false
   })
-  // G returns to the Library grid from Develop, like Lightroom.
-  useShortcuts(['develop'], module === 'develop', (id) => (id === 'develop.grid' ? go('library') : false))
   useKeymapVersion()
 
   const modules: { id: Module; name: string; enabled: boolean; hint?: string }[] = [
@@ -155,6 +153,7 @@ export default function App() {
             onNavigate={(id) => setDeveloping((d) => (d ? { ...d, id } : d))}
             onEdited={onEdited}
             onExport={setExporting}
+            onLibrary={() => go('library')}
           />
         )}
         {module === 'syscheck' && <SystemCheck />}

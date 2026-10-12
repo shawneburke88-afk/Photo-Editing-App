@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { BUILT_IN_TARGETS } from '../engine/develop/auto'
+import { isWithinImage } from '../engine/develop/crop'
+import { DEFAULT_GEOMETRY, rotate90, setAngle, setAspect } from '../engine/develop/geometry'
 import { DEFAULT_RGB_SETTINGS, DEFAULT_SETTINGS } from '../engine/develop/settings'
-import { applyPaste, changedKeys, describePaste, type Clipboard } from './paste'
+import { applyPaste, changedKeys, DEFAULT_PASTE_KEYS, describePaste, type Clipboard } from './paste'
 
 const source = {
   ...DEFAULT_SETTINGS,
@@ -47,5 +49,37 @@ describe('paste', () => {
   it('finds which settings changed (for Auto Sync)', () => {
     expect(changedKeys(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, shadows: 12 })).toEqual(['shadows'])
     expect(changedKeys(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, advanced: { ...DEFAULT_SETTINGS.advanced, demosaic: 'bilinear' } })).toEqual(['demosaic'])
+  })
+
+  it('leaves the crop alone unless it is ticked', () => {
+    expect(DEFAULT_PASTE_KEYS).not.toContain('crop')
+    expect(DEFAULT_PASTE_KEYS).not.toContain('straighten')
+    expect(DEFAULT_PASTE_KEYS).not.toContain('rotate')
+    expect(DEFAULT_PASTE_KEYS).not.toContain('process')
+    const cropped = { ...source, geometry: setAspect(DEFAULT_GEOMETRY, '1:1', 600, 400) }
+    expect(applyPaste(DEFAULT_SETTINGS, clip({ settings: cropped, keys: DEFAULT_PASTE_KEYS }), 'raw', [600, 400]).geometry).toEqual(DEFAULT_GEOMETRY)
+  })
+
+  it('pastes a crop, keeping a locked aspect on a photo of another shape', () => {
+    const cropped = { ...source, geometry: setAspect(DEFAULT_GEOMETRY, '1:1', 600, 400) }
+    const out = applyPaste(DEFAULT_SETTINGS, clip({ settings: cropped, keys: ['crop'] }), 'raw', [400, 600]).geometry
+    const c = out.crop
+    expect((c.x1 - c.x0) * 400).toBeCloseTo((c.y1 - c.y0) * 600, 6)
+    expect(out.aspect).toBe('1:1')
+    expect(describePaste(clip({ settings: cropped, keys: ['crop'] }), 'raw')[0]).toBe('Crop: 67 × 100 % of the photo, 1:1')
+  })
+
+  it('pastes rotation, angle and crop in that order, keeping the crop inside the photo', () => {
+    const turned = rotate90(setAngle(DEFAULT_GEOMETRY, 10, 600, 400), 1)
+    const src = { ...source, geometry: turned }
+    const out = applyPaste(DEFAULT_SETTINGS, clip({ settings: src, keys: ['rotate', 'straighten', 'crop'] }), 'raw', [600, 400]).geometry
+    expect([out.turns, out.mirror, out.angle]).toEqual([1, false, 10])
+    // Turned: the frame is 400 × 600.
+    expect(isWithinImage({ rect: out.crop, angle: 10 }, 400, 600)).toBe(true)
+    // The angle alone shrinks the target's own crop to fit.
+    const angleOnly = applyPaste(DEFAULT_SETTINGS, clip({ settings: src, keys: ['straighten'] }), 'raw', [600, 400]).geometry
+    expect(angleOnly.angle).toBe(10)
+    expect(isWithinImage({ rect: angleOnly.crop, angle: 10 }, 600, 400)).toBe(true)
+    expect(changedKeys(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, geometry: turned })).toEqual(['rotate', 'straighten', 'crop'])
   })
 })

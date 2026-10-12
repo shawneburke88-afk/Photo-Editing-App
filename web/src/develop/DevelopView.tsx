@@ -6,6 +6,8 @@ import type { PhotoDetail } from '../catalog/types'
 import { multipliersToTemperature } from '../engine/color/temperature'
 import { AUTO_SLIDERS, BUILT_IN_TARGETS, metricsFromStats, solveAuto, statsFromPixels, targetFromMetrics, type AutoKey, type AutoTarget } from '../engine/develop/auto'
 import { defaultsFor, displayUniforms, type DevelopSettings } from '../engine/develop/settings'
+import { DEFAULT_GEOMETRY, flip, isIdentityGeometry, rotate90, sameGeometry, setAngle, setAspect, setLocked, swapAspect, type GeometrySettings } from '../engine/develop/geometry'
+import { CURRENT_PROCESS, processStatus } from '../engine/develop/process'
 import { DevelopEngine, type ImageStats, type RawStageOptions, type ViewState } from '../engine/gpu/develop-engine'
 import { RawDecoder } from '../engine/raw/decoder'
 import { Thumb } from '../library/Thumb'
@@ -15,6 +17,10 @@ import { useStoredNumber } from '../lib/useStoredNumber'
 import { DEFAULT_CLIP, DEFAULT_RAW_CLIP, type Indicators } from '../engine/develop/indicators'
 import { exposureText } from '../library/format'
 import { BasicPanel } from './BasicPanel'
+import { CropPanel, type GeometryEdit } from './CropPanel'
+import { CropOverlay } from './CropOverlay'
+import { ToolStack, type GroupId } from './ToolStack'
+import { CROP_OVERLAYS, GROUP_ICONS, type CropOverlayKind } from './tools'
 import { Histogram } from './Histogram'
 import { ResizeHandle } from './ResizeHandle'
 import { WbLoupe } from './WbLoupe'
@@ -37,6 +43,8 @@ interface Props {
   onNavigate: (id: number) => void
   onEdited: () => void
   onExport: (ids: number[]) => void
+  /** Back to the Library (G). */
+  onLibrary: () => void
 }
 
 type Status = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string }
@@ -56,6 +64,28 @@ const DEFAULT_AUTO_OPTIONS: AutoOptionsState = { strength: 1, sliders: AUTO_SLID
 
 type PasteMode = { mode: 'copy' | 'sync' | 'paste' | 'preset'; clip: Clipboard }
 
+/** The Basic group's settings at their defaults (its on/off eye): white balance, tone and presence. */
+function withoutBasic(s: DevelopSettings, d: DevelopSettings): DevelopSettings {
+  const { whiteBalance, exposure, contrast, highlights, shadows, whites, blacks, vibrance, saturation } = d
+  return { ...s, whiteBalance, exposure, contrast, highlights, shadows, whites, blacks, vibrance, saturation }
+}
+
+/** What a crop session changed, as the history step's name. */
+function cropLabel(before: GeometrySettings, after: GeometrySettings): string {
+  const same = (k: keyof GeometrySettings) => JSON.stringify(before[k]) === JSON.stringify(after[k])
+  if (!same('angle') && same('crop') && same('turns') && same('mirror')) return 'Straighten'
+  return 'Crop'
+}
+
+/** True when a crop session changed nothing worth a history step. */
+const sameCropSession = (a: GeometrySettings, b: GeometrySettings) =>
+  sameGeometry(a, b) && a.aspect === b.aspect && a.locked === b.locked && a.custom[0] === b.custom[0] && a.custom[1] === b.custom[1]
+
+interface Bypass {
+  crop: boolean
+  basic: boolean
+}
+
 /** The preset just applied: its Amount can be changed until the photo is changed another way. */
 interface AppliedPreset {
   preset: Preset
@@ -66,7 +96,7 @@ interface AppliedPreset {
   result: DevelopSettings
 }
 
-export function DevelopView({ ids, id, selected: initialSelection, onNavigate, onEdited, onExport }: Props) {
+export function DevelopView({ ids, id, selected: initialSelection, onNavigate, onEdited, onExport, onLibrary }: Props) {
   const catalog = getCatalog()
   const stageRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<DevelopEngine | null>(null)
@@ -112,6 +142,21 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [autoSync, setAutoSync] = useState(false)
   const [pasting, setPasting] = useState<PasteMode | null>(null)
   const [reloads, setReloads] = useState(0)
+  /** The crop being edited on the photo (R), or null. Applied with Enter, dropped with Esc. */
+  const [draft, setDraft] = useState<GeometrySettings | null>(null)
+  const draftUndo = useRef<{ back: GeometrySettings[]; ahead: GeometrySettings[] }>({ back: [], ahead: [] })
+  const [leveling, setLeveling] = useState(false)
+  const [cropOverlay, setCropOverlay] = useStoredJson<{ kind: CropOverlayKind }>('lightbench.crop.overlay', { kind: 'thirds' })
+  /** Where the straightened photo sits on the stage while cropping (CSS pixels). */
+  const [frameBox, setFrameBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const cropDragging = useRef(false)
+  /** The angle slider works from the crop before it started moving, so moving it back gives the crop back. */
+  const angleBase = useRef<{ from: GeometrySettings; last: GeometrySettings } | null>(null)
+  /** Groups switched off with their eye (a view only). */
+  const [bypass, setBypass] = useState<Bypass>({ crop: false, basic: false })
+  const [reveal, setReveal] = useState<{ id: GroupId; n: number } | null>(null)
+  // Sublabels next to each slider: 1 = shown, 2 = hidden (tooltips are always available on hover).
+  const [hintsPref, setHintsPref] = useStoredNumber('lightbench.develop.hints', 1)
   const [presets, setPresets] = useState<Preset[]>([])
   const [hoverPreset, setHoverPreset] = useState<Preset | null>(null)
   const [applied, setApplied] = useState<AppliedPreset | null>(null)
@@ -130,9 +175,18 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const settings = history ? current(history) : defaults
   /** Hover preview of a preset (its Auto, if any, runs only when it is applied). */
   const hover = useMemo(
-    () => (hoverPreset && info ? applyPaste(settings, { ...presetClip(hoverPreset), rerunAuto: false }, info.kind) : null),
+    () => (hoverPreset && info ? applyPaste(settings, { ...presetClip(hoverPreset), rerunAuto: false }, info.kind, engineRef.current?.imageSize) : null),
     [hoverPreset, info, settings],
   )
+  const draftRef = useRef(draft)
+  draftRef.current = draft
+  const historyRef = useRef(history)
+  historyRef.current = history
+  const infoRef = useRef(info)
+  infoRef.current = info
+  /** The geometry shown in the Crop group: the crop being edited, else the photo's. */
+  const geometry = draft ?? settings.geometry
+  const frameOf = (g: GeometrySettings) => (engineRef.current && info ? engineRef.current.geometry(g, true).frame : null)
 
   // ---- engine lifetime
   useEffect(() => {
@@ -179,6 +233,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setHistory(null)
     setInfo(null)
     setView({ zoom: 'fit', center: [0.5, 0.5] })
+    setDraft(null)
+    setLeveling(false)
+    angleBase.current = null
     builtStage.current = null
     dirty.current = false
     void thumbUrl(id).then((u) => !stale() && setPlaceholder(u))
@@ -246,25 +303,49 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     () => ({ clip: clipSettings, showClip: overlay, raw: rawClipSettings, showRaw: rawOverlay }),
     [clipSettings, overlay, rawClipSettings, rawOverlay],
   )
-  const latest = useRef({ settings, info, view, before, indicators, hover })
-  latest.current = { settings, info, view, before, indicators, hover }
+  const latest = useRef({ settings, info, view, before, indicators, hover, draft, bypass })
+  latest.current = { settings, info, view, before, indicators, hover, draft, bypass }
+  /** The settings drawn: Before shows the defaults; a preset hovered, the crop being edited and switched-off groups apply on top. */
+  const shownOf = (x: typeof latest.current, inf: SensorInfo): DevelopSettings => {
+    if (x.before) return defaultsFor(inf.kind)
+    let s = x.hover ?? x.settings
+    if (x.bypass.basic) s = withoutBasic(s, defaultsFor(inf.kind))
+    if (x.draft) return { ...s, geometry: x.draft }
+    return x.bypass.crop ? { ...s, geometry: DEFAULT_GEOMETRY } : s
+  }
 
-  // Histogram: measured on a small rendering shortly after each redraw (throttled).
+  // Histogram: measured on a small rendering of the (cropped) result shortly after each redraw (throttled, one at
+  // a time). While a crop handle is being dragged it waits for the end of the drag.
   const statsTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const statsBusy = useRef(false)
+  const statsAgain = useRef(false)
   const scheduleStats = useCallback(() => {
-    if (statsTimer.current !== null) return
+    if (statsTimer.current !== null || cropDragging.current) return
+    if (statsBusy.current) {
+      statsAgain.current = true
+      return
+    }
     statsTimer.current = setTimeout(async () => {
       statsTimer.current = null
       const engine = engineRef.current
-      const { settings: s, info: inf, before: b, indicators: ind, hover: hv } = latest.current
+      const x = latest.current
+      const inf = x.info
       if (!engine || !inf) return
-      const shown = b ? defaultsFor(inf.kind) : (hv ?? s)
+      const shown = shownOf(x, inf)
+      statsBusy.current = true
       try {
-        setStats(await engine.renderStats(displayUniforms(shown), b ? inf.asShotWb : multipliers(shown, inf), 256, ind))
+        setStats(await engine.renderStats(displayUniforms(shown), x.before ? inf.asShotWb : multipliers(shown, inf), 256, x.indicators))
       } catch {
         // e.g. engine closed while measuring
+      } finally {
+        statsBusy.current = false
+        if (statsAgain.current) {
+          statsAgain.current = false
+          scheduleStats()
+        }
       }
     }, 120)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const rendering = useRef(false)
   const pending = useRef(false)
@@ -276,12 +357,21 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       while (pending.current) {
         pending.current = false
         const engine = engineRef.current
-        const { settings: s, info: inf, view: v, before: b, indicators: o, hover: hv } = latest.current
+        const x = latest.current
+        const inf = x.info
         if (!engine || !inf) break
-        const shown = b ? defaultsFor(inf.kind) : (hv ?? s)
+        const shown = shownOf(x, inf)
+        // While cropping, the whole straightened photo is shown under the crop box.
+        const v: ViewState = x.draft && !x.before ? { zoom: 'fit', center: [0.5, 0.5], frame: true } : x.view
         try {
-          const ms = await engine.render(displayUniforms(shown), b ? inf.asShotWb : multipliers(shown, inf), v, o)
-          setTiming((x) => ({ ...x, frame: ms }))
+          const ms = await engine.render(displayUniforms(shown), x.before ? inf.asShotWb : multipliers(shown, inf), v, x.indicators)
+          setTiming((t) => ({ ...t, frame: ms }))
+          if (v.frame) {
+            const dpr = window.devicePixelRatio || 1
+            const l = engine.layout(v, engine.canvas.width, engine.canvas.height)
+            const box = { x: l.x / dpr, y: l.y / dpr, w: l.w / dpr, h: l.h / dpr }
+            setFrameBox((b) => (b && Math.abs(b.x - box.x) + Math.abs(b.y - box.y) + Math.abs(b.w - box.w) + Math.abs(b.h - box.h) < 0.01 ? b : box))
+          }
           scheduleStats()
         } catch (e) {
           setStatus({ kind: 'error', message: e instanceof Error ? e.message : String(e) })
@@ -293,7 +383,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   useEffect(() => {
     if (status.kind === 'ready') requestRender()
-  }, [status.kind, settings, view, before, indicators, hover, requestRender])
+  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, requestRender])
 
   useEffect(() => {
     const el = stageRef.current
@@ -305,38 +395,55 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   // ---- saving (debounced): settings + history to the catalog, and a fresh thumbnail.
   // A save still waiting when the photo changes or Develop closes is run immediately, so no edit is lost.
-  useEffect(() => {
-    if (!history || !info || !dirty.current) return
-    const photoId = id
-    const engine = engineRef.current
-    const run = async () => {
-      const s = current(history)
-      await catalog.saveEdit(photoId, JSON.stringify(s), JSON.stringify(savedForm(history)))
+  /** Saves a photo's settings and history, then refreshes its thumbnail and sidecar. */
+  const persist = useCallback(
+    async (photoId: number, h: History, inf: SensorInfo, engine: DevelopEngine | null) => {
+      const s = current(h)
+      await catalog.saveEdit(photoId, JSON.stringify(s), JSON.stringify(savedForm(h)))
       sidecars.schedule([photoId])
       try {
         if (engine) {
-          await saveThumb(photoId, await renderThumbnail(engine, s, info))
+          await saveThumb(photoId, await renderThumbnail(engine, s, inf))
           forgetThumbUrl(photoId)
         }
       } catch {
         // The settings are saved; only the thumbnail refresh failed (e.g. the GPU was reset).
       }
       onEdited()
-    }
+    },
+    [catalog, onEdited],
+  )
+
+  useEffect(() => {
+    if (!history || !info || !dirty.current) return
+    const photoId = id
+    const engine = engineRef.current
+    const run = () => persist(photoId, history, info, engine)
     pendingSave.current = run
     const t = setTimeout(() => {
       pendingSave.current = null
       saving.current = run()
     }, 800)
     return () => clearTimeout(t)
-  }, [catalog, history, info, id, onEdited])
+  }, [persist, history, info, id])
 
   useEffect(
     () => () => {
       const run = pendingSave.current
       pendingSave.current = null
-      if (run) saving.current = run()
+      let job = run ? run() : null
+      // A crop still being edited is applied when leaving the photo or Develop, as Lightroom does.
+      const d = draftRef.current
+      const h = historyRef.current
+      const inf = infoRef.current
+      if (d && h && inf && !sameCropSession(current(h).geometry, d)) {
+        const next = record(h, cropLabel(current(h).geometry, d), { ...current(h), geometry: d })
+        const engine = engineRef.current
+        job = (job ?? Promise.resolve()).then(() => persist(id, next, inf, engine))
+      }
+      if (job) saving.current = job
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [id],
   )
 
@@ -446,6 +553,100 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setTargetId('natural')
   }
 
+  // ---- crop, straighten, rotate and flip
+  function startCrop(level = false) {
+    if (status.kind !== 'ready' || !info) return
+    setWbPick(false)
+    setLoupe(null)
+    setPicking(false)
+    setBefore(false)
+    setView((v) => ({ ...v, zoom: 'fit' }))
+    if (!draft) {
+      setDraft(settings.geometry)
+      draftUndo.current = { back: [], ahead: [] }
+    }
+    setLeveling(level)
+    setReveal({ id: 'crop', n: Date.now() })
+  }
+  function endCrop(apply: boolean) {
+    if (apply && draft && !sameCropSession(settings.geometry, draft)) change(cropLabel(settings.geometry, draft), { ...settings, geometry: draft })
+    setDraft(null)
+    setLeveling(false)
+    angleBase.current = null
+    // The histogram measures the result again.
+    requestRender()
+  }
+  /** While cropping, every change can be undone (Ctrl+Z) until the crop is applied. */
+  function setDraftStep(next: GeometrySettings) {
+    if (!draft) return
+    draftUndo.current = { back: [...draftUndo.current.back, draft].slice(-100), ahead: [] }
+    setDraft(next)
+  }
+  function draftHistory(dir: 'undo' | 'redo') {
+    const u = draftUndo.current
+    if (!draft) return
+    const from = dir === 'undo' ? u.back : u.ahead
+    if (!from.length) return
+    const prev = from[from.length - 1]
+    draftUndo.current = dir === 'undo' ? { back: u.back.slice(0, -1), ahead: [...u.ahead, draft] } : { back: [...u.back, draft], ahead: u.ahead.slice(0, -1) }
+    setDraft(prev)
+  }
+
+  function editGeometry(e: GeometryEdit) {
+    const base = draft ?? settings.geometry
+    const fr = frameOf(base)
+    if (!fr || status.kind !== 'ready') return
+    let next: GeometrySettings
+    let label: string
+    // Angle slider moves continue one change (one undo step while cropping).
+    const continuing = e.kind === 'angle' && angleBase.current?.last === base
+    switch (e.kind) {
+      case 'angle': {
+        const from = continuing ? angleBase.current!.from : base
+        next = setAngle(from, e.angle, fr[0], fr[1])
+        angleBase.current = { from, last: next }
+        label = 'Straighten'
+        break
+      }
+      case 'aspect':
+        next = setAspect(base, e.aspect, fr[0], fr[1], e.custom)
+        label = 'Crop aspect'
+        break
+      case 'lock':
+        next = setLocked(base, e.locked, fr[0], fr[1])
+        label = e.locked ? 'Lock crop aspect' : 'Unlock crop aspect'
+        break
+      case 'swap':
+        next = swapAspect(base, fr[0], fr[1])
+        label = 'Swap crop aspect'
+        break
+      case 'rotate':
+        next = rotate90(base, e.dir)
+        label = e.dir === 1 ? 'Rotate right' : 'Rotate left'
+        break
+      case 'flip':
+        next = flip(base, e.axis)
+        label = e.axis === 'h' ? 'Flip horizontal' : 'Flip vertical'
+        break
+      case 'reset':
+        next = DEFAULT_GEOMETRY
+        label = 'Reset crop'
+        break
+    }
+    if (e.kind !== 'angle') angleBase.current = null
+    if (draft) {
+      if (continuing) setDraft(next)
+      else setDraftStep(next)
+    } else if (JSON.stringify(next) !== JSON.stringify(base)) {
+      change(label, { ...settings, geometry: next })
+    }
+  }
+  const nextOverlay = () => {
+    const i = CROP_OVERLAYS.findIndex((o) => o.id === cropOverlay.kind)
+    setCropOverlay({ kind: CROP_OVERLAYS[(i + 1) % CROP_OVERLAYS.length].id })
+  }
+  const updateProcess = () => change(`Update to process ${CURRENT_PROCESS}`, { ...settings, process: CURRENT_PROCESS })
+
   const selectedTarget = targets.find((t) => t.id === targetId) ?? BUILT_IN_TARGETS[0]
   const infoLine = photo ? exposureText(photo) : ''
 
@@ -470,7 +671,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   async function pasteHere(clip: Clipboard) {
     const engine = engineRef.current
     if (!engine || !info) return
-    let next = applyPaste(settings, clip, info.kind)
+    let next = applyPaste(settings, clip, info.kind, engine.imageSize)
     if (clip.rerunAuto && clip.settings.auto) {
       setAutoBusy(true)
       try {
@@ -510,7 +711,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     if (!engine || !info || status.kind !== 'ready') return
     setHoverPreset(null)
     const before = settings
-    let after = applyPaste(before, presetClip(p), info.kind)
+    let after = applyPaste(before, presetClip(p), info.kind, engine.imageSize)
     if (p.rerunAuto && p.settings.auto) {
       setAutoBusy(true)
       try {
@@ -607,8 +808,36 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   // ---- keyboard
   const index = ids.indexOf(id)
-  useShortcuts(['develop'], !pasting, (cmd) => {
+  useShortcuts(['crop'], !pasting && !!draft, (cmd) => {
     switch (cmd) {
+      case 'develop.crop':
+      case 'crop.apply': endCrop(true); break
+      case 'crop.cancel': endCrop(false); break
+      case 'crop.overlay': nextOverlay(); break
+      case 'crop.swap': editGeometry({ kind: 'swap' }); break
+      case 'crop.lock': editGeometry({ kind: 'lock', locked: !geometry.locked }); break
+      case 'crop.reset': editGeometry({ kind: 'reset' }); break
+      case 'develop.undo': draftHistory('undo'); break
+      case 'develop.redo': draftHistory('redo'); break
+      case 'develop.rotateLeft': editGeometry({ kind: 'rotate', dir: -1 }); break
+      case 'develop.rotateRight': editGeometry({ kind: 'rotate', dir: 1 }); break
+      case 'develop.flipH': editGeometry({ kind: 'flip', axis: 'h' }); break
+      case 'develop.flipV': editGeometry({ kind: 'flip', axis: 'v' }); break
+      case 'develop.level': setLeveling((l) => !l); break
+      default:
+        return false
+    }
+  })
+  useShortcuts(['develop'], !pasting && !draft, (cmd) => {
+    switch (cmd) {
+      case 'develop.grid': onLibrary(); break
+      case 'develop.crop': startCrop(); break
+      case 'develop.level': startCrop(true); break
+      case 'crop.reset': editGeometry({ kind: 'reset' }); break
+      case 'develop.rotateLeft': editGeometry({ kind: 'rotate', dir: -1 }); break
+      case 'develop.rotateRight': editGeometry({ kind: 'rotate', dir: 1 }); break
+      case 'develop.flipH': editGeometry({ kind: 'flip', axis: 'h' }); break
+      case 'develop.flipV': editGeometry({ kind: 'flip', axis: 'v' }); break
       case 'export': onExport([id]); break
       // Copy always asks which settings to copy.
       case 'settings.copy': openCopy('copy'); break
@@ -706,7 +935,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   }
 
   function onPointerDown(e: React.PointerEvent) {
-    if (status.kind !== 'ready' || wbPick) return
+    if (status.kind !== 'ready' || wbPick || draft) return
     ;(e.target as Element).setPointerCapture(e.pointerId)
     drag.current = { x: e.clientX, y: e.clientY, center: view.center, moved: false }
   }
@@ -723,7 +952,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       return
     }
     const d = drag.current
-    if (!d || view.zoom === 'fit') return
+    if (!d || view.zoom === 'fit' || draft) return
     const p = canvasPoint(e)
     if (!p) return
     const dpr = window.devicePixelRatio || 1
@@ -740,7 +969,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     }
     const d = drag.current
     drag.current = null
-    if (!d || d.moved) return
+    if (!d || d.moved || draft) return
     const p = canvasPoint(e)
     if (!p) return
     if (view.zoom === 'fit') {
@@ -821,7 +1050,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       <section className="dcenter">
         <div className="dtoolbar">
           <span className="dtitle">{photo ? photo.fileName : ''}</span>
-          <button className={`button small ${before ? 'on' : ''}`} onClick={() => setBefore(!before)} disabled={status.kind !== 'ready'} title={withKey('Before / after', 'develop.before')}>
+          <button className={`button small ${draft ? 'on' : ''}`} onClick={() => (draft ? endCrop(true) : startCrop())} disabled={status.kind !== 'ready'} title={withKey(draft ? 'Apply the crop' : 'Crop and straighten', 'develop.crop')}>
+            {draft ? 'Done' : 'Crop'}
+          </button>
+          <button className={`button small ${before ? 'on' : ''}`} onClick={() => setBefore(!before)} disabled={status.kind !== 'ready' || !!draft} title={withKey('Before / after', 'develop.before')}>
             {before ? 'Showing before' : 'Before / after'}
           </button>
           <button className="button small" onClick={() => setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center }))} disabled={status.kind !== 'ready'} title={withKey('Zoom', 'develop.zoom')}>
@@ -844,7 +1076,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           <button className="button small" onClick={() => onExport([id])} title={withKey('Export this photo', 'export')}>Export…</button>
         </div>
         <div
-          className={`dstage ${view.zoom === 'fit' ? 'fit' : 'zoomed'} ${wbPick ? 'wb-picking' : ''}`}
+          className={`dstage ${draft ? 'cropping' : view.zoom === 'fit' ? 'fit' : 'zoomed'} ${wbPick ? 'wb-picking' : ''}`}
           ref={stageRef}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -855,8 +1087,36 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           {status.kind === 'loading' && <div className="dmessage">Developing…</div>}
           {status.kind === 'error' && <div className="dmessage error">{status.message}</div>}
           {engineError && <div className="dmessage error">{engineError}</div>}
+          {draft && frameBox && info && status.kind === 'ready' && (
+            <CropOverlay
+              box={frameBox}
+              frame={frameOf(draft) ?? [1, 1]}
+              geometry={draft}
+              overlay={cropOverlay.kind}
+              leveling={leveling}
+              onBegin={() => {
+                cropDragging.current = true
+                angleBase.current = null
+                draftUndo.current = { back: [...draftUndo.current.back, draft].slice(-100), ahead: [] }
+              }}
+              onChange={setDraft}
+              onEnd={() => {
+                cropDragging.current = false
+                scheduleStats()
+              }}
+              onLevelDone={() => setLeveling(false)}
+            />
+          )}
+          {draft && (
+            <div className="dbadge crop-hint">
+              {leveling ? 'Draw along something that should be level or upright' : 'Drag corners or edges · drag inside to move · drag outside to turn · Ctrl-drag to level'} · Enter applies · Esc cancels
+            </div>
+          )}
           {before && <div className="dbadge">Before</div>}
-          {!before && hoverPreset && <div className="dbadge">Preview: {hoverPreset.name}</div>}
+          {!before && hoverPreset && !draft && <div className="dbadge">Preview: {hoverPreset.name}</div>}
+          {!before && !draft && (bypass.crop || bypass.basic) && (
+            <div className="dbadge">Hidden: {[bypass.crop && 'Crop', bypass.basic && 'Basic'].filter(Boolean).join(', ')}</div>
+          )}
           {(overlay || rawOverlay) && (
             <div className="dbadge right">
               {[overlay && withKey('Clipping shown', 'develop.clipping'), rawOverlay && withKey('Sensor clipping shown', 'develop.sensorClipping')].filter(Boolean).join(' · ')}
@@ -884,6 +1144,72 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
       <ResizeHandle axis="x" value={rightW} min={240} max={520} direction={-1} onChange={setRightW} label="Resize right panel" />
       <aside className="dright">
+        <ToolStack
+          reveal={reveal}
+          header={
+            status.kind === 'ready' && processStatus(settings.process) === 'older' ? (
+              <div className="process-offer">
+                <span>This photo was edited with process version {settings.process}.</span>
+                <button
+                  className="button small"
+                  onClick={updateProcess}
+                  title={`Render it with LightBench’s current rendering (version ${CURRENT_PROCESS}). The photo may change; the previous step stays in the History, so you can compare and undo.`}
+                >
+                  Update to current process
+                </button>
+              </div>
+            ) : null
+          }
+          footer={
+            status.kind === 'ready' && (
+              <p
+                className="process-line muted small"
+                title="The version of LightBench’s rendering this edit uses. A later version never changes an edit until you choose to update it."
+              >
+                Process version {settings.process}
+                {processStatus(settings.process) === 'current'
+                  ? ' (current)'
+                  : processStatus(settings.process) === 'newer'
+                    ? ` (from a newer LightBench; shown with version ${CURRENT_PROCESS})`
+                    : ''}
+              </p>
+            )
+          }
+          groups={[
+            {
+              id: 'crop',
+              label: 'Crop',
+              title: 'Crop',
+              icon: GROUP_ICONS.crop,
+              bypass: isIdentityGeometry(settings.geometry) && !bypass.crop
+                ? undefined
+                : { off: bypass.crop, onToggle: () => setBypass((b) => ({ ...b, crop: !b.crop })), title: bypass.crop ? 'Show the crop again' : 'Show the photo without crop, straighten, rotate and flip (nothing is changed)' },
+              content: (
+                <CropPanel
+                  geometry={geometry}
+                  frame={info ? frameOf(geometry) : null}
+                  cropSize={info && engineRef.current ? engineRef.current.outputSize(geometry) : null}
+                  cropping={!!draft}
+                  leveling={leveling}
+                  overlay={cropOverlay.kind}
+                  disabled={status.kind !== 'ready'}
+                  showHint={hintsPref === 1}
+                  onToggleCrop={() => (draft ? endCrop(true) : startCrop())}
+                  onApply={() => endCrop(true)}
+                  onCancel={() => endCrop(false)}
+                  onLevel={() => (draft ? setLeveling((l) => !l) : startCrop(true))}
+                  onOverlay={(kind) => setCropOverlay({ kind })}
+                  onEdit={editGeometry}
+                />
+              ),
+            },
+            {
+              id: 'basic',
+              label: 'Basic',
+              title: 'Basic',
+              icon: GROUP_ICONS.basic,
+              bypass: { off: bypass.basic, onToggle: () => setBypass((b) => ({ ...b, basic: !b.basic })), title: bypass.basic ? 'Show the Basic adjustments again' : 'Show the photo without white balance, tone and presence (nothing is changed)' },
+              content: (
         <BasicPanel
           settings={settings}
           asShot={info?.asShot ?? null}
@@ -891,8 +1217,12 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           defaults={defaults}
           onChange={change}
           disabled={status.kind !== 'ready'}
+          hints={hintsPref === 1}
+          onHints={(on) => setHintsPref(on ? 1 : 2)}
           pickingWb={wbPick}
           onPickWb={() => {
+            // The picker works on the cropped photo: a crop being edited is applied first.
+            if (draft) endCrop(true)
             setWbPick((p) => !p)
             setLoupe(null)
           }}
@@ -911,6 +1241,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             onOptions: (o) => setAutoOptions({ ...autoOptions, ...o }),
             record: autoRecord,
           }}
+        />
+              ),
+            },
+          ]}
         />
       </aside>
       {pasting && (

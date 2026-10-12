@@ -149,7 +149,8 @@ export async function runExport(
         const saved = await catalog.getEdit(id)
         const settings = savedSettings(saved, info.kind)
         await engine.process(stageOptions(settings, info))
-        const [iw, ih] = engine.imageSize
+        // The crop at 100 % (the whole photo when it isn't cropped).
+        const [iw, ih] = engine.outputSize(settings.geometry)
         const { width, height } = outputSize(iw, ih, s.size)
         const bits = s.format === 'jpeg' ? 8 : s.bits
         const out = await engine.renderOutput(displayUniforms(settings), multipliers(settings, info), {

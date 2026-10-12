@@ -100,7 +100,7 @@ The right panel is one scrolling stack in workflow order, with Crop & Lens first
 
 | Order | Group | Contents | Engine (darktable) | Status |
 |---|---|---|---|---|
-| 1 | **Crop & Lens** | Crop, Straighten, Transform/Upright; Lens profile, Chromatic aberration, Vignetting correction | crop, rotate and perspective (ashift), lens correction (lensfun), CA correction | Crop/straighten: Phase 1 (not built yet); rest: Phase 3 |
+| 1 | **Crop & Lens** | Crop, Straighten, Transform/Upright; Lens profile, Chromatic aberration, Vignetting correction | crop, rotate and perspective (ashift), lens correction (lensfun), CA correction | Crop, straighten, rotate 90° and flip: **built** (Phase 3, Part 1; [PHASE3.md](PHASE3.md)), shown as the **Crop** group; Transform/Upright and lens corrections: later in Phase 3 (the group becomes Crop & Lens) |
 | 2 | **Basic** (open by default) | Auto + look; White balance (preset, **Pick**, Temp, Tint); Tone (Exposure, Contrast, Highlights, Shadows, Whites, Blacks); Presence (Texture, Clarity, Dehaze, Vibrance, Saturation) | temperature, exposure, sigmoid, tone equalizer, colour balance rgb, local contrast, haze removal | Built, except Texture/Clarity/Dehaze and colour balance rgb |
 | 3 | **Tone curve** | Parametric + point, RGB | rgb curve | Phase 3 |
 | 4 | **Colour** | Colour mixer (HSL), Colour grading, Point colour | colour equalizer, colour balance rgb | Phase 3 |
@@ -111,7 +111,7 @@ The right panel is one scrolling stack in workflow order, with Crop & Lens first
 Every group follows the same rules:
 - **One control per job.** Alternative algorithms (e.g. sigmoid / filmic / AgX for tone mapping) go in a **Method** dropdown inside the group, not in separate modules.
 - **"Advanced ▸"** inside each group shows the darktable module's own parameters, so no capability is lost.
-- **One stack with a jump bar** (owner, 2026-10-11, after round 2; replaces the earlier tool-tabs choice): all groups stay in one scrolling list in workflow order. A row of group buttons at the top of the panel jumps to a group and highlights the group in view; nothing is hidden. Panel order is cosmetic; the processing order is fixed (R2 7).
+- **One stack with a jump bar** (owner, 2026-10-11, after round 2; replaces the earlier tool-tabs choice): all groups stay in one scrolling list in workflow order. A row of group buttons at the top of the panel jumps to a group and highlights the group in view; nothing is hidden. Panel order is cosmetic; the processing order is fixed (R2 7). _Built in Phase 3, Part 1 with the Crop and Basic groups; groups also close, and each has an on/off eye to see the photo without it ([PHASE3.md](PHASE3.md))._
 - **Tool search** (owner, 2026-10-11): `/` or Ctrl+F finds a tool by its Lightroom name, LightBench name or darktable name, e.g. "Clarity" → Presence → Clarity (local contrast). It comes late, once most tools exist.
 
 ### Guidance in the interface (owner's request)

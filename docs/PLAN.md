@@ -127,7 +127,7 @@ Non-destructive editing: originals are never modified. Edits are settings re-app
 - **Library:** grid and loupe views, flags (P/X/U), stars (0–5), color labels (6–9),
   basic filter bar, folder tree, keyboard navigation.
 - **Develop (basic):** white balance, exposure, contrast, highlights, shadows, whites, blacks,
-  texture/clarity (basic), vibrance, saturation, crop/straighten/rotate, before/after, undo history.
+  texture/clarity (basic), vibrance, saturation, crop/straighten/rotate (_built in Phase 3, Part 1_), before/after, undo history.
 - **darktable processing core:** replace the Phase 0 placeholder processing with code translated from
   darktable's modules: demosaic (RCD), highlight reconstruction, exposure, white balance, input colour
   profile and sigmoid tone mapping. The Lightroom-style sliders drive these modules.
@@ -165,6 +165,13 @@ diffuse or sharpen, AMaZE and X-Trans demosaic). Tone curve (parametric + point,
 and noise reduction, lens profile corrections (lensfun), chromatic aberration, transform/upright,
 vignette and grain, dehaze, camera profiles, masking (brush, linear, radial, color/luminance range),
 heal and clone, snapshots, soft proofing. Develop tools in **one scrolling stack in workflow order, Crop & Lens first, with a jump bar of group buttons** (owner, after round 2; replaces the earlier tabs plan; see USABILITY.md). **Tool search** comes at the end of this phase, once most tools exist.
+
+**Part 1 — built, see [PHASE3.md](PHASE3.md#part-1-process-versions-the-tool-stack-and-crop):** process versions, the tool stack with its jump bar (Crop and Basic so far), and crop, straighten, rotate 90° and flip. Engineering decisions made with it (owner, 2026-10-12, after reviewing LightCraft's code catalogue):
+- **Process versions.** Every edit records the version of LightBench's rendering it uses (`process` in the develop settings, separate from the settings' schema `version`). Edits saved before 0.3.0 are version 1; new edits get the current version. Rendering reads each version's own parameters, so a later rendering change never silently changes an existing edit; an older edit offers **Update to current process** (one history step, so it can be compared and undone). Today there is one rendering (version 1).
+- **One geometry pass.** Lens correction → perspective (Upright) → flip → crop, darktable's order, are combined into one map from output pixels to the sensor and resampled once (bicubic, darktable's default warp interpolation), never once per tool. Whole-pixel maps (no straighten angle) aren't resampled at all. The warped image is cached, so tone and colour sliders never warp again. Rotate/flip/crop/straighten are built; lens and perspective will join the same map.
+- **Crop coordinates** are stored relative to the geometry-corrected image (after lens and perspective), so crops (and later masks) stay on the same content when lens or Upright settings change.
+- **The crop model** (a rectangle in the straightened frame plus an angle; flips separate) and its drag rules are ported from LightCraft (MIT), with tests.
+- **Later in Phase 3:** write Lightroom's `crs:Crop*` sidecar fields for interop (not done; LightBench's crop lives in `lightbench:Develop`), Auto straighten with Upright.
 
 **Keyboard and display** (owner, after round 2; can land in any phase): remappable shortcuts with a Lightroom-compatible preset, UI scaling, every core action reachable by keyboard. **Built** in Phase 2 ([PHASE2.md, Part 12](PHASE2.md#part-12-keyboard-and-display-settings)): Settings with shortcut sets, the ? list, command search, slider keys, interface size and photo background.
 **Later in Phase 3 or after:** read and write darktable XMP develop edits (R2 18), once more darktable tools exist in LightBench.
