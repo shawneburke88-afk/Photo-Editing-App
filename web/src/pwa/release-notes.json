@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.3.0",
+    "date": "2026-10-12",
+    "newFeatures": [
+      "Crop and straighten (R): drag corners or edges, drag inside to move, drag outside to turn the photo under a level crop box. Enter applies, Esc cancels.",
+      "Crop aspects Original, 1:1, 4:5, 5:7, 2:3, 16:9 and Custom, with a lock; X swaps portrait and landscape; O cycles thirds, grid, golden ratio and diagonals.",
+      "Straighten with the Angle slider, or draw a level line along the horizon (the Level button, or Ctrl-drag while cropping).",
+      "Rotate left and right (Ctrl+[ and Ctrl+]) and flip horizontally or vertically.",
+      "The crop is used everywhere: histogram, Auto, thumbnails, Export, 100 % views, and Paste, Sync and presets (tick Crop to copy it).",
+      "Develop's tools are now one scrolling list with a jump bar (Crop, Basic); groups can be closed, and an eye shows the photo without a group.",
+      "Process versions: each edit remembers which version of LightBench's rendering it uses, so later changes never alter it until you choose “Update to current process”."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.2.0",
     "date": "2026-10-12",
     "newFeatures": [

@@ -16,6 +16,7 @@ const ONE: Context[] = ['global', 'cull', 'cull-one']
 const COMPARE: Context[] = ['global', 'cull', 'compare']
 const SURVEY: Context[] = ['global', 'cull', 'survey']
 const DEVELOP: Context[] = ['global', 'develop']
+const CROP: Context[] = ['global', 'crop']
 
 describe('chords', () => {
   it('writes chords in one normal form', () => {
@@ -114,6 +115,28 @@ describe('shortcut sets', () => {
     expect(at(key('g'), DEVELOP)).toBe('develop.grid')
     // Not while culling: the Library's keys belong to the grid.
     expect(at(key('a', { ctrlKey: true }), ONE)).toBeNull()
+  })
+
+  it('keeps cropping keys apart from Develop’s own (O, X, Esc, Enter)', () => {
+    for (const set of [LB, LR]) {
+      const map = resolveKeymap(set)
+      expect(matchAction(map, key('o'), CROP)).toBe('crop.overlay')
+      expect(matchAction(map, key('x'), CROP)).toBe('crop.swap')
+      expect(matchAction(map, key('Escape'), CROP)).toBe('crop.cancel')
+      expect(matchAction(map, key('Enter'), CROP)).toBe('crop.apply')
+      expect(matchAction(map, key('r'), CROP)).toBe('develop.crop')
+      expect(matchAction(map, key('r'), DEVELOP)).toBe('develop.crop')
+      expect(matchAction(map, key('[', { ctrlKey: true }), DEVELOP)).toBe('develop.rotateLeft')
+      expect(matchAction(map, key(']', { ctrlKey: true }), CROP)).toBe('develop.rotateRight')
+      expect(matchAction(map, key('z', { ctrlKey: true }), CROP)).toBe('develop.undo')
+      // Not while cropping: clipping, sensor clipping, the picker, next photo, the grid.
+      expect(matchAction(map, key('j'), CROP)).toBeNull()
+      expect(matchAction(map, key('O', { shiftKey: true }), CROP)).toBe('crop.overlay')
+      expect(matchAction(map, key('ArrowRight'), CROP)).toBeNull()
+      expect(matchAction(map, key('g'), CROP)).toBeNull()
+      expect(matchAction(map, key('Escape'), DEVELOP)).toBe('develop.cancel')
+    }
+    expect(matchAction(resolveKeymap(LB), key('o'), DEVELOP)).toBe('develop.clipping')
   })
 
   it('uses Lightroom keys where LightBench differs', () => {

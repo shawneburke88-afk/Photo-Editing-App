@@ -3,10 +3,14 @@
 // Stage A (when a photo opens, or white balance / highlight / demosaic settings change):
 //   raw → black/white normalise + white balance → highlight reconstruction → demosaic →
 //   camera RGB → scene-linear Rec.2020 texture, plus a mip chain for zoomed-out viewing.
+// Geometry (when crop, straighten, rotate or flip change): one combined map from output pixels to the scene
+//   (engine/develop/geometry.ts). Whole-pixel maps are sampled directly; others are warped once with bicubic
+//   interpolation into a cached texture (with its own mip chain), so slider moves never warp again.
 // Stage B (every slider move): exposure → tone equalizer → presence → sigmoid → sRGB, at screen size.
 
 import { apply, invert, mul, SRGB_TO_REC2020, type Mat3, type Vec3 } from '../color/matrix'
 import { clipUniforms, DEFAULT_CLIP, DEFAULT_RAW_CLIP, RAW_COLOURS, rawModeCode, rawThresholds, type Indicators } from '../develop/indicators'
+import { applyMap, DEFAULT_GEOMETRY, IDENTITY_MAP, resolveGeometry, type GeometrySettings, type ResolvedGeometry } from '../develop/geometry'
 import type { DisplayUniforms } from '../develop/settings'
 import { inverseLoglogistic, type SigmoidCurve } from '../color/sigmoid'
 import type { RgbImage, SensorData } from '../raw/types'
@@ -16,6 +20,7 @@ import rawWgsl from './raw-pipeline.wgsl?raw'
 import rgbInputWgsl from './rgb-input.wgsl?raw'
 import exportWgsl from './export.wgsl?raw'
 import statsWgsl from './stats.wgsl?raw'
+import warpWgsl from './warp.wgsl?raw'
 
 export interface RawStageOptions {
   /** White balance multipliers [R, G, B], green = 1. */
@@ -31,6 +36,24 @@ export interface ViewState {
   zoom: 'fit' | number
   /** Centre of the view in image uv (0…1), used when zoomed in. */
   center: [number, number]
+  /**
+   * The crop tool's view: the whole straightened photo (uncropped, turned by the straighten angle) with a margin
+   * for the handles, instead of the cropped result. Always fitted.
+   */
+  frame?: boolean
+}
+
+/** Margin around the photo in the crop tool's view, in CSS pixels. */
+export const FRAME_PAD = 28
+
+/** What a rendering samples: the scene, or its warped copy, and how output uv maps onto it and onto the sensor. */
+interface Source {
+  tex: GPUTexture
+  texMap: Mat3
+  rawMap: Mat3
+  w: number
+  h: number
+  frame: boolean
 }
 
 export type PresentMode = 'canvas' | 'readback'
@@ -76,7 +99,7 @@ const STATS_WORDS = 1028
 
 const IDENTITY: Mat3 = [1, 0, 0, 0, 1, 0, 0, 0, 1]
 const RAW_PARAMS_SIZE = 160
-const VIEW_SIZE = 272
+const VIEW_SIZE = 368
 
 // Without explicit indicators (e.g. for Auto), clipping is counted on screen values only: sensor
 // clipping can't be fixed by moving sliders.
@@ -119,7 +142,17 @@ export class DevelopEngine {
   private exportPipes: { resampleX: GPUComputePipeline; resampleY: GPUComputePipeline; encodeOnly: GPUComputePipeline } | null = null
   private rawBuf: GPUBuffer | null = null
   private scene: GPUTexture | null = null
-  private flip = 0
+  /** Counts scene rebuilds, so a warped copy of an older scene is never reused. */
+  private sceneGen = 0
+  /** The camera's orientation (LibRaw flip code). */
+  private exifFlip = 0
+  /** The last warped scene (one is kept: before/after and identity geometries don't evict it). */
+  private warp: { key: string; gen: number; tex: GPUTexture } | null = null
+  private warpPipe: GPUComputePipeline | null = null
+  /** Warps run one at a time. */
+  private warpChain: Promise<unknown> = Promise.resolve()
+  /** Size and sensor map of the last rendering on the canvas (for `layout` and the white balance picker). */
+  private shown: { w: number; h: number; rawMap: Mat3 } | null = null
   private lost = false
   private probing = false
   /** The white balance the scene texture was built with (for live previews of WB changes). */
@@ -242,7 +275,8 @@ export class DevelopEngine {
       this.device.queue.writeBuffer(this.rawBuf, sensor.data.byteLength - 2, tail)
     }
     this.sensor = sensor
-    this.flip = flip
+    this.exifFlip = flip
+    this.shown = null
     this.camToWorking = mul(SRGB_TO_REC2020, sensor.camToRgb as Mat3)
     this.rgbInput?.texture.destroy()
     this.rgbInput = null
@@ -290,10 +324,91 @@ export class DevelopEngine {
     return this.rgbInput !== null
   }
 
+  /** The photo's size in its camera orientation, before any crop, turn or flip. */
   get imageSize(): [number, number] {
     if (!this.sensor) return [0, 0]
-    const sideways = this.flip === 5 || this.flip === 6
+    const sideways = this.exifFlip === 5 || this.exifFlip === 6
     return sideways ? [this.sensor.height, this.sensor.width] : [this.sensor.width, this.sensor.height]
+  }
+
+  /** The geometry resolved for the loaded photo (`whole`: the uncropped straightened frame). */
+  geometry(g: GeometrySettings, whole = false): ResolvedGeometry {
+    const s = this.sensor
+    if (!s) throw new Error('No photo loaded')
+    return resolveGeometry(g, s.width, s.height, this.exifFlip, whole)
+  }
+
+  /** Size of the developed photo with this geometry (the crop in whole pixels): what Export writes at 100 %. */
+  outputSize(g: GeometrySettings): [number, number] {
+    return this.sensor ? this.geometry(g).size : [0, 0]
+  }
+
+  /** What to sample for a geometry: the scene itself (whole-pixel maps, and the crop tool's view) or its warped copy. */
+  private async source(g: GeometrySettings, whole = false): Promise<Source> {
+    const r = this.geometry(g, whole)
+    if (whole || r.exact) return { tex: this.scene!, texMap: r.uvToSensor, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: whole }
+    const tex = await this.warped(r)
+    return { tex, texMap: IDENTITY_MAP, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: false }
+  }
+
+  /** The scene warped through a geometry map, from the cache when the same map was warped last. */
+  private warped(r: ResolvedGeometry): Promise<GPUTexture> {
+    const job = this.warpChain.then(() => {
+      if (this.warp && this.warp.key === r.key && this.warp.gen === this.sceneGen) return this.warp.tex
+      this.checkAlive()
+      const tex = this.buildWarp(r)
+      // Work already submitted with the old texture still completes (WebGPU destroys it afterwards).
+      this.warp?.tex.destroy()
+      this.warp = { key: r.key, gen: this.sceneGen, tex }
+      return tex
+    })
+    this.warpChain = job.catch(() => {})
+    return job
+  }
+
+  /** One bicubic resample of the scene through the combined geometry map (warp.wgsl), then its mip chain. */
+  private buildWarp(r: ResolvedGeometry): GPUTexture {
+    const { device } = this
+    const [w, h] = r.size
+    this.warpPipe ??= device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: warpWgsl }), entryPoint: 'warp' } })
+    const m = r.toSensor
+    const params = new ArrayBuffer(64)
+    new Float32Array(params).set([m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0], 0)
+    new Uint32Array(params).set([w, h], 12)
+    const paramBuf = device.createBuffer({ size: params.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    device.queue.writeBuffer(paramBuf, 0, params)
+    const tex = device.createTexture({
+      size: [w, h],
+      format: 'rgba16float',
+      mipLevelCount: Math.floor(Math.log2(Math.max(w, h))) + 1,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+    })
+    const enc = device.createCommandEncoder()
+    const pass = enc.beginComputePass()
+    pass.setPipeline(this.warpPipe)
+    pass.setBindGroup(0, device.createBindGroup({
+      layout: this.warpPipe.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: paramBuf } },
+        { binding: 1, resource: this.scene!.createView({ baseMipLevel: 0, mipLevelCount: 1 }) },
+        { binding: 2, resource: tex.createView({ baseMipLevel: 0, mipLevelCount: 1 }) },
+      ],
+    }))
+    pass.dispatchWorkgroups(Math.ceil(w / 16), Math.ceil(h / 16))
+    pass.end()
+    this.encodeMips(enc, tex)
+    device.queue.submit([enc.finish()])
+    paramBuf.destroy()
+    return tex
+  }
+
+  /** A new scene: the warped copy belongs to the old one. */
+  private newScene(scene: GPUTexture) {
+    this.scene?.destroy()
+    this.scene = scene
+    this.sceneGen++
+    this.warp?.tex.destroy()
+    this.warp = null
   }
 
   /** Stage A. Resolves with the GPU time in ms. */
@@ -423,8 +538,7 @@ export class DevelopEngine {
     await device.queue.onSubmittedWorkDone()
     for (const b of temps) b.destroy()
     paramBuf.destroy()
-    this.scene?.destroy()
-    this.scene = scene
+    this.newScene(scene)
     this.builtWb = [...opts.wb] as Vec3
     return performance.now() - t0
   }
@@ -494,32 +608,33 @@ export class DevelopEngine {
     await device.queue.onSubmittedWorkDone()
     paramBuf.destroy()
     lutBuf.destroy()
-    this.scene?.destroy()
-    this.scene = scene
+    this.newScene(scene)
     // White balance on a JPEG is applied entirely by the develop pass (relative to the file's colours).
     this.builtWb = [1, 1, 1]
     return performance.now() - t0
   }
 
   /**
-   * Renders the photo for export: develops it at full resolution, resamples it to `width`×`height` with
-   * Lanczos3 in linear light, converts it to the output colour space and quantises it (export.wgsl).
+   * Renders the photo for export: develops it at full resolution (the crop, at 100 %), resamples it to
+   * `width`×`height` with Lanczos3 in linear light, converts it to the output colour space and quantises it
+   * (export.wgsl).
    */
   async renderOutput(u: DisplayUniforms, wb: Vec3, o: OutputOptions): Promise<OutputImage> {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
     const { device } = this
-    const [iw, ih] = this.imageSize
+    const src = await this.source(u.geometry)
+    const { w: iw, h: ih } = src
     const max = device.limits.maxTextureDimension2D
     if (o.width > max || o.height > max) throw new Error(`The export size is larger than this GPU allows (${max} px)`)
     const pipes = (this.exportPipes ??= this.createExportPipes())
 
     const dev = device.createTexture({ size: [iw, ih], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING })
-    this.writeView(u, wb, { x: 0, y: 0, w: iw, h: ih }, 0, NO_INDICATORS, 2)
+    this.writeView(u, wb, src, { x: 0, y: 0, w: iw, h: ih }, 0, NO_INDICATORS, 2)
     const enc = device.createCommandEncoder()
     const rp = enc.beginRenderPass({ colorAttachments: [{ view: dev.createView(), loadOp: 'clear', storeOp: 'store' }] })
     rp.setPipeline(this.statsRenderPipe)
-    rp.setBindGroup(0, this.displayBindGroup(this.statsRenderPipe))
+    rp.setBindGroup(0, this.displayBindGroup(this.statsRenderPipe, src.tex))
     rp.draw(3)
     rp.end()
 
@@ -615,7 +730,7 @@ export class DevelopEngine {
     return mul(mul(m, d), invert(m))
   }
 
-  private writeView(u: DisplayUniforms, wb: Vec3, rect: { x: number; y: number; w: number; h: number }, lod: number, ind: Indicators = NO_INDICATORS, pass: 0 | 1 | 2 = 0) {
+  private writeView(u: DisplayUniforms, wb: Vec3, src: Source, rect: { x: number; y: number; w: number; h: number }, lod: number, ind: Indicators = NO_INDICATORS, pass: 0 | 1 | 2 = 0) {
     const statsPass = pass === 1
     const v = new ArrayBuffer(VIEW_SIZE)
     const f = new Float32Array(v)
@@ -628,7 +743,7 @@ export class DevelopEngine {
     f[28] = lod
     f[29] = u.exposureGain
     ui[30] = u.toneEnabled ? 1 : 0
-    ui[31] = this.flip
+    ui[31] = src.frame ? 1 : 0
     f.set([u.vibrance, u.saturation, u.sigmoid.whiteTarget, u.sigmoid.blackTarget, u.sigmoid.paperExp,
       u.sigmoid.filmFog, u.sigmoid.filmPower, u.sigmoid.paperPower, u.huePreservation], 32)
     const clip = clipUniforms(ind.clip)
@@ -644,14 +759,22 @@ export class DevelopEngine {
     ui[62] = s.height
     ui[63] = s.cfa.reduce((acc, c, i) => acc | (c << (i * 2)), 0)
     ui[64] = pass
+    const t = src.texMap
+    const r = src.rawMap
+    f.set([t[0], t[1], t[2], 0, t[3], t[4], t[5], 0, t[6], t[7], t[8], 0], 68)
+    f.set([r[0], r[1], r[2], 0, r[3], r[4], r[5], 0, r[6], r[7], r[8], 0], 80)
     this.device.queue.writeBuffer(this.viewBuf, 0, v)
   }
 
-  /** Where the image sits on a canvas of size cw×ch for the given view, and which mip level to use. */
-  layout(view: ViewState, cw: number, ch: number) {
-    const [iw, ih] = this.imageSize
-    const fit = Math.min(cw / iw, ch / ih)
-    const scale = view.zoom === 'fit' ? fit : view.zoom * (window.devicePixelRatio || 1)
+  /**
+   * Where the image sits on a canvas of size cw×ch for the given view, and which mip level to use. The image is
+   * what was last drawn (the crop, or the whole straightened photo in the crop tool's view); `size` overrides it.
+   */
+  layout(view: ViewState, cw: number, ch: number, size?: [number, number]) {
+    const [iw, ih] = size ?? (this.shown ? [this.shown.w, this.shown.h] : this.imageSize)
+    const pad = view.frame ? FRAME_PAD * (window.devicePixelRatio || 1) : 0
+    const fit = Math.min(Math.max(1, cw - 2 * pad) / iw, Math.max(1, ch - 2 * pad) / ih)
+    const scale = view.zoom === 'fit' || view.frame ? fit : view.zoom * (window.devicePixelRatio || 1)
     const w = iw * scale
     const h = ih * scale
     let x = (cw - w) / 2
@@ -674,12 +797,14 @@ export class DevelopEngine {
       this.canvas.width = cw
       this.canvas.height = ch
     }
-    const l = this.layout(view, cw, ch)
-    this.writeView(u, wb, l, l.lod, indicators)
+    const src = await this.source(u.geometry, !!view.frame)
+    const l = this.layout(view, cw, ch, [src.w, src.h])
+    this.shown = { w: src.w, h: src.h, rawMap: src.rawMap }
+    this.writeView(u, wb, src, l, l.lod, indicators)
     const target = this.gpuCtx
       ? this.gpuCtx.getCurrentTexture()
       : this.device.createTexture({ size: [cw, ch], format: this.format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
-    const pixels = await this.draw(this.displayPipe, target, cw, ch, !this.gpuCtx)
+    const pixels = await this.draw(this.displayPipe, target, src.tex, cw, ch, !this.gpuCtx)
     if (pixels) {
       this.ctx2d!.putImageData(pixels, 0, 0)
       target.destroy()
@@ -687,17 +812,18 @@ export class DevelopEngine {
     return performance.now() - t0
   }
 
-  /** Renders the whole photo at most `maxSize` px on its long edge, e.g. for thumbnails. */
+  /** Renders the whole (cropped) photo at most `maxSize` px on its long edge, e.g. for thumbnails. */
   async renderImage(u: DisplayUniforms, wb: Vec3, maxSize: number): Promise<ImageData> {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
-    const [iw, ih] = this.imageSize
+    const src = await this.source(u.geometry)
+    const { w: iw, h: ih } = src
     const scale = Math.min(1, maxSize / Math.max(iw, ih))
     const w = Math.max(1, Math.round(iw * scale))
     const h = Math.max(1, Math.round(ih * scale))
-    this.writeView(u, wb, { x: 0, y: 0, w, h }, Math.max(0, Math.log2(1 / scale)))
+    this.writeView(u, wb, src, { x: 0, y: 0, w, h }, Math.max(0, Math.log2(1 / scale)))
     const target = this.device.createTexture({ size: [w, h], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
-    const pixels = (await this.draw(this.offscreenPipe, target, w, h, true))!
+    const pixels = (await this.draw(this.offscreenPipe, target, src.tex, w, h, true))!
     target.destroy()
     return pixels
   }
@@ -721,14 +847,9 @@ export class DevelopEngine {
     }
   }
 
-  /** Maps displayed-image uv (after orientation) to sensor-image uv, like the shader's sourceUv. */
+  /** Maps uv on the image last drawn on the canvas to sensor-image uv (through its orientation, crop and angle). */
   private sourceUv(u: number, v: number): [number, number] {
-    switch (this.flip) {
-      case 3: return [1 - u, 1 - v]
-      case 5: return [1 - v, u]
-      case 6: return [v, 1 - u]
-      default: return [u, v]
-    }
+    return applyMap(this.shown ? this.shown.rawMap : this.geometry(DEFAULT_GEOMETRY).uvToSensor, u, v)
   }
 
   /**
@@ -789,12 +910,13 @@ export class DevelopEngine {
   async renderLoupe(u: DisplayUniforms, wb: Vec3, cu: number, cv: number, size: number): Promise<ImageData> {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
-    const [iw, ih] = this.imageSize
+    const src = await this.source(u.geometry)
+    const { w: iw, h: ih } = src
     const cx = Math.floor(cu * iw) + 0.5
     const cy = Math.floor(cv * ih) + 0.5
-    this.writeView(u, wb, { x: size / 2 - cx, y: size / 2 - cy, w: iw, h: ih }, 0)
+    this.writeView(u, wb, src, { x: size / 2 - cx, y: size / 2 - cy, w: iw, h: ih }, 0)
     const target = this.device.createTexture({ size: [size, size], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
-    const pixels = (await this.draw(this.offscreenPipe, target, size, size, true))!
+    const pixels = (await this.draw(this.offscreenPipe, target, src.tex, size, size, true))!
     target.destroy()
     return pixels
   }
@@ -806,16 +928,17 @@ export class DevelopEngine {
     const statsPipe = (this.statsPipe ??= device.createComputePipeline({ layout: 'auto', compute: { module: this.statsModule, entryPoint: 'histogram' } }))
     const bins = device.createBuffer({ size: STATS_WORDS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST })
     const read = device.createBuffer({ size: STATS_WORDS * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
+    const src = await this.source(u.geometry)
     const enc = device.createCommandEncoder()
-    const [iw, ih] = this.imageSize
+    const { w: iw, h: ih } = src
     const scale = Math.min(1, maxSize / Math.max(iw, ih))
     const w = Math.max(1, Math.round(iw * scale))
     const h = Math.max(1, Math.round(ih * scale))
-    this.writeView(u, wb, { x: 0, y: 0, w, h }, Math.max(0, Math.log2(1 / scale)), indicators, 1)
+    this.writeView(u, wb, src, { x: 0, y: 0, w, h }, Math.max(0, Math.log2(1 / scale)), indicators, 1)
     const target = device.createTexture({ size: [w, h], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING })
     const rp = enc.beginRenderPass({ colorAttachments: [{ view: target.createView(), loadOp: 'clear', storeOp: 'store' }] })
     rp.setPipeline(this.statsRenderPipe)
-    rp.setBindGroup(0, this.displayBindGroup(this.statsRenderPipe))
+    rp.setBindGroup(0, this.displayBindGroup(this.statsRenderPipe, src.tex))
     rp.draw(3)
     rp.end()
     const pass = enc.beginComputePass()
@@ -836,11 +959,11 @@ export class DevelopEngine {
     }
   }
 
-  private displayBindGroup(pipe: GPURenderPipeline): GPUBindGroup {
+  private displayBindGroup(pipe: GPURenderPipeline, tex: GPUTexture): GPUBindGroup {
     return this.device.createBindGroup({
       layout: pipe.getBindGroupLayout(0),
       entries: [
-        { binding: 0, resource: this.scene!.createView() },
+        { binding: 0, resource: tex.createView() },
         { binding: 1, resource: this.sampler },
         { binding: 2, resource: { buffer: this.viewBuf } },
         { binding: 3, resource: { buffer: this.rawBuf! } },
@@ -848,12 +971,12 @@ export class DevelopEngine {
     })
   }
 
-  private async draw(pipe: GPURenderPipeline, target: GPUTexture, w: number, h: number, readback: boolean): Promise<ImageData | null> {
+  private async draw(pipe: GPURenderPipeline, target: GPUTexture, tex: GPUTexture, w: number, h: number, readback: boolean): Promise<ImageData | null> {
     const { device } = this
     const enc = device.createCommandEncoder()
     const pass = enc.beginRenderPass({ colorAttachments: [{ view: target.createView(), loadOp: 'clear', storeOp: 'store' }] })
     pass.setPipeline(pipe)
-    pass.setBindGroup(0, this.displayBindGroup(pipe))
+    pass.setBindGroup(0, this.displayBindGroup(pipe, tex))
     pass.draw(3)
     pass.end()
     if (!readback) {
@@ -876,6 +999,7 @@ export class DevelopEngine {
 
   destroy() {
     this.rgbInput?.texture.destroy()
+    this.warp?.tex.destroy()
     this.scene?.destroy()
     this.rawBuf?.destroy()
     this.viewBuf.destroy()

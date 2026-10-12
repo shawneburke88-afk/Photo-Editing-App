@@ -8,9 +8,19 @@
 import { SIGMOID_DEFAULTS, sigmoidCurve, type SigmoidCurve } from '../color/sigmoid'
 import { toneEqualizerFactors } from '../color/tone-equalizer'
 import type { AutoRecord } from './auto'
+import { DEFAULT_GEOMETRY, normalizeGeometry, type GeometrySettings } from './geometry'
+import { CURRENT_PROCESS, processParams, validProcess } from './process'
 
 export interface DevelopSettings {
+  /** Layout of this settings object (the JSON schema), not the rendering: see `process`. */
   version: 1
+  /**
+   * Process version: which generation of LightBench's rendering these settings are rendered with (process.ts).
+   * Edits saved before it existed are version 1; new edits get the current version.
+   */
+  process: number
+  /** Crop, straighten, rotate and flip: one geometry stage (geometry.ts). */
+  geometry: GeometrySettings
   whiteBalance: { mode: 'as-shot' | 'custom'; temperature: number; tint: number }
   /** EV, on top of darktable's scene-referred base exposure. */
   exposure: number
@@ -46,6 +56,8 @@ export interface DevelopSettings {
 
 export const DEFAULT_SETTINGS: DevelopSettings = {
   version: 1,
+  process: CURRENT_PROCESS,
+  geometry: DEFAULT_GEOMETRY,
   whiteBalance: { mode: 'as-shot', temperature: 5000, tint: 1 },
   exposure: 0,
   contrast: 0,
@@ -82,7 +94,10 @@ export const DEFAULT_RGB_SETTINGS: DevelopSettings = {
 
 export const defaultsFor = (kind: SourceKind) => (kind === 'rgb' ? DEFAULT_RGB_SETTINGS : DEFAULT_SETTINGS)
 
-/** Fills in missing fields (e.g. from older saved edits) with the defaults for this kind of photo. */
+/**
+ * Fills in missing fields (e.g. from older saved edits) with the defaults for this kind of photo. A saved edit
+ * without a process version is version 1 (the rendering it was made with), and one without geometry has none.
+ */
 export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined, kind: SourceKind = 'raw'): DevelopSettings {
   const d = defaultsFor(kind)
   return {
@@ -91,6 +106,8 @@ export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined
     whiteBalance: { ...d.whiteBalance, ...s?.whiteBalance },
     advanced: { ...d.advanced, ...s?.advanced },
     version: 1,
+    process: validProcess(s?.process),
+    geometry: normalizeGeometry(s?.geometry),
   }
 }
 
@@ -98,27 +115,15 @@ export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined
 export const tintFromSlider = (slider: number, asShot: number) => asShot * 2 ** (-slider * 0.006)
 export const sliderFromTint = (tint: number, asShot: number) => -Math.log2(tint / asShot) / 0.006
 
-/** Contrast slider → darktable sigmoid contrast (default 1.5). */
-export const sigmoidContrast = (slider: number) => 1.5 * 2 ** ((slider / 100) * 0.6)
+/** Contrast slider → darktable sigmoid contrast (default 1.5); the spread depends on the process version. */
+export const sigmoidContrast = (slider: number, process = CURRENT_PROCESS) => 1.5 * 2 ** ((slider / 100) * processParams(process).contrastSpread)
 
-/** Max tone-equalizer gain at full slider travel, in EV. */
-const TONE_RANGE = 1.5
-
-/**
- * How strongly each slider moves each tone-equalizer band (−8 … 0 EV of pixel brightness after
- * exposure; with the +0.7 EV default, middle grey sits near −1.8 EV and clipped white above 0).
- */
-const BAND_WEIGHTS = {
-  blacks: [1, 1, 0.5, 0.1, 0, 0, 0, 0, 0],
-  shadows: [0, 0.1, 0.3, 0.8, 1, 0.5, 0.1, 0, 0],
-  highlights: [0, 0, 0, 0, 0, 0.1, 0.5, 1, 0.4],
-  whites: [0, 0, 0, 0, 0, 0, 0, 0.35, 1],
-} as const
-
-export function toneBands(s: Pick<DevelopSettings, 'highlights' | 'shadows' | 'whites' | 'blacks'>): number[] {
+/** Tone-equalizer band gains (EV) of the four tone sliders, with the process version's weights. */
+export function toneBands(s: Pick<DevelopSettings, 'highlights' | 'shadows' | 'whites' | 'blacks'> & { process?: number }): number[] {
+  const { toneRange, bandWeights } = processParams(s.process ?? CURRENT_PROCESS)
   return Array.from({ length: 9 }, (_, i) =>
     (['blacks', 'shadows', 'highlights', 'whites'] as const).reduce(
-      (ev, k) => ev + (s[k] / 100) * TONE_RANGE * BAND_WEIGHTS[k][i],
+      (ev, k) => ev + (s[k] / 100) * toneRange * bandWeights[k][i],
       0,
     ),
   )
@@ -133,6 +138,8 @@ export interface DisplayUniforms {
   saturation: number
   sigmoid: SigmoidCurve
   huePreservation: number
+  /** Crop, straighten, rotate and flip; the engine resolves it against the photo's size. */
+  geometry: GeometrySettings
 }
 
 export function displayUniforms(s: DevelopSettings): DisplayUniforms {
@@ -144,11 +151,12 @@ export function displayUniforms(s: DevelopSettings): DisplayUniforms {
     vibrance: s.vibrance / 100,
     saturation: s.saturation / 100,
     sigmoid: sigmoidCurve({
-      contrast: sigmoidContrast(s.contrast),
+      contrast: sigmoidContrast(s.contrast, s.process),
       skew: s.advanced.skew,
       whiteTarget: s.advanced.whiteTarget,
       blackTarget: s.advanced.blackTarget,
     }),
     huePreservation: Math.min(1, Math.max(0, s.advanced.huePreservation / 100)),
+    geometry: s.geometry ?? DEFAULT_GEOMETRY,
   }
 }

@@ -164,7 +164,7 @@ class BatchDeveloper {
     const kind: SourceKind = info?.kind ?? (isRawFile(p.fileName) ? 'raw' : 'rgb')
     // Read the edit now rather than when the job was queued, so a change made meanwhile (e.g. in Develop) isn't lost.
     const h = loadHistory(await catalog.getEdit(id), kind)
-    let next = applyPaste(current(h), job.clip, kind)
+    let next = applyPaste(current(h), job.clip, kind, engine && info ? engine.imageSize : undefined)
     if (wantsAuto && engine && info) next = await rerunAuto(engine, { ...next, auto: job.clip.settings.auto }, info)
     await catalog.saveEdit(id, JSON.stringify(next), JSON.stringify(savedForm(record(h, job.label, next))))
     sidecars.schedule([id])

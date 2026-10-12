@@ -4,25 +4,40 @@
 
 import type { DevelopSettings, SourceKind } from '../engine/develop/settings'
 import { AUTO_SLIDERS, type AutoKey } from '../engine/develop/auto'
+import { pasteCrop, setAngle, withOrientation, type GeometrySettings } from '../engine/develop/geometry'
 
 export type PasteKey =
   | 'whiteBalance'
   | 'exposure' | 'contrast' | 'highlights' | 'shadows' | 'whites' | 'blacks'
   | 'vibrance' | 'saturation'
-  | 'baseExposure' | 'toneMapper' | 'highlightReconstruction' | 'demosaic'
+  | 'rotate' | 'straighten' | 'crop'
+  | 'process' | 'baseExposure' | 'toneMapper' | 'highlightReconstruction' | 'demosaic'
 
 export interface PasteItem {
   key: PasteKey
   label: string
-  group: 'White balance' | 'Tone' | 'Presence' | 'Advanced (darktable modules)'
+  group: 'White balance' | 'Tone' | 'Presence' | 'Crop' | 'Advanced (darktable modules)'
   /**
    * Only pasted between photos of the same kind (RAW to RAW, JPEG to JPEG): a RAW's +0.7 EV base exposure or its
    * camera white balance would be wrong on a JPEG, which is already rendered.
    */
   sameKindOnly?: boolean
-  copy: (to: DevelopSettings, from: DevelopSettings) => DevelopSettings
+  /**
+   * `size` is the target photo's size in its camera orientation, when known: the crop items use it to keep a
+   * locked aspect and to keep the crop inside the photo.
+   */
+  copy: (to: DevelopSettings, from: DevelopSettings, size?: [number, number]) => DevelopSettings
   show: (s: DevelopSettings) => string
 }
+
+/** The straightened frame of a photo whose camera-oriented size is `size`, after the user's turns. */
+const frameOf = (g: GeometrySettings, size?: [number, number]): [number, number] | null =>
+  size ? (g.turns % 2 ? [size[1], size[0]] : size) : null
+
+const ORIENTATION_TEXT = ['', 'turned right', 'turned 180°', 'turned left']
+const orientationText = (g: GeometrySettings) =>
+  !g.mirror ? ORIENTATION_TEXT[g.turns] || 'as shot' : g.turns === 0 ? 'flipped horizontally' : g.turns === 2 ? 'flipped vertically' : `${ORIENTATION_TEXT[g.turns]}, flipped`
+
 
 const signed = (v: number, digits = 0, unit = '') => `${v > 0 ? '+' : ''}${v.toFixed(digits)}${unit}`
 const slider = (key: 'exposure' | 'contrast' | 'highlights' | 'shadows' | 'whites' | 'blacks' | 'vibrance' | 'saturation', label: string, group: PasteItem['group']): PasteItem => ({
@@ -50,6 +65,47 @@ export const PASTE_ITEMS: PasteItem[] = [
   slider('blacks', 'Blacks', 'Tone'),
   slider('vibrance', 'Vibrance', 'Presence'),
   slider('saturation', 'Saturation', 'Presence'),
+  // Crop items come in this order when pasted: orientation first (the crop rectangle is relative to it), then the
+  // angle, then the rectangle (kept inside the photo at the new angle).
+  {
+    key: 'rotate',
+    label: 'Rotate & flip',
+    group: 'Crop',
+    copy: (to, from) => ({ ...to, geometry: withOrientation(to.geometry, from.geometry.turns, from.geometry.mirror) }),
+    show: (s) => orientationText(s.geometry),
+  },
+  {
+    key: 'straighten',
+    label: 'Straighten angle',
+    group: 'Crop',
+    copy: (to, from, size) => {
+      const f = frameOf(to.geometry, size)
+      return { ...to, geometry: f ? setAngle(to.geometry, from.geometry.angle, f[0], f[1]) : { ...to.geometry, angle: from.geometry.angle } }
+    },
+    show: (s) => `${s.geometry.angle > 0 ? '+' : ''}${s.geometry.angle.toFixed(2)}°`,
+  },
+  {
+    key: 'crop',
+    label: 'Crop',
+    group: 'Crop',
+    copy: (to, from, size) => {
+      const f = frameOf(to.geometry, size)
+      return { ...to, geometry: pasteCrop(to.geometry, from.geometry, f?.[0], f?.[1]) }
+    },
+    show: (s) => {
+      const c = s.geometry.crop
+      if (c.x0 === 0 && c.y0 === 0 && c.x1 === 1 && c.y1 === 1) return 'none'
+      const aspect = s.geometry.locked ? (s.geometry.aspect === 'original' ? ', original aspect' : s.geometry.aspect === 'custom' ? `, ${s.geometry.custom.join(' : ')}` : `, ${s.geometry.aspect}`) : ''
+      return `${Math.round((c.x1 - c.x0) * 100)} × ${Math.round((c.y1 - c.y0) * 100)} % of the photo${aspect}`
+    },
+  },
+  {
+    key: 'process',
+    label: 'Process version',
+    group: 'Advanced (darktable modules)',
+    copy: (to, from) => ({ ...to, process: from.process }),
+    show: (s) => String(s.process),
+  },
   {
     key: 'baseExposure',
     label: 'Base exposure',
@@ -89,8 +145,12 @@ export const PASTE_ITEMS: PasteItem[] = [
 
 export const PASTE_GROUPS = [...new Set(PASTE_ITEMS.map((i) => i.group))]
 
-/** Default choice: everything except the advanced darktable modules (Lightroom leaves its expert items to the user). */
-export const DEFAULT_PASTE_KEYS: PasteKey[] = PASTE_ITEMS.filter((i) => i.group !== 'Advanced (darktable modules)').map((i) => i.key)
+/**
+ * Default choice: everything except the crop items and the advanced darktable modules. Lightroom leaves its expert
+ * items to the user; not copying the crop unless ticked is Lightroom's default as the owner described it
+ * (2026-10-12; not checked against Lightroom here), and LightBench's choice either way.
+ */
+export const DEFAULT_PASTE_KEYS: PasteKey[] = PASTE_ITEMS.filter((i) => i.group !== 'Advanced (darktable modules)' && i.group !== 'Crop').map((i) => i.key)
 
 /** What a copy carries. */
 export interface Clipboard {
@@ -113,12 +173,13 @@ export function itemsFor(c: Clipboard, kind: SourceKind): PasteItem[] {
 
 /**
  * Applies a copy to a photo's settings. Auto re-running happens afterwards (it needs the photo's pixels); the
- * record of it travels so the photo knows its tone came from Auto.
+ * record of it travels so the photo knows its tone came from Auto. `size` is the photo's size in its camera
+ * orientation (for the crop items), when known.
  */
-export function applyPaste(target: DevelopSettings, c: Clipboard, kind: SourceKind): DevelopSettings {
+export function applyPaste(target: DevelopSettings, c: Clipboard, kind: SourceKind, size?: [number, number]): DevelopSettings {
   const items = itemsFor(c, kind)
   let out = target
-  for (const item of items) out = item.copy(out, c.settings)
+  for (const item of items) out = item.copy(out, c.settings, size)
   // Pasted numbers on sliders the photo's own Auto had set: its tone no longer comes from that Auto.
   if (out.auto && items.some((i) => out.auto!.sliders.includes(i.key as AutoKey))) out = { ...out, auto: null }
   return out

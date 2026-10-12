@@ -9,7 +9,7 @@
 import type { Chord } from './chords'
 
 /** Where an action works. A view uses `global` plus one or more of the others (see `VIEWS`). */
-export type Context = 'global' | 'library' | 'cull' | 'cull-one' | 'compare' | 'survey' | 'develop'
+export type Context = 'global' | 'library' | 'cull' | 'cull-one' | 'compare' | 'survey' | 'develop' | 'crop'
 
 export const CONTEXT_NAMES: Record<Context, string> = {
   global: 'Everywhere',
@@ -19,6 +19,7 @@ export const CONTEXT_NAMES: Record<Context, string> = {
   compare: 'Compare',
   survey: 'Survey',
   develop: 'Develop',
+  crop: 'Develop: cropping',
 }
 
 /** The contexts that are active together. Two actions can't share a key if one view has both. */
@@ -28,6 +29,8 @@ export const VIEWS: Context[][] = [
   ['global', 'cull', 'compare'],
   ['global', 'cull', 'survey'],
   ['global', 'develop'],
+  // While cropping, Develop listens to 'crop' instead, so O can cycle the crop overlay and Esc cancel the crop.
+  ['global', 'crop'],
 ]
 
 export type PresetId = 'lightbench' | 'lightroom'
@@ -47,6 +50,8 @@ export interface ActionDef {
 const PHOTO: Context[] = ['library', 'cull']
 const SETTINGS: Context[] = ['library', 'develop']
 const ONE_OR_COMPARE: Context[] = ['cull-one', 'compare']
+/** Develop, also while cropping. */
+const DEVELOP_ANY: Context[] = ['develop', 'crop']
 
 export const ACTIONS: ActionDef[] = [
   // Everywhere
@@ -132,8 +137,8 @@ export const ACTIONS: ActionDef[] = [
   { id: 'survey.close', label: 'Back to the grid', contexts: ['survey'], keys: ['Escape', 'G', 'N', 'E', 'F'] },
 
   // Develop
-  { id: 'develop.undo', label: 'Undo', contexts: ['develop'], keys: ['Ctrl+Z'] },
-  { id: 'develop.redo', label: 'Redo', contexts: ['develop'], keys: ['Ctrl+Y', 'Ctrl+Shift+Z'] },
+  { id: 'develop.undo', label: 'Undo', contexts: DEVELOP_ANY, keys: ['Ctrl+Z'] },
+  { id: 'develop.redo', label: 'Redo', contexts: DEVELOP_ANY, keys: ['Ctrl+Y', 'Ctrl+Shift+Z'] },
   { id: 'develop.before', label: 'Before / after', contexts: ['develop'], keys: ['\\'] },
   { id: 'develop.clipping', label: 'Show clipping', contexts: ['develop'], keys: ['J', 'O'], lightroom: ['J'] },
   { id: 'develop.sensorClipping', label: 'Show sensor clipping', contexts: ['develop'], keys: ['Shift+O'] },
@@ -143,6 +148,20 @@ export const ACTIONS: ActionDef[] = [
   { id: 'develop.whiteBalance', label: 'White balance picker', contexts: ['develop'], keys: ['W'] },
   { id: 'develop.cancel', label: 'Cancel the picker and fit the photo', contexts: ['develop'], keys: ['Escape'] },
   { id: 'develop.grid', label: 'Back to the Library grid', contexts: ['develop'], keys: ['G'] },
+  { id: 'develop.crop', label: 'Crop and straighten (again: apply)', contexts: DEVELOP_ANY, keys: ['R'] },
+  { id: 'develop.rotateLeft', label: 'Rotate left', contexts: DEVELOP_ANY, keys: ['Ctrl+['] },
+  { id: 'develop.rotateRight', label: 'Rotate right', contexts: DEVELOP_ANY, keys: ['Ctrl+]'] },
+  { id: 'develop.flipH', label: 'Flip horizontal', contexts: DEVELOP_ANY, keys: [] },
+  { id: 'develop.flipV', label: 'Flip vertical', contexts: DEVELOP_ANY, keys: [] },
+  { id: 'develop.level', label: 'Straighten: draw a level line', contexts: DEVELOP_ANY, keys: [] },
+
+  // Develop, while cropping
+  { id: 'crop.apply', label: 'Apply the crop', contexts: ['crop'], keys: ['Enter'] },
+  { id: 'crop.cancel', label: 'Cancel the crop', contexts: ['crop'], keys: ['Escape'] },
+  { id: 'crop.overlay', label: 'Next crop overlay (thirds, grid, golden ratio, diagonals)', contexts: ['crop'], keys: ['O'] },
+  { id: 'crop.swap', label: 'Swap portrait and landscape', contexts: ['crop'], keys: ['X'] },
+  { id: 'crop.lock', label: 'Lock or unlock the aspect', contexts: ['crop'], keys: [] },
+  { id: 'crop.reset', label: 'Reset crop, straighten, rotate and flip', contexts: DEVELOP_ANY, keys: [] },
 ]
 
 export const ACTION_BY_ID = new Map(ACTIONS.map((a) => [a.id, a]))
