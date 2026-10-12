@@ -12,7 +12,7 @@ following third-party components, each under its own license.
 | [LibRaw](https://www.libraw.org/) 0.22.1 | Reading camera RAW files | LGPL-2.1 or CDDL-1.0 (shipped as a separate, replaceable `.wasm` file) |
 | [@colorhythm/libraw-wasm](https://github.com/colorhythm/libraw-wasm) | WebAssembly build + bindings for LibRaw | MIT |
 | [SQLite](https://sqlite.org/) / [@sqlite.org/sqlite-wasm](https://github.com/sqlite/sqlite-wasm) | Library catalog database | Public domain / Apache-2.0 |
-| [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) | Cross-origin isolation on GitHub Pages | MIT |
+| [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) 0.1.7 | No longer shipped. LightBench's own service worker (`web/src/pwa/sw.ts`) reproduces its COOP/COEP header logic for cross-origin isolation on GitHub Pages | MIT. Copyright © Guido Zuidhof and contributors. |
 | [React](https://react.dev/) | User interface | MIT |
 | [Vite](https://vite.dev/), [TypeScript](https://www.typescriptlang.org/), [oxlint](https://oxc.rs/) | Build tools (not shipped) | MIT / Apache-2.0 / MIT |
 

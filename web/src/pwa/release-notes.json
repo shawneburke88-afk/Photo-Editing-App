@@ -1,0 +1,16 @@
+[
+  {
+    "version": "0.1.0",
+    "date": "2026-10-12",
+    "newFeatures": [
+      "Install LightBench as an app from Chrome or Edge (the install button in the address bar).",
+      "Works offline after the first visit. Your photos and library were already stored on your computer.",
+      "An “Update ready” notice with these notes. Nothing changes until you click Reload.",
+      "Open RAW and JPEG files with the installed app from your file manager (Chrome and Edge).",
+      "Copy, paste and sync develop settings between photos, choosing which settings go. Auto can re-run on each photo.",
+      "Auto options: a strength slider and a choice of which sliders Auto may change.",
+      "Presets: save chosen settings, preview on hover, apply with an Amount, and develop new photos with one automatically."
+    ],
+    "bugFixes": []
+  }
+]

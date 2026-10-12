@@ -300,6 +300,16 @@ function listFiles(rootId: number, path: string): string[] {
   return rows.map((r) => (r.path ? `${r.path}/${r.name}` : r.name))
 }
 
+/** The original (not a virtual copy) of a file in a library folder, or null if it isn't catalogued. */
+function findPhoto(rootId: number, folderPath: string, fileName: string): number | null {
+  const id = conn().selectValue(
+    `SELECT p.id FROM photos p JOIN folders f ON f.id = p.folder_id
+     WHERE f.root_id = ? AND f.path = ? AND p.file_name = ? AND p.version = 0`,
+    [rootId, folderPath, fileName],
+  )
+  return id === undefined ? null : Number(id)
+}
+
 /** Returns, for each key, whether a matching photo is already in the catalog. */
 function findDuplicates(keys: DuplicateKey[]): boolean[] {
   const stmt = conn().prepare(
@@ -1067,6 +1077,7 @@ const handlers = {
   folderTree,
   findDuplicates,
   listFiles,
+  findPhoto,
   addPhotos,
   queryPhotos,
   getPhoto,

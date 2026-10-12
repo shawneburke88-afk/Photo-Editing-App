@@ -155,7 +155,7 @@ metadata presets, import presets, compare and survey views.
 
 **Lightroom import — postponed** (owner, 2026-10-12: no Lightroom catalog is available to test against). Kept with the owner's answers for when it can be tested: read the Lightroom Classic catalog (.lrcat, read-only) plus Lightroom-written XMP sidecars; bring ratings, flags, labels and keywords, stacks and virtual copies, and the Basic develop sliders approximately (the engines differ, so the look will be close, not identical). Collections were not chosen.
 
-**Installable, offline website (PWA)** (owner, after round 2): works without a connection after the first visit.
+**Installable, offline website (PWA)** (owner, after round 2): works without a connection after the first visit — _built, see [PHASE2.md](PHASE2.md#part-9-installable-offline-app-pwa)_.
 **+0.7 EV base exposure shown and configurable** (owner, after round 2): a note under Exposure for RAW files, and a preference for the default used on photos not yet edited.
 
 ### Phase 3 — Editing depth
