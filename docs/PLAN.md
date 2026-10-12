@@ -195,6 +195,28 @@ Owner's requests (2026-10-11), to be built on the AI masks:
   The owner picks models before Phase 4. darktable 5.6 ships SAM 2.1 (Hiera small) and SegNext for masks
   (`data/ai_models.json`).
 
+Owner's requests (2026-10-12), decided after discussion:
+- **Fill clipped highlights and shadows.** Both blown highlights and crushed shadows, each with its own threshold and
+  a **buffer** slider (grows or shrinks the area), shown as an on-photo preview before pressing Go.
+  - **Recover first, AI only where nothing is left:** partly clipped areas use real reconstruction (darktable's
+    highlight reconstruction, already in LightBench); AI fills only areas with no data left (all channels clipped,
+    or crushed to black). The buffer can still extend the AI fill over the fringe that recovery handled, where the
+    owner judges recovery looks worse.
+  - AI-filled areas are **invented, not recovered**: label them as generated and keep them as a separate, removable
+    layer.
+  - The model needs research: no inpainting model's licence has been checked yet against the permissive-only rule
+    (LaMa is planned for AI remove but unverified). A no-AI PatchMatch fill exists as an option for small areas
+    (LightCraft's MIT port, `docs/research/LIGHTCRAFT.md`).
+- **AI depth of field (lens blur).** Blur that grows with distance from the focus plane, both in front and behind
+  (more bokeh for objects further from the focus distance), not just "blur everything except the subject".
+  - A **strength** slider; **click to set the focus point**, with a focus-range slider; **auto focus on the detected
+    subject** to start; **refine the depth map with a brush** (hair, glass, fences); a choice of **bokeh shape**
+    (round, cat's-eye, aperture-blade polygon).
+  - Depth from **Depth Anything V2 Small** (Apache-2.0, about 50 MB, official in-browser WebGPU demo), already the
+    proposed depth model above; its larger checkpoints are non-commercial and excluded.
+  - Lightroom has a comparable Lens Blur (unverified against Adobe's docs).
+- **When:** both in Phase 4, as planned; inpainting-model licence research when Phase 4 starts.
+
 ### Phase 5 — Output and advanced
 HDR and panorama merge, HDR editing and export (AVIF / JPEG XL / gain-map JPEG), map module,
 print module, slideshow, web gallery, book module, plugin system.
