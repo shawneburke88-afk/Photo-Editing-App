@@ -5,11 +5,13 @@ following third-party components, each under its own license.
 
 | Component | Used for | License |
 |---|---|---|
-| [darktable](https://github.com/darktable-org/darktable) (code translated to WGSL/TypeScript, from commit `6271f53`, Oct 2026) | RCD demosaic, inpaint-opposed highlight reconstruction, sigmoid tone mapping, tone equalizer, white balance (temperature/tint), CIE colour tables | GPL-3.0-or-later. Copyright © darktable developers. RCD by Luis Sanz Rodríguez. |
+| [darktable](https://github.com/darktable-org/darktable) (code translated to WGSL/TypeScript, from commit `6271f53`, Oct 2026) | RCD demosaic, inpaint-opposed highlight reconstruction, sigmoid tone mapping, tone equalizer, white balance (temperature/tint), CIE colour tables; Transform/Upright: the perspective model, line selection, outlier removal, fit and automatic crop of "rotate and perspective" (`src/iop/ashift.c` → `web/src/engine/develop/ashift.ts`) | GPL-3.0-or-later. Copyright © darktable developers. RCD by Luis Sanz Rodríguez. darktable credits ShiftN by Marcus Hebel as the inspiration of ashift. |
+| [LSD — Line Segment Detector](http://dx.doi.org/10.5201/ipol.2012.gjmr-lsd) version 1.6, as included in darktable (`src/iop/ashift_lsd.c`, translated to TypeScript in `web/src/engine/develop/lsd.ts`) | Finding straight lines for Upright and Auto straighten | AGPL-3.0-or-later. Copyright © 2007-2011 Rafael Grompone von Gioi. GPL-3.0 section 13 allows combining it with GPL-3.0 code (as darktable does); the AGPL's own terms stay with this file, including its section 13 (users who interact with a modified version over a network must be offered its source). LightBench's source is public on GitHub (https://github.com/shawneburke88-afk/Photo-Editing-App), and the app links to it from Settings and System Check (owner's decision, 2026-10-12). |
+| Nelder-Mead simplex by Michael F. Hutt, as included in darktable (`src/iop/ashift_nmsimplex.c`, translated to TypeScript in `web/src/engine/develop/nmsimplex.ts`) | Fitting Upright's perspective model and its automatic crop | MIT (text in the file's header). Copyright © 1997-2011 Michael F. Hutt; darktable's changes GPL-3.0-or-later. |
 | [rawspeed](https://github.com/darktable-org/rawspeed) camera database (`data/cameras.xml`, converted to `web/src/engine/raw/camera-db.json` by `web/scripts/build-camera-db.mjs`) | Sensor white levels per camera, mode and ISO; the selection logic follows rawspeed's `Camera::getSensorInfo` | Data: CC-BY-SA 3.0 (the converted JSON stays under CC-BY-SA 3.0). Copyright © rawspeed and darktable contributors. |
 | [jpegli](https://github.com/google/jpegli) (commit `031a007`), compiled to WebAssembly by `web/scripts/build-jpegli.sh` | JPEG export encoder | BSD-3-Clause plus Google's patent grant (`web/src/vendor/jpegli/LICENSE`, `PATENTS`). Copyright © the JPEG XL Project Authors. |
 | [Highway](https://github.com/google/highway) (linked into the jpegli WebAssembly) | SIMD support for jpegli | Apache-2.0 or BSD-3-Clause, at the user's choice (`web/src/vendor/jpegli/LICENSE.highway`). |
-| [LightCraft](https://github.com/storytold/lightcraft) (commit `701f78e`, `crates/geom/src/crop.rs` and `crop_drag.rs`, translated to TypeScript and modified in `web/src/engine/develop/crop.ts`) | The crop model and the rules for dragging crop handles | MIT OR Apache-2.0, used here under the MIT License (text below). Copyright (c) 2026 ArtCraft Team and the LightCraft contributors. |
+| [LightCraft](https://github.com/storytold/lightcraft) (commit `701f78e`, `crates/geom/src/crop.rs` and `crop_drag.rs`, translated to TypeScript and modified in `web/src/engine/develop/crop.ts`; `crates/pipeline/src/upright.rs`, parts translated and modified in `web/src/engine/develop/upright.ts`) | The crop model and the rules for dragging crop handles; Upright's guards against false corrections (reliability gates, level consensus, Auto's limits) | MIT OR Apache-2.0, used here under the MIT License (text below). Copyright (c) 2026 ArtCraft Team and the LightCraft contributors. |
 | [LibRaw](https://www.libraw.org/) 0.22.1 | Reading camera RAW files | LGPL-2.1 or CDDL-1.0 (shipped as a separate, replaceable `.wasm` file) |
 | [@colorhythm/libraw-wasm](https://github.com/colorhythm/libraw-wasm) | WebAssembly build + bindings for LibRaw | MIT |
 | [SQLite](https://sqlite.org/) / [@sqlite.org/sqlite-wasm](https://github.com/sqlite/sqlite-wasm) | Library catalog database | Public domain / Apache-2.0 |
@@ -24,7 +26,9 @@ in this repository.
 ## LightCraft licence (MIT)
 
 `web/src/engine/develop/crop.ts` (and its tests in `crop.test.ts`) is a translation of LightCraft's crop model,
-modified by the LightBench contributors (2026); the file's header lists the changes. LightCraft offers its code
+modified by the LightBench contributors (2026); the file's header lists the changes. Parts of
+`web/src/engine/develop/upright.ts` (the vanishing-point helpers, `reliable`, `level_angle` and the Auto policy of
+LightCraft's `crates/pipeline/src/upright.rs`) are translated and modified the same way; that file's header says how. LightCraft offers its code
 under the MIT License or the Apache License 2.0; LightBench uses it under the MIT License:
 
 ```

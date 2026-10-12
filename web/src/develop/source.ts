@@ -13,6 +13,18 @@ export interface SensorInfo {
   asShot: { temperature: number; tint: number }
   /** Input colour profile of a JPEG, and a note when it had to be assumed. */
   profile?: { name: string; note?: string }
+  /**
+   * 35 mm-equivalent focal length for Upright, as darktable's ashift takes it: the EXIF focal length times the
+   * crop factor (FocalLengthIn35mmFilm / focal length; 1 when unknown); null when the file has no focal length.
+   */
+  focal35?: number | null
+}
+
+function focalOf(r: DecodeResult): number | null {
+  const f = r.info.focalLength
+  if (!(f > 0)) return null
+  const f35 = r.info.focal35 ?? 0
+  return f35 > 0 ? f35 : f
 }
 
 /** Uploads a decoded photo (RAW sensor data or JPEG pixels) to the engine. Call `engine.process` next. */
@@ -24,12 +36,12 @@ export function loadIntoEngine(engine: DevelopEngine, r: DecodeResult): SensorIn
     // White balance works on the file's linear colours: "camera" RGB is the profile's RGB.
     const xyzToCam = invert(mul(REC2020_TO_XYZ, r.rgb.toRec2020 as Mat3))
     const wb: Vec3 = [1, 1, 1]
-    return { kind: 'rgb', asShotWb: wb, xyzToCam, asShot: multipliersToTemperature(wb, xyzToCam), profile: { name: r.rgb.profileName, note: r.rgb.profileNote } }
+    return { kind: 'rgb', asShotWb: wb, xyzToCam, asShot: multipliersToTemperature(wb, xyzToCam), profile: { name: r.rgb.profileName, note: r.rgb.profileNote }, focal35: focalOf(r) }
   }
   if (!r.sensor) throw new Error(r.sensorUnsupported ?? 'This RAW file can’t be developed yet.')
   engine.loadSensor(r.sensor, r.info.flip)
   const xyzToCam = r.sensor.xyzToCam as Mat3
-  return { kind: 'raw', asShotWb: r.sensor.wb, xyzToCam, asShot: multipliersToTemperature(r.sensor.wb, xyzToCam) }
+  return { kind: 'raw', asShotWb: r.sensor.wb, xyzToCam, asShot: multipliersToTemperature(r.sensor.wb, xyzToCam), focal35: focalOf(r) }
 }
 
 export function multipliers(s: DevelopSettings, info: SensorInfo): Vec3 {

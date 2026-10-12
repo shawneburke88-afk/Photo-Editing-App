@@ -1,9 +1,9 @@
 // The geometry stage: crop, straighten, rotate 90° and flip, applied together as ONE resample.
 //
 // Order (darktable's pixelpipe order, src/common/iop_order.c, v5.0: lens 13 → ashift 15 → flip 16 → crop 24.5):
-//   lens correction → rotate and perspective (straighten; later Upright) → flip (camera orientation, the user's
+//   lens correction → rotate and perspective (Transform/Upright, straighten) → flip (camera orientation, the user's
 //   rotate 90° and flips) → crop.
-// Only the last three exist today; lens correction and perspective are identity. All of them are combined into
+// Lens correction is identity for now; the perspective (Transform/Upright, upright.ts) exists. All of them are combined into
 // one map from an output pixel back to a sensor position (`resolveGeometry`), so a photo is resampled once
 // whatever tools are used, never once per tool. darktable's own modules each resample (each calls
 // `dt_interpolation_new(DT_INTERPOLATION_USERPREF_WARP)`); combining them is LightBench's choice.
@@ -14,7 +14,7 @@
 // coordinates (and later mask coordinates) therefore stay on the same content when lens or Upright settings
 // change. Rotating 90° or flipping moves the crop with the photo (`rotate90`, `flip`).
 //
-// Resampling: when the map is a whole-pixel one (no straighten angle, and later no lens or perspective), the
+// Resampling: when the map is a whole-pixel one (no straighten angle, no perspective, and later no lens), the
 // pixels are copied exactly and nothing is resampled. Otherwise the engine warps the photo once with bicubic
 // (Catmull-Rom) interpolation, darktable's default for warps (`plugins/lighttable/export/pixel_interpolator_warp`
 // = bicubic in data/darktableconfig.xml.in; DT_INTERPOLATION_DEFAULT_WARP = BICUBIC in src/common/interpolation.h;
@@ -22,6 +22,7 @@
 
 import type { Mat3 } from '../color/matrix'
 import { constrained, cropFitAngle, fitAbout, fromCenter, rectCenter, rectHeight, rectWidth, scaleRect, UNIT_RECT, withAngle, type CropGeometry, type Rect } from './crop'
+import { isIdentityTransform, normalizeTransform, perspectiveMap, transformKey, turnTransform, type Orient, type TransformSettings } from './upright'
 
 export type AspectId = 'original' | '1:1' | '4:5' | '5:7' | '2:3' | '16:9' | 'custom'
 
@@ -51,6 +52,8 @@ export interface GeometrySettings {
   custom: [number, number]
   /** Aspect locked: dragging keeps the crop's shape. */
   locked: boolean
+  /** Transform and Upright (perspective), applied before straightening (upright.ts). Absent: none. */
+  transform?: TransformSettings
 }
 
 /** Defaults: no crop; the aspect starts locked to the photo's own (LightBench's choice; Lightroom's default not checked). */
@@ -76,17 +79,22 @@ export function normalizeGeometry(g: Partial<GeometrySettings> | null | undefine
     aspect: ASPECTS.some((a) => a.id === g.aspect) ? (g.aspect as AspectId) : d.aspect,
     custom,
     locked: typeof g.locked === 'boolean' ? g.locked : d.locked,
+    ...withTransform(normalizeTransform(g.transform)),
   }
 }
 
+/** The transform as an optional field: left out entirely when there is none, so old edits stay as they were. */
+const withTransform = (t: TransformSettings | undefined) => (t ? { transform: t } : {})
+
 /** True when the geometry changes nothing (old edits, and every photo not cropped, turned or flipped). */
 export const isIdentityGeometry = (g: GeometrySettings) =>
-  g.turns === 0 && !g.mirror && g.angle === 0 && g.crop.x0 === 0 && g.crop.y0 === 0 && g.crop.x1 === 1 && g.crop.y1 === 1
+  g.turns === 0 && !g.mirror && g.angle === 0 && g.crop.x0 === 0 && g.crop.y0 === 0 && g.crop.x1 === 1 && g.crop.y1 === 1 && isIdentityTransform(g.transform)
 
 /** The parts that change pixels (the aspect choice and lock are tool state). */
 export const sameGeometry = (a: GeometrySettings, b: GeometrySettings) =>
   a.turns === b.turns && a.mirror === b.mirror && a.angle === b.angle &&
-  a.crop.x0 === b.crop.x0 && a.crop.y0 === b.crop.y0 && a.crop.x1 === b.crop.x1 && a.crop.y1 === b.crop.y1
+  a.crop.x0 === b.crop.x0 && a.crop.y0 === b.crop.y0 && a.crop.x1 === b.crop.x1 && a.crop.y1 === b.crop.y1 &&
+  transformKey(a.transform) === transformKey(b.transform)
 
 // ---- orientation: the camera's orientation and the user's turns and flips, as one of the 8 symmetries of a
 // rectangle. A 2×2 integer matrix acting on coordinates centred on the image (y down); R turns clockwise.
@@ -115,6 +123,9 @@ export const EXIF_TURNS: Record<number, number> = { 0: 0, 3: 2, 5: 3, 6: 1 }
 /** The full orientation: the camera's, then the user's. */
 const totalOrientation = (g: GeometrySettings, exifFlip: number) => mul2(orientMatrix(g.turns, g.mirror), orientMatrix(EXIF_TURNS[exifFlip] ?? 0, false))
 
+/** The full orientation as a 2×2 matrix from sensor to screen coordinates (for Upright). */
+export const orientationOf = (g: GeometrySettings, exifFlip: number): Orient => totalOrientation(g, exifFlip)
+
 /** Size of the straightened frame (the oriented photo) for a sensor of sw × sh. */
 export function frameSize(g: GeometrySettings, sw: number, sh: number, exifFlip: number): [number, number] {
   const m = totalOrientation(g, exifFlip)
@@ -128,7 +139,7 @@ export function rotate90(g: GeometrySettings, dir: 1 | -1): GeometrySettings {
   const { turns, mirror } = fromMatrix(mul2(dir === 1 ? R90 : pow2(R90, 3), orientMatrix(g.turns, g.mirror)))
   const c = g.crop
   const crop = dir === 1 ? { x0: 1 - c.y1, y0: c.x0, x1: 1 - c.y0, y1: c.x1 } : { x0: c.y0, y0: 1 - c.x1, x1: c.y1, y1: 1 - c.x0 }
-  return { ...g, turns, mirror, crop }
+  return { ...g, turns, mirror, crop, ...withTransform(turnTransform(g.transform, dir === 1 ? R90 : pow2(R90, 3))) }
 }
 
 /** Flips the photo left-right ('h') or top-bottom ('v'); the crop and the straighten angle are mirrored with it. */
@@ -137,7 +148,7 @@ export function flip(g: GeometrySettings, axis: 'h' | 'v'): GeometrySettings {
   const { turns, mirror } = fromMatrix(mul2(m, orientMatrix(g.turns, g.mirror)))
   const c = g.crop
   const crop = axis === 'h' ? { ...c, x0: 1 - c.x1, x1: 1 - c.x0 } : { ...c, y0: 1 - c.y1, y1: 1 - c.y0 }
-  return { ...g, turns, mirror, crop, angle: g.angle === 0 ? 0 : -g.angle }
+  return { ...g, turns, mirror, crop, angle: g.angle === 0 ? 0 : -g.angle, ...withTransform(turnTransform(g.transform, m)) }
 }
 
 /** Sets the user's orientation (Paste), turning and flipping step by step so the crop follows the photo. */
@@ -324,7 +335,9 @@ export function resolveGeometry(g: GeometrySettings, sw: number, sh: number, exi
   // Straightening is applied before flip, as darktable's rotate-and-perspective (ashift) comes before flip; an
   // angle seen clockwise on screen is anticlockwise on the sensor when the orientation mirrors.
   const sensorAngle = det * g.angle
-  const exact = g.angle === 0
+  // Transform / Upright: a perspective in the sensor's axes, before straightening (upright.ts `perspectiveMap`).
+  const perspective = perspectiveMap(g.transform, A, sw, sh) as Mat3 | null
+  const exact = g.angle === 0 && !perspective
   let uvToSensor: Mat3
   if (exact) {
     // Built in uv units so a photo without crop gets exactly the orientation map it had before (0, 1 and −1 entries).
@@ -334,9 +347,9 @@ export function resolveGeometry(g: GeometrySettings, sw: number, sh: number, exi
     uvToSensor = IDENTITY_MAP // replaced below
   }
   // Output pixel → frame pixel → (inverse flip) sensor-oriented pixel about the centre → (inverse straighten) sensor pixel.
-  // Lens correction and perspective (Upright) will join here, before `translate(sw / 2, sh / 2)`.
+  // Lens correction will join here, before `translate(sw / 2, sh / 2)`; the perspective (Upright) is in place.
   const toSensor = mul3(
-    mul3(translate(sw / 2, sh / 2), rotation(-sensorAngle)),
+    mul3(perspective ? mul3(translate(sw / 2, sh / 2), perspective) : translate(sw / 2, sh / 2), rotation(-sensorAngle)),
     mul3(mul3(linear(transpose2(A)), translate(-fw / 2, -fh / 2)), translate(x0, y0)),
   )
   if (!exact) uvToSensor = mul3(mul3(scale(1 / sw, 1 / sh), toSensor), scale(w, h))
@@ -347,7 +360,7 @@ export function resolveGeometry(g: GeometrySettings, sw: number, sh: number, exi
     toSensor,
     uvToSensor,
     exact,
-    key: `${sw}x${sh}/${exifFlip}/${g.turns}/${g.mirror}/${g.angle}/${x0},${y0},${x1},${y1}`,
+    key: `${sw}x${sh}/${exifFlip}/${g.turns}/${g.mirror}/${g.angle}/${x0},${y0},${x1},${y1}${perspective ? `/t${transformKey(g.transform)}` : ''}`,
   }
 }
 

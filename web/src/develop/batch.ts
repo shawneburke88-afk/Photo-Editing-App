@@ -15,6 +15,7 @@ import { sidecars } from '../sidecar/sync'
 import { current, loadHistory, record, savedForm } from './history'
 import { applyPaste, mergeClipboards, type Clipboard } from './paste'
 import { loadIntoEngine, multipliers, renderThumbnail, stageOptions, type SensorInfo } from './source'
+import { ownFocal, rerunUpright, wantsUprightRerun } from './uprightRun'
 
 export interface BatchJob {
   /** History step added to each photo, e.g. "Paste settings". */
@@ -151,6 +152,8 @@ class BatchDeveloper {
     onName(p.fileName)
     const file = await openPhotoFile(p.rootId, p.folderPath, p.fileName)
     const wantsAuto = job.clip.rerunAuto && !!job.clip.settings.auto
+    // Upright's Auto, Level, Vertical and Full are detected again on each photo, like Auto tone.
+    const wantsUpright = job.clip.keys.includes('upright') && wantsUprightRerun(job.clip.settings)
     let engine: DevelopEngine | null = null
     let info: SensorInfo | null = null
     if (file && 'gpu' in navigator) {
@@ -158,13 +161,20 @@ class BatchDeveloper {
       engine = await this.engine
       this.decoder ??= new RawDecoder()
       info = loadIntoEngine(engine, await this.decoder.decode(file, true))
-    } else if (wantsAuto) {
-      throw new Error(file ? 'Auto needs WebGPU (Chrome or Edge).' : 'The photo’s folder isn’t connected, so Auto can’t look at it. Reconnect it in the Library.')
+    } else if (wantsAuto || wantsUpright) {
+      const what = wantsAuto ? 'Auto' : 'Upright'
+      throw new Error(file ? `${what} needs WebGPU (Chrome or Edge).` : `The photo’s folder isn’t connected, so ${what} can’t look at it. Reconnect it in the Library.`)
     }
     const kind: SourceKind = info?.kind ?? (isRawFile(p.fileName) ? 'raw' : 'rgb')
     // Read the edit now rather than when the job was queued, so a change made meanwhile (e.g. in Develop) isn't lost.
     const h = loadHistory(await catalog.getEdit(id), kind)
     let next = applyPaste(current(h), job.clip, kind, engine && info ? engine.imageSize : undefined)
+    if (info) next = ownFocal(next, info)
+    if (wantsUpright && engine && info) {
+      // Lines are found on the developed scene (the RAW stage must have run).
+      await engine.process(stageOptions(next, info))
+      next = await rerunUpright(engine, next, info)
+    }
     if (wantsAuto && engine && info) next = await rerunAuto(engine, { ...next, auto: job.clip.settings.auto }, info)
     await catalog.saveEdit(id, JSON.stringify(next), JSON.stringify(savedForm(record(h, job.label, next))))
     sidecars.schedule([id])
