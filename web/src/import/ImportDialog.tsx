@@ -156,7 +156,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
         .then((file) => pool.probe(file))
         .then((r) => {
           const thumbUrl = r.thumb ? URL.createObjectURL(new Blob([r.thumb], { type: 'image/jpeg' })) : undefined
-          batch.set(f, { status: 'ready', item: { file: f, meta: r.meta, thumb: r.thumb }, thumbUrl })
+          batch.set(f, { status: 'ready', item: { file: f, meta: r.meta, thumb: r.thumb, xmp: r.xmp }, thumbUrl })
           schedule()
         })
         .catch((e: Error) => {

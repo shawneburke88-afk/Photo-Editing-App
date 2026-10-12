@@ -76,6 +76,8 @@ export interface PhotoQuery {
   minRating?: number
   flag?: 'picked' | 'rejected' | 'unflagged' | 'notRejected'
   color?: ColorLabel
+  /** Keyword path; photos with it or any keyword below it. */
+  keyword?: string
   text?: string
   sort?: 'captureAsc' | 'captureDesc' | 'name'
 }

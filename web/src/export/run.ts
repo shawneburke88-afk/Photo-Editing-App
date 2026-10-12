@@ -167,7 +167,7 @@ export async function runExport(
               { width, height, srgb: s.space === 'srgb' },
             )
           : undefined
-        const xmp = exportXmp(p, saved?.settings ?? null, s.metadata)
+        const xmp = exportXmp(p, saved?.settings ?? null, s.metadata, await catalog.photoKeywords(id))
 
         let blob: Blob
         if (s.format === 'jpeg') {

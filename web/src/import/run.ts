@@ -13,6 +13,8 @@ export interface ImportItem {
   file: ScannedFile
   meta: PhotoMeta
   thumb: Uint8Array<ArrayBuffer> | null
+  /** XMP embedded in a JPEG, used when there is no sidecar. */
+  xmp?: string
 }
 
 export interface ImportOptions {
@@ -98,12 +100,13 @@ export async function findSidecar(dir: FileSystemDirectoryHandle, photoName: str
   return null
 }
 
-/** Applies what a sidecar says (ratings, flag, label, LightBench edits) to a newly imported photo. */
+/** Applies what a sidecar says (ratings, flag, label, keywords, LightBench edits) to a newly imported photo. */
 export async function applySidecar(catalog: Catalog, id: number, text: string) {
   const r = readXmp(text)
   if (r.rating !== undefined) await catalog.setRating([id], r.rating)
   if (r.flag !== undefined) await catalog.setFlag([id], r.flag)
   if (r.color !== undefined) await catalog.setColor([id], r.color)
+  if (r.keywords?.length) await catalog.addKeywords([id], r.keywords)
   if (r.develop) {
     const history = JSON.stringify({ steps: [{ label: 'From sidecar', settings: JSON.parse(r.develop) }], index: 0 })
     await catalog.saveEdit(id, r.develop, history)
@@ -165,7 +168,8 @@ export async function runImport(
       } else {
         progress.imported++
         if (item.thumb) await saveThumb(id, item.thumb)
-        if (sidecar) await applySidecar(catalog, id, sidecar.text)
+        const xmpText = sidecar?.text ?? item.xmp
+        if (xmpText) await applySidecar(catalog, id, xmpText)
       }
     } catch (err) {
       progress.failed.push({ name: item.file.name, error: err instanceof Error ? err.message : String(err) })

@@ -41,7 +41,7 @@ describe('XMP sidecars', () => {
   })
 
   it('reads Lightroom’s rating and label', () => {
-    expect(readXmp(LIGHTROOM)).toEqual({ rating: 4, color: 3 })
+    expect(readXmp(LIGHTROOM)).toEqual({ rating: 4, color: 3, keywords: ['Glarus', 'Lake'] })
   })
 
   it('updates only its own fields and keeps everything else', () => {
@@ -82,6 +82,28 @@ describe('XMP sidecars', () => {
     const out = writeXmp(el, data({ rating: 1 }))!
     expect(out).not.toContain('<xmp:Rating>')
     expect(readXmp(out).rating).toBe(1)
+  })
+
+  it('writes keywords as darktable and Lightroom do, and reads them back', () => {
+    const text = writeXmp(null, data({ keywords: ['Places|Canada|Ottawa', 'Places|Canada', 'Family'] }))!
+    const flat = /<dc:subject>([\s\S]*?)<\/dc:subject>/.exec(text)![1]
+    expect([...flat.matchAll(/<rdf:li>([^<]*)<\/rdf:li>/g)].map((m) => m[1])).toEqual(['Places', 'Canada', 'Ottawa', 'Family'])
+    expect(text).toContain('<rdf:li>Places|Canada|Ottawa</rdf:li>')
+    expect(readXmp(text).keywords).toEqual(['Places|Canada|Ottawa', 'Places|Canada', 'Family'])
+  })
+
+  it('prefers the hierarchy, ignores darktable internal tags, and falls back to dc:subject', () => {
+    const dt = LIGHTROOM.replace('</dc:subject>', `</dc:subject><lr:hierarchicalSubject xmlns:lr="http://ns.adobe.com/lightroom/1.0/"><rdf:Bag>
+      <rdf:li>Trips|Glarus</rdf:li><rdf:li>darktable|format|nef</rdf:li><rdf:li> Lake | </rdf:li></rdf:Bag></lr:hierarchicalSubject>`)
+    expect(readXmp(dt).keywords).toEqual(['Trips|Glarus', 'Lake'])
+  })
+
+  it('replaces keywords only when they change, and leaves them alone when not given', () => {
+    const same = writeXmp(LIGHTROOM, data({ rating: 4, color: 3, keywords: ['Glarus', 'Lake'] }))!
+    expect(writeXmp(same, data({ rating: 4, color: 3, keywords: ['lake', 'glarus'] }))).toBeNull()
+    const cleared = writeXmp(same, data({ rating: 4, color: 3, keywords: [] }))!
+    expect(readXmp(cleared).keywords).toBeUndefined()
+    expect(writeXmp(LIGHTROOM, data({ rating: 1 }))!).toContain('<rdf:li>Glarus</rdf:li>')
   })
 
   it('refuses to overwrite a damaged file', () => {

@@ -6,7 +6,7 @@
 
 import { getCatalog } from '../catalog/client'
 import { getDirAt, getRootHandle } from '../platform/roots'
-import { sidecarName, writeXmp } from './xmp'
+import { readXmp, sidecarName, writeXmp } from './xmp'
 
 export interface SidecarStatus {
   /** Library folders where LightBench is waiting for permission to write sidecars. */
@@ -86,9 +86,19 @@ class SidecarSync {
     } catch {
       existing = null
     }
+    let keywords = src.keywords
+    if (!src.keywordsRead) {
+      // Added before LightBench had keywords: take the sidecar's keywords into the library first, so
+      // rewriting the sidecar doesn't drop keywords written by Lightroom, darktable or another app.
+      const found = existing ? (readXmp(existing).keywords ?? []) : []
+      const missing = found.filter((k) => !keywords.some((have) => have.toLowerCase() === k.toLowerCase()))
+      if (missing.length) await catalog.addKeywords([id], missing)
+      await catalog.markKeywordsRead(id)
+      keywords = [...keywords, ...missing]
+    }
     let text: string | null
     try {
-      text = writeXmp(existing, { rating: photo.rating, flag: photo.flag, color: photo.color, develop: src.settings })
+      text = writeXmp(existing, { rating: photo.rating, flag: photo.flag, color: photo.color, develop: src.settings, keywords })
     } catch (e) {
       throw new Error(`${name}: ${e instanceof Error ? e.message : e}`, { cause: e })
     }
