@@ -1,11 +1,12 @@
 // Thumbnail cache in the browser's private storage, so the library grid works even when the
-// photo folders are not connected.
+// photo folders are not connected. The folder is the library slot's (slot.ts; "thumbnails" unless a restore moved it).
 
-const DIR = 'thumbnails'
+import { activeSlot } from './slot'
+
 let dirPromise: Promise<FileSystemDirectoryHandle> | null = null
 
 function dir() {
-  dirPromise ??= navigator.storage.getDirectory().then((root) => root.getDirectoryHandle(DIR, { create: true }))
+  dirPromise ??= Promise.all([navigator.storage.getDirectory(), activeSlot()]).then(([root, slot]) => root.getDirectoryHandle(slot.thumbsDir, { create: true }))
   return dirPromise
 }
 

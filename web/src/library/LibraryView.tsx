@@ -16,7 +16,8 @@ import { ImportDialog } from '../import/ImportDialog'
 import { joinPath } from '../import/plan'
 import { launched } from '../pwa/launch'
 import { supportsFolderAccess } from '../platform/folders'
-import { getRootHandle } from '../platform/roots'
+import { getRootHandle, reconnectRoot } from '../platform/roots'
+import { BackupDialog } from '../backup/BackupDialog'
 import { sidecars } from '../sidecar/sync'
 import { hintLine, keyText, rangeText, useKeymapVersion, useShortcuts, withKey } from '../settings/shortcuts'
 import { FilterBar } from './FilterBar'
@@ -87,6 +88,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   const [view, setView] = useState<'grid' | 'loupe'>('grid')
   const [cellSize, setCellSize] = useState(170)
   const [importing, setImporting] = useState(false)
+  const [backupMode, setBackupMode] = useState<'backup' | 'restore' | null>(null)
   const [culling, setCulling] = useState<{ rows: PhotoRow[]; start: number; layout?: CullLayout; candidate?: number } | null>(null)
   /** A short message above the grid (e.g. why Survey didn't open); clears itself. */
   const [notice, setNotice] = useState('')
@@ -559,7 +561,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
 
   // Keyboard shortcuts (Lightroom's keys by default; see settings/actions.ts). Paused while a dialog or
   // the culling view is open.
-  const keysOn = active && !importing && !culling && !draft && !autoStacking && !launchFiles.length && !pasting && status === 'ready'
+  const keysOn = active && !importing && !culling && !draft && !autoStacking && !launchFiles.length && !pasting && !backupMode && status === 'ready'
   useShortcuts(['library'], keysOn, (id, e) => {
     const idx = focus === null ? -1 : rows.findIndex((r) => r.id === focus)
     const move = (delta: number) => {
@@ -648,8 +650,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   const total = useMemo(() => folders.reduce((n, f) => n + f.count, 0), [folders])
 
   async function reconnect(rootId: number) {
-    const h = await getRootHandle(rootId)
-    if (h && (await h.requestPermission({ mode: 'read' })) === 'granted') refresh()
+    if (await reconnectRoot(rootId, roots.find((r) => r.id === rootId)?.name ?? '')) refresh()
   }
 
   function openImport() {
@@ -720,6 +721,10 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
             onDelete={(path) => void deleteKeyword(path)}
           />
         </FolderPanel>
+        <div className="backup-row">
+          <button className="button small" onClick={() => setBackupMode('backup')} title="Save the catalog, thumbnails and settings to one file (not the photos)">Back up library…</button>
+          <button className="button small" onClick={() => setBackupMode('restore')} title="Replace this library with one from a backup file">Restore…</button>
+        </div>
       </aside>
 
       <section className="center-pane">
@@ -745,6 +750,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
                 <p className="muted">Open a folder of photos to start: they stay where they are, nothing is copied.</p>
                 <button className="button primary large" onClick={() => void openFolder()}>Open folder…</button>
                 <p className="muted small">Photos on a memory card? <button className="linklike" onClick={openImport}>Import from card…</button> copies them into your photo folder first.</p>
+                <p className="muted small">Have a LightBench backup? <button className="linklike" onClick={() => setBackupMode('restore')}>Restore library…</button></p>
                 {folderError && <p className="error">{folderError}</p>}
               </>
             ) : (
@@ -923,6 +929,8 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
       {launchFiles.length > 0 && (
         <OpenWithDialog files={launchFiles} onOpenFolder={() => openLaunchedFolder(launchFiles)} onClose={() => launched.clear()} />
       )}
+
+      {backupMode && <BackupDialog mode={backupMode} onClose={() => setBackupMode(null)} />}
 
       {importing && (
         <ImportDialog
