@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { HIGHEST_TEMPERATURE, LOWEST_TEMPERATURE } from '../engine/color/temperature'
 import { sliderFromTint, tintFromSlider, type DevelopSettings, type SourceKind } from '../engine/develop/settings'
+import type { SensorLayout } from '../engine/raw/types'
 import { AutoControls, type AutoProps } from './AutoControls'
 import { HELP } from './help'
 import { Slider } from './Slider'
@@ -13,6 +14,8 @@ interface Props {
   disabled: boolean
   /** RAW or display-referred (JPEG): JPEGs have no highlight reconstruction or demosaic. */
   kind: SourceKind
+  /** RAW photos: the sensor layout, which decides the demosaic methods offered. */
+  layout?: SensorLayout
   /** Default settings for this kind of photo (double-click reset values). */
   defaults: DevelopSettings
   auto: AutoProps
@@ -35,7 +38,7 @@ const TINT_TRACK = 'linear-gradient(90deg, #4caf50, #ddd 50%, #c050c0)'
 const toMired = (k: number) => -1e6 / k
 const fromMired = (m: number) => Math.round(-1e6 / m)
 
-export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, defaults, auto, pickingWb, onPickWb, hints, onHints }: Props) {
+export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, layout, defaults, auto, pickingWb, onPickWb, hints, onHints }: Props) {
   const [advanced, setAdvanced] = useState(false)
   const guide = (key: string) => ({ help: HELP[key], showHint: hints })
   const set = (label: string, patch: Partial<DevelopSettings>) => onChange(label, { ...s, ...patch })
@@ -177,14 +180,19 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, defa
                   defaultValue={defaults.advanced.highlightClip} format={(v) => v.toFixed(3)} disabled={disabled}
                   onChange={(v) => setAdv('Highlight clipping threshold', { highlightClip: v })} />
                 <h4>demosaic</h4>
-                <label className="adv-row">
-                  Method
-                  <select value={s.advanced.demosaic} disabled={disabled}
-                    onChange={(e) => setAdv('Demosaic', { demosaic: e.target.value as 'rcd' | 'bilinear' })}>
-                    <option value="rcd">RCD</option>
-                    <option value="bilinear">bilinear (fast preview)</option>
-                  </select>
-                </label>
+                {layout === 'linear' ? (
+                  <p className="muted small">Linear DNG: the file is already demosaiced (three colours per pixel).</p>
+                ) : (
+                  <label className="adv-row">
+                    Method
+                    {/* The stored value names the Bayer method; an X-Trans photo uses darktable's X-Trans counterpart. */}
+                    <select value={s.advanced.demosaic} disabled={disabled}
+                      onChange={(e) => setAdv('Demosaic', { demosaic: e.target.value as 'rcd' | 'bilinear' })}>
+                      <option value="rcd">{layout === 'xtrans' ? 'Markesteijn 1-pass' : 'RCD'}</option>
+                      <option value="bilinear">{layout === 'xtrans' ? 'linear (fast preview)' : 'bilinear (fast preview)'}</option>
+                    </select>
+                  </label>
+                )}
               </>
             ) : (
               <p className="muted small">

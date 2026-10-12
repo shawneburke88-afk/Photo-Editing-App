@@ -85,7 +85,16 @@ export function RawCheck() {
         return
       }
       const s = r.sensor
-      lines.push(`Sensor: ${s.width}×${s.height}, CFA ${s.cfa.join('')}, black ${s.black.join('/')}, white ${s.white} (${s.whiteSource}), WB ${s.wb.map((v) => v.toFixed(3)).join('/')}`)
+      const layout = s.layout ?? 'bayer'
+      const pattern = layout === 'xtrans' ? `X-Trans ${s.xtrans?.join('')}` : layout === 'linear' ? 'linear DNG (3 colours per pixel)' : `CFA ${s.cfa.join('')}`
+      lines.push(`Sensor: ${s.width}×${s.height}, ${pattern}, black ${s.black.join('/')}, white ${s.white} (${s.whiteSource}), WB ${s.wb.map((v) => v.toFixed(3)).join('/')}${s.dng ? ', DNG colour model' : ''}`)
+      if (layout !== 'bayer') {
+        // This check's GPU test is Phase 0's bilinear Bayer renderer; Develop handles the other layouts.
+        lines.push('GPU: the System Check speed test handles Bayer sensors only; open this photo in Develop.')
+        set('RAW photo', lines)
+        setStatus('pass')
+        return
+      }
 
       if (!rendererRef.current) {
         try {

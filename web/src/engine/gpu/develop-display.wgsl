@@ -43,7 +43,7 @@ struct View {
   cfa: u32,           // CFA colours of the 2×2 tile, 2 bits each
   statsPass: u32,     // 1 = unclamped display RGB + clipping class in alpha (histogram); 2 = linear Rec.2020 output (export)
   displaySpace: u32,  // 0 = sRGB; 1 = Display P3 (the on-screen canvas on a wide-gamut screen, display-space.ts)
-  pad1: f32,
+  rawLayout: u32,     // sensor data: 0 Bayer (2×2 `cfa`), 1 X-Trans (6×6 `xt`), 2 linear DNG (three values per pixel)
   pad2: f32,
   // The geometry stage (engine/develop/geometry.ts) as projective 3×3 maps from the shown image's uv, rows padded:
   texMap0: vec4f,     // → uv of the bound texture (the scene, or its warped copy: then identity)
@@ -55,6 +55,7 @@ struct View {
   toDisplay0: vec4f,  // linear Rec.2020 → linear Display P3, rows (icc.ts, as the Display P3 export)
   toDisplay1: vec4f,
   toDisplay2: vec4f,
+  xt: vec4u,          // X-Trans 6×6 pattern, 2 bits per photosite (engine/raw/xtrans.ts packXtrans)
 }
 
 @group(0) @binding(0) var img: texture_2d<f32>;
@@ -249,8 +250,38 @@ fn rawValue(x: u32, y: u32) -> f32 {
   return f32((raw[i >> 1u] >> ((i & 1u) * 16u)) & 0xffffu);
 }
 
-/** True if any photosite of the 2×2 CFA tile under this pixel is at or above its clipping threshold. */
+/** Linear DNGs: colour c of the pixel (three values per pixel). */
+fn rawValueC(x: u32, y: u32, c: u32) -> f32 {
+  let i = (y * V.rawWidth + x) * 3u + c;
+  return f32((raw[i >> 1u] >> ((i & 1u) * 16u)) & 0xffffu);
+}
+
+/** Linear DNGs: which colours of the pixel are at or above their clipping threshold (1 each). */
+fn linearClipped(p: vec2u) -> vec3f {
+  var hit = vec3f(0.0);
+  for (var c = 0u; c < 3u; c++) {
+    if (rawValueC(p.x, p.y, c) >= V.rawThreshold[c]) { hit[c] = 1.0; }
+  }
+  return hit;
+}
+
+/**
+ * True if any photosite of the CFA tile under this pixel is at or above its clipping threshold: the 2×2 tile of a
+ * Bayer sensor, the 3×3 block (which holds all three colours) of an X-Trans one; a linear DNG's own three values.
+ */
 fn sensorTileClipped(suv: vec2f) -> bool {
+  if (V.rawLayout == 2u) { return any(linearClipped(rawPx(suv)) > vec3f(0.0)); }
+  if (V.rawLayout == 1u) {
+    let q = (rawPx(suv) / 3u) * 3u;
+    for (var dy = 0u; dy < 3u; dy++) {
+      for (var dx = 0u; dx < 3u; dx++) {
+        let x = min(q.x + dx, V.rawWidth - 1u);
+        let y = min(q.y + dy, V.rawHeight - 1u);
+        if (rawValue(x, y) >= V.rawThreshold[(y & 1u) * 2u + (x & 1u)]) { return true; }
+      }
+    }
+    return false;
+  }
   let p = rawPx(suv) & vec2u(~1u, ~1u);
   for (var dy = 0u; dy < 2u; dy++) {
     for (var dx = 0u; dx < 2u; dx++) {
@@ -263,12 +294,27 @@ fn sensorTileClipped(suv: vec2f) -> bool {
 }
 
 fn cfaColor(x: u32, y: u32) -> u32 {
+  if (V.rawLayout == 1u) {
+    let i = (y % 6u) * 6u + x % 6u;
+    return (V.xt[i >> 4u] >> ((i & 15u) * 2u)) & 3u;
+  }
   return (V.cfa >> (((y & 1u) * 2u + (x & 1u)) * 2u)) & 3u;
 }
 
 /** darktable rawoverexposed.c: marks the pixel if its source photosite is at or above the threshold. */
 fn rawOverexposed(uv: vec2f, out: vec3f) -> vec3f {
   let px = rawPx(uv);
+  if (V.rawLayout == 2u) {
+    // A linear DNG has all three colours per pixel (darktable's indicator works on raw mosaics only): mark the
+    // clipped colours.
+    let hit = linearClipped(px);
+    if (all(hit == vec3f(0.0))) { return out; }
+    switch V.rawMode {
+      case 1u: { return hit; }
+      case 2u: { return V.rawColor.rgb; }
+      default: { return out * (vec3f(1.0) - hit); }
+    }
+  }
   let v = rawValue(px.x, px.y);
   let pos = (px.y & 1u) * 2u + (px.x & 1u);
   if (v < V.rawThreshold[pos]) { return out; }

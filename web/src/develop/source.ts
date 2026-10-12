@@ -1,10 +1,11 @@
 // Loading a photo into the develop engine, shared by Develop and Export so both render identically.
 
+import { dngTransform, xyzToCamera, xyzToXy, type DngColor } from '../engine/color/dng'
 import { invert, mul, REC2020_TO_XYZ, type Mat3, type Vec3 } from '../engine/color/matrix'
-import { multipliersToTemperature, RAW_MULTIPLIER_LIMIT, RGB_MULTIPLIER_LIMIT, temperatureToMultipliers } from '../engine/color/temperature'
+import { multipliersToTemperature, RAW_MULTIPLIER_LIMIT, RGB_MULTIPLIER_LIMIT, temperatureToMultipliers, temperatureToXYZ } from '../engine/color/temperature'
 import { defaultsFor, displayUniforms, normalizeSettings, type DevelopSettings, type SourceKind } from '../engine/develop/settings'
 import type { DevelopEngine, RawStageOptions } from '../engine/gpu/develop-engine'
-import type { DecodeResult } from '../engine/raw/types'
+import type { DecodeResult, SensorLayout } from '../engine/raw/types'
 import type { LensMeta } from '../engine/lens/meta'
 
 export interface SensorInfo {
@@ -14,6 +15,13 @@ export interface SensorInfo {
   asShot: { temperature: number; tint: number }
   /** Input colour profile of a JPEG, and a note when it had to be assumed. */
   profile?: { name: string; note?: string }
+  /** RAW photos: Bayer, X-Trans or linear (already demosaiced) DNG. */
+  layout?: SensorLayout
+  /**
+   * Set when the photo uses the DNG colour model (linear DNGs, and Bayer DNGs LibRaw has no matrix for): its
+   * camera matrix then follows the white balance, and temperature/tint use the matrix for that white.
+   */
+  dng?: DngColor
   /** A RAW's lens metadata, for lens corrections (null for JPEGs). */
   lens?: LensMeta | null
   /**
@@ -28,6 +36,21 @@ function focalOf(r: DecodeResult): number | null {
   if (!(f > 0)) return null
   const f35 = r.info.focal35 ?? 0
   return f35 > 0 ? f35 : f
+}
+
+type WbModel = Pick<SensorInfo, 'xyzToCam' | 'dng'>
+
+/** Temperature and tint (darktable's temperature.c maths) of white balance multipliers (camera RGB, green = 1). */
+export function temperatureOf(mul: Vec3, info: WbModel): { temperature: number; tint: number } {
+  return multipliersToTemperature(mul, info.dng ? dngTransform(info.dng, mul).xyzToCam : info.xyzToCam)
+}
+
+/** White balance multipliers for a temperature and tint. With the DNG model, XYZ → camera is taken at that white. */
+export function multipliersOf(temperature: number, tint: number, info: WbModel, limit = RAW_MULTIPLIER_LIMIT): Vec3 {
+  if (!info.dng) return temperatureToMultipliers(temperature, tint, info.xyzToCam, limit)
+  const xyz = temperatureToXYZ(temperature)
+  xyz[1] /= tint
+  return temperatureToMultipliers(temperature, tint, xyzToCamera(info.dng, xyzToXy(xyz)), limit)
 }
 
 /** Uploads a decoded photo (RAW sensor data or JPEG pixels) to the engine. Call `engine.process` next. */
@@ -46,23 +69,37 @@ export function loadIntoEngine(engine: DevelopEngine, r: DecodeResult): SensorIn
   // Lens corrections then apply to everything this engine renders (engine/lens/correction.ts).
   engine.setLensMeta(r.lens ?? null)
   const xyzToCam = r.sensor.xyzToCam as Mat3
-  return { kind: 'raw', asShotWb: r.sensor.wb, xyzToCam, asShot: multipliersToTemperature(r.sensor.wb, xyzToCam), lens: r.lens ?? null, focal35: focalOf(r) }
+  const model: WbModel = { xyzToCam, dng: r.sensor.dng }
+  return {
+    kind: 'raw',
+    layout: r.sensor.layout ?? 'bayer',
+    dng: r.sensor.dng,
+    asShotWb: r.sensor.wb,
+    xyzToCam,
+    asShot: temperatureOf(r.sensor.wb, model),
+    lens: r.lens ?? null,
+    focal35: focalOf(r),
+  }
 }
 
 export function multipliers(s: DevelopSettings, info: SensorInfo): Vec3 {
   return s.whiteBalance.mode === 'as-shot'
     ? info.asShotWb
-    : temperatureToMultipliers(s.whiteBalance.temperature, s.whiteBalance.tint, info.xyzToCam, info.kind === 'rgb' ? RGB_MULTIPLIER_LIMIT : RAW_MULTIPLIER_LIMIT)
+    : multipliersOf(s.whiteBalance.temperature, s.whiteBalance.tint, info, info.kind === 'rgb' ? RGB_MULTIPLIER_LIMIT : RAW_MULTIPLIER_LIMIT)
 }
 
 export function stageOptions(s: DevelopSettings, info: SensorInfo): RawStageOptions {
-  return {
-    // A JPEG's white balance is applied entirely in the develop pass, so it never needs reprocessing.
-    wb: info.kind === 'rgb' ? [1, 1, 1] : multipliers(s, info),
+  // A JPEG's white balance is applied entirely in the develop pass, so it never needs reprocessing.
+  const wb = info.kind === 'rgb' ? ([1, 1, 1] as Vec3) : multipliers(s, info)
+  const opts: RawStageOptions = {
+    wb,
     highlightMode: s.advanced.highlightReconstruction ? 'opposed' : 'clip',
     highlightClip: s.advanced.highlightClip,
     demosaic: s.advanced.demosaic,
   }
+  // The DNG model's camera matrix depends on the white (interpolated between the calibration illuminants).
+  if (info.dng) opts.camToWorking = dngTransform(info.dng, wb).camToRec2020
+  return opts
 }
 
 /** The settings saved in the catalog for a photo (or the defaults for its kind). */

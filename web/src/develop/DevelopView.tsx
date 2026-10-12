@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { getCatalog } from '../catalog/client'
 import { forgetThumbUrl, loadThumb, saveThumb, thumbUrl } from '../catalog/thumbs'
 import type { PhotoDetail } from '../catalog/types'
-import { multipliersToTemperature } from '../engine/color/temperature'
 import { AUTO_SLIDERS, BUILT_IN_TARGETS, metricsFromStats, solveAuto, statsFromPixels, targetFromMetrics, type AutoKey, type AutoTarget } from '../engine/develop/auto'
 import { defaultsFor, displayUniforms, type DevelopSettings } from '../engine/develop/settings'
 import { DEFAULT_GEOMETRY, flip, isIdentityGeometry, rotate90, sameGeometry, setAngle, setAspect, setLocked, swapAspect, type GeometrySettings } from '../engine/develop/geometry'
@@ -31,7 +30,7 @@ import { CROP_OVERLAYS, GROUP_ICONS, type CropOverlayKind } from './tools'
 import { Histogram } from './Histogram'
 import { ResizeHandle } from './ResizeHandle'
 import { WbLoupe } from './WbLoupe'
-import { loadIntoEngine, multipliers, renderThumbnail, stageOptions, type SensorInfo } from './source'
+import { loadIntoEngine, multipliers, renderThumbnail, stageOptions, temperatureOf, type SensorInfo } from './source'
 import { sidecars } from '../sidecar/sync'
 import { checkPhoto } from '../sidecar/watch'
 import { canRedo, canUndo, current, jump, loadHistory, record, redo, replaceCurrent, savedForm, undo, type History } from './history'
@@ -1127,7 +1126,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setWbPick(false)
     setLoupe(null)
     const working = await engine.sampleScene(uv[0], uv[1], 2)
-    const { temperature, tint } = multipliersToTemperature(engine.neutralMultipliers(working), info.xyzToCam)
+    const { temperature, tint } = temperatureOf(engine.neutralMultipliers(working), info)
     change('White balance: picker', { ...settings, whiteBalance: { mode: 'custom', temperature, tint } })
   }
 
@@ -1472,6 +1471,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           settings={settings}
           asShot={info?.asShot ?? null}
           kind={info?.kind ?? 'raw'}
+          layout={info?.layout}
           defaults={defaults}
           onChange={change}
           disabled={status.kind !== 'ready'}

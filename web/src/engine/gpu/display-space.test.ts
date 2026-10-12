@@ -62,13 +62,13 @@ describe('display colour space', () => {
     srgbColourIn('display-p3', [1, 1, 1]).forEach((v) => expect(v).toBeCloseTo(1, 3))
   })
 
-  it('the shader’s View struct ends with the Display P3 matrix at byte 368 (VIEW_SIZE 416)', () => {
+  it('the shader’s View struct has the Display P3 matrix at byte 368 and the X-Trans pattern after it (VIEW_SIZE 432)', () => {
     const struct = /struct View \{([\s\S]*?)\n\}/.exec(developDisplay)![1]
     const fields = [...struct.matchAll(/^\s+(\w+): (\w+),/gm)].map((m) => [m[1], m[2]])
     let at = 0
     const offsets: Record<string, number> = {}
     for (const [name, type] of fields) {
-      const size = type === 'vec4f' ? 16 : type === 'vec2f' ? 8 : 4
+      const size = type === 'vec4f' || type === 'vec4u' ? 16 : type === 'vec2f' ? 8 : 4
       at = Math.ceil(at / size) * size
       offsets[name] = at
       at += size
@@ -77,6 +77,9 @@ describe('display colour space', () => {
     expect(offsets.displaySpace).toBe(65 * 4)
     expect(offsets.texMap0).toBe(68 * 4)
     expect(offsets.toDisplay0).toBe(92 * 4)
-    expect(Math.ceil(at / 16) * 16).toBe(416)
+    // raw formats (PHASE3.md Part 5): the sensor layout and the X-Trans pattern, as writeView sets them
+    expect(offsets.rawLayout).toBe(66 * 4)
+    expect(offsets.xt).toBe(104 * 4)
+    expect(Math.ceil(at / 16) * 16).toBe(432)
   })
 })
