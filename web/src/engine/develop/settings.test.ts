@@ -32,11 +32,11 @@ describe('develop settings', () => {
     multipliers({ ...defaultsFor(info.kind), whiteBalance: { mode: 'custom', temperature: info.asShot.temperature, tint: tintFromSlider(slider, info.asShot.tint) } }, info)
   // Nikon D700 Adobe matrix (XYZ → camera) and the as-shot multipliers of the D700 sample, as LibRaw reports them.
   const D700: Mat3 = [0.8139, -0.2171, -0.0663, -0.8747, 1.6541, 0.2295, -0.1925, 0.2008, 0.8093]
-  // On an sRGB JPEG at its as-shot 6500 K, Tint +150 asks for a white outside sRGB and the red multiplier comes
-  // out negative (found while writing this test, not changed here), so that case stops at +100.
+  // On an sRGB JPEG at its as-shot 6500 K, Tint +150 used to ask for a white outside sRGB and the red multiplier came
+  // out negative (about −7.9); temperature.ts fitWhite now keeps the white inside, so the whole range is tested.
   const cases: [string, SensorInfo, number[]][] = [
     ['RAW (Nikon D700)', sensor([443 / 256, 1, 367 / 256], D700, 'raw'), [-150, -100, -50, 0, 50, 100, 150]],
-    ['JPEG (sRGB)', sensor([1, 1, 1], invert(mul(REC2020_TO_XYZ, SRGB_TO_REC2020)), 'rgb'), [-150, -100, -50, 0, 50, 100]],
+    ['JPEG (sRGB)', sensor([1, 1, 1], invert(mul(REC2020_TO_XYZ, SRGB_TO_REC2020)), 'rgb'), [-150, -100, -50, 0, 50, 100, 120, 150]],
   ]
   for (const [name, info, sliders] of cases) {
     it(`moves the rendered white balance towards magenta / green with the Tint slider: ${name}`, () => {
@@ -45,7 +45,9 @@ describe('develop settings', () => {
       for (const slider of sliders) {
         const g = greenWeight(atTint(info, slider))
         expect(atTint(info, slider).every((v) => v > 0)).toBe(true)
-        expect(g).toBeLessThan(previous) // further right = less green = more magenta
+        // Further right = less green = more magenta (or the same, once the white reaches the edge of the gamut).
+        expect(g).toBeLessThanOrEqual(previous)
+        if (slider <= 100) expect(g).toBeLessThan(previous)
         previous = g
       }
       expect(greenWeight(atTint(info, 60))).toBeLessThan(neutral * 0.95) // towards magenta: green clearly lower

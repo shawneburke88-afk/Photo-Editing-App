@@ -70,13 +70,77 @@ export function temperatureToXYZ(tempK: number): Vec3 {
 }
 
 /**
+ * The most one white-balance multiplier may be of another (6 EV). LightBench's own limit, not darktable's: see
+ * fitWhite.
+ */
+export const MAX_MULTIPLIER_RATIO = 64
+
+const withinLimit = (cam: Vec3) => {
+  const hi = Math.max(cam[0], cam[1], cam[2])
+  return hi > 0 && Math.min(cam[0], cam[1], cam[2]) * MAX_MULTIPLIER_RATIO >= hi
+}
+
+/**
+ * Moves a white in camera RGB straight towards the camera's neutral (equal channels) until its weakest channel is
+ * 1/MAX_MULTIPLIER_RATIO of its strongest; a white already within that is returned as it is. The last resort of
+ * temperatureToMultipliers (and a guard against rounding at the limit).
+ */
+export function fitWhite(cam: Vec3): Vec3 {
+  const hi = Math.max(cam[0], cam[1], cam[2])
+  if (!(hi > 0)) return [1, 1, 1]
+  const lo = Math.min(cam[0], cam[1], cam[2])
+  const floor = hi / MAX_MULTIPLIER_RATIO
+  if (lo >= floor) return cam
+  const a = (floor - lo) / (hi - lo)
+  return [cam[0] + a * (hi - cam[0]), cam[1] + a * (hi - cam[1]), cam[2] + a * (hi - cam[2])]
+}
+
+/**
+ * The range of 1/tint (darktable's tint divides XYZ.Y) for which the white of `a + u·b` in camera RGB stays within
+ * MAX_MULTIPLIER_RATIO; null when no tint does. Every condition `RATIO·cam_i ≥ cam_j` is linear in u, so the
+ * allowed values form one interval.
+ */
+function allowedInverseTint(a: Vec3, b: Vec3): [number, number] | null {
+  let lo = 0
+  let hi = Infinity
+  for (let i = 0; i < 3; i++) {
+    for (let j = 0; j < 3; j++) {
+      // f(u) = c0 + u·c1 ≥ 0
+      const c0 = MAX_MULTIPLIER_RATIO * a[i] - a[j]
+      const c1 = MAX_MULTIPLIER_RATIO * b[i] - b[j]
+      if (c1 > 0) lo = Math.max(lo, -c0 / c1)
+      else if (c1 < 0) hi = Math.min(hi, -c0 / c1)
+      else if (c0 < 0) return null
+    }
+  }
+  return lo <= hi && hi > 0 ? [lo, hi] : null
+}
+
+/**
  * Temperature (K) + tint → white-balance multipliers [R, G, B], normalised so green = 1.
  * `xyzToCam` is the camera's Adobe matrix (XYZ → camera RGB), as LibRaw reports it (cam_xyz).
+ *
+ * Extreme settings can ask for a white the camera (or a JPEG's colour space) can't hold: a channel of its camera RGB
+ * reaches zero, so that multiplier (1 / the channel) grows without bound and then turns negative, inverting the
+ * colours. E.g. an sRGB JPEG at 6500 K with Tint +150 (red about −7.9), or at 1901 K with Tint 0 (blue about 4800).
+ * darktable has no guard for this: temperature.c `_xyz2mul` takes 1 / CAM as it is, and for non-raw input uses sRGB
+ * as the "camera" (`_prepare_matrices`). LightBench's own, smallest fix: the tint is limited to where no multiplier
+ * is more than MAX_MULTIPLIER_RATIO times another, so the slider stops getting stronger at that edge instead of
+ * turning back; if no tint fits at that temperature, the white is fitted in camera RGB (fitWhite). Settings already
+ * within the limit are computed exactly as before.
  */
 export function temperatureToMultipliers(tempK: number, tint: number, xyzToCam: Mat3): Vec3 {
   const xyz = temperatureToXYZ(tempK)
+  const [X, Y, Z] = xyz
   xyz[1] /= tint
-  const cam = apply(xyzToCam, xyz)
+  let cam = apply(xyzToCam, xyz)
+  if (!withinLimit(cam)) {
+    const a = apply(xyzToCam, [X, 0, Z])
+    const b = apply(xyzToCam, [0, Y, 0])
+    const range = allowedInverseTint(a, b)
+    const u = range ? Math.min(range[1], Math.max(range[0], 1 / tint)) : 1
+    cam = fitWhite([a[0] + u * b[0], a[1] + u * b[1], a[2] + u * b[2]])
+  }
   const mul: Vec3 = [1 / cam[0], 1 / cam[1], 1 / cam[2]]
   return [mul[0] / mul[1], 1, mul[2] / mul[1]]
 }
