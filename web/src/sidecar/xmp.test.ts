@@ -106,6 +106,14 @@ describe('XMP sidecars', () => {
     expect(writeXmp(LIGHTROOM, data({ rating: 1 }))!).toContain('<rdf:li>Glarus</rdf:li>')
   })
 
+  it('keeps manual collection names in its own namespace', () => {
+    const text = writeXmp(null, data({ collections: ['Portfolio', 'Trip 2026'] }))!
+    expect(text).toContain('lightbench:Collections')
+    expect(readXmp(text).collections).toEqual(['Portfolio', 'Trip 2026'])
+    expect(writeXmp(text, data({ collections: ['trip 2026', 'portfolio'] }))).toBeNull()
+    expect(readXmp(writeXmp(text, data({ collections: [] }))!).collections).toBeUndefined()
+  })
+
   it('refuses to overwrite a damaged file', () => {
     expect(() => writeXmp('<not xml', data())).toThrow()
     expect(readXmp('<not xml')).toEqual({})

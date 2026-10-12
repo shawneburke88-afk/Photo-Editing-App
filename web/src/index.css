@@ -447,3 +447,29 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .kw-row .kw-delete:hover { color: var(--bad); }
 .kw-row .kw-delete + .count { margin-left: 4px; }
 .kw-filter { display: inline-flex; align-items: center; gap: 4px; background: var(--panel-2); border: 1px solid var(--accent); border-radius: 999px; padding: 1px 4px 1px 10px; }
+
+/* Collections */
+.collection-list { margin: 2px 0 4px; }
+.panel-title-row { display: flex; align-items: center; justify-content: space-between; padding-right: 8px; }
+.panel-title-row .panel-title { margin-right: auto; }
+.coll-menu { position: relative; }
+.coll-menu .menu { position: absolute; right: 0; top: 100%; z-index: 30; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 0; min-width: 200px; box-shadow: 0 6px 18px rgba(0,0,0,0.4); }
+.coll-menu .menu button { background: none; border: 0; color: var(--text); font: inherit; font-size: 0.85rem; text-align: left; padding: 6px 12px; cursor: pointer; }
+.coll-menu .menu button:hover { background: var(--panel-2); }
+.coll-row { padding-left: 12px; }
+.coll-row .coll-icon { width: 16px; color: var(--muted); font-size: 0.75rem; text-align: center; }
+.coll-row.drop { background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--accent); }
+.coll-row .kw-delete { visibility: hidden; background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; padding: 0 3px; }
+.coll-row .folder-name { flex: 1; min-width: 0; }
+.coll-row:hover .kw-delete { visibility: visible; }
+.coll-row .kw-delete:hover { color: var(--text); }
+.coll-row .kw-delete + .count { margin-left: 4px; }
+.quick-badge { position: absolute; top: 6px; right: 8px; color: var(--accent); font-size: 0.8rem; text-shadow: 0 1px 2px #000; }
+.collections-section select { width: 100%; }
+.collection-dialog { width: min(520px, calc(100vw - 32px)); }
+.collection-dialog.smart { width: min(720px, calc(100vw - 32px)); }
+.collection-dialog .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.smart-match { display: flex; align-items: center; gap: 8px; }
+.smart-rules { list-style: none; padding: 0; margin: 0 0 10px; display: flex; flex-direction: column; gap: 6px; }
+.smart-rules li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.smart-rules input[type=number] { width: 70px; }
