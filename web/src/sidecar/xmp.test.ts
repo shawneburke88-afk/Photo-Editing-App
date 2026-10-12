@@ -123,6 +123,14 @@ describe('XMP sidecars', () => {
     expect(writeXmp(lower, data({ stack: { uid: 'abc', top: false } }))).toBeNull()
   })
 
+  it('keeps virtual copies inside the original’s sidecar', () => {
+    const v = { name: 'B&W', rating: 4, flag: 1, color: 2, develop: '{"exposure":1}', keywords: ['Mono'], collections: [] }
+    const text = writeXmp(null, data({ versions: [v] }))!
+    expect(readXmp(text).versions).toEqual([v])
+    expect(writeXmp(text, data({ versions: [v] }))).toBeNull()
+    expect(readXmp(writeXmp(text, data({ versions: [] }))!).versions).toBeUndefined()
+  })
+
   it('refuses to overwrite a damaged file', () => {
     expect(() => writeXmp('<not xml', data())).toThrow()
     expect(readXmp('<not xml')).toEqual({})

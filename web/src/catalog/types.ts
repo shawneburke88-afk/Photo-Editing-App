@@ -58,6 +58,10 @@ export interface PhotoRow {
   edited: boolean
   /** In the Quick Collection. */
   quick: boolean
+  /** 0 for the original; 1, 2… for virtual copies. */
+  version: number
+  /** A virtual copy's name ("Copy 1", or what the user called it); null for the original. */
+  versionName: string | null
   /** Stack this photo belongs to (null: none). */
   stackId: number | null
   /** Photos in its stack (0 when not stacked). */
@@ -76,6 +80,8 @@ export interface PhotoDetail extends PhotoMeta {
   rating: number
   flag: Flag
   color: ColorLabel
+  version: number
+  versionName: string | null
 }
 
 export interface PhotoQuery {

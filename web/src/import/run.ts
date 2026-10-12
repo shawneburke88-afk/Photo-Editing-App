@@ -2,7 +2,7 @@
 // thumbnails. Adding a folder where it is (no copying) is Open folder, in library/indexer.ts.
 
 import type { Catalog } from '../catalog/client'
-import { saveThumb } from '../catalog/thumbs'
+import { loadThumb, saveThumb } from '../catalog/thumbs'
 import type { PhotoMeta } from '../catalog/types'
 import { getDirAt, resolveRoot } from '../platform/roots'
 import { baseNameOf, dateFolder, extensionOf, JPEG_EXTENSIONS, joinPath, numberedName, renamedFile, type RenameTemplate } from './plan'
@@ -100,7 +100,7 @@ export async function findSidecar(dir: FileSystemDirectoryHandle, photoName: str
   return null
 }
 
-/** Applies what a sidecar says (ratings, flag, label, keywords, collections, LightBench edits) to a newly imported photo. */
+/** Applies what a sidecar says (ratings, flag, label, keywords, collections, stack, virtual copies, LightBench edits) to a newly imported photo. */
 export async function applySidecar(catalog: Catalog, id: number, text: string) {
   const r = readXmp(text)
   if (r.rating !== undefined) await catalog.setRating([id], r.rating)
@@ -109,6 +109,12 @@ export async function applySidecar(catalog: Catalog, id: number, text: string) {
   if (r.keywords?.length) await catalog.addKeywords([id], r.keywords)
   if (r.collections?.length) await catalog.addToCollectionsByName(id, r.collections)
   if (r.stack) await catalog.joinStackByUid(id, r.stack.uid, r.stack.top)
+  if (r.versions?.length) {
+    // Virtual copies come back with the original's thumbnail until they are developed again.
+    const made = await catalog.restoreVersions(id, r.versions)
+    const thumb = made.length ? await loadThumb(id) : null
+    if (thumb) for (const v of made) await saveThumb(v, new Uint8Array(await thumb.arrayBuffer()))
+  }
   if (r.develop) {
     const history = JSON.stringify({ steps: [{ label: 'From sidecar', settings: JSON.parse(r.develop) }], index: 0 })
     await catalog.saveEdit(id, r.develop, history)

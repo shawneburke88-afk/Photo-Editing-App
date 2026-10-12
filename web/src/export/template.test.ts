@@ -28,4 +28,12 @@ describe('export file name templates (darktable syntax)', () => {
   it('leaves unknown variables visible', () => {
     expect(expandTemplate('$(NOPE)', ctx)).toBe('$(NOPE)')
   })
+
+  it('names virtual copies, with darktable’s version variables', () => {
+    const copy = { ...ctx, version: 2, versionName: 'B&W', versionCount: 3 }
+    expect(expandTemplate('$(FILE.NAME)', copy)).toBe('DSC_0042-B&W')
+    expect(expandTemplate('$(FILE.NAME)_$(VERSION)', copy)).toBe('DSC_0042_2')
+    expect(expandTemplate('$(FILE.NAME)$(VERSION.IF_MULTI)', { ...ctx, version: 0, versionCount: 1 })).toBe('DSC_0042')
+    expect(expandTemplate('$(FILE.NAME)', { ...ctx, version: 0 })).toBe('DSC_0042')
+  })
 })

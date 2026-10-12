@@ -46,6 +46,22 @@ export interface SidecarData {
    * null = not stacked, undefined = leave as is. Lightroom and darktable keep stacks only in their databases.
    */
   stack?: { uid: string; top: boolean } | null
+  /**
+   * Virtual copies of this photo (owner's choice: kept inside the photo's own sidecar rather than one file per
+   * copy), as JSON in LightBench's namespace. Undefined leaves them as they are.
+   */
+  versions?: SidecarVersion[]
+}
+
+/** One virtual copy as stored in its original's sidecar. */
+export interface SidecarVersion {
+  name: string
+  rating: number
+  flag: number
+  color: number
+  develop: string | null
+  keywords: string[]
+  collections: string[]
 }
 
 /** Separator between keyword levels, as in darktable's tags and Lightroom's lr:hierarchicalSubject. */
@@ -159,8 +175,11 @@ function managedValues(d: SidecarData): [ns: string, prefix: string, local: stri
           [NS.lightbench, 'lightbench', 'Stack', d.stack?.uid ?? null],
           [NS.lightbench, 'lightbench', 'StackTop', d.stack?.top ? 'True' : null],
         ]
+  const versions: [string, string, string, string | null][] =
+    d.versions === undefined ? [] : [[NS.lightbench, 'lightbench', 'Versions', d.versions.length ? JSON.stringify(d.versions) : null]]
   return [
     ...stack,
+    ...versions,
     [NS.xmp, 'xmp', 'Rating', String(d.flag === -1 ? -1 : Math.max(0, Math.min(5, Math.round(d.rating))))],
     [NS.xmp, 'xmp', 'Label', LABEL_NAMES[d.color] || null],
     [NS.lightbench, 'lightbench', 'Rating', String(Math.max(0, Math.min(5, Math.round(d.rating))))],
@@ -222,6 +241,7 @@ export interface SidecarRead {
   /** LightBench manual collection names. */
   collections?: string[]
   stack?: { uid: string; top: boolean }
+  versions?: SidecarVersion[]
 }
 
 /** Reads ratings, flags, labels and LightBench edits from any XMP sidecar (Lightroom, Bridge, darktable, …). */
@@ -248,6 +268,15 @@ export function readXmp(text: string): SidecarRead {
     ?.map(normalizeKeyword)
     .filter((k): k is string => !!k && !k.toLowerCase().startsWith('darktable|'))
   if (kws?.length) out.keywords = [...new Map(kws.map((k) => [k.toLowerCase(), k])).values()]
+  const versions = getProp(doc, NS.lightbench, 'Versions')
+  if (versions) {
+    try {
+      const list = JSON.parse(versions) as SidecarVersion[]
+      if (Array.isArray(list)) out.versions = list.filter((v) => v && typeof v.name === 'string')
+    } catch {
+      // ignore damaged copies
+    }
+  }
   const stackUid = getProp(doc, NS.lightbench, 'Stack')
   if (stackUid) out.stack = { uid: stackUid, top: getProp(doc, NS.lightbench, 'StackTop')?.toLowerCase() === 'true' }
   const cols = getBag(doc, NS.lightbench, 'Collections')

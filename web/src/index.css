@@ -482,3 +482,7 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .stacks-menu .menu { right: auto; left: 0; min-width: 260px; }
 .stacks-menu .menu button { display: flex; justify-content: space-between; gap: 12px; }
 .stacks-menu .menu button:disabled { opacity: 0.45; cursor: default; }
+
+/* Virtual copies */
+.copy-tag { margin-left: auto; font-size: 0.7rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.copies-section .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }

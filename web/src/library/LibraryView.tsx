@@ -1,7 +1,7 @@
 import { isSliderKey, isTextEntry } from '../lib/keys'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getCatalog, requestPersistentStorage } from '../catalog/client'
-import { deleteThumbs, forgetThumbUrl } from '../catalog/thumbs'
+import { deleteThumbs, forgetThumbUrl, loadThumb, saveThumb } from '../catalog/thumbs'
 import type { CollectionInfo, ColorLabel, Flag, FolderNode, LibraryRoot, PhotoDetail, PhotoQuery, PhotoRow } from '../catalog/types'
 import type { SmartRules } from '../catalog/smart'
 import { ImportDialog } from '../import/ImportDialog'
@@ -352,6 +352,29 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     refresh()
   }
 
+  // ---- virtual copies (saved inside the original's sidecar)
+  async function makeVirtualCopy() {
+    if (focus === null) return
+    const id = await catalog.createVirtualCopy(focus)
+    const thumb = await loadThumb(focus)
+    if (thumb) await saveThumb(id, new Uint8Array(await thumb.arrayBuffer()))
+    sidecars.schedule([id])
+    setFocus(id)
+    setSelected(new Set([id]))
+    anchor.current = id
+    refresh()
+  }
+
+  async function renameCopy(name: string) {
+    if (focus === null) return
+    try {
+      sidecars.schedule([await catalog.renameVersion(focus, name)])
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : String(e))
+    }
+    refresh()
+  }
+
   /** Full-screen culling of the photos shown, starting at the focused one. */
   const startCulling = useCallback(() => {
     if (rows.length) setCulling({ rows, start: focus ?? rows[0].id })
@@ -372,7 +395,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
       `Remove ${ids.length === 1 ? 'this photo' : `${ids.length} photos`} from the LightBench library?\n\nThe files stay on your disk; only the library entries are removed.`,
     )
     if (!ok) return
-    await catalog.removePhotos(ids)
+    sidecars.schedule(await catalog.removePhotos(ids))
     ids.forEach(forgetThumbUrl)
     await deleteThumbs(ids)
     setSelected(new Set())
@@ -420,6 +443,10 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
         if (k === 'a') {
           setSelected(new Set(rows.map((r) => r.id)))
           e.preventDefault()
+        } else if (e.key === "'") {
+          // Lightroom: Ctrl+' creates a virtual copy.
+          e.preventDefault()
+          void makeVirtualCopy()
         } else if (k === 'g') {
           // Lightroom: Ctrl+G stacks the selection, Ctrl+Shift+G unstacks.
           e.preventDefault()
@@ -623,6 +650,8 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
         onFlag={(v: Flag) => void apply('flag', v)}
         onColor={(v: ColorLabel) => void apply('color', v)}
         onDevelop={() => focus !== null && onDevelop(focus, rows.map((r) => r.id))}
+        onVirtualCopy={() => void makeVirtualCopy()}
+        onRenameCopy={(name) => void renameCopy(name)}
       >
         <KeywordEditor
           ref={keywordInput}

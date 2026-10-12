@@ -97,6 +97,7 @@ export function Grid({ rows, selected, focus, cellSize, onClick, onOpen, onDragS
           <div className="cell-foot">
             <Stars value={row.rating} size="small" />
             {row.color > 0 && <span className={`label label-${row.color}`} aria-label="Color label" />}
+            {row.version > 0 && <span className="copy-tag" title={`Virtual copy: ${row.versionName ?? ''}`}>{row.versionName}</span>}
           </div>
         </div>,
       )

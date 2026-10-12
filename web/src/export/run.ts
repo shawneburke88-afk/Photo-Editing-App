@@ -193,6 +193,7 @@ export async function runExport(
         const path = expandTemplate(s.template, {
           fileName: p.fileName, folder: p.folderPath, sequence: index + 1, capturedAt: p.capturedAt, make: p.cameraMake, model: p.cameraModel,
           lens: p.lens, iso: p.iso, aperture: p.aperture, shutter: p.shutter, focalLength: p.focalLength, rating: p.rating, color: p.color, width, height,
+          version: p.version, versionName: p.versionName, versionCount: await catalog.versionCount(id),
         })
         const parts = path.split('/')
         const base = parts.pop()!

@@ -23,6 +23,12 @@ export interface TemplateContext {
   color: number
   width: number
   height: number
+  /** 0 for the original, 1, 2… for virtual copies (darktable's duplicate version). */
+  version?: number
+  /** A virtual copy's name. */
+  versionName?: string | null
+  /** Catalog entries for this file (original + copies), for $(VERSION.IF_MULTI). */
+  versionCount?: number
   now?: Date
 }
 
@@ -46,6 +52,7 @@ export const TEMPLATE_VARIABLES: [string, string][] = [
   ['$(EXIF.ISO) $(EXIF.APERTURE) $(EXIF.EXPOSURE) $(EXIF.FOCAL.LENGTH)', 'camera settings'],
   ['$(STARS) $(LABELS)', 'rating and colour label'],
   ['$(WIDTH.EXPORT) $(HEIGHT.EXPORT)', 'exported size in pixels'],
+  ['$(VERSION) $(VERSION.NAME)', 'virtual copy number (0 = original) and name'],
 ]
 
 const LABELS = ['', 'red', 'yellow', 'green', 'blue', 'purple']
@@ -113,6 +120,13 @@ function value(name: string, args: string | undefined, c: TemplateContext): stri
       return String(c.width)
     case 'HEIGHT.EXPORT':
       return String(c.height)
+    case 'VERSION':
+      return String(c.version ?? 0)
+    case 'VERSION.NAME':
+      return c.versionName ?? ''
+    case 'VERSION.IF.MULTI':
+      // darktable: the version number, only when the file has more than one version.
+      return (c.versionCount ?? 1) > 1 ? String(c.version ?? 0) : ''
     default:
       return null
   }
@@ -147,6 +161,9 @@ export const sanitizeSegment = (s: string) =>
  * left as typed so mistakes are visible.
  */
 export function expandTemplate(template: string, c: TemplateContext): string {
+  // A virtual copy exported with a template that doesn't name versions gets its name appended, so it doesn't
+  // overwrite (or get numbered like a clash with) the original's export: DSC_0001-B&W.
+  if ((c.version ?? 0) > 0 && !/\$\(VERSION/i.test(template)) template = `${template}-$(VERSION.NAME)`
   const expanded = template.replace(/\$\(([A-Za-z_.]+)(?:\[([^\]]*)\])?((?:\^\^|,,|\^|,|[-+][^)]*|:-?\d+(?::\d+)?)?)\)/g, (whole, raw: string, args, op) => {
     const name = raw.toUpperCase().replace(/_/g, '.')
     const v = value(name, args, c)
