@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { ascii, encodeIfd } from '../../export/exif-writer'
 import { parseExifDate, readJpegExif } from './exif'
 
 /** Builds a little-endian JPEG with an EXIF block holding the given IFD0 and EXIF-IFD entries. */
@@ -66,5 +67,29 @@ describe('parseExifDate', () => {
   it('rejects blank dates', () => {
     expect(parseExifDate('0000:00:00 00:00:00')).toBe(0)
     expect(parseExifDate('')).toBe(0)
+  })
+})
+
+describe('readJpegExif artist, copyright and description', () => {
+  /** A JPEG whose IFD0 holds the given entries. */
+  function jpegWith(entries: Parameters<typeof encodeIfd>[0]): Uint8Array {
+    const ifd = encodeIfd(entries, 8, 0)
+    const tiff = new Uint8Array([0x49, 0x49, 0x2a, 0, 8, 0, 0, 0, ...ifd])
+    const app1 = [0x45, 0x78, 0x69, 0x66, 0, 0, ...tiff]
+    const len = app1.length + 2
+    return new Uint8Array([0xff, 0xd8, 0xff, 0xe1, len >> 8, len & 0xff, ...app1, 0xff, 0xd9])
+  }
+
+  it('reads them from IFD0, trimmed', () => {
+    const info = readJpegExif(jpegWith([[0x013b, ascii('Ann Smith ')], [0x8298, ascii('(c) 2024 Ann Smith')], [0x010e, ascii('          ')]]))!
+    expect(info.artist).toBe('Ann Smith')
+    expect(info.copyright).toBe('(c) 2024 Ann Smith')
+    expect(info.description).toBe('')
+  })
+
+  it('decodes UTF-8 text', () => {
+    const bytes = new TextEncoder().encode('© Zoë\0')
+    const info = readJpegExif(jpegWith([[0x8298, { type: 7, bytes }]]))!
+    expect(info.copyright).toBe('© Zoë')
   })
 })

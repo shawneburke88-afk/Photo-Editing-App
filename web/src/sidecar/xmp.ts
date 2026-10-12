@@ -6,11 +6,16 @@
 //  - Standard fields for interoperability: xmp:Rating, xmp:Label, and keywords as dc:subject (flat) plus
 //    lr:hierarchicalSubject ("Places|Canada|Ottawa"), as darktable and Lightroom write them. LightBench's own
 //    edit settings go in a separate `lightbench:` namespace.
+//  - Descriptive metadata (owner, 2026-10-12): title, caption, creator, copyright, copyright URL, headline and
+//    location, in the IPTC Core properties listed in METADATA_XMP.
 //  - Other applications' properties in an existing sidecar are preserved; only LightBench's fields and the
 //    standard fields above are updated (darktable does the same, src/common/exif.cc dt_exif_xmp_write).
 //
 // Conventions follow darktable where it has one: rejected = xmp:Rating -1 (darktable, Adobe Bridge), and
 // the file is only rewritten when something actually changed.
+
+import type { MetadataKey, PhotoMetadata } from '../catalog/types'
+import { creatorList, joinCreators, METADATA_KEYS } from '../library/metadata'
 
 export const NS = {
   x: 'adobe:ns:meta/',
@@ -19,7 +24,10 @@ export const NS = {
   dc: 'http://purl.org/dc/elements/1.1/',
   lr: 'http://ns.adobe.com/lightroom/1.0/',
   lightbench: 'https://shawneburke88-afk.github.io/Photo-Editing-App/xmp/1.0/',
+  xmpRights: 'http://ns.adobe.com/xap/1.0/rights/',
+  photoshop: 'http://ns.adobe.com/photoshop/1.0/',
   xmlns: 'http://www.w3.org/2000/xmlns/',
+  xml: 'http://www.w3.org/XML/1998/namespace',
 } as const
 
 /** Colour label names as Lightroom's default label set writes them in xmp:Label (1 = red … 5 = purple). */
@@ -51,6 +59,8 @@ export interface SidecarData {
    * copy), as JSON in LightBench's namespace. Undefined leaves them as they are.
    */
   versions?: SidecarVersion[]
+  /** Title, caption, creator, copyright and location ('' = not set); undefined leaves them as they are. */
+  metadata?: PhotoMetadata
 }
 
 /** One virtual copy as stored in its original's sidecar. */
@@ -62,6 +72,26 @@ export interface SidecarVersion {
   develop: string | null
   keywords: string[]
   collections: string[]
+  /** The copy's own title, caption… (only the fields that are set); absent in sidecars written before metadata. */
+  metadata?: Partial<PhotoMetadata>
+}
+
+/**
+ * Where each metadata field lives in XMP: the IPTC Core properties that Lightroom, Bridge and darktable read
+ * (darktable's own fields are Xmp.dc.title, .description, .creator and .rights, src/common/database.c). Title,
+ * caption and copyright are language alternatives (written as the default language, x-default), the creator an
+ * ordered list; the others are plain text.
+ */
+export const METADATA_XMP: Record<MetadataKey, { ns: string; prefix: string; local: string; kind: 'alt' | 'seq' | 'text' }> = {
+  title: { ns: NS.dc, prefix: 'dc', local: 'title', kind: 'alt' },
+  caption: { ns: NS.dc, prefix: 'dc', local: 'description', kind: 'alt' },
+  creator: { ns: NS.dc, prefix: 'dc', local: 'creator', kind: 'seq' },
+  copyright: { ns: NS.dc, prefix: 'dc', local: 'rights', kind: 'alt' },
+  copyrightUrl: { ns: NS.xmpRights, prefix: 'xmpRights', local: 'WebStatement', kind: 'text' },
+  headline: { ns: NS.photoshop, prefix: 'photoshop', local: 'Headline', kind: 'text' },
+  city: { ns: NS.photoshop, prefix: 'photoshop', local: 'City', kind: 'text' },
+  state: { ns: NS.photoshop, prefix: 'photoshop', local: 'State', kind: 'text' },
+  country: { ns: NS.photoshop, prefix: 'photoshop', local: 'Country', kind: 'text' },
 }
 
 /** Separator between keyword levels, as in darktable's tags and Lightroom's lr:hierarchicalSubject. */
@@ -129,22 +159,97 @@ function getBag(doc: Document, ns: string, local: string): string[] | null {
   return null
 }
 
-function setBag(doc: Document, desc: Element, ns: string, preferredPrefix: string, local: string, items: string[]) {
+/** A new, empty property element on `desc`, declaring its namespace there if needed. */
+function propElement(doc: Document, desc: Element, ns: string, preferredPrefix: string, local: string): Element {
   let prefix = desc.lookupPrefix(ns)
   if (!prefix) {
     prefix = preferredPrefix
     desc.setAttributeNS(NS.xmlns, `xmlns:${prefix}`, ns)
   }
-  const rdf = desc.lookupPrefix(NS.rdf) ?? 'rdf'
   const prop = doc.createElementNS(ns, `${prefix}:${local}`)
-  const bag = doc.createElementNS(NS.rdf, `${rdf}:Bag`)
+  desc.appendChild(prop)
+  return prop
+}
+
+function setBag(doc: Document, desc: Element, ns: string, preferredPrefix: string, local: string, items: string[], container: 'Bag' | 'Seq' = 'Bag') {
+  const prop = propElement(doc, desc, ns, preferredPrefix, local)
+  const rdf = desc.lookupPrefix(NS.rdf) ?? 'rdf'
+  const bag = doc.createElementNS(NS.rdf, `${rdf}:${container}`)
   for (const item of items) {
     const li = doc.createElementNS(NS.rdf, `${rdf}:li`)
     li.textContent = item
     bag.appendChild(li)
   }
   prop.appendChild(bag)
-  desc.appendChild(prop)
+}
+
+/** The property element itself (not an attribute), or null. */
+function findElement(doc: Document, ns: string, local: string): Element | null {
+  for (const d of descriptions(doc)) for (const c of Array.from(d.children)) if (c.namespaceURI === ns && c.localName === local) return c
+  return null
+}
+
+/** A language alternative (rdf:Alt): the default language's text, else the first one; null when absent. */
+function getAlt(doc: Document, ns: string, local: string): string | null {
+  const el = findElement(doc, ns, local)
+  if (!el) return getProp(doc, ns, local)
+  const items = Array.from(el.getElementsByTagNameNS(NS.rdf, 'li'))
+  if (!items.length) return (el.textContent ?? '').trim()
+  const li = items.find((i) => i.getAttributeNS(NS.xml, 'lang')?.toLowerCase() === 'x-default') ?? items[0]
+  return (li.textContent ?? '').trim()
+}
+
+/** A metadata field as the document has it ('' when absent). */
+function getMetadataField(doc: Document, key: MetadataKey): string {
+  const { ns, local, kind } = METADATA_XMP[key]
+  if (kind === 'alt') return getAlt(doc, ns, local) ?? ''
+  if (kind === 'seq') return joinCreators(getBag(doc, ns, local) ?? [])
+  return getProp(doc, ns, local) ?? ''
+}
+
+/** The text LightBench wants a field to have, in the same form getMetadataField returns. */
+function wantedField(m: PhotoMetadata, key: MetadataKey): string {
+  return key === 'creator' ? joinCreators(creatorList(m.creator)) : m[key].trim()
+}
+
+/**
+ * Writes the fields that differ. A changed language alternative keeps its other languages and replaces the
+ * default one (LightBench edits one language); a cleared field is removed entirely.
+ */
+function setMetadata(doc: Document, desc: Element, m: PhotoMetadata) {
+  for (const key of METADATA_KEYS) {
+    const value = wantedField(m, key)
+    if (getMetadataField(doc, key) === value) continue
+    const { ns, prefix, local, kind } = METADATA_XMP[key]
+    const alt = kind === 'alt' ? findElement(doc, ns, local)?.getElementsByTagNameNS(NS.rdf, 'Alt')[0] : undefined
+    if (alt && value) {
+      const items = Array.from(alt.getElementsByTagNameNS(NS.rdf, 'li'))
+      let li = items.find((i) => i.getAttributeNS(NS.xml, 'lang')?.toLowerCase() === 'x-default')
+      if (!li) {
+        li = doc.createElementNS(NS.rdf, `${alt.prefix ?? 'rdf'}:li`)
+        li.setAttributeNS(NS.xml, 'xml:lang', 'x-default')
+        alt.insertBefore(li, alt.firstChild)
+      }
+      li.textContent = value
+      continue
+    }
+    removeProp(doc, ns, local)
+    if (!value) continue
+    if (kind === 'seq') {
+      setBag(doc, desc, ns, prefix, local, creatorList(value), 'Seq')
+    } else if (kind === 'alt') {
+      const rdf = desc.lookupPrefix(NS.rdf) ?? 'rdf'
+      const box = doc.createElementNS(NS.rdf, `${rdf}:Alt`)
+      const li = doc.createElementNS(NS.rdf, `${rdf}:li`)
+      li.setAttributeNS(NS.xml, 'xml:lang', 'x-default')
+      li.textContent = value
+      box.appendChild(li)
+      propElement(doc, desc, ns, prefix, local).appendChild(box)
+    } else {
+      // As an element rather than an attribute, so line breaks survive.
+      propElement(doc, desc, ns, prefix, local).textContent = value
+    }
+  }
 }
 
 const sameSet = (a: string[] | null, b: string[]) =>
@@ -206,7 +311,9 @@ export function writeXmp(existing: string | null, data: SidecarData, now = new D
   const cols = data.collections
   const collectionsSame = !cols || sameSet(getBag(doc, NS.lightbench, 'Collections'), cols)
   const keywordsSame = !kw || (sameSet(getBag(doc, NS.dc, 'subject'), flat) && sameSet(getBag(doc, NS.lr, 'hierarchicalSubject'), kw))
-  if (existing !== null && keywordsSame && collectionsSame && wanted.every(([ns, , local, value]) => getProp(doc, ns, local) === value)) return null
+  const meta = data.metadata
+  const metadataSame = !meta || METADATA_KEYS.every((k) => getMetadataField(doc, k) === wantedField(meta, k))
+  if (existing !== null && keywordsSame && collectionsSame && metadataSame && wanted.every(([ns, , local, value]) => getProp(doc, ns, local) === value)) return null
 
   for (const [ns, , local] of wanted) removeProp(doc, ns, local)
   removeProp(doc, NS.xmp, 'MetadataDate')
@@ -222,6 +329,7 @@ export function writeXmp(existing: string | null, data: SidecarData, now = new D
     removeProp(doc, NS.lightbench, 'Collections')
     if (cols.length) setBag(doc, desc, NS.lightbench, 'lightbench', 'Collections', cols)
   }
+  if (meta && !metadataSame) setMetadata(doc, desc, meta)
   // XMP: MetadataDate records when the metadata last changed.
   setProp(desc, NS.xmp, 'xmp', 'MetadataDate', now.toISOString().replace(/\.\d{3}Z$/, 'Z'))
 
@@ -242,9 +350,11 @@ export interface SidecarRead {
   collections?: string[]
   stack?: { uid: string; top: boolean }
   versions?: SidecarVersion[]
+  /** Title, caption, creator… (only the fields that are set). */
+  metadata?: Partial<PhotoMetadata>
 }
 
-/** Reads ratings, flags, labels and LightBench edits from any XMP sidecar (Lightroom, Bridge, darktable, …). */
+/** Reads ratings, flags, labels, keywords, metadata and LightBench edits from any XMP sidecar (Lightroom, Bridge, darktable, …). */
 export function readXmp(text: string): SidecarRead {
   const doc = parse(text)
   if (!doc) return {}
@@ -281,6 +391,12 @@ export function readXmp(text: string): SidecarRead {
   if (stackUid) out.stack = { uid: stackUid, top: getProp(doc, NS.lightbench, 'StackTop')?.toLowerCase() === 'true' }
   const cols = getBag(doc, NS.lightbench, 'Collections')
   if (cols?.length) out.collections = cols
+  const metadata: Partial<PhotoMetadata> = {}
+  for (const k of METADATA_KEYS) {
+    const v = getMetadataField(doc, k)
+    if (v) metadata[k] = v
+  }
+  if (Object.keys(metadata).length) out.metadata = metadata
   const develop = getProp(doc, NS.lightbench, 'Develop')
   if (develop) {
     try {

@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { NewPhotosPreset } from '../develop/PresetSelect'
+import { newPhotosPreset, setNewPhotosPreset } from '../develop/presetStore'
 import { getCatalog } from '../catalog/client'
+import { NewPhotosMetadataPreset } from '../library/MetadataPanel'
+import { newPhotosMetadataPreset, setNewPhotosMetadataPreset } from '../library/metadataPresets'
 import { loadHandle, saveHandle } from '../platform/handle-store'
 import { ensurePermission } from '../platform/roots'
+import { deleteImportPreset, importPresetFolders, loadImportPresets, saveImportPreset, type ImportPreset } from './importPresets'
 import { dateFolder, dateString, extensionOf, findRawJpegPairs, renamedFile, type RenameTemplate } from './plan'
 import { ProbePool } from './probe'
 import { findAtDestination, photoTime, runImport, type ImportItem, type ImportProgress } from './run'
@@ -43,6 +47,12 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
   const [dayFilter, setDayFilter] = useState<string | null>(null)
   const [progress, setProgress] = useState<ImportProgress | null>(null)
   const [finished, setFinished] = useState(false)
+  const [presets, setPresets] = useState<ImportPreset[]>([])
+  /** The import preset in use; cleared when an option is changed by hand. */
+  const [presetId, setPresetId] = useState<number | null>(null)
+  /** The name being typed while saving a preset (null: not saving). */
+  const [presetName, setPresetName] = useState<string | null>(null)
+  const [presetNote, setPresetNote] = useState('')
   const lastClicked = useRef<number | null>(null)
   const poolRef = useRef<ProbePool | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -57,6 +67,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
     c.touched ? c : { ...c, selected: c.status !== 'error' && !isDuplicate(c) }
 
   useEffect(() => {
+    void loadImportPresets().then(setPresets)
     loadHandle(DEST_KEY).then((h) => h && setDest(h)).catch(() => {})
     loadHandle(BACKUP_KEY).then((h) => h && setBackup(h)).catch(() => {})
     return () => {
@@ -157,7 +168,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
         .then((file) => pool.probe(file))
         .then((r) => {
           const thumbUrl = r.thumb ? URL.createObjectURL(new Blob([r.thumb], { type: 'image/jpeg' })) : undefined
-          batch.set(f, { status: 'ready', item: { file: f, meta: r.meta, thumb: r.thumb, xmp: r.xmp }, thumbUrl })
+          batch.set(f, { status: 'ready', item: { file: f, meta: r.meta, thumb: r.thumb, xmp: r.xmp, camera: r.camera }, thumbUrl })
           schedule()
         })
         .catch((e: Error) => {
@@ -171,6 +182,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
   async function chooseFolder(kind: 'dest' | 'backup') {
     try {
       const h = await window.showDirectoryPicker!({ id: kind === 'dest' ? 'lightbench-import-dest' : 'lightbench-import-backup', mode: 'readwrite' })
+      edited()
       if (kind === 'dest') {
         setDest(h)
         await saveHandle(DEST_KEY, h)
@@ -182,6 +194,75 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
     } catch (e) {
       if ((e as DOMException).name !== 'AbortError') setError(e instanceof Error ? e.message : String(e))
     }
+  }
+
+  /** An option was changed by hand, so the options no longer are the preset's. */
+  function edited() {
+    setPresetId(null)
+    setPresetNote('')
+  }
+
+  /** Uses an import preset: its options, and its folders after asking for permission again (this follows a click). */
+  async function applyPreset(id: number) {
+    const p = presets.find((x) => x.id === id)
+    if (!p) return
+    setPresetId(id)
+    setPresetName(null)
+    setRenameKind(p.rename.kind)
+    setRenameText(p.rename.text)
+    setRenameStart(p.rename.start)
+    setBackupOn(p.backup)
+    setIncludePaired(p.includePaired)
+    setNewPhotosPreset(p.developPreset)
+    setNewPhotosMetadataPreset(p.metadataPreset)
+    const folders = await importPresetFolders(id)
+    const notes: string[] = []
+    for (const [which, handle, name] of [['dest', folders.destination, p.destinationName], ['backup', folders.backup, p.backupName]] as const) {
+      if (!handle) {
+        if (name) notes.push(`The folder “${name}” is no longer available: choose it again.`)
+        continue
+      }
+      if (!(await ensurePermission(handle, 'readwrite'))) notes.push(`LightBench will ask again to save into “${handle.name}” when you import.`)
+      if (which === 'dest') {
+        setDest(handle)
+        await saveHandle(DEST_KEY, handle).catch(() => {})
+      } else {
+        setBackup(handle)
+        await saveHandle(BACKUP_KEY, handle).catch(() => {})
+      }
+    }
+    setPresetNote(notes.join(' '))
+  }
+
+  async function savePreset() {
+    if (!presetName?.trim()) return
+    try {
+      const id = await saveImportPreset(
+        presetName,
+        {
+          rename: { kind: renameKind, text: renameText, start: renameStart },
+          backup: backupOn,
+          includePaired,
+          developPreset: newPhotosPreset(),
+          metadataPreset: newPhotosMetadataPreset(),
+        },
+        { destination: dest, backup: backupOn ? backup : null },
+      )
+      setPresets(await loadImportPresets())
+      setPresetId(id)
+      setPresetName(null)
+      setPresetNote('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function removePreset() {
+    const p = presets.find((x) => x.id === presetId)
+    if (!p || !window.confirm(`Delete the import preset “${p.name}”?`)) return
+    await deleteImportPreset(p.id)
+    setPresets(await loadImportPresets())
+    setPresetId(null)
   }
 
   const days = useMemo(() => {
@@ -386,6 +467,55 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
               on your computer, close this and use <strong>Open folder</strong>: they stay where they are.
             </p>
 
+                <fieldset className="import-preset">
+                  <legend>Import preset</legend>
+                  {presetName === null ? (
+                    <div className="import-preset-row">
+                      <select
+                        value={presetId ?? ''}
+                        aria-label="Import preset"
+                        onChange={(e) => (e.target.value ? void applyPreset(Number(e.target.value)) : edited())}
+                      >
+                        <option value="">{presets.length ? 'Choose a preset…' : 'No presets yet'}</option>
+                        {presets.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                      <button className="button small" onClick={() => setPresetName(presets.find((p) => p.id === presetId)?.name ?? '')} title="Save these options under a name">
+                        Save…
+                      </button>
+                      <button className="button small" disabled={presetId === null} onClick={() => void removePreset()} title="Delete the chosen preset">
+                        Delete
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="import-preset-row">
+                      <input
+                        type="text"
+                        value={presetName}
+                        autoFocus
+                        placeholder="Preset name"
+                        aria-label="Preset name"
+                        onChange={(e) => setPresetName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') void savePreset()
+                          if (e.key === 'Escape') {
+                            e.stopPropagation()
+                            setPresetName(null)
+                          }
+                        }}
+                      />
+                      <button className="button small primary" disabled={!presetName.trim()} onClick={() => void savePreset()}>Save</button>
+                      <button className="button small" onClick={() => setPresetName(null)}>Cancel</button>
+                    </div>
+                  )}
+                  {presetName !== null && (
+                    <p className="muted small">
+                      Saves the destination, file names, backup, RAW + JPEG and Apply during import choices
+                      {presets.some((p) => p.name.toLowerCase() === presetName.trim().toLowerCase()) ? `, replacing “${presetName.trim()}”.` : '.'}
+                    </p>
+                  )}
+                  {presetNote && <p className="muted small">{presetNote}</p>}
+                </fieldset>
+
                 <fieldset>
                   <legend>Destination</legend>
                   <div className="folder-pick">
@@ -399,33 +529,34 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
 
                 <fieldset>
                   <legend>File names</legend>
-                  <select value={renameKind} onChange={(e) => setRenameKind(e.target.value as RenameKind)}>
+                  <select value={renameKind} aria-label="File names" onChange={(e) => { setRenameKind(e.target.value as RenameKind); edited() }}>
                     <option value="original">Keep original names</option>
                     <option value="date-sequence">Date + number</option>
                     <option value="custom-sequence">Custom name + number</option>
                   </select>
                   {renameKind === 'custom-sequence' && (
-                    <input type="text" placeholder="e.g. Hike" value={renameText} onChange={(e) => setRenameText(e.target.value)} />
+                    <input type="text" placeholder="e.g. Hike" aria-label="Custom name" value={renameText} onChange={(e) => { setRenameText(e.target.value); edited() }} />
                   )}
                   {renameKind !== 'original' && (
                     <label className="inline small">
                       Start numbering at
-                      <input type="number" min={1} value={renameStart} onChange={(e) => setRenameStart(Math.max(1, Number(e.target.value) || 1))} />
+                      <input type="number" min={1} value={renameStart} onChange={(e) => { setRenameStart(Math.max(1, Number(e.target.value) || 1)); edited() }} />
                     </label>
                   )}
                   {exampleName && <p className="muted small">Example: <code>{exampleName}</code></p>}
                 </fieldset>
 
                 <fieldset>
-                  <legend>Develop settings</legend>
-                  <NewPhotosPreset />
-                  <p className="muted small">Photos that already have edits (in their sidecars) keep them.</p>
+                  <legend>Apply during import</legend>
+                  <NewPhotosPreset onChange={edited} />
+                  <NewPhotosMetadataPreset onChange={edited} />
+                  <p className="muted small">Photos that already have edits or metadata (in their sidecars) keep them.</p>
                 </fieldset>
 
                 <fieldset>
                   <legend>Backup</legend>
                   <label className="check">
-                    <input type="checkbox" checked={backupOn} onChange={(e) => setBackupOn(e.target.checked)} />
+                    <input type="checkbox" checked={backupOn} onChange={(e) => { setBackupOn(e.target.checked); edited() }} />
                     Make a second copy to another folder
                   </label>
                   {backupOn && (
@@ -441,7 +572,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
               <fieldset>
                 <legend>RAW + JPEG</legend>
                 <label className="check">
-                  <input type="checkbox" checked={includePaired} onChange={(e) => setIncludePaired(e.target.checked)} />
+                  <input type="checkbox" checked={includePaired} onChange={(e) => { setIncludePaired(e.target.checked); edited() }} />
                   Also import the {pairedCount === 1 ? 'JPEG' : `${pairedCount} JPEGs`} shot alongside RAW files
                 </label>
                 <p className="muted small">Each JPEG is stacked under its RAW, so the grid shows one photo per shot (as darktable does).</p>

@@ -4,7 +4,7 @@
 import type { Catalog } from '../catalog/client'
 import { photosAdded } from '../library/added'
 import { loadThumb, saveThumb } from '../catalog/thumbs'
-import type { PhotoMeta } from '../catalog/types'
+import type { PhotoMeta, PhotoMetadata } from '../catalog/types'
 import { getDirAt, resolveRoot } from '../platform/roots'
 import { baseNameOf, dateFolder, extensionOf, JPEG_EXTENSIONS, joinPath, numberedName, renamedFile, type RenameTemplate } from './plan'
 import type { ScannedFile } from './scan'
@@ -16,6 +16,8 @@ export interface ImportItem {
   thumb: Uint8Array<ArrayBuffer> | null
   /** XMP embedded in a JPEG, used when there is no sidecar. */
   xmp?: string
+  /** Creator, caption, copyright from the camera's EXIF, filling fields the sidecar leaves empty. */
+  camera?: Partial<PhotoMetadata>
 }
 
 export interface ImportOptions {
@@ -101,9 +103,13 @@ export async function findSidecar(dir: FileSystemDirectoryHandle, photoName: str
   return null
 }
 
-/** Applies what a sidecar says (ratings, flag, label, keywords, collections, stack, virtual copies, LightBench edits) to a newly imported photo. */
+/**
+ * Applies what a sidecar says (ratings, flag, label, keywords, metadata, collections, stack, virtual copies,
+ * LightBench edits) to a newly imported photo.
+ */
 export async function applySidecar(catalog: Catalog, id: number, text: string) {
   const r = readXmp(text)
+  if (r.metadata) await catalog.setMetadata([id], r.metadata)
   if (r.rating !== undefined) await catalog.setRating([id], r.rating)
   if (r.flag !== undefined) await catalog.setFlag([id], r.flag)
   if (r.color !== undefined) await catalog.setColor([id], r.color)
@@ -185,6 +191,7 @@ export async function runImport(
         if (item.thumb) await saveThumb(id, item.thumb)
         const xmpText = sidecar?.text ?? item.xmp
         if (xmpText) await applySidecar(catalog, id, xmpText)
+        if (item.camera) await catalog.fillMetadata([id], item.camera)
       }
     } catch (err) {
       progress.failed.push({ name: item.file.name, error: err instanceof Error ? err.message : String(err) })

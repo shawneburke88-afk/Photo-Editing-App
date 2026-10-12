@@ -18,6 +18,10 @@ export interface ExifInfo {
   interopIndex: string
   /** EXIF ColorSpace tag: 1 = sRGB, 0xFFFF = uncalibrated, 0 = absent. */
   colorSpace: number
+  /** IFD0 Artist, Copyright and ImageDescription ('' if absent), which darktable takes as creator, rights and description. */
+  artist: string
+  copyright: string
+  description: string
 }
 
 const EXIF_TO_FLIP: Record<number, number> = { 1: 0, 3: 3, 6: 6, 8: 5 }
@@ -55,6 +59,7 @@ function readTiff(v: DataView, base: number, end: number): ExifInfo | null {
   const info: ExifInfo = {
     make: '', model: '', lens: '', orientation: 0, capturedAt: 0,
     iso: 0, shutter: 0, aperture: 0, focalLength: 0, width: 0, height: 0, interopIndex: '', colorSpace: 0,
+    artist: '', copyright: '', description: '',
   }
 
   const TYPE_SIZE: Record<number, number> = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8 }
@@ -81,6 +86,17 @@ function readTiff(v: DataView, base: number, end: number): ExifInfo | null {
     }
     return s.trim()
   }
+  /** Free text: UTF-8 when it is valid UTF-8 (common in practice), otherwise one byte per character. */
+  const text = (o: number, n: number) => {
+    let len = 0
+    while (len < n && v.getUint8(o + len) !== 0) len++
+    const bytes = new Uint8Array(v.buffer, v.byteOffset + o, len)
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes).trim()
+    } catch {
+      return String.fromCharCode(...bytes).trim()
+    }
+  }
   const num = (type: number, o: number) => {
     if (type === 3) return u16(o)
     if (type === 4) return u32(o)
@@ -103,6 +119,9 @@ function readTiff(v: DataView, base: number, end: number): ExifInfo | null {
     else if (tag === 0x0112) info.orientation = EXIF_TO_FLIP[num(type, o)] ?? 0
     else if (tag === 0x0132 && !info.capturedAt) info.capturedAt = parseExifDate(str(o, count))
     else if (tag === 0x8769) exifIfd = num(type, o)
+    else if (tag === 0x013b) info.artist = text(o, count)
+    else if (tag === 0x8298) info.copyright = text(o, count)
+    else if (tag === 0x010e) info.description = text(o, count)
   })
   readEntries(exifIfd, (tag, type, count, o) => {
     if (tag === 0x9003) info.capturedAt = parseExifDate(str(o, count)) || info.capturedAt

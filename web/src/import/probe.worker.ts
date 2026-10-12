@@ -2,7 +2,7 @@
 // Reads a photo's metadata and makes an upright thumbnail, for the import window and the library grid.
 import { LibRaw } from '@colorhythm/libraw-wasm'
 import wasmUrl from '@colorhythm/libraw-wasm/libraw.wasm?url'
-import type { PhotoMeta } from '../catalog/types'
+import type { PhotoMeta, PhotoMetadata } from '../catalog/types'
 import { readJpegExif } from '../engine/meta/exif'
 import { exposeRpc } from '../lib/rpc'
 import { extractJpegXmp } from '../sidecar/xmp-packet'
@@ -12,6 +12,8 @@ export interface ProbeResult {
   thumb: Uint8Array<ArrayBuffer> | null
   /** XMP embedded in a JPEG (ratings, labels, keywords written by Lightroom, Bridge or the camera). */
   xmp?: string
+  /** Creator, caption and copyright the camera wrote in EXIF (Artist, ImageDescription, Copyright), when set. */
+  camera?: Partial<PhotoMetadata>
 }
 
 const THUMB_SIZE = 512
@@ -20,6 +22,20 @@ const ready = LibRaw.initialize(fetch(wasmUrl))
 function cleanText(s: string): string {
   const t = s.replace(/[^\x20-\x7e]/g, '').trim()
   return /[A-Za-z0-9]{2}/.test(t) ? t : ''
+}
+
+/**
+ * darktable's import takes EXIF Artist as the creator, ImageDescription as the description and Copyright as the
+ * rights (src/common/exif.cc, _exif_decode_exif_data). Many cameras pad these with spaces when unset.
+ */
+function cameraText(fields: Partial<PhotoMetadata>): Partial<PhotoMetadata> | undefined {
+  const out: Partial<PhotoMetadata> = {}
+  for (const [k, raw] of Object.entries(fields) as [keyof PhotoMetadata, string][]) {
+    // eslint-disable-next-line no-control-regex -- control characters (other than tab and line breaks) become spaces
+    const t = raw.replace(/[\u0000-\u0008\u000b-\u001f]/g, ' ').trim()
+    if (t) out[k] = t
+  }
+  return Object.keys(out).length ? out : undefined
 }
 
 function extension(name: string) {
@@ -102,7 +118,8 @@ async function probeRaw(file: File): Promise<ProbeResult> {
     } catch {
       // No usable embedded preview: the photo still imports, with a placeholder thumbnail.
     }
-    return { meta, thumb }
+    // LibRaw reads Artist and ImageDescription (not Copyright) into imgother.
+    return { meta, thumb, camera: cameraText({ creator: other.artist ?? '', caption: other.desc ?? '' }) }
   } finally {
     lr.dispose()
   }
@@ -130,7 +147,12 @@ async function probeJpeg(file: File): Promise<ProbeResult> {
     height: exif?.height || bmp.height,
     orientation: exif?.orientation ?? 0,
   }
-  return { meta, thumb: await makeThumb(bmp, 0), xmp: extractJpegXmp(head) ?? undefined }
+  return {
+    meta,
+    thumb: await makeThumb(bmp, 0),
+    xmp: extractJpegXmp(head) ?? undefined,
+    camera: exif ? cameraText({ creator: exif.artist, copyright: exif.copyright, caption: exif.description }) : undefined,
+  }
 }
 
 async function probe(file: File): Promise<ProbeResult> {

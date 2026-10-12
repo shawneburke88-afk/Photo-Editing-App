@@ -165,6 +165,8 @@ class FolderIndexer {
           const sidecar = folder ? await findSidecar(folder, file.name) : null
           const xmpText = sidecar?.text ?? result.xmp
           if (xmpText) await applySidecar(catalog, id, xmpText).catch(() => {})
+          // Like darktable, the camera's Artist, Copyright and ImageDescription fill what the sidecar leaves empty.
+          if (result.camera) await catalog.fillMetadata([id], result.camera)
         }
         // RAW+JPEG pairs become stacks with the RAW on top (darktable-style).
         const newIds = ids.filter((id): id is number => id !== null)
@@ -202,15 +204,19 @@ class FolderIndexer {
       this.pool = null
     }
 
-    // Photos added before LightBench had keywords: bring in their sidecar keywords now.
-    for (const p of await catalog.photosWithUnreadKeywords(rootId, subPath)) {
+    // Photos added before LightBench had keywords or metadata: bring in their sidecar's now.
+    for (const p of await catalog.photosWithUnreadSidecar(rootId, subPath)) {
       if (this.stopped) break
       const folder = await getDirAt(dir, relativeTo(subPath, p.folderPath)).catch(() => null)
       const sidecar = folder ? await findSidecar(folder, p.fileName) : null
-      const kws = sidecar ? readXmp(sidecar.text).keywords : undefined
+      const read = sidecar ? readXmp(sidecar.text) : {}
+      const kws = p.keywordsRead ? undefined : read.keywords
+      const meta = p.metadataRead ? undefined : read.metadata
       if (kws?.length) await catalog.addKeywords([p.id], kws)
-      await catalog.markKeywordsRead(p.id)
-      if (kws?.length) this.set({ changes: this.status.changes + 1 })
+      if (meta) await catalog.fillMetadata([p.id], meta)
+      if (!p.keywordsRead) await catalog.markKeywordsRead(p.id)
+      if (!p.metadataRead) await catalog.markMetadataRead(p.id)
+      if (kws?.length || meta) this.set({ changes: this.status.changes + 1 })
     }
 
     const where = `“${name}”`

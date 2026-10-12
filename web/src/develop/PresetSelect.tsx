@@ -24,7 +24,7 @@ function PresetOptions({ presets }: { presets: Preset[] }) {
 }
 
 /** "Develop new photos with": the preset applied to photos added by Open folder or Import (Lightroom's import Develop Settings). */
-export function NewPhotosPreset() {
+export function NewPhotosPreset({ onChange }: { onChange?: () => void }) {
   const presets = usePresets()
   const [value, setValue] = useState(newPhotosPreset)
   useEffect(() => presetsChanged.subscribe(() => setValue(newPhotosPreset())), [])
@@ -33,7 +33,14 @@ export function NewPhotosPreset() {
   return (
     <label className="new-photos-preset small" title="Applied to photos added by Open folder or Import that have no edits yet (none in their sidecars)">
       <span className="muted">Develop new photos with</span>
-      <select value={shown} onChange={(e) => setNewPhotosPreset(e.target.value)} aria-label="Preset for new photos">
+      <select
+        value={shown}
+        onChange={(e) => {
+          setNewPhotosPreset(e.target.value)
+          onChange?.()
+        }}
+        aria-label="Preset for new photos"
+      >
         <option value="">No preset</option>
         <PresetOptions presets={presets} />
       </select>

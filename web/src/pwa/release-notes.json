@@ -9,7 +9,9 @@
       "Open RAW and JPEG files with the installed app from your file manager (Chrome and Edge).",
       "Copy, paste and sync develop settings between photos, choosing which settings go. Auto can re-run on each photo.",
       "Auto options: a strength slider and a choice of which sliders Auto may change.",
-      "Presets: save chosen settings, preview on hover, apply with an Amount, and develop new photos with one automatically."
+      "Presets: save chosen settings, preview on hover, apply with an Amount, and develop new photos with one automatically.",
+      "Metadata: edit title, caption, creator, copyright and location on one photo or many. They are saved in sidecars and included in exports.",
+      "Metadata presets (“© {year} Your Name” becomes each photo's year) that can fill in new photos, and import presets for the Import window's options."
     ],
     "bugFixes": []
   }

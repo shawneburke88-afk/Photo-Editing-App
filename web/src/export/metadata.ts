@@ -1,8 +1,10 @@
 // Metadata embedded in exported files, following darktable's export defaults (src/common/metadata_export.c):
 // camera EXIF, rating/label XMP, keywords (flat; the hierarchy only on request, DT_META_HIERARCHICAL_TAG is
-// off by default) and the develop settings are included unless switched off.
+// off by default), title/caption/creator/copyright/location (DT_META_METADATA, on by default) and the develop
+// settings are included unless switched off.
 
-import type { PhotoDetail } from '../catalog/types'
+import type { PhotoDetail, PhotoMetadata } from '../catalog/types'
+import { EMPTY_METADATA } from '../library/metadata'
 import { NS, writeXmp } from '../sidecar/xmp'
 
 export interface MetadataOptions {
@@ -16,20 +18,30 @@ export interface MetadataOptions {
   keywords?: boolean
   /** Also the full keyword paths as lr:hierarchicalSubject. */
   keywordHierarchy?: boolean
+  /** Title, caption, creator, copyright and location (XMP). Missing in settings saved before metadata existed: on. */
+  description?: boolean
 }
 
-export const DEFAULT_METADATA: MetadataOptions = { camera: true, rating: true, develop: true, keywords: true, keywordHierarchy: false }
+export const DEFAULT_METADATA: MetadataOptions = { camera: true, rating: true, develop: true, keywords: true, keywordHierarchy: false, description: true }
 
 /** The XMP packet for an exported file, or undefined when nothing is to be included. */
-export function exportXmp(photo: PhotoDetail, settings: string | null, o: MetadataOptions, keywords: string[] = []): string | undefined {
+export function exportXmp(
+  photo: PhotoDetail,
+  settings: string | null,
+  o: MetadataOptions,
+  keywords: string[] = [],
+  metadata: PhotoMetadata = EMPTY_METADATA,
+): string | undefined {
   const withKeywords = o.keywords !== false && keywords.length > 0
-  if (!o.rating && !o.develop && !withKeywords) return undefined
+  const withMetadata = o.description !== false && Object.values(metadata).some((v) => v.trim() !== '')
+  if (!o.rating && !o.develop && !withKeywords && !withMetadata) return undefined
   const text = writeXmp(null, {
     rating: o.rating ? photo.rating : 0,
     flag: o.rating ? photo.flag : 0,
     color: o.rating ? photo.color : 0,
     develop: o.develop ? settings : null,
     keywords: withKeywords ? keywords : [],
+    metadata: withMetadata ? metadata : EMPTY_METADATA,
   })!
   const doc = new DOMParser().parseFromString(text, 'application/xml')
   const desc = doc.getElementsByTagNameNS(NS.rdf, 'Description')[0]
