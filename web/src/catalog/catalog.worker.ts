@@ -308,6 +308,15 @@ export function migrate(d: Database) {
         ALTER TABLE photos ADD COLUMN sidecar_external INTEGER NOT NULL DEFAULT 0;
       `)
     }
+    if (version < 12) {
+      // Where the photo was taken, from its EXIF GPS (JPEG) or LibRaw's parsed GPS (RAW): degrees (north and east
+      // positive) and metres; NULL when not recorded. Photos added earlier have none until they are added again.
+      d.exec(`
+        ALTER TABLE photos ADD COLUMN gps_lat REAL;
+        ALTER TABLE photos ADD COLUMN gps_lon REAL;
+        ALTER TABLE photos ADD COLUMN gps_alt REAL;
+      `)
+    }
     d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     d.exec('COMMIT')
   } catch (err) {
@@ -407,13 +416,13 @@ function addPhotos(photos: NewPhoto[]): (number | null)[] {
     const stmt = d.prepare(`
       INSERT OR IGNORE INTO photos (folder_id, file_name, original_name, file_type, file_size, file_modified,
         captured_at, imported_at, camera_make, camera_model, lens, iso, shutter, aperture, focal_length,
-        width, height, orientation, keywords_read, metadata_read)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)`)
+        width, height, orientation, gps_lat, gps_lon, gps_alt, keywords_read, metadata_read)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)`)
     for (const p of photos) {
       stmt.bind([
         folderId(p.rootId, p.folderPath), p.fileName, p.originalName, p.fileType, p.fileSize, p.fileModified,
         p.capturedAt, now, p.cameraMake, p.cameraModel, p.lens, p.iso, p.shutter, p.aperture, p.focalLength,
-        p.width, p.height, p.orientation,
+        p.width, p.height, p.orientation, p.gpsLat ?? null, p.gpsLon ?? null, p.gpsAlt ?? null,
       ])
       stmt.step()
       stmt.reset()
@@ -1162,7 +1171,8 @@ function getPhoto(id: number): PhotoDetail | null {
        p.file_size AS fileSize, p.file_modified AS fileModified, p.captured_at AS capturedAt,
        p.imported_at AS importedAt, p.camera_make AS cameraMake, p.camera_model AS cameraModel, p.lens,
        p.iso, p.shutter, p.aperture, p.focal_length AS focalLength, p.width, p.height, p.orientation,
-       p.rating, p.flag, p.color_label AS color, p.version, p.version_name AS versionName
+       p.rating, p.flag, p.color_label AS color, p.version, p.version_name AS versionName,
+       p.gps_lat AS gpsLat, p.gps_lon AS gpsLon, p.gps_alt AS gpsAlt
      FROM photos p JOIN folders f ON f.id = p.folder_id WHERE p.id = ?`,
     [id],
   )

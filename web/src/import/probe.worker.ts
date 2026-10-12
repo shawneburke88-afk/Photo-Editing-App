@@ -4,6 +4,7 @@ import { LibRaw } from '@colorhythm/libraw-wasm'
 import wasmUrl from '@colorhythm/libraw-wasm/libraw.wasm?url'
 import type { PhotoMeta, PhotoMetadata } from '../catalog/types'
 import { readJpegExif } from '../engine/meta/exif'
+import { gpsFromLibRaw, type GpsPosition } from '../engine/meta/gps'
 import { embeddedPreviewColorSpace, jpegFileBlob, tagPreview } from '../engine/meta/preview-space'
 import { exposeRpc } from '../lib/rpc'
 import { extractJpegXmp } from '../sidecar/xmp-packet'
@@ -64,6 +65,9 @@ async function makeThumb(bmp: ImageBitmap, rotate: 0 | 90 | 180 | 270): Promise<
   return new Uint8Array(await blob.arrayBuffer())
 }
 
+/** The catalog's GPS fields (null when the file records no position). */
+const gpsColumns = (g: GpsPosition | null) => ({ gpsLat: g?.lat ?? null, gpsLon: g?.lon ?? null, gpsAlt: g?.alt ?? null })
+
 const FLIP_TO_ROTATION: Record<number, 0 | 90 | 180 | 270> = { 0: 0, 3: 180, 5: 270, 6: 90 }
 
 async function probeRaw(file: File): Promise<ProbeResult> {
@@ -95,6 +99,7 @@ async function probeRaw(file: File): Promise<ProbeResult> {
       width: lr.getActiveWidth(),
       height: lr.getActiveHeight(),
       orientation: flip,
+      ...gpsColumns(gpsFromLibRaw(other.parsed_gps)),
     }
     let thumb: Uint8Array<ArrayBuffer> | null = null
     try {
@@ -150,6 +155,7 @@ async function probeJpeg(file: File): Promise<ProbeResult> {
     width: exif?.width || bmp.width,
     height: exif?.height || bmp.height,
     orientation: exif?.orientation ?? 0,
+    ...gpsColumns(exif?.gps ?? null),
   }
   return {
     meta,
