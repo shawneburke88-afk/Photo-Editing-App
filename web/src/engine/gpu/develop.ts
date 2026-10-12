@@ -1,6 +1,7 @@
 import type { SensorData } from '../raw/types'
 import demosaicWgsl from './demosaic.wgsl?raw'
 import displayWgsl from './display.wgsl?raw'
+import { currentDisplaySpace, SRGB_TO_DISPLAY_P3, type DisplaySpace } from './display-space'
 
 export interface DevelopParams {
   exposure: number
@@ -34,6 +35,8 @@ export async function probeGpu(): Promise<GpuInfo | string> {
 
 export type PresentMode = 'canvas' | 'readback'
 
+const VIEW_SIZE = 112
+
 /**
  * GPU develop pipeline: demosaic once per photo, then redraw cheaply on every slider change.
  *
@@ -56,6 +59,8 @@ export class DevelopRenderer {
   private readonly ctx2d: CanvasRenderingContext2D | null = null
   private lost = false
   private probing = false
+  /** Display P3 on wide-gamut screens (display-space.ts), else sRGB; fixed for this renderer (the System check's). */
+  private readonly displaySpace: DisplaySpace = currentDisplaySpace()
 
   private constructor(device: GPUDevice, mode: PresentMode) {
     this.device = device
@@ -66,10 +71,10 @@ export class DevelopRenderer {
     if (mode === 'canvas') {
       const ctx = this.canvas.getContext('webgpu')
       if (!ctx) throw new Error('Could not create a WebGPU canvas context')
-      ctx.configure({ device, format: this.format, alphaMode: 'opaque' })
+      ctx.configure({ device, format: this.format, alphaMode: 'opaque', colorSpace: this.displaySpace })
       this.gpuCtx = ctx
     } else {
-      this.ctx2d = this.canvas.getContext('2d')
+      this.ctx2d = this.canvas.getContext('2d', { colorSpace: this.displaySpace })
     }
 
     device.addEventListener('uncapturederror', (e) => console.error('WebGPU error:', (e as GPUUncapturedErrorEvent).error.message))
@@ -88,7 +93,7 @@ export class DevelopRenderer {
       vertex: { module: displayModule, entryPoint: 'vs' },
       fragment: { module: displayModule, entryPoint: 'fs', targets: [{ format: this.format }] },
     })
-    this.viewBuf = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    this.viewBuf = device.createBuffer({ size: VIEW_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' })
   }
 
@@ -223,10 +228,13 @@ export class DevelopRenderer {
     const w = iw * scale
     const h = ih * scale
 
-    const view = new ArrayBuffer(64)
+    const view = new ArrayBuffer(VIEW_SIZE)
     new Float32Array(view, 0, 7).set([(cw - w) / 2, (ch - h) / 2, w, h, p.exposure, p.contrast, p.saturation])
     new Uint32Array(view, 28, 1)[0] = this.flip
     new Float32Array(view, 32, 4).set([0.09, 0.094, 0.106, 1])
+    new Uint32Array(view, 48, 1)[0] = this.displaySpace === 'display-p3' ? 1 : 0
+    const d = SRGB_TO_DISPLAY_P3
+    new Float32Array(view, 64, 12).set([d[0], d[1], d[2], 0, d[3], d[4], d[5], 0, d[6], d[7], d[8], 0])
     device.queue.writeBuffer(this.viewBuf, 0, view)
 
     const target = this.gpuCtx
@@ -254,7 +262,7 @@ export class DevelopRenderer {
     device.queue.submit([enc.finish()])
     await readBuf.mapAsync(GPUMapMode.READ)
     const src = new Uint8Array(readBuf.getMappedRange())
-    const img = new ImageData(cw, ch)
+    const img = new ImageData(cw, ch, { colorSpace: this.displaySpace })
     for (let y = 0; y < ch; y++) img.data.set(src.subarray(y * bytesPerRow, y * bytesPerRow + cw * 4), y * cw * 4)
     readBuf.unmap()
     readBuf.destroy()

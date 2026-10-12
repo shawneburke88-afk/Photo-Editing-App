@@ -1,4 +1,4 @@
-// Per-frame develop rendering: scene-linear Rec.2020 → display sRGB.
+// Per-frame develop rendering: scene-linear Rec.2020 → display sRGB (or Display P3 on wide-gamut screens).
 //
 // Order follows darktable's scene-referred pipeline: exposure → tone equalizer → (presence) →
 // sigmoid → output colour profile. The sigmoid functions are translated from darktable's
@@ -42,7 +42,7 @@ struct View {
   rawHeight: u32,
   cfa: u32,           // CFA colours of the 2×2 tile, 2 bits each
   statsPass: u32,     // 1 = unclamped display RGB + clipping class in alpha (histogram); 2 = linear Rec.2020 output (export)
-  pad0: f32,
+  displaySpace: u32,  // 0 = sRGB; 1 = Display P3 (the on-screen canvas on a wide-gamut screen, display-space.ts)
   pad1: f32,
   pad2: f32,
   // The geometry stage (engine/develop/geometry.ts) as projective 3×3 maps from the shown image's uv, rows padded:
@@ -52,6 +52,9 @@ struct View {
   rawMap0: vec4f,     // → sensor uv (sensor clipping)
   rawMap1: vec4f,
   rawMap2: vec4f,
+  toDisplay0: vec4f,  // linear Rec.2020 → linear Display P3, rows (icc.ts, as the Display P3 export)
+  toDisplay1: vec4f,
+  toDisplay2: vec4f,
 }
 
 @group(0) @binding(0) var img: texture_2d<f32>;
@@ -166,11 +169,6 @@ fn srgbOetf(c: vec3f) -> vec3f {
 /** sRGB encoding extended to values outside 0…1 (mirrored for negatives), for the clipping tests. */
 fn srgbOetfUnbounded(c: vec3f) -> vec3f {
   return sign(c) * srgbOetf(abs(c));
-}
-
-/** The full develop transform for one scene-linear Rec.2020 pixel; returns unclamped linear sRGB. */
-fn develop(scene: vec3f) -> vec3f {
-  return rec2020ToSrgb(developRec2020(scene));
 }
 
 /** The develop transform up to the tone mapper: display-referred linear Rec.2020 (before the output profile). */
@@ -295,7 +293,9 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     // Export: the output colour profile, resizing and encoding happen afterwards (export.wgsl).
     return vec4f(developRec2020(scene), 1.0);
   }
-  let lin = develop(scene);
+  let rec = developRec2020(scene);
+  // Histogram and clipping are judged in sRGB, whatever the screen.
+  let lin = rec2020ToSrgb(rec);
   let t = srgbOetfUnbounded(lin);
   if (V.statsPass == 1u) {
     // Alpha carries the clipping class: 1 fine, 0.5 under, 0 over.
@@ -303,6 +303,11 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     return vec4f(t, select(select(1.0, 0.5, cls == 2u), 0.0, cls == 1u));
   }
   var out = clamp(t, vec3f(0.0), vec3f(1.0));
+  if (V.displaySpace == 1u) {
+    // Display P3: matrix, clamp, sRGB tone curve, as export.wgsl encodes a Display P3 export.
+    let p3 = vec3f(dot(V.toDisplay0.xyz, rec), dot(V.toDisplay1.xyz, rec), dot(V.toDisplay2.xyz, rec));
+    out = srgbOetf(clamp(p3, vec3f(0.0), vec3f(1.0)));
+  }
   // darktable order: overexposed (66) before rawoverexposed (67), both just before gamma.
   if (V.clipMode != 0u) {
     let cls = clipClass(t, lin, suv);
