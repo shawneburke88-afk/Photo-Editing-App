@@ -98,7 +98,7 @@ class SidecarSync {
     }
     let text: string | null
     try {
-      text = writeXmp(existing, { rating: photo.rating, flag: photo.flag, color: photo.color, develop: src.settings, keywords, collections: src.collections })
+      text = writeXmp(existing, { rating: photo.rating, flag: photo.flag, color: photo.color, develop: src.settings, keywords, collections: src.collections, stack: src.stack })
     } catch (e) {
       throw new Error(`${name}: ${e instanceof Error ? e.message : e}`, { cause: e })
     }

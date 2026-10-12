@@ -3,10 +3,11 @@
 import sqlite3InitModule, { type Database } from '@sqlite.org/sqlite-wasm'
 import { exposeRpc } from '../lib/rpc'
 import { compileSmart, type SmartRules } from './smart'
+import { burstGroups, collapseStacks } from './stacks'
 import type { CollectionInfo, DuplicateKey, FolderNode, LibraryRoot, NewPhoto, PhotoDetail, PhotoQuery, PhotoRow } from './types'
 
 const DB_FILE = '/lightbench-catalog.sqlite3'
-const SCHEMA_VERSION = 6
+const SCHEMA_VERSION = 7
 
 let db: Database | null = null
 let persistent = false
@@ -159,6 +160,19 @@ function migrate(d: Database) {
         );
         CREATE INDEX collection_photos_photo ON collection_photos(photo_id);
         INSERT INTO collections (name, kind, created_at) VALUES ('Quick Collection', 'quick', strftime('%s', 'now'));
+      `)
+    }
+    if (version < 7) {
+      // Stacks (darktable's groups, Lightroom's stacks). uid is stable across rebuilds and is what sidecars store.
+      d.exec(`
+        CREATE TABLE stacks (
+          id INTEGER PRIMARY KEY,
+          uid TEXT NOT NULL UNIQUE,
+          top_id INTEGER,
+          expanded INTEGER NOT NULL DEFAULT 0
+        );
+        ALTER TABLE photos ADD COLUMN stack_id INTEGER REFERENCES stacks(id) ON DELETE SET NULL;
+        CREATE INDEX photos_stack ON photos(stack_id);
       `)
     }
     d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
@@ -321,10 +335,24 @@ function queryPhotos(q: PhotoQuery): PhotoRow[] {
   const sql = `SELECT p.id, p.file_name AS fileName, p.captured_at AS capturedAt, p.rating, p.flag,
       p.color_label AS color, p.orientation, EXISTS (SELECT 1 FROM edits e WHERE e.photo_id = p.id) AS edited,
       EXISTS (SELECT 1 FROM collection_photos cp JOIN collections c ON c.id = cp.collection_id
-              WHERE cp.photo_id = p.id AND c.kind = 'quick') AS quick
-    FROM photos p ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order}`
-  type Row = Omit<PhotoRow, 'edited' | 'quick'> & { edited: number; quick: number }
-  return (conn().selectObjects(sql, bind) as unknown as Row[]).map((r) => ({ ...r, edited: !!r.edited, quick: !!r.quick }))
+              WHERE cp.photo_id = p.id AND c.kind = 'quick') AS quick,
+      p.stack_id AS stackId, COALESCE(s.top_id = p.id, 0) AS stackTop, COALESCE(s.expanded, 0) AS stackExpanded,
+      (SELECT COUNT(*) FROM photos m WHERE m.stack_id = p.stack_id) AS stackSize
+    FROM photos p LEFT JOIN stacks s ON s.id = p.stack_id
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order}`
+  type Row = Omit<PhotoRow, 'edited' | 'quick' | 'stackTop' | 'stackExpanded'> & { edited: number; quick: number; stackTop: number; stackExpanded: number }
+  const rows = (conn().selectObjects(sql, bind) as unknown as Row[]).map((r) => ({
+    ...r,
+    edited: !!r.edited,
+    quick: !!r.quick,
+    stackTop: !!r.stackTop,
+    stackExpanded: !!r.stackExpanded,
+    stackSize: r.stackId === null ? 0 : r.stackSize,
+  })).map((r) =>
+    // A stack being rebuilt from sidecars can briefly hold one photo: show it as an ordinary photo.
+    r.stackId !== null && r.stackSize < 2 ? { ...r, stackId: null, stackSize: 0, stackTop: false, stackExpanded: false } : r,
+  )
+  return q.ungrouped ? rows : collapseStacks(rows)
 }
 
 // ---- keywords
@@ -561,6 +589,155 @@ function photoCollections(photoId: number): string[] {
   ) as unknown as { name: string }[]).map((r) => r.name)
 }
 
+// ---- stacks
+
+/** Takes photos out of their stacks, dissolving stacks left with fewer than two photos. Returns touched ids. */
+function leaveStacks(ids: number[]): number[] {
+  if (!ids.length) return []
+  const touched = new Set(ids)
+  const list = ids.map(() => '?').join(',')
+  const old = (conn().selectObjects(`SELECT DISTINCT stack_id AS s FROM photos WHERE id IN (${list}) AND stack_id IS NOT NULL`, ids) as unknown as { s: number }[]).map((r) => r.s)
+  conn().exec({ sql: `UPDATE photos SET stack_id = NULL WHERE id IN (${list})`, bind: ids })
+  for (const sid of old) for (const id of tidyStack(sid)) touched.add(id)
+  return [...touched]
+}
+
+/** After members change: dissolves a stack of fewer than two, or moves the top if it left. Returns members touched. */
+function tidyStack(stackId: number): number[] {
+  const members = (conn().selectObjects('SELECT id FROM photos WHERE stack_id = ? ORDER BY captured_at, id', [stackId]) as unknown as { id: number }[]).map((r) => r.id)
+  if (members.length < 2) {
+    conn().exec({ sql: 'UPDATE photos SET stack_id = NULL WHERE stack_id = ?', bind: [stackId] })
+    conn().exec({ sql: 'DELETE FROM stacks WHERE id = ?', bind: [stackId] })
+    return members
+  }
+  const top = Number(conn().selectValue('SELECT top_id FROM stacks WHERE id = ?', [stackId]))
+  if (!members.includes(top)) {
+    conn().exec({ sql: 'UPDATE stacks SET top_id = ? WHERE id = ?', bind: [members[0], stackId] })
+    return members
+  }
+  return []
+}
+
+/**
+ * Stacks photos; `top` defaults to the earliest. Stacks among them are merged whole (as in Lightroom, stacking a
+ * collapsed stack with other photos brings its hidden photos along). Returns touched ids.
+ */
+function createStack(given: number[], top?: number, uid?: string): number[] {
+  const ids = given.length
+    ? (conn().selectObjects(
+        `SELECT id FROM photos WHERE id IN (${given.map(() => '?').join(',')})
+           OR stack_id IN (SELECT stack_id FROM photos WHERE id IN (${given.map(() => '?').join(',')}) AND stack_id IS NOT NULL)`,
+        [...given, ...given],
+      ) as unknown as { id: number }[]).map((r) => r.id)
+    : []
+  if (ids.length < 2) return []
+  return inTransaction(() => {
+    const touched = new Set(leaveStacks(ids))
+    const first = top ?? Number(conn().selectValue(`SELECT id FROM photos WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY captured_at, id LIMIT 1`, ids))
+    conn().exec({ sql: 'INSERT INTO stacks (uid, top_id) VALUES (?, ?)', bind: [uid ?? crypto.randomUUID(), first] })
+    const sid = Number(conn().selectValue('SELECT last_insert_rowid()'))
+    const stmt = conn().prepare('UPDATE photos SET stack_id = ? WHERE id = ?')
+    for (const id of ids) stmt.bind([sid, id]).stepReset()
+    stmt.finalize()
+    for (const id of ids) touched.add(id)
+    return [...touched]
+  })
+}
+
+/** Lightroom's Unstack: dissolves every stack that holds any of `ids`. Returns all their photos. */
+function unstack(ids: number[]): number[] {
+  if (!ids.length) return []
+  return inTransaction(() => {
+    const list = ids.map(() => '?').join(',')
+    const members = (conn().selectObjects(
+      `SELECT id FROM photos WHERE stack_id IN (SELECT stack_id FROM photos WHERE id IN (${list}) AND stack_id IS NOT NULL)`, ids,
+    ) as unknown as { id: number }[]).map((r) => r.id)
+    conn().exec({ sql: `DELETE FROM stacks WHERE id IN (SELECT stack_id FROM photos WHERE id IN (${list}))`, bind: ids })
+    conn().exec({ sql: `UPDATE photos SET stack_id = NULL WHERE id IN (${members.map(() => '?').join(',') || 'NULL'})`, bind: members })
+    return members
+  })
+}
+
+/** Lightroom's Shift+S: makes a photo the top of its stack. Returns the stack's photos. */
+function setStackTop(id: number): number[] {
+  const sid = conn().selectValue('SELECT stack_id FROM photos WHERE id = ?', [id])
+  if (sid === null || sid === undefined) return []
+  conn().exec({ sql: 'UPDATE stacks SET top_id = ? WHERE id = ?', bind: [id, sid] })
+  return (conn().selectObjects('SELECT id FROM photos WHERE stack_id = ?', [sid]) as unknown as { id: number }[]).map((r) => r.id)
+}
+
+/** Expands or collapses the stack of `id` (all stacks when id is null). */
+function setStackExpanded(id: number | null, expanded: boolean) {
+  if (id === null) conn().exec({ sql: 'UPDATE stacks SET expanded = ?', bind: [expanded ? 1 : 0] })
+  else conn().exec({ sql: 'UPDATE stacks SET expanded = ? WHERE id = (SELECT stack_id FROM photos WHERE id = ?)', bind: [expanded ? 1 : 0, id] })
+}
+
+/** Auto-stack by capture time over `ids`. Returns touched ids (for sidecars) and how many stacks were made. */
+function autoStack(ids: number[], gapSeconds: number): { touched: number[]; stacks: number } {
+  if (!ids.length) return { touched: [], stacks: 0 }
+  const photos = conn().selectObjects(
+    `SELECT id, captured_at AS capturedAt, stack_id IS NOT NULL AS stacked FROM photos WHERE id IN (${ids.map(() => '?').join(',')})`, ids,
+  ) as unknown as { id: number; capturedAt: number; stacked: number }[]
+  const groups = burstGroups(photos.map((p) => ({ ...p, stacked: !!p.stacked })), gapSeconds)
+  const touched: number[] = []
+  for (const g of groups) touched.push(...createStack(g, g[0]))
+  return { touched, stacks: groups.length }
+}
+
+/**
+ * darktable-style RAW+JPEG stacks: for each photo in `ids`, an unstacked JPEG with the same base name as a RAW in
+ * the same folder joins the RAW's stack, or starts one with the RAW on top. (A RAW can already be in a stack when
+ * it was rebuilt from its sidecar before its JPEG was found.)
+ */
+function stackRawJpegPairs(ids: number[]): number[] {
+  if (!ids.length) return []
+  const pairs = conn().selectObjects(
+    `SELECT r.id AS raw, j.id AS jpeg, r.stack_id AS rawStack FROM photos r JOIN photos j
+       ON j.folder_id = r.folder_id AND j.id <> r.id
+      AND lower(substr(j.file_name, 1, length(j.file_name) - length(j.file_type) - 1)) = lower(substr(r.file_name, 1, length(r.file_name) - length(r.file_type) - 1))
+     WHERE lower(j.file_type) IN ('jpg', 'jpeg') AND lower(r.file_type) NOT IN ('jpg', 'jpeg')
+       AND j.stack_id IS NULL
+       AND (r.id IN (${ids.map(() => '?').join(',')}) OR j.id IN (${ids.map(() => '?').join(',')}))`,
+    [...ids, ...ids],
+  ) as unknown as { raw: number; jpeg: number; rawStack: number | null }[]
+  const touched: number[] = []
+  const used = new Set<number>()
+  for (const { raw, jpeg, rawStack } of pairs) {
+    if (used.has(raw) || used.has(jpeg)) continue
+    used.add(raw)
+    used.add(jpeg)
+    if (rawStack !== null) {
+      conn().exec({ sql: 'UPDATE photos SET stack_id = ? WHERE id = ?', bind: [rawStack, jpeg] })
+      touched.push(raw, jpeg)
+    } else {
+      touched.push(...createStack([raw, jpeg], raw))
+    }
+  }
+  return touched
+}
+
+/** From a sidecar: joins (or starts) the stack with this uid. */
+function joinStackByUid(photoId: number, uid: string, top: boolean) {
+  inTransaction(() => {
+    leaveStacks([photoId])
+    let sid = conn().selectValue('SELECT id FROM stacks WHERE uid = ?', [uid]) as number | undefined
+    if (sid === undefined) {
+      conn().exec({ sql: 'INSERT INTO stacks (uid, top_id) VALUES (?, ?)', bind: [uid, photoId] })
+      sid = Number(conn().selectValue('SELECT last_insert_rowid()'))
+    } else if (top) {
+      conn().exec({ sql: 'UPDATE stacks SET top_id = ? WHERE id = ?', bind: [photoId, sid] })
+    }
+    conn().exec({ sql: 'UPDATE photos SET stack_id = ? WHERE id = ?', bind: [sid, photoId] })
+  })
+}
+
+function stackOf(photoId: number): { uid: string; top: boolean } | null {
+  const r = conn().selectObject(
+    'SELECT s.uid, s.top_id = p.id AS top FROM photos p JOIN stacks s ON s.id = p.stack_id WHERE p.id = ?', [photoId],
+  ) as { uid: string; top: number } | undefined
+  return r ? { uid: r.uid, top: !!r.top } : null
+}
+
 function getEdit(photoId: number): { settings: string; history: string } | null {
   return (conn().selectObject('SELECT settings, history FROM edits WHERE photo_id = ?', [photoId]) as { settings: string; history: string } | undefined) ?? null
 }
@@ -613,6 +790,8 @@ function removePhotos(ids: number[]) {
   const stmt = d.prepare('DELETE FROM photos WHERE id = ?')
   for (const id of ids) stmt.bind([id]).stepReset()
   stmt.finalize()
+  // Stacks that lost photos: dissolve singletons, move a missing top.
+  for (const { id } of d.selectObjects('SELECT id FROM stacks') as unknown as { id: number }[]) tidyStack(id)
   d.exec(`DELETE FROM folders WHERE id NOT IN (SELECT DISTINCT folder_id FROM photos)`)
   d.exec(`DELETE FROM roots WHERE id NOT IN (SELECT DISTINCT root_id FROM folders)`)
   d.exec('COMMIT')
@@ -650,7 +829,7 @@ function sidecarSource(photoId: number) {
   ) as unknown as { fileType: string }[]
   const owner = !(isJpeg && twins.some((t) => !/^jpe?g$/i.test(t.fileType)))
   const keywordsRead = Number(conn().selectValue('SELECT keywords_read FROM photos WHERE id = ?', [photoId])) === 1
-  return { photo: p, settings: edit?.settings ?? null, owner, keywords: photoKeywords(photoId), keywordsRead, collections: photoCollections(photoId) }
+  return { photo: p, settings: edit?.settings ?? null, owner, keywords: photoKeywords(photoId), keywordsRead, collections: photoCollections(photoId), stack: stackOf(photoId) }
 }
 
 function markSidecarWritten(photoId: number, at: number) {
@@ -705,6 +884,13 @@ const handlers = {
   clearQuick,
   collectionsOf,
   addToCollectionsByName,
+  createStack,
+  unstack,
+  setStackTop,
+  setStackExpanded,
+  autoStack,
+  stackRawJpegPairs,
+  joinStackByUid,
   markSidecarWritten,
   stats,
 }

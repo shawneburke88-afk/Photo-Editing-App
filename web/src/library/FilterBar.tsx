@@ -1,6 +1,7 @@
 import type { ColorLabel, PhotoQuery } from '../catalog/types'
 import { COLOR_NAMES } from './format'
 import { showKeyword } from './keywords'
+import { useState } from 'react'
 
 type Filters = Pick<PhotoQuery, 'text' | 'minRating' | 'flag' | 'color' | 'sort' | 'keyword'>
 
@@ -11,6 +12,8 @@ interface Props {
   onView: (v: 'grid' | 'loupe') => void
   /** Opens the full-screen culling view. */
   onCull: () => void
+  /** Stack commands, for the Stacks menu. */
+  stacks: { stack: () => void; unstack: () => void; auto: () => void; expandAll: () => void; collapseAll: () => void; canStack: boolean }
   cellSize: number
   onCellSize: (n: number) => void
   shown: number
@@ -19,7 +22,7 @@ interface Props {
   onSubfolders: (on: boolean) => void
 }
 
-export function FilterBar({ value, onChange, view, onView, onCull, cellSize, onCellSize, shown, subfolders, onSubfolders }: Props) {
+export function FilterBar({ value, onChange, view, onView, onCull, stacks, cellSize, onCellSize, shown, subfolders, onSubfolders }: Props) {
   const set = (patch: Partial<Filters>) => onChange({ ...value, ...patch })
   return (
     <div className="filterbar">
@@ -68,12 +71,39 @@ export function FilterBar({ value, onChange, view, onView, onCull, cellSize, onC
           <button className="kw-x" onClick={() => set({ keyword: undefined })} aria-label="Clear keyword filter">×</button>
         </span>
       )}
+      <StacksMenu {...stacks} />
       <span className="muted small grow">{shown.toLocaleString()} photos</span>
       {view === 'grid' && (
         <label className="size small">
           Size
           <input type="range" min={110} max={320} value={cellSize} onChange={(e) => onCellSize(Number(e.target.value))} />
         </label>
+      )}
+    </div>
+  )
+}
+
+function StacksMenu({ stack, unstack, auto, expandAll, collapseAll, canStack }: Props['stacks']) {
+  const [open, setOpen] = useState(false)
+  const item = (label: string, keys: string, fn: () => void, disabled = false) => (
+    <button role="menuitem" disabled={disabled} onClick={() => { setOpen(false); fn() }}>
+      <span>{label}</span>
+      <span className="muted small">{keys}</span>
+    </button>
+  )
+  return (
+    <div className="coll-menu stacks-menu">
+      <button className="button small" onClick={() => setOpen(!open)} aria-expanded={open} title="Stacks: RAW+JPEG pairs, bursts and brackets shown as one photo">
+        Stacks ▾
+      </button>
+      {open && (
+        <div className="menu" role="menu" onMouseLeave={() => setOpen(false)}>
+          {item('Stack selected photos', 'Ctrl+G', stack, !canStack)}
+          {item('Unstack', 'Ctrl+Shift+G', unstack)}
+          {item('Auto-stack by capture time…', '', auto)}
+          {item('Expand all stacks', '', expandAll)}
+          {item('Collapse all stacks', '', collapseAll)}
+        </div>
       )}
     </div>
   )

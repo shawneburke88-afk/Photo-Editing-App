@@ -58,6 +58,12 @@ export interface PhotoRow {
   edited: boolean
   /** In the Quick Collection. */
   quick: boolean
+  /** Stack this photo belongs to (null: none). */
+  stackId: number | null
+  /** Photos in its stack (0 when not stacked). */
+  stackSize: number
+  stackTop: boolean
+  stackExpanded: boolean
 }
 
 export interface PhotoDetail extends PhotoMeta {
@@ -78,6 +84,8 @@ export interface PhotoQuery {
   minRating?: number
   flag?: 'picked' | 'rejected' | 'unflagged' | 'notRejected'
   color?: ColorLabel
+  /** Show every photo of collapsed stacks too (default: one photo per collapsed stack). */
+  ungrouped?: boolean
   /** Collection id: a manual collection's photos, or a smart collection's matches. */
   collection?: number
   /** Keyword path; photos with it or any keyword below it. */

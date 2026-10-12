@@ -5,7 +5,7 @@ import type { Catalog } from '../catalog/client'
 import { saveThumb } from '../catalog/thumbs'
 import type { PhotoMeta } from '../catalog/types'
 import { getDirAt, resolveRoot } from '../platform/roots'
-import { dateFolder, joinPath, numberedName, renamedFile, type RenameTemplate } from './plan'
+import { baseNameOf, dateFolder, extensionOf, JPEG_EXTENSIONS, joinPath, numberedName, renamedFile, type RenameTemplate } from './plan'
 import type { ScannedFile } from './scan'
 import { readXmp, sidecarName } from '../sidecar/xmp'
 
@@ -108,6 +108,7 @@ export async function applySidecar(catalog: Catalog, id: number, text: string) {
   if (r.color !== undefined) await catalog.setColor([id], r.color)
   if (r.keywords?.length) await catalog.addKeywords([id], r.keywords)
   if (r.collections?.length) await catalog.addToCollectionsByName(id, r.collections)
+  if (r.stack) await catalog.joinStackByUid(id, r.stack.uid, r.stack.top)
   if (r.develop) {
     const history = JSON.stringify({ steps: [{ label: 'From sidecar', settings: JSON.parse(r.develop) }], index: 0 })
     await catalog.saveEdit(id, r.develop, history)
@@ -134,6 +135,11 @@ export async function runImport(
     const name = `LightBench backup ${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())} ${p(now.getHours())}${p(now.getMinutes())}`
     backupDir = await opts.backup.getDirectoryHandle(name, { create: true })
   }
+
+  // RAW+JPEG pairs, by their names on the card (renaming may give them different numbers), stacked at the end.
+  const pairKey = (f: ScannedFile) => `${f.dir}/${baseNameOf(f.name).toLowerCase()}`
+  const raws = new Map<string, number>()
+  const jpegs = new Map<string, number>()
 
   for (const [index, item] of ordered.entries()) {
     if (signal?.aborted) break
@@ -168,6 +174,7 @@ export async function runImport(
         progress.skipped++
       } else {
         progress.imported++
+        ;(JPEG_EXTENSIONS.includes(extensionOf(item.file.name)) ? jpegs : raws).set(pairKey(item.file), id)
         if (item.thumb) await saveThumb(id, item.thumb)
         const xmpText = sidecar?.text ?? item.xmp
         if (xmpText) await applySidecar(catalog, id, xmpText)
@@ -177,6 +184,10 @@ export async function runImport(
     }
     progress.done++
     onProgress({ ...progress })
+  }
+  for (const [key, jpeg] of jpegs) {
+    const raw = raws.get(key)
+    if (raw !== undefined) await catalog.createStack([raw, jpeg], raw).catch(() => {})
   }
   progress.current = ''
   onProgress({ ...progress })

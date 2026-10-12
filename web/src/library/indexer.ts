@@ -16,6 +16,7 @@ import { scanSource, type ScannedFile } from '../import/scan'
 import { getDirAt, getRootHandle, resolveRoot } from '../platform/roots'
 import { filesToAdd } from './index-plan'
 import { readXmp } from '../sidecar/xmp'
+import { sidecars } from '../sidecar/sync'
 import type { ProbeResult } from '../import/probe'
 
 export interface IndexStatus {
@@ -164,7 +165,10 @@ class FolderIndexer {
           const xmpText = sidecar?.text ?? result.xmp
           if (xmpText) await applySidecar(catalog, id, xmpText).catch(() => {})
         }
-        this.set({ added: this.status.added + ids.filter((id) => id !== null).length, changes: this.status.changes + 1 })
+        // RAW+JPEG pairs become stacks with the RAW on top (darktable-style).
+        const newIds = ids.filter((id): id is number => id !== null)
+        if (newIds.length) sidecars.schedule(await catalog.stackRawJpegPairs(newIds))
+        this.set({ added: this.status.added + newIds.length, changes: this.status.changes + 1 })
       })
       return writing
     }

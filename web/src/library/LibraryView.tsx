@@ -14,6 +14,7 @@ import { CullView, type CullField } from './CullView'
 import { CollectionChips } from './CollectionChips'
 import { CollectionDialog, type CollectionDraft } from './CollectionDialog'
 import { CollectionList, PHOTOS_DRAG_TYPE } from './CollectionList'
+import { AutoStackDialog } from './AutoStackDialog'
 import { Grid } from './Grid'
 import { IndexProgress } from './IndexProgress'
 import { useIndexStatus } from './useIndexStatus'
@@ -60,6 +61,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   const [collections, setCollections] = useState<CollectionInfo[]>([])
   const [targetCollections, setTargetCollections] = useState<{ id: number; name: string; count: number }[]>([])
   const [draft, setDraft] = useState<CollectionDraft | null>(null)
+  const [autoStacking, setAutoStacking] = useState(false)
   const [filters, setFilters] = useState<Filters>({ sort: 'captureDesc' })
   const [rows, setRows] = useState<PhotoRow[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -325,6 +327,31 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     refresh()
   }
 
+  // ---- stacks (darktable's groups, Lightroom's stacks). Stack membership is saved in sidecars.
+  async function stackSelected() {
+    const ids = targets()
+    if (ids.length < 2) return
+    sidecars.schedule(await catalog.createStack(ids))
+    refresh()
+  }
+
+  async function unstackSelected() {
+    sidecars.schedule(await catalog.unstack(targets()))
+    refresh()
+  }
+
+  async function toggleStack(id: number) {
+    const row = rows.find((r) => r.id === id)
+    if (!row || row.stackId === null) return
+    await catalog.setStackExpanded(id, !row.stackExpanded)
+    refresh()
+  }
+
+  async function makeTop(id: number) {
+    sidecars.schedule(await catalog.setStackTop(id))
+    refresh()
+  }
+
   /** Full-screen culling of the photos shown, starting at the focused one. */
   const startCulling = useCallback(() => {
     if (rows.length) setCulling({ rows, start: focus ?? rows[0].id })
@@ -374,7 +401,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   // Lightroom-style keyboard shortcuts.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!active || importing || culling || draft || status !== 'ready') return
+      if (!active || importing || culling || draft || autoStacking || status !== 'ready') return
       const t = e.target as HTMLElement
       if (isTextEntry(t) || isSliderKey(e)) return
       const idx = focus === null ? -1 : rows.findIndex((r) => r.id === focus)
@@ -393,6 +420,10 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
         if (k === 'a') {
           setSelected(new Set(rows.map((r) => r.id)))
           e.preventDefault()
+        } else if (k === 'g') {
+          // Lightroom: Ctrl+G stacks the selection, Ctrl+Shift+G unstacks.
+          e.preventDefault()
+          void (e.shiftKey ? unstackSelected() : stackSelected())
         } else if (k === 'k' && targets().length) {
           // Lightroom: Ctrl+K goes to the keyword box.
           e.preventDefault()
@@ -423,6 +454,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
       else if (k === 'd' && focus !== null) onDevelop(focus, rows.map((r) => r.id))
       else if (k === 'g' || k === 'escape') setView('grid')
       else if (k === 'b') void toggleQuick(targets())
+      else if (k === 's' && focus !== null) void (e.shiftKey ? makeTop(focus) : toggleStack(focus))
       else if ((k === 'delete' || k === 'backspace') && activeCollection && activeCollection.kind !== 'smart') {
         // Like Lightroom: in a collection, Delete takes photos out of the collection, not the library.
         void removeFromCollection(activeCollection.id, targets())
@@ -543,6 +575,14 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
               view={view}
               onView={setView}
               onCull={startCulling}
+              stacks={{
+                stack: () => void stackSelected(),
+                unstack: () => void unstackSelected(),
+                auto: () => setAutoStacking(true),
+                expandAll: () => void catalog.setStackExpanded(null, true).then(refresh),
+                collapseAll: () => void catalog.setStackExpanded(null, false).then(refresh),
+                canStack: targets().length > 1,
+              }}
               cellSize={cellSize}
               onCellSize={setCellSize}
               shown={rows.length}
@@ -558,6 +598,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
                   cellSize={cellSize}
                   onClick={clickCell}
                   onOpen={(id) => { setFocus(id); setView('loupe') }}
+                  onToggleStack={(id) => void toggleStack(id)}
                   onDragStart={(id, e) => {
                     const ids = selected.has(id) ? [...selected] : [id]
                     e.dataTransfer.setData(PHOTOS_DRAG_TYPE, JSON.stringify(ids))
@@ -569,7 +610,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
               <Loupe photo={detail} />
             )}
             <p className="hint muted small">
-              Keys: arrows move · P pick · X reject · U unflag · 0–5 stars · 6–9 colour labels · Ctrl+K keywords · B Quick Collection · E loupe · F cull · G grid · D develop · Delete removes from {activeCollection && activeCollection.kind !== 'smart' ? 'this collection' : 'library'}
+              Keys: arrows move · P pick · X reject · U unflag · 0–5 stars · 6–9 colour labels · Ctrl+K keywords · B Quick Collection · S stack · E loupe · F cull · G grid · D develop · Delete removes from {activeCollection && activeCollection.kind !== 'smart' ? 'this collection' : 'library'}
             </p>
           </>
         )}
@@ -612,6 +653,19 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
             endCulling(id)
             onDevelop(id, ids)
           }}
+        />
+      )}
+
+      {autoStacking && (
+        <AutoStackDialog
+          count={rows.length}
+          onRun={async (gap) => {
+            const r = await catalog.autoStack(rows.map((x) => x.id), gap)
+            sidecars.schedule(r.touched)
+            refresh()
+            return r.stacks
+          }}
+          onClose={() => setAutoStacking(false)}
         />
       )}
 
