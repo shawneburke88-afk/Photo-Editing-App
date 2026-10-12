@@ -35,6 +35,24 @@ export async function resolveRoot(catalog: Catalog, dir: FileSystemDirectoryHand
   return { rootId, subPath: '' }
 }
 
+/**
+ * Reconnect: asks for permission to a library folder again. When this browser has no record of the folder (a
+ * library restored from a backup), the user chooses it; a folder with another name needs a confirmation.
+ */
+export async function reconnectRoot(rootId: number, name: string): Promise<boolean> {
+  const h = await getRootHandle(rootId)
+  if (h) return (await h.requestPermission({ mode: 'read' })) === 'granted'
+  let dir: FileSystemDirectoryHandle
+  try {
+    dir = await window.showDirectoryPicker!({ id: 'lightbench-open-folder', mode: 'read' })
+  } catch {
+    return false
+  }
+  if (dir.name !== name && !confirm(`The library's folder is called “${name}”, and you chose “${dir.name}”. Use “${dir.name}” for it?`)) return false
+  await saveHandle(key(rootId), dir)
+  return true
+}
+
 /** Checks permission; asks for it if needed (asking only works right after a click). */
 export async function ensurePermission(handle: FileSystemHandle, mode: FileSystemPermissionMode = 'read'): Promise<boolean> {
   if ((await handle.queryPermission({ mode })) === 'granted') return true

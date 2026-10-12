@@ -1,16 +1,20 @@
 /// <reference lib="webworker" />
 // The library catalog: one SQLite database stored in the browser's private storage (OPFS).
-import sqlite3InitModule, { type Database } from '@sqlite.org/sqlite-wasm'
+import sqlite3InitModule, { type Database, type SAHPoolUtil, type Sqlite3Static } from '@sqlite.org/sqlite-wasm'
 import { exposeRpc } from '../lib/rpc'
 import { isStorageFailure, NEWER_CATALOG_MESSAGE } from './errors'
 import { compileSmart, type SmartRules } from './smart'
 import { burstGroups, collapseStacks } from './stacks'
+import { checkCatalogImage, discardStaged, exportCatalog, removeLeftovers, stageCatalog } from './backup-db'
+import { SCHEMA_VERSION } from './schema'
+import { activeSlot, type Slot } from './slot'
 import type { CollectionInfo, DuplicateKey, FolderNode, LibraryRoot, MetadataKey, NewPhoto, PhotoDetail, PhotoMetadata, PhotoQuery, PhotoRow } from './types'
 
-const DB_FILE = '/lightbench-catalog.sqlite3'
-const SCHEMA_VERSION = 10
-
 let db: Database | null = null
+/** For backups: the SQLite module, its storage pool and the library slot in use (see slot.ts). */
+let sqlite: Sqlite3Static | null = null
+let pool: SAHPoolUtil | null = null
+let slot: Slot | null = null
 let persistent = false
 let opening: Promise<{ persistent: boolean }> | null = null
 
@@ -21,7 +25,11 @@ function conn(): Database {
 
 /** Opens the catalog once; concurrent callers share the same attempt. */
 function open(options: { inMemory?: boolean } = {}): Promise<{ persistent: boolean }> {
-  opening ??= openOnce(options).catch((err) => {
+  opening ??= openOnce(options).then((r) => {
+    // Once the catalog has opened (and been upgraded), the copy a restore replaced is no longer needed.
+    if (pool && slot) removeLeftovers(pool, slot)
+    return r
+  }, (err) => {
     opening = null
     throw err
   })
@@ -30,12 +38,14 @@ function open(options: { inMemory?: boolean } = {}): Promise<{ persistent: boole
 
 async function openOnce(options: { inMemory?: boolean }): Promise<{ persistent: boolean }> {
   const sqlite3 = await sqlite3InitModule()
+  sqlite = sqlite3
   if (options.inMemory) {
     db = new sqlite3.oo1.DB(':memory:', 'c')
   } else {
     try {
-      const pool = await sqlite3.installOpfsSAHPoolVfs({ name: 'lightbench', directory: '.lightbench-catalog' })
-      db = new pool.OpfsSAHPoolDb(DB_FILE)
+      pool = await sqlite3.installOpfsSAHPoolVfs({ name: 'lightbench', directory: '.lightbench-catalog' })
+      slot = await activeSlot()
+      db = new pool.OpfsSAHPoolDb(slot.dbFile)
       persistent = true
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -54,6 +64,11 @@ async function openOnce(options: { inMemory?: boolean }): Promise<{ persistent: 
     throw err
   }
   return { persistent }
+}
+
+function restorePool(): { pool: SAHPoolUtil; slot: Slot } {
+  if (!pool || !slot) throw new Error('Restoring needs the library to be in the browser’s storage.')
+  return { pool, slot }
 }
 
 function migrate(d: Database) {
@@ -1316,6 +1331,11 @@ const handlers = {
   versionCount,
   markSidecarWritten,
   stats,
+  // Library backup and restore (backup-db.ts).
+  exportCatalog: () => exportCatalog(sqlite!, conn()),
+  checkCatalogImage: (bytes: Uint8Array) => checkCatalogImage(sqlite!, bytes),
+  stageCatalog: (bytes: Uint8Array<ArrayBuffer>) => stageCatalog(restorePool().pool, restorePool().slot, bytes),
+  discardStagedCatalog: () => discardStaged(restorePool().pool, restorePool().slot),
 }
 
 export type CatalogApi = typeof handlers
