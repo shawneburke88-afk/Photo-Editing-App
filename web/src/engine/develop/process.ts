@@ -58,7 +58,7 @@ const V1: ProcessParams = {
 }
 
 export const PROCESS_VERSIONS: ProcessVersion[] = [
-  { version: 1, summary: 'LightBench’s first rendering (0.1.0 to 0.3.0): darktable’s RCD, inpaint opposed, tone equalizer and sigmoid.', params: V1 },
+  { version: 1, summary: 'LightBench’s first rendering (0.1.0 to 0.4.0): darktable’s RCD, inpaint opposed, tone equalizer and sigmoid.', params: V1 },
 ]
 
 // Test scaffolding, development server only: `?simulateProcess=2` adds a copy of the newest version under that
