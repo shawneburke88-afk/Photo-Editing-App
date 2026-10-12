@@ -4,6 +4,7 @@ import { LibRaw } from '@colorhythm/libraw-wasm'
 import wasmUrl from '@colorhythm/libraw-wasm/libraw.wasm?url'
 import type { PhotoMeta, PhotoMetadata } from '../catalog/types'
 import { readJpegExif } from '../engine/meta/exif'
+import { embeddedPreviewColorSpace, jpegFileBlob, tagPreview } from '../engine/meta/preview-space'
 import { exposeRpc } from '../lib/rpc'
 import { extractJpegXmp } from '../sidecar/xmp-packet'
 
@@ -70,7 +71,10 @@ async function probeRaw(file: File): Promise<ProbeResult> {
   const lr = new LibRaw()
   await lr.waitUntilReady()
   try {
-    lr.open(await file.arrayBuffer())
+    const buffer = await file.arrayBuffer()
+    // Adobe RGB camera previews are tagged so the thumbnail isn't washed out (preview-space.ts).
+    const previewSpace = embeddedPreviewColorSpace(new Uint8Array(buffer))
+    lr.open(buffer)
     const ip = lr.getIParams()
     const other = lr.getImgOther()
     const lens = lr.getLensInfo()
@@ -98,7 +102,7 @@ async function probeRaw(file: File): Promise<ProbeResult> {
       const img = lr.dcrawMakeMemThumb()
       let bmp: ImageBitmap | null = null
       if (img.type_ === 'LIBRAW_IMAGE_JPEG') {
-        bmp = await createImageBitmap(new Blob([new Uint8Array(img.data)], { type: 'image/jpeg' }))
+        bmp = await createImageBitmap(new Blob([tagPreview(new Uint8Array(img.data), previewSpace)], { type: 'image/jpeg' }))
       } else if (img.type_ === 'LIBRAW_IMAGE_BITMAP' && img.colors === 3 && img.bits === 8) {
         const rgba = new Uint8ClampedArray(img.width * img.height * 4)
         for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
@@ -129,7 +133,7 @@ async function probeJpeg(file: File): Promise<ProbeResult> {
   const head = new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer())
   const exif = readJpegExif(head)
   // The browser applies the EXIF orientation while decoding, so the thumbnail comes out upright.
-  const bmp = await createImageBitmap(file)
+  const bmp = await createImageBitmap(jpegFileBlob(file, head))
   const meta: PhotoMeta = {
     fileName: file.name,
     fileSize: file.size,

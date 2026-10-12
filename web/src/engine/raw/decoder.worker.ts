@@ -3,6 +3,7 @@ import { LibRaw } from '@colorhythm/libraw-wasm'
 import wasmUrl from '@colorhythm/libraw-wasm/libraw.wasm?url'
 import { chooseInputProfile, extractJpegIcc, linearizationLut, profileToRec2020 } from '../color/icc'
 import { readJpegExif } from '../meta/exif'
+import { embeddedPreviewColorSpace, tagPreview, type PreviewSpace } from '../meta/preview-space'
 import { databaseWhiteLevel } from './camera-db'
 import { whiteLevel } from './white-level'
 import type { DecodeRequest, DecodeResponse, DecodeResult, EmbeddedPreview, RgbImage, SensorData } from './types'
@@ -33,6 +34,8 @@ async function decode(file: File, full: boolean): Promise<DecodeResult> {
   let t = performance.now()
   const buffer = await file.arrayBuffer()
   const read = performance.now() - t
+  // What the RAW says about its preview's colours (Adobe RGB previews are tagged so they aren't shown as sRGB).
+  const previewSpace = embeddedPreviewColorSpace(new Uint8Array(buffer))
 
   const lr = new LibRaw()
   await lr.waitUntilReady()
@@ -58,7 +61,7 @@ async function decode(file: File, full: boolean): Promise<DecodeResult> {
     }
 
     t = performance.now()
-    const preview = extractPreview(lr)
+    const preview = extractPreview(lr, previewSpace)
     const previewMs = performance.now() - t
 
     let sensor: SensorData | null = null
@@ -93,12 +96,12 @@ function cleanText(s: string): string {
   return /[A-Za-z0-9]{2}/.test(t) ? t : ''
 }
 
-function extractPreview(lr: LibRaw): EmbeddedPreview | null {
+function extractPreview(lr: LibRaw, space: PreviewSpace | null): EmbeddedPreview | null {
   try {
     lr.unpackThumb()
     const img = lr.dcrawMakeMemThumb()
     if (img.type_ === 'LIBRAW_IMAGE_JPEG') {
-      return { bytes: new Uint8Array(img.data), format: 'jpeg', width: img.width, height: img.height }
+      return { bytes: tagPreview(new Uint8Array(img.data), space), format: 'jpeg', width: img.width, height: img.height }
     }
     if (img.type_ === 'LIBRAW_IMAGE_BITMAP' && img.colors === 3 && img.bits === 8) {
       return { bytes: new Uint8Array(img.data), format: 'rgb', width: img.width, height: img.height }
