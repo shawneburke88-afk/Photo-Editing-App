@@ -12,13 +12,15 @@ interface Props {
   onOpen: (id: number) => void
   /** Dragging photos out of the grid (onto a collection). */
   onDragStart?: (id: number, e: React.DragEvent) => void
+  /** Expand or collapse the stack of a photo (its badge was clicked). */
+  onToggleStack?: (id: number) => void
 }
 
 const GAP = 8
 const FOOTER = 34
 
 /** Virtualised thumbnail grid: only the rows on screen are rendered, so 50,000 photos scroll smoothly. */
-export function Grid({ rows, selected, focus, cellSize, onClick, onOpen, onDragStart }: Props) {
+export function Grid({ rows, selected, focus, cellSize, onClick, onOpen, onDragStart, onToggleStack }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(800)
   const [height, setHeight] = useState(600)
@@ -62,7 +64,7 @@ export function Grid({ rows, selected, focus, cellSize, onClick, onOpen, onDragS
       cells.push(
         <div
           key={row.id}
-          className={`cell ${selected.has(row.id) ? 'selected' : ''} ${focus === row.id ? 'focus' : ''} ${row.flag === -1 ? 'rejected' : ''}`}
+          className={`cell ${selected.has(row.id) ? 'selected' : ''} ${focus === row.id ? 'focus' : ''} ${row.flag === -1 ? 'rejected' : ''} ${row.stackId !== null && row.stackExpanded ? 'in-stack' : ''}`}
           style={{ left: GAP + c * (cellW + GAP), top: GAP + r * rowH, width: cellW, height: cellW + FOOTER }}
           onClick={(e) => onClick(row.id, e)}
           onDoubleClick={() => onOpen(row.id)}
@@ -78,10 +80,24 @@ export function Grid({ rows, selected, focus, cellSize, onClick, onOpen, onDragS
             {row.flag === -1 && <span className="flag reject" title="Rejected">✕</span>}
             {row.edited && <span className="edited-badge" title="Edited in Develop">✎</span>}
             {row.quick && <span className="quick-badge" title="In the Quick Collection (B)">●</span>}
+            {row.stackId !== null && (
+              <button
+                className={`stack-badge ${row.stackExpanded ? 'open' : ''}`}
+                title={row.stackExpanded ? 'Collapse this stack (S)' : `Stack of ${row.stackSize}: click or press S to show all`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onToggleStack?.(row.id)
+                }}
+                onDoubleClick={(e) => e.stopPropagation()}
+              >
+                {row.stackExpanded ? (row.stackTop ? `▾ ${row.stackSize}` : '◦') : `⧉ ${row.stackSize}`}
+              </button>
+            )}
           </div>
           <div className="cell-foot">
             <Stars value={row.rating} size="small" />
             {row.color > 0 && <span className={`label label-${row.color}`} aria-label="Color label" />}
+            {row.version > 0 && <span className="copy-tag" title={`Virtual copy: ${row.versionName ?? ''}`}>{row.versionName}</span>}
           </div>
         </div>,
       )

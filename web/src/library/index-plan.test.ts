@@ -14,13 +14,8 @@ describe('filesToAdd', () => {
     expect(filesToAdd([f('', 'A.NEF'), f('x', 'B.jpg')], new Set(['A.NEF']), '')).toEqual([f('x', 'B.jpg')])
   })
 
-  it('leaves out JPEGs shot alongside a RAW of the same name', () => {
-    const files = [f('', 'DSC_1.NEF'), f('', 'DSC_1.JPG'), f('', 'DSC_2.JPG'), f('sub', 'DSC_1.jpg')]
-    expect(filesToAdd(files, new Set(), '')).toEqual([f('', 'DSC_1.NEF'), f('', 'DSC_2.JPG'), f('sub', 'DSC_1.jpg')])
-  })
-
-  it('still leaves out a companion JPEG when its RAW was added earlier', () => {
+  it('includes JPEGs shot alongside a RAW (they are stacked after adding)', () => {
     const files = [f('', 'DSC_1.NEF'), f('', 'DSC_1.JPG')]
-    expect(filesToAdd(files, new Set(['DSC_1.NEF']), '')).toEqual([])
+    expect(filesToAdd(files, new Set(['DSC_1.NEF']), '')).toEqual([f('', 'DSC_1.JPG')])
   })
 })

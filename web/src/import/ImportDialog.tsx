@@ -38,7 +38,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
   const [renameKind, setRenameKind] = useState<RenameKind>('original')
   const [renameText, setRenameText] = useState('')
   const [renameStart, setRenameStart] = useState(1)
-  const [includePaired, setIncludePaired] = useState(false)
+  const [includePaired, setIncludePaired] = useState(true)
   const [dayFilter, setDayFilter] = useState<string | null>(null)
   const [progress, setProgress] = useState<ImportProgress | null>(null)
   const [finished, setFinished] = useState(false)
@@ -51,9 +51,9 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
   destRef.current = dest
 
   const isDuplicate = (c: Candidate) => c.inCatalog || c.atDestination
-  /** Untouched photos are ticked unless they look already imported, failed, or are RAW+JPEG companions. */
+  /** Untouched photos are ticked unless they look already imported or failed. */
   const withAutoSelection = (c: Candidate): Candidate =>
-    c.touched ? c : { ...c, selected: c.status !== 'error' && !c.pairedJpeg && !isDuplicate(c) }
+    c.touched ? c : { ...c, selected: c.status !== 'error' && !isDuplicate(c) }
 
   useEffect(() => {
     loadHandle(DEST_KEY).then((h) => h && setDest(h)).catch(() => {})
@@ -115,7 +115,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
     setCands(
       files.map((file, i) => ({
         file, status: 'reading', inCatalog: false, atDestination: false,
-        pairedJpeg: paired.has(i), selected: !paired.has(i), touched: false,
+        pairedJpeg: paired.has(i), selected: true, touched: false,
       })),
     )
     readAll(files)
@@ -435,8 +435,9 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
                 <legend>RAW + JPEG</legend>
                 <label className="check">
                   <input type="checkbox" checked={includePaired} onChange={(e) => setIncludePaired(e.target.checked)} />
-                  Also import the {pairedCount === 1 ? 'JPEG' : `${pairedCount} JPEGs`} shot alongside RAW files as separate photos
+                  Also import the {pairedCount === 1 ? 'JPEG' : `${pairedCount} JPEGs`} shot alongside RAW files
                 </label>
+                <p className="muted small">Each JPEG is stacked under its RAW, so the grid shows one photo per shot (as darktable does).</p>
               </fieldset>
             )}
           </aside>

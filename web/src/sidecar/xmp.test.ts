@@ -114,6 +114,23 @@ describe('XMP sidecars', () => {
     expect(readXmp(writeXmp(text, data({ collections: [] }))!).collections).toBeUndefined()
   })
 
+  it('records the stack and whether the photo is on top', () => {
+    const text = writeXmp(null, data({ stack: { uid: 'abc', top: true } }))!
+    expect(readXmp(text).stack).toEqual({ uid: 'abc', top: true })
+    const lower = writeXmp(text, data({ stack: { uid: 'abc', top: false } }))!
+    expect(readXmp(lower).stack).toEqual({ uid: 'abc', top: false })
+    expect(readXmp(writeXmp(lower, data({ stack: null }))!).stack).toBeUndefined()
+    expect(writeXmp(lower, data({ stack: { uid: 'abc', top: false } }))).toBeNull()
+  })
+
+  it('keeps virtual copies inside the original’s sidecar', () => {
+    const v = { name: 'B&W', rating: 4, flag: 1, color: 2, develop: '{"exposure":1}', keywords: ['Mono'], collections: [] }
+    const text = writeXmp(null, data({ versions: [v] }))!
+    expect(readXmp(text).versions).toEqual([v])
+    expect(writeXmp(text, data({ versions: [v] }))).toBeNull()
+    expect(readXmp(writeXmp(text, data({ versions: [] }))!).versions).toBeUndefined()
+  })
+
   it('refuses to overwrite a damaged file', () => {
     expect(() => writeXmp('<not xml', data())).toThrow()
     expect(readXmp('<not xml')).toEqual({})

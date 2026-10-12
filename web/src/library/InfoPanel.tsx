@@ -12,9 +12,11 @@ interface Props {
   onDevelop: () => void
   /** Extra sections below the rating controls (keywords). */
   children?: React.ReactNode
+  onVirtualCopy: () => void
+  onRenameCopy: (name: string) => void
 }
 
-export function InfoPanel({ photo, count, onRating, onFlag, onColor, onDevelop, children }: Props) {
+export function InfoPanel({ photo, count, onRating, onFlag, onColor, onDevelop, children, onVirtualCopy, onRenameCopy }: Props) {
   if (!photo) return <aside className="info"><p className="muted small pad">Select a photo to see its details.</p></aside>
   const rows: [string, string][] = [
     ['File', photo.fileName],
@@ -52,6 +54,24 @@ export function InfoPanel({ photo, count, onRating, onFlag, onColor, onDevelop, 
         </div>
       </div>
       {children}
+      <section className="keywords copies-section" aria-label="Virtual copy">
+        <h3 className="panel-title">{photo.version > 0 ? 'Virtual copy' : 'Versions'}</h3>
+        {photo.version > 0 && (
+          <label className="field small">
+            Name
+            <input
+              key={photo.id}
+              type="text"
+              defaultValue={photo.versionName ?? ''}
+              onBlur={(e) => e.target.value.trim() && e.target.value !== photo.versionName && onRenameCopy(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+            />
+          </label>
+        )}
+        <button className="button small" onClick={onVirtualCopy} title="Another version of this photo with its own edits, rating and keywords; the file isn't copied (Ctrl+')">
+          Make virtual copy
+        </button>
+      </section>
       <dl className="info-list">
         {rows.map(([k, v]) => (
           <div key={k}>
