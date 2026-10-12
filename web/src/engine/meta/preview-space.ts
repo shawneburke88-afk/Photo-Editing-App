@@ -118,13 +118,18 @@ export function embeddedPreviewColorSpace(raw: Uint8Array): PreviewSpace | null 
 }
 
 /**
- * How a JPEG declares its own colours: 'icc' (the browser applies it), the space its EXIF gives (darktable's
- * reading), or null when it says nothing.
+ * How a JPEG declares its own colours: 'icc' (the browser applies it), the space its EXIF ColorSpace gives
+ * (darktable's reading), or null when it says nothing.
+ *
+ * Unlike LightCraft, EXIF without a ColorSpace tag counts as saying nothing: LibRaw's dcraw_make_mem_thumb puts its
+ * own EXIF block in front of a preview that has none (src/postprocessing/mem_image.cpp, built by tiff_head in
+ * src/write/file_write.cpp, LibRaw 0.22.1), and that block never has a ColorSpace. It is the RAW's data, not a
+ * declaration by the camera's JPEG.
  */
 export function jpegOwnSpace(jpeg: Uint8Array): 'icc' | PreviewSpace | null {
   if (extractJpegIcc(jpeg)) return 'icc'
   const exif = readJpegExif(jpeg)
-  if (!exif) return null
+  if (!exif || !exif.colorSpace) return null
   if (exif.colorSpace === 2 || (exif.colorSpace === 0xffff && exif.interopIndex.startsWith('R03'))) return 'adobe-rgb'
   return 'srgb'
 }

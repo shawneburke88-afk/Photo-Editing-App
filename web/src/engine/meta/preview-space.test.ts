@@ -167,6 +167,10 @@ describe('tagging previews', () => {
     expect(jpegOwnSpace(exifAdobe)).toBe('adobe-rgb')
     expect(previewIsAdobeRgb(exifAdobe, null)).toBe(true)
     expect(jpegOwnSpace(untagged)).toBeNull()
+    // LibRaw's dcraw_make_mem_thumb adds EXIF (make, model, exposure…) without a ColorSpace: that says nothing.
+    const libraw = jpeg(exifApp(raw({ make: 'SONY' })))
+    expect(jpegOwnSpace(libraw)).toBeNull()
+    expect(previewIsAdobeRgb(libraw, 'adobe-rgb')).toBe(true)
   })
 
   it('reads a JPEG file the way Develop does (R03 without ICC = Adobe RGB)', async () => {
