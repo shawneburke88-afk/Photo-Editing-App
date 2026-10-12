@@ -4,31 +4,43 @@ import type { SourceKind } from '../engine/develop/settings'
 import { describePaste, PASTE_GROUPS, PASTE_ITEMS, rememberChoice, type Clipboard, type PasteKey } from './paste'
 
 interface Props {
-  /** copy: choose what to copy · sync: choose what to apply to the targets · paste: preview, then apply. */
-  mode: 'copy' | 'sync' | 'paste'
+  /**
+   * copy: choose what to copy · sync: choose what to apply to the targets · paste: preview, then apply ·
+   * preset: name a new preset and choose what it holds.
+   */
+  mode: 'copy' | 'sync' | 'paste' | 'preset'
   clip: Clipboard
   /** Photos the settings go to (sync and paste), and whether they are RAW, JPEG or both (undefined: not known). */
   targets?: { count: number; kind?: SourceKind | 'mixed' }
-  onConfirm: (clip: Clipboard) => void
+  /** `name` is the new preset's name (preset mode). */
+  onConfirm: (clip: Clipboard, name: string) => void
   onClose: () => void
 }
 
-/** Copy settings / Sync settings / Paste settings, with grouped checkboxes and a preview of what will change. */
+/** Copy / Sync / Paste settings and New preset, with grouped checkboxes and a preview of what will change. */
 export function PasteDialog({ mode, clip, targets, onConfirm, onClose }: Props) {
   const [keys, setKeys] = useState<Set<PasteKey>>(() => new Set(clip.keys))
   const [rerunAuto, setRerunAuto] = useState(clip.rerunAuto)
   const [choosing, setChoosing] = useState(mode !== 'paste')
+  const [name, setName] = useState('')
   const dialog = useRef<HTMLDivElement>(null)
-  useEffect(() => dialog.current?.querySelector<HTMLElement>('.button.primary')?.focus(), [choosing])
+  useEffect(() => {
+    if (mode !== 'preset') dialog.current?.querySelector<HTMLElement>('.button.primary')?.focus()
+  }, [choosing, mode])
 
   const current: Clipboard = { ...clip, keys: PASTE_ITEMS.map((i) => i.key).filter((k) => keys.has(k)), rerunAuto }
   const auto = clip.settings.auto ?? null
   const viaAuto = new Set<string>(rerunAuto && auto ? auto.sliders : [])
   const count = targets?.count ?? 0
   const photos = `${count} ${count === 1 ? 'photo' : 'photos'}`
-  const title = mode === 'copy' ? `Copy settings from ${clip.sourceName}` : mode === 'sync' ? `Sync settings from ${clip.sourceName} to ${photos}` : `Paste settings onto ${photos}`
-  const action = mode === 'copy' ? 'Copy' : mode === 'sync' ? 'Sync' : 'Paste'
-  const nothing = current.keys.length === 0 && !(rerunAuto && auto)
+  const title = {
+    copy: `Copy settings from ${clip.sourceName}`,
+    sync: `Sync settings from ${clip.sourceName} to ${photos}`,
+    paste: `Paste settings onto ${photos}`,
+    preset: `New preset from ${clip.sourceName}`,
+  }[mode]
+  const action = { copy: 'Copy', sync: 'Sync', paste: 'Paste', preset: 'Save preset' }[mode]
+  const nothing = (current.keys.length === 0 && !(rerunAuto && auto)) || (mode === 'preset' && !name.trim())
   const sameKindChecked = PASTE_ITEMS.some((i) => i.sameKindOnly && keys.has(i.key))
   const kindNote = !targets || !sameKindChecked || targets.kind === clip.sourceKind
     ? ''
@@ -44,8 +56,8 @@ export function PasteDialog({ mode, clip, targets, onConfirm, onClose }: Props) 
   }
   const confirm = () => {
     if (nothing) return
-    if (mode !== 'paste') rememberChoice(current)
-    onConfirm(current)
+    if (mode === 'copy' || mode === 'sync') rememberChoice(current)
+    onConfirm(current, name.trim())
   }
 
   return (
@@ -53,6 +65,12 @@ export function PasteDialog({ mode, clip, targets, onConfirm, onClose }: Props) 
       <div className="dialog collection-dialog paste-dialog" role="dialog" aria-label={title} ref={dialog}>
         <h2>{title}</h2>
         {mode === 'paste' && <p className="muted small">Copied from {clip.sourceName}. Each photo’s other settings stay as they are; you can undo it in each photo’s history.</p>}
+        {mode === 'preset' && (
+          <label className="field">
+            Name
+            <input type="text" value={name} autoFocus onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && confirm()} placeholder="e.g. My landscapes" />
+          </label>
+        )}
 
         {!choosing ? (
           <>
@@ -67,7 +85,7 @@ export function PasteDialog({ mode, clip, targets, onConfirm, onClose }: Props) 
               <label className="paste-auto">
                 <input type="checkbox" checked={rerunAuto} onChange={(e) => setRerunAuto(e.target.checked)} />
                 <span>
-                  Re-run Auto on each photo
+                  {mode === 'preset' ? 'Run Auto on each photo' : 'Re-run Auto on each photo'}
                   <span className="muted small">
                     {' '}— “{auto.target.name}”, {Math.round(auto.strength * 100)} %. Each photo gets its own{' '}
                     {AUTO_SLIDERS.filter((s) => auto.sliders.includes(s.key)).map((s) => s.label).join(', ')} instead of this photo’s numbers.

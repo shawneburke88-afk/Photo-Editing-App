@@ -2,6 +2,7 @@
 // thumbnails. Adding a folder where it is (no copying) is Open folder, in library/indexer.ts.
 
 import type { Catalog } from '../catalog/client'
+import { photosAdded } from '../library/added'
 import { loadThumb, saveThumb } from '../catalog/thumbs'
 import type { PhotoMeta } from '../catalog/types'
 import { getDirAt, resolveRoot } from '../platform/roots'
@@ -195,6 +196,7 @@ export async function runImport(
     const raw = raws.get(key)
     if (raw !== undefined) await catalog.createStack([raw, jpeg], raw).catch(() => {})
   }
+  photosAdded.emit([...raws.values(), ...jpegs.values()])
   progress.current = ''
   onProgress({ ...progress })
   return progress

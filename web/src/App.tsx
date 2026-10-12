@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { BatchProgress } from './develop/BatchProgress'
 import { batch } from './develop/batch'
+import { startNewPhotosPreset } from './develop/presetStore'
 import { DevelopView } from './develop/DevelopView'
 import { isTextEntry } from './lib/keys'
 import { LibraryView } from './library/LibraryView'
@@ -53,6 +54,9 @@ export default function App() {
       if (timer) clearTimeout(timer)
     }
   }, [])
+
+  // Develop new photos (Open folder, Import) with the preset chosen for them.
+  useEffect(() => startNewPhotosPreset(), [])
 
   // Write any queued sidecars before the tab closes.
   useEffect(() => {

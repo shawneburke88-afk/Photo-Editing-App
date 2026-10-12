@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { NewPhotosPreset } from '../develop/PresetSelect'
 import { getCatalog } from '../catalog/client'
 import { loadHandle, saveHandle } from '../platform/handle-store'
 import { ensurePermission } from '../platform/roots'
@@ -413,6 +414,12 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
                     </label>
                   )}
                   {exampleName && <p className="muted small">Example: <code>{exampleName}</code></p>}
+                </fieldset>
+
+                <fieldset>
+                  <legend>Develop settings</legend>
+                  <NewPhotosPreset />
+                  <p className="muted small">Photos that already have edits (in their sidecars) keep them.</p>
                 </fieldset>
 
                 <fieldset>

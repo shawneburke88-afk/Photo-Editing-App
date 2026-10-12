@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS } from '../engine/develop/settings'
-import { canRedo, canUndo, current, record, redo, startHistory, undo } from './history'
+import { canRedo, canUndo, current, record, redo, replaceCurrent, startHistory, undo } from './history'
 
 const s = (exposure: number) => ({ ...DEFAULT_SETTINGS, exposure })
 
@@ -32,5 +32,14 @@ describe('history', () => {
     expect(canUndo(h)).toBe(false)
     h = record(h, 'Shadows', { ...s(0), shadows: 40 }, 20000)
     expect(h.steps.map((x) => x.label)).toEqual(['Import', 'Shadows'])
+  })
+
+  it('replaces the settings of the step shown without adding a step (preset Amount)', () => {
+    const h = record(startHistory(DEFAULT_SETTINGS), 'Preset: Punchy', { ...DEFAULT_SETTINGS, contrast: 25 }, 0)
+    const r = replaceCurrent(h, { ...DEFAULT_SETTINGS, contrast: 12 })
+    expect(r.steps.length).toBe(2)
+    expect(r.steps[1].label).toBe('Preset: Punchy')
+    expect(current(r).contrast).toBe(12)
+    expect(current(h).contrast).toBe(25)
   })
 })

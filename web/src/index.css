@@ -518,3 +518,23 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .auto-options .auto-sliders label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
 .auto-note { font-size: 0.78rem; color: var(--muted); margin: 4px 0 0; }
 .dbadge.sync { top: auto; bottom: 10px; color: var(--text); }
+
+/* Presets */
+.presets { border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.presets-head { display: flex; align-items: baseline; justify-content: space-between; padding-right: 12px; }
+.presets-list { max-height: 210px; overflow: auto; }
+.presets-group { margin: 6px 12px 2px; font-size: 0.72rem; color: var(--muted); }
+.preset-row { display: flex; align-items: center; }
+.preset-row:hover { background: var(--panel-2); }
+.preset-row.on { box-shadow: inset 3px 0 0 var(--accent); background: var(--panel-2); }
+.preset-name { flex: 1; text-align: left; background: none; border: 0; color: var(--text); font: inherit; font-size: 0.88rem; padding: 3px 12px; cursor: pointer; }
+.preset-name:disabled { color: var(--muted); cursor: default; }
+.preset-row .kw-delete { visibility: hidden; background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; padding: 0 10px; }
+.preset-row:hover .kw-delete { visibility: visible; }
+.preset-row .kw-delete:hover { color: var(--text); }
+.preset-amount { display: flex; align-items: center; gap: 8px; padding: 6px 12px 0; font-size: 0.85rem; }
+.preset-amount input { flex: 1; accent-color: var(--accent); }
+.presets-hint { margin: 4px 12px 0; }
+.new-photos-preset { display: flex; flex-direction: column; gap: 3px; margin: 0 12px 10px; }
+.new-photos-preset select { width: 100%; }
+.preset-amount > .muted { white-space: nowrap; min-width: 3.4em; text-align: right; }

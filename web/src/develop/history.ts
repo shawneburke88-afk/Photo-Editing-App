@@ -43,6 +43,13 @@ export const redo = (h: History): History => ({ ...h, index: Math.min(h.steps.le
 export const jump = (h: History, index: number): History => ({ ...h, index: Math.min(h.steps.length - 1, Math.max(0, index)) })
 export const current = (h: History) => h.steps[h.index].settings
 
+/** Changes the settings of the step shown, without adding a step (a preset's Amount after applying it). */
+export function replaceCurrent(h: History, settings: DevelopSettings): History {
+  const steps = [...h.steps]
+  steps[h.index] = { ...steps[h.index], settings }
+  return { ...h, steps }
+}
+
 /** Saved form of the history (timestamps are not stored). */
 export interface SavedHistory {
   steps: { label: string; settings: DevelopSettings }[]

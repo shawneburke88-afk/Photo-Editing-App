@@ -20,10 +20,13 @@ import { ResizeHandle } from './ResizeHandle'
 import { WbLoupe } from './WbLoupe'
 import { loadIntoEngine, multipliers, renderThumbnail, stageOptions, type SensorInfo } from './source'
 import { sidecars } from '../sidecar/sync'
-import { canRedo, canUndo, current, jump, loadHistory, record, redo, savedForm, undo, type History } from './history'
+import { canRedo, canUndo, current, jump, loadHistory, record, redo, replaceCurrent, savedForm, undo, type History } from './history'
 import { batch, rerunAuto } from './batch'
 import { applyPaste, changedKeys, rememberedChoice, settingsClipboard, type Clipboard, type PasteKey } from './paste'
 import { PasteDialog } from './PasteDialog'
+import { PresetPanel } from './PresetPanel'
+import { blendSettings, presetClip, type Preset, type PresetData } from './presets'
+import { loadPresets, presetsChanged } from './presetStore'
 
 interface Props {
   ids: number[]
@@ -50,7 +53,17 @@ interface AutoOptionsState {
 }
 const DEFAULT_AUTO_OPTIONS: AutoOptionsState = { strength: 1, sliders: AUTO_SLIDERS.map((x) => x.key) }
 
-type PasteMode = { mode: 'copy' | 'sync' | 'paste'; clip: Clipboard }
+type PasteMode = { mode: 'copy' | 'sync' | 'paste' | 'preset'; clip: Clipboard }
+
+/** The preset just applied: its Amount can be changed until the photo is changed another way. */
+interface AppliedPreset {
+  preset: Preset
+  before: DevelopSettings
+  after: DevelopSettings
+  amount: number
+  /** The settings now shown, as set by the preset (when they change otherwise, the Amount goes away). */
+  result: DevelopSettings
+}
 
 export function DevelopView({ ids, id, selected: initialSelection, onNavigate, onEdited, onExport }: Props) {
   const catalog = getCatalog()
@@ -98,6 +111,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [autoSync, setAutoSync] = useState(false)
   const [pasting, setPasting] = useState<PasteMode | null>(null)
   const [reloads, setReloads] = useState(0)
+  const [presets, setPresets] = useState<Preset[]>([])
+  const [hoverPreset, setHoverPreset] = useState<Preset | null>(null)
+  const [applied, setApplied] = useState<AppliedPreset | null>(null)
   const hasClip = useSyncExternalStore(settingsClipboard.subscribe, () => !!settingsClipboard.get())
   const [leftW, setLeftW] = useStoredNumber('lightbench.develop.left', 240)
   const [rightW, setRightW] = useStoredNumber('lightbench.develop.right', 300)
@@ -111,6 +127,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   const defaults = defaultsFor(info?.kind ?? 'raw')
   const settings = history ? current(history) : defaults
+  /** Hover preview of a preset (its Auto, if any, runs only when it is applied). */
+  const hover = useMemo(
+    () => (hoverPreset && info ? applyPaste(settings, { ...presetClip(hoverPreset), rerunAuto: false }, info.kind) : null),
+    [hoverPreset, info, settings],
+  )
 
   // ---- engine lifetime
   useEffect(() => {
@@ -223,8 +244,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     () => ({ clip: clipSettings, showClip: overlay, raw: rawClipSettings, showRaw: rawOverlay }),
     [clipSettings, overlay, rawClipSettings, rawOverlay],
   )
-  const latest = useRef({ settings, info, view, before, indicators })
-  latest.current = { settings, info, view, before, indicators }
+  const latest = useRef({ settings, info, view, before, indicators, hover })
+  latest.current = { settings, info, view, before, indicators, hover }
 
   // Histogram: measured on a small rendering shortly after each redraw (throttled).
   const statsTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -233,9 +254,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     statsTimer.current = setTimeout(async () => {
       statsTimer.current = null
       const engine = engineRef.current
-      const { settings: s, info: inf, before: b, indicators: ind } = latest.current
+      const { settings: s, info: inf, before: b, indicators: ind, hover: hv } = latest.current
       if (!engine || !inf) return
-      const shown = b ? defaultsFor(inf.kind) : s
+      const shown = b ? defaultsFor(inf.kind) : (hv ?? s)
       try {
         setStats(await engine.renderStats(displayUniforms(shown), b ? inf.asShotWb : multipliers(shown, inf), 256, ind))
       } catch {
@@ -253,9 +274,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       while (pending.current) {
         pending.current = false
         const engine = engineRef.current
-        const { settings: s, info: inf, view: v, before: b, indicators: o } = latest.current
+        const { settings: s, info: inf, view: v, before: b, indicators: o, hover: hv } = latest.current
         if (!engine || !inf) break
-        const shown = b ? defaultsFor(inf.kind) : s
+        const shown = b ? defaultsFor(inf.kind) : (hv ?? s)
         try {
           const ms = await engine.render(displayUniforms(shown), b ? inf.asShotWb : multipliers(shown, inf), v, o)
           setTiming((x) => ({ ...x, frame: ms }))
@@ -270,7 +291,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   useEffect(() => {
     if (status.kind === 'ready') requestRender()
-  }, [status.kind, settings, view, before, indicators, requestRender])
+  }, [status.kind, settings, view, before, indicators, hover, requestRender])
 
   useEffect(() => {
     const el = stageRef.current
@@ -463,12 +484,73 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     change('Paste settings', next, true)
   }
 
-  function confirmPaste(clip: Clipboard) {
+  function confirmPaste(clip: Clipboard, name: string) {
     const mode = pasting?.mode
     setPasting(null)
-    if (mode === 'copy') settingsClipboard.set(clip)
+    if (mode === 'preset') void savePreset(clip, name)
+    else if (mode === 'copy') settingsClipboard.set(clip)
     else if (mode === 'paste') void pasteHere(clip)
     else if (mode === 'sync') batch.run({ label: 'Sync settings', ids: others, clip })
+  }
+
+  // ---- presets
+  useEffect(() => {
+    const load = () => void loadPresets().then(setPresets)
+    load()
+    return presetsChanged.subscribe(load)
+  }, [])
+
+  // The Amount slider stays while the photo shows what the preset set; any other change (or another photo) ends it.
+  const amountFor = applied && applied.result === settings ? applied : null
+
+  async function applyPreset(p: Preset) {
+    const engine = engineRef.current
+    if (!engine || !info || status.kind !== 'ready') return
+    setHoverPreset(null)
+    const before = settings
+    let after = applyPaste(before, presetClip(p), info.kind)
+    if (p.rerunAuto && p.settings.auto) {
+      setAutoBusy(true)
+      try {
+        after = await rerunAuto(engine, { ...after, auto: p.settings.auto }, info)
+        builtStage.current = stageOptions(after, info)
+      } catch (e) {
+        setStatus({ kind: 'error', message: `Auto failed: ${e instanceof Error ? e.message : e}` })
+        return
+      } finally {
+        setAutoBusy(false)
+      }
+    }
+    change(`Preset: ${p.name}`, after, true)
+    setApplied({ preset: p, before, after, amount: 1, result: after })
+  }
+
+  function changeAmount(amount: number) {
+    if (!amountFor || !info) return
+    const result = blendSettings(amountFor.before, amountFor.after, amount, info.asShot)
+    dirty.current = true
+    setHistory((h) => (h && current(h) === amountFor.result ? replaceCurrent(h, result) : h))
+    setApplied({ ...amountFor, amount, result })
+  }
+
+  function openNewPreset() {
+    // Pre-tick what differs from the defaults, so a preset holds what was actually changed.
+    const changed = changedKeys(defaults, settings)
+    const { keys } = rememberedChoice()
+    const clip = clipFor(changed.length ? changed : keys, !!settings.auto)
+    if (clip && status.kind === 'ready') setPasting({ mode: 'preset', clip })
+  }
+
+  async function savePreset(clip: Clipboard, name: string) {
+    const data: PresetData = { keys: clip.keys, settings: clip.settings, rerunAuto: clip.rerunAuto && !!clip.settings.auto, sourceKind: clip.sourceKind }
+    await catalog.savePreset(name, JSON.stringify(data))
+    presetsChanged.emit()
+  }
+
+  async function removePreset(p: Preset) {
+    if (p.starter || !window.confirm(`Delete the preset “${p.name}”? Photos it was applied to keep their settings.`)) return
+    await catalog.deletePreset(Number(p.id.slice('user:'.length)))
+    presetsChanged.emit()
   }
 
   // Auto Sync: each change here goes to the other selected photos, a moment after the last one.
@@ -698,6 +780,16 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           />
         </section>
         <ResizeHandle axis="y" value={histH} min={90} max={480} onChange={setHistH} label="Resize histogram" />
+        <PresetPanel
+          presets={presets}
+          applied={amountFor ? { id: amountFor.preset.id, amount: amountFor.amount } : null}
+          disabled={status.kind !== 'ready' || autoBusy}
+          onHover={setHoverPreset}
+          onApply={(p) => void applyPreset(p)}
+          onAmount={changeAmount}
+          onNew={openNewPreset}
+          onDelete={(p) => void removePreset(p)}
+        />
         <h3 className="panel-title">History</h3>
         <ol className="history" reversed>
           {history &&
@@ -770,6 +862,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           {status.kind === 'error' && <div className="dmessage error">{status.message}</div>}
           {engineError && <div className="dmessage error">{engineError}</div>}
           {before && <div className="dbadge">Before</div>}
+          {!before && hoverPreset && <div className="dbadge">Preview: {hoverPreset.name}</div>}
           {(overlay || rawOverlay) && (
             <div className="dbadge right">
               {[overlay && 'Clipping shown (J)', rawOverlay && 'Sensor clipping shown (Shift+O)'].filter(Boolean).join(' · ')}
