@@ -15,6 +15,7 @@ import { normalizeSettings } from '../engine/develop/settings'
 import { isRawFile } from '../engine/raw/decoder'
 import { getDirAt, getRootHandle } from '../platform/roots'
 import { fieldsFromRead, mergeForRead, parseFields } from './changes'
+import { sidecarCandidates } from './naming'
 import { externalChanges, inspectSidecar, locateSidecar, oursOf } from './external'
 import { sidecars } from './sync'
 import { isValidXmp, readXmp } from './xmp'
@@ -58,10 +59,10 @@ export async function checkPhoto(id: number): Promise<void> {
   try {
     const catalog = getCatalog()
     const src = await catalog.sidecarSource(id)
-    if (!src?.owner) return
+    if (!src) return
     if (src.sidecar.external) return externalChanges.add([src.photo.id])
     const dir = await photoDir(src.photo)
-    const located = dir ? await locateSidecar(dir, src.photo.fileName) : null
+    const located = dir ? await locateSidecar(dir, src.photo.fileName, src.owner) : null
     if (located) await inspectSidecar(catalog, src, located.file)
   } catch {
     // A check that fails (folder gone, catalog busy) is tried again next time.
@@ -86,8 +87,8 @@ export async function checkFolder(rootId: number, path: string, lookup: (folderP
         out.external++
         continue
       }
-      const dot = r.fileName.lastIndexOf('.')
-      const handle = lookup(r.folderPath, `${dot > 0 ? r.fileName.slice(0, dot) : r.fileName}.xmp`) ?? lookup(r.folderPath, `${r.fileName}.xmp`)
+      // The file this photo reads and writes (naming.ts): a JPEG next to its RAW watches its own name.JPG.xmp.
+      const handle = sidecarCandidates(r.fileName, r.owner).reduce<FileSystemFileHandle | undefined>((found, name) => found ?? lookup(r.folderPath, name), undefined)
       if (!handle) continue
       try {
         const file = await handle.getFile()
@@ -134,7 +135,7 @@ export async function readChanges(ids: number[]): Promise<Answer> {
       continue
     }
     const dir = await photoDir(src.photo)
-    const located = dir ? await locateSidecar(dir, src.photo.fileName).catch(() => null) : null
+    const located = dir ? await locateSidecar(dir, src.photo.fileName, src.owner).catch(() => null) : null
     if (!dir) {
       answer.skipped++
       continue
@@ -192,7 +193,7 @@ export async function ignoreChanges(ids: number[]): Promise<Answer> {
       continue
     }
     const dir = await photoDir(src.photo)
-    const located = dir ? await locateSidecar(dir, src.photo.fileName).catch(() => null) : null
+    const located = dir ? await locateSidecar(dir, src.photo.fileName, src.owner).catch(() => null) : null
     if (!dir) {
       answer.skipped++
       continue

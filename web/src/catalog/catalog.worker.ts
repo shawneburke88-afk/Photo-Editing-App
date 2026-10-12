@@ -6,6 +6,7 @@ import { isStorageFailure, NEWER_CATALOG_MESSAGE } from './errors'
 import { compileSmart, type SmartRules } from './smart'
 import { burstGroups, collapseStacks } from './stacks'
 import type { SidecarState } from '../sidecar/changes'
+import { ownsStem, stemOwners } from '../sidecar/naming'
 import { checkCatalogImage, discardStaged, exportCatalog, removeLeftovers, stageCatalog } from './backup-db'
 import { SCHEMA_VERSION } from './schema'
 import { activeSlot, type Slot } from './slot'
@@ -1244,19 +1245,19 @@ function sidecarSource(requested: number) {
   const p = getPhoto(photoId)
   if (!p) return null
   const edit = getEdit(photoId)
-  // Lightroom-style sidecars (name.xmp) are shared by files with the same base name. Like Lightroom with
-  // RAW+JPEG pairs, the RAW owns it: a JPEG doesn't write one when a non-JPEG twin is in the library.
+  // Lightroom-style sidecars (name.xmp) are shared by files with the same base name. The RAW owns it; its JPEG twin
+  // uses name.JPG.xmp (sidecar/naming.ts).
   const dot = p.fileName.lastIndexOf('.')
   const base = dot > 0 ? p.fileName.slice(0, dot) : p.fileName
-  const isJpeg = /^jpe?g$/i.test(p.fileType)
   const twins = conn().selectObjects(
-    `SELECT file_type AS fileType FROM photos
+    `SELECT file_name AS fileName FROM photos
      WHERE folder_id = ?1 AND id <> ?2 AND version = 0
        AND lower(substr(file_name, 1, length(?3) + 1)) = lower(?3) || '.'
        AND instr(substr(file_name, length(?3) + 2), '.') = 0`,
     [p.folderId, photoId, base],
-  ) as unknown as { fileType: string }[]
-  const owner = !(isJpeg && twins.some((t) => !/^jpe?g$/i.test(t.fileType)))
+  ) as unknown as { fileName: string }[]
+  /** Whether the photo owns name.xmp; when not, its sidecar is name.ext.xmp. */
+  const owner = ownsStem(p.fileName, twins.map((t) => t.fileName))
   const read = conn().selectObject('SELECT keywords_read AS k, metadata_read AS m FROM photos WHERE id = ?', [photoId]) as { k: number; m: number }
   return {
     photo: p, settings: edit?.settings ?? null, owner, keywords: photoKeywords(photoId), keywordsRead: read.k === 1, collections: photoCollections(photoId),
@@ -1289,25 +1290,19 @@ function sidecarCompare(photoId: number) {
 }
 
 /**
- * The sidecar records of the photos under a folder that own their sidecar: originals only (virtual copies live in
- * their original's sidecar), and not a JPEG whose RAW twin is in the same folder (the RAW owns the shared sidecar).
+ * The sidecar records of the photos under a folder: originals only (virtual copies live in their original's
+ * sidecar). `owner`: the photo owns name.xmp; a JPEG whose RAW twin is in the same folder doesn't, and uses
+ * name.JPG.xmp (sidecar/naming.ts).
  */
-function sidecarStates(rootId: number, path: string): (Omit<SidecarState, 'fields'> & { id: number; folderPath: string; fileName: string })[] {
+function sidecarStates(rootId: number, path: string): (Omit<SidecarState, 'fields'> & { id: number; folderPath: string; fileName: string; owner: boolean })[] {
   const rows = conn().selectObjects(
     `SELECT p.id, f.path AS folderPath, p.file_name AS fileName, p.file_type AS fileType, ${SIDECAR_STATE}
      FROM photos p JOIN folders f ON f.id = p.folder_id
      WHERE p.version = 0 AND f.root_id = ?1 AND (?2 = '' OR f.path = ?2 OR substr(f.path, 1, length(?2) + 1) = ?2 || '/')`,
     [rootId, path],
   ) as unknown as (StateRow & { id: number; folderPath: string; fileName: string; fileType: string })[]
-  const isJpeg = (t: string) => /^jpe?g$/i.test(t)
-  const base = (r: { folderPath: string; fileName: string }) => {
-    const dot = r.fileName.lastIndexOf('.')
-    return `${r.folderPath}/${(dot > 0 ? r.fileName.slice(0, dot) : r.fileName).toLowerCase()}`
-  }
-  const rawBases = new Set(rows.filter((r) => !isJpeg(r.fileType)).map(base))
-  return rows
-    .filter((r) => !(isJpeg(r.fileType) && rawBases.has(base(r))))
-    .map(({ fileType: _t, ...r }) => ({ ...r, external: !!r.external }))
+  const owners = stemOwners(rows.map((r) => ({ dir: r.folderPath, name: r.fileName })))
+  return rows.map(({ fileType: _t, ...r }) => ({ ...r, external: !!r.external, owner: owners.has(`${r.folderPath}/${r.fileName}`) }))
 }
 
 /**

@@ -75,14 +75,17 @@ describe('sidecar records', () => {
     cameraMake: '', cameraModel: '', lens: '', iso: 0, shutter: 0, aperture: 0, focalLength: 0, width: 1, height: 1, orientation: 0,
   })
 
-  it('lists photos that own their sidecar, records reads and writes, and marks changes by other apps', async () => {
+  it('lists photos with their sidecar owner, records reads and writes, and marks changes by other apps', async () => {
     await api.open({ inMemory: true })
     const root = api.addRoot('Photos')
     const [a, b, bj, c] = api.addPhotos([photo('A.NEF'), photo('B.NEF'), photo('B.JPG'), photo('C.jpg', 'day2')].map((p) => ({ ...p, rootId: root })))
     const copy = api.createVirtualCopy(a!)
-    const listed = api.sidecarStates(root, '').map((r) => r.fileName).sort()
-    // B.JPG's sidecar belongs to B.NEF; the virtual copy lives in A's sidecar.
-    expect(listed).toEqual(['A.NEF', 'B.NEF', 'C.jpg'])
+    const listed = api.sidecarStates(root, '').map((r) => `${r.fileName}:${r.owner}`).sort()
+    // B.NEF owns B.xmp; B.JPG has its own B.JPG.xmp. The virtual copy lives in A's sidecar.
+    expect(listed).toEqual(['A.NEF:true', 'B.JPG:false', 'B.NEF:true', 'C.jpg:true'])
+    expect(api.sidecarSource(b!)!.owner).toBe(true)
+    expect(api.sidecarSource(bj!)!.owner).toBe(false)
+    expect(api.sidecarSource(c!)!.owner).toBe(true)
     expect(api.sidecarStates(root, 'day2').map((r) => r.id)).toEqual([c])
     expect(api.sidecarStates(root, '').find((r) => r.id === a)).toMatchObject({ modified: null, size: null, external: false, writtenAt: null })
 

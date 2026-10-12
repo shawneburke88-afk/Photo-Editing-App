@@ -13,7 +13,8 @@ import { QUIET_MS } from '../catalog/storage'
 import { getDirAt, getRootHandle } from '../platform/roots'
 import { fieldsFromRead } from './changes'
 import { externalChanges, inspectSidecar, locateSidecar } from './external'
-import { readXmp, sidecarName, writeXmp } from './xmp'
+import { sidecarFor } from './naming'
+import { readXmp, writeXmp } from './xmp'
 
 export interface SidecarStatus {
   /** Library folders where LightBench is waiting for permission to write sidecars. */
@@ -74,9 +75,10 @@ class SidecarSync {
   private async writeOne(id: number) {
     const catalog = getCatalog()
     const src = await catalog.sidecarSource(id)
-    if (!src || !src.owner) return
+    if (!src) return
     const { photo } = src
-    const name = sidecarName(photo.fileName)
+    // RAW+JPEG twins (naming.ts): the RAW writes name.xmp, the JPEG its own name.JPG.xmp.
+    const name = sidecarFor(photo.fileName, src.owner)
     const root = await getRootHandle(photo.rootId)
     // The browser forgot the folder (e.g. its site data was cleared): say so rather than skipping silently.
     if (!root) throw new Error(`${name}: LightBench no longer has access to this photo's folder. Open the folder again with Open folder.`)
@@ -96,13 +98,15 @@ class SidecarSync {
       throw new Error(`${where}: ${e.name === 'NotFoundError' ? 'the folder can’t be found (was it moved or renamed?)' : e.message}`, { cause: e })
     })
     // Changed by another app since LightBench last read or wrote it: don't overwrite it, ask (SidecarBanner).
-    const located = await locateSidecar(dir, photo.fileName)
+    const located = await locateSidecar(dir, photo.fileName, src.owner)
     if (src.sidecar.external || (located && (await inspectSidecar(catalog, src, located.file)) === 'external')) {
       externalChanges.add([photo.id])
       externalChanges.hold(photo.id)
       return
     }
-    // darktable's name.ext.xmp is read but never written: LightBench writes its own name.xmp.
+    // For the RAW (or a photo alone), darktable's name.ext.xmp is read but never written: LightBench writes its own
+    // name.xmp. A JPEG next to its RAW writes name.JPG.xmp, which is also darktable's name for that JPEG's sidecar;
+    // darktable's fields in it are kept (writeXmp merges).
     const existing = located?.name === name ? await located.file.text() : null
     let keywords = src.keywords
     if (!src.keywordsRead) {

@@ -9,7 +9,8 @@ import { getDirAt, resolveRoot } from '../platform/roots'
 import { copyVerified } from './copy'
 import { baseNameOf, dateFolder, extensionOf, JPEG_EXTENSIONS, joinPath, renamedFile, type RenameTemplate } from './plan'
 import type { ScannedFile } from './scan'
-import { readXmp, sidecarName } from '../sidecar/xmp'
+import { fullSidecarName, sidecarCandidates, stemOwners, stemSidecarName } from '../sidecar/naming'
+import { readXmp } from '../sidecar/xmp'
 
 export interface ImportItem {
   file: ScannedFile
@@ -65,15 +66,28 @@ export async function findAtDestination(dest: FileSystemDirectoryHandle, items: 
   return out
 }
 
+/** A sidecar found for a photo. `borrowed`: its RAW twin's `NAME.xmp`, read because the photo has none of its own. */
+export interface FoundSidecar {
+  name: string
+  text: string
+  modified: number
+  size: number
+  borrowed: boolean
+}
+
 /**
- * Finds an existing sidecar for a photo: Lightroom-style `name.xmp` (what LightBench writes), or darktable's
- * `name.ext.xmp`. Returns its file name and text, or null.
+ * Finds an existing sidecar for a photo (sidecar/naming.ts): the owner of `NAME.xmp` reads it, else darktable's
+ * `NAME.ext.xmp`; a JPEG next to its RAW reads its own `NAME.JPG.xmp`. Without one, the JPEG borrows the RAW's
+ * `NAME.xmp` when it is added (as LightBench always did, and as LightCraft does), but only for the library fields
+ * (see applySidecar). Returns null when there is none.
  */
-export async function findSidecar(dir: FileSystemDirectoryHandle, photoName: string): Promise<{ name: string; text: string; modified: number; size: number } | null> {
-  for (const name of [sidecarName(photoName), `${photoName}.xmp`]) {
+export async function findSidecar(dir: FileSystemDirectoryHandle, photoName: string, owner = true): Promise<FoundSidecar | null> {
+  const names = sidecarCandidates(photoName, owner).map((name) => ({ name, borrowed: false }))
+  if (!owner) names.push({ name: stemSidecarName(photoName), borrowed: true })
+  for (const { name, borrowed } of names) {
     try {
       const file = await (await dir.getFileHandle(name)).getFile()
-      return { name, text: await file.text(), modified: file.lastModified, size: file.size }
+      return { name, text: await file.text(), modified: file.lastModified, size: file.size, borrowed }
     } catch {
       // not there; try the next naming style
     }
@@ -83,15 +97,17 @@ export async function findSidecar(dir: FileSystemDirectoryHandle, photoName: str
 
 /**
  * Applies what a sidecar says (ratings, flag, label, keywords, metadata, collections, stack, virtual copies,
- * LightBench edits) to a newly imported photo.
+ * LightBench edits) to a newly imported photo. A `borrowed` sidecar (the RAW twin's) gives only stars, flag, label,
+ * keywords and metadata: its edits, virtual copies, stack and collections are the RAW's.
  */
-export async function applySidecar(catalog: Catalog, id: number, text: string) {
+export async function applySidecar(catalog: Catalog, id: number, text: string, borrowed = false) {
   const r = readXmp(text)
   if (r.metadata) await catalog.setMetadata([id], r.metadata)
   if (r.rating !== undefined) await catalog.setRating([id], r.rating)
   if (r.flag !== undefined) await catalog.setFlag([id], r.flag)
   if (r.color !== undefined) await catalog.setColor([id], r.color)
   if (r.keywords?.length) await catalog.addKeywords([id], r.keywords)
+  if (borrowed) return
   if (r.collections?.length) await catalog.addToCollectionsByName(id, r.collections)
   if (r.stack) await catalog.joinStackByUid(id, r.stack.uid, r.stack.top)
   if (r.versions?.length) {
@@ -131,6 +147,8 @@ export async function runImport(
   const pairKey = (f: ScannedFile) => `${f.dir}/${baseNameOf(f.name).toLowerCase()}`
   const raws = new Map<string, number>()
   const jpegs = new Map<string, number>()
+  // Which file of RAW+JPEG twins on the card owns `NAME.xmp` (sidecar/naming.ts).
+  const owners = stemOwners(ordered.map((it) => it.file))
 
   for (const [index, item] of ordered.entries()) {
     if (signal?.aborted) break
@@ -139,7 +157,7 @@ export async function runImport(
     try {
       // An existing sidecar (from Lightroom, darktable, or LightBench itself) carries ratings, labels and edits.
       const sourceDir = await getDirAt(opts.source, item.file.dir).catch(() => null)
-      const sidecar = sourceDir ? await findSidecar(sourceDir, item.file.name) : null
+      const sidecar = sourceDir ? await findSidecar(sourceDir, item.file.name, owners.has(`${item.file.dir}/${item.file.name}`)) : null
       const folder = dateFolder(photoTime(item.meta))
       const dir = await getDirAt(target, folder, true)
       const file = await item.file.handle.getFile()
@@ -148,9 +166,11 @@ export async function runImport(
       const copy = await copyVerified(dir, wanted, file)
       const fileName = copy.name
       if (backupDir) await copyVerified(backupDir, item.file.name, file, copy.digest)
-      if (sidecar) {
-        // The sidecar travels with the photo, renamed to match it. An existing one there is kept.
-        const name = sidecarName(fileName)
+      if (sidecar && !sidecar.borrowed) {
+        // The sidecar travels with the photo, renamed to match it (in the same naming style). An existing one there
+        // is kept. A borrowed one is the RAW's, which travels with the RAW.
+        const stem = sidecar.name.toLowerCase() === stemSidecarName(item.file.name).toLowerCase()
+        const name = stem ? stemSidecarName(fileName) : fullSidecarName(fileName)
         const exists = await dir.getFileHandle(name).then(() => true, () => false)
         if (!exists) {
           const w = await (await dir.getFileHandle(name, { create: true })).createWritable()
@@ -170,7 +190,7 @@ export async function runImport(
         ;(JPEG_EXTENSIONS.includes(extensionOf(item.file.name)) ? jpegs : raws).set(pairKey(item.file), id)
         if (item.thumb) await saveThumb(id, item.thumb)
         const xmpText = sidecar?.text ?? item.xmp
-        if (xmpText) await applySidecar(catalog, id, xmpText)
+        if (xmpText) await applySidecar(catalog, id, xmpText, !!sidecar?.borrowed)
         if (item.camera) await catalog.fillMetadata([id], item.camera)
       }
     } catch (err) {
