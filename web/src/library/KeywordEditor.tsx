@@ -1,6 +1,7 @@
 import { forwardRef, useMemo, useState } from 'react'
 import { KEYWORD_SEP } from '../sidecar/xmp'
 import { parseKeywordInput, showKeyword } from './keywords'
+import { withKey } from '../settings/shortcuts'
 
 export interface KeywordCount {
   path: string
@@ -96,7 +97,7 @@ export const KeywordEditor = forwardRef<HTMLInputElement, Props>(function Keywor
           ref={ref}
           type="text"
           value={text}
-          placeholder={total > 1 ? `Add to ${total} photos (Ctrl+K)` : 'Add keywords (Ctrl+K)'}
+          placeholder={withKey(total > 1 ? `Add to ${total} photos` : 'Add keywords', 'library.keywords')}
           aria-label="Add keywords"
           onChange={(e) => {
             setText(e.target.value)

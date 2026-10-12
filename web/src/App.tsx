@@ -3,13 +3,17 @@ import { BatchProgress } from './develop/BatchProgress'
 import { batch } from './develop/batch'
 import { startNewPhotosPreset } from './develop/presetStore'
 import { DevelopView } from './develop/DevelopView'
-import { isTextEntry } from './lib/keys'
 import { LibraryView } from './library/LibraryView'
 import { startNewPhotosMetadata } from './library/metadataPresets'
 import { launched } from './pwa/launch'
 import { UpdateNotice } from './pwa/UpdateNotice'
 import { SidecarBanner } from './sidecar/SidecarBanner'
 import { sidecars } from './sidecar/sync'
+import { CommandSearch } from './settings/CommandSearch'
+import { SettingsDialog, type SettingsSection } from './settings/SettingsDialog'
+import { ShortcutList } from './settings/ShortcutList'
+import { onShortcutKey, useKeymapVersion, useShortcuts, withKey } from './settings/shortcuts'
+import { settings, stepScale } from './settings/store'
 import { SystemCheck } from './syscheck/SystemCheck'
 import { ExportDialog } from './export/ExportDialog'
 
@@ -22,6 +26,8 @@ export default function App() {
   /** The photo being developed, the filmstrip, and the photos selected with it (for Sync). */
   const [developing, setDeveloping] = useState<{ id: number; ids: number[]; selected: number[] } | null>(null)
   const [libraryVersion, setLibraryVersion] = useState(0)
+  /** Settings, the shortcut list (?) or command search (Ctrl+Shift+P), shown over any module. */
+  const [panel, setPanel] = useState<{ kind: 'settings'; section?: SettingsSection } | { kind: 'shortcuts' | 'commands' } | null>(null)
 
   const go = useCallback((m: Module) => {
     setModule(m)
@@ -73,14 +79,22 @@ export default function App() {
     return () => window.removeEventListener('pagehide', onHide)
   }, [])
 
-  // G returns to the Library grid from Develop, like Lightroom.
+  // One keyboard listener; each view says what its actions do (settings/shortcuts.ts).
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (module === 'develop' && e.key.toLowerCase() === 'g' && !isTextEntry(e.target)) go('library')
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [module, go])
+    window.addEventListener('keydown', onShortcutKey)
+    return () => window.removeEventListener('keydown', onShortcutKey)
+  }, [])
+  useShortcuts(['global'], true, (id) => {
+    if (id === 'app.settings') setPanel({ kind: 'settings' })
+    else if (id === 'app.shortcuts') setPanel({ kind: 'shortcuts' })
+    else if (id === 'app.commands') setPanel({ kind: 'commands' })
+    else if (id === 'app.scaleUp' || id === 'app.scaleDown') {
+      settings.update((s) => ({ ...s, display: { ...s.display, scale: stepScale(s.display.scale, id === 'app.scaleUp' ? 1 : -1) } }))
+    } else return false
+  })
+  // G returns to the Library grid from Develop, like Lightroom.
+  useShortcuts(['develop'], module === 'develop', (id) => (id === 'develop.grid' ? go('library') : false))
+  useKeymapVersion()
 
   const modules: { id: Module; name: string; enabled: boolean; hint?: string }[] = [
     { id: 'library', name: 'Library', enabled: true },
@@ -121,6 +135,12 @@ export default function App() {
             </button>
           ))}
         </nav>
+        <button className="gear" onClick={() => setPanel({ kind: 'settings' })} title={withKey('Settings', 'app.settings')} aria-label="Settings">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden>
+            <circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray="3.38 3.38" />
+            <circle cx="12" cy="12" r="5.6" fill="none" stroke="currentColor" strokeWidth="3.2" />
+          </svg>
+        </button>
       </header>
       <SidecarBanner />
       <main className={module === 'syscheck' ? 'main' : 'main full'}>
@@ -142,6 +162,9 @@ export default function App() {
       <BatchProgress />
       {exporting && <ExportDialog ids={exporting} onClose={() => setExporting(null)} />}
       <UpdateNotice />
+      {panel?.kind === 'settings' && <SettingsDialog section={panel.section} onClose={() => setPanel(null)} />}
+      {panel?.kind === 'shortcuts' && <ShortcutList onClose={() => setPanel(null)} onSettings={() => setPanel({ kind: 'settings', section: 'keyboard' })} />}
+      {panel?.kind === 'commands' && <CommandSearch onClose={() => setPanel(null)} />}
     </div>
   )
 }

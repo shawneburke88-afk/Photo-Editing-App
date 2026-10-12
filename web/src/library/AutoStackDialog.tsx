@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { keyText } from '../settings/shortcuts'
 
 interface Props {
   count: number
@@ -17,7 +18,7 @@ export function AutoStackDialog({ count, onRun, onClose }: Props) {
         <h2>Auto-stack by capture time</h2>
         <p className="muted small">
           Stacks photos taken in quick succession (bursts, brackets) among the {count.toLocaleString()} photos shown. Photos already in a
-          stack, or with no capture time, are left as they are. You can unstack with Ctrl+Shift+G.
+          stack, or with no capture time, are left as they are.{keyText('library.unstack') && ` You can unstack with ${keyText('library.unstack')}.`}
         </p>
         <label className="inline">
           Stack photos taken at most

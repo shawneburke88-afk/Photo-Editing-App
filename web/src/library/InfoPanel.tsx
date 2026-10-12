@@ -2,6 +2,7 @@ import type { ColorLabel, Flag, PhotoDetail } from '../catalog/types'
 import { bytes } from '../syscheck/format'
 import { captureText, COLOR_NAMES, exposureText } from './format'
 import { Stars } from './Stars'
+import { withKey } from '../settings/shortcuts'
 
 interface Props {
   photo: PhotoDetail | null
@@ -33,12 +34,12 @@ export function InfoPanel({ photo, count, onRating, onFlag, onColor, onDevelop, 
       {count > 1 && <p className="info-multi">{count} photos selected — changes apply to all of them</p>}
       <div className="info-actions">
         {!/^jpe?g$/i.test(photo.fileType) && (
-          <button className="button primary" onClick={onDevelop} title="Develop (D)">Edit in Develop</button>
+          <button className="button primary" onClick={onDevelop} title={withKey('Develop', 'photo.develop')}>Edit in Develop</button>
         )}
         <Stars value={photo.rating} onChange={onRating} />
         <div className="flag-buttons" role="group" aria-label="Flag">
-          <button className={photo.flag === 1 ? 'on pick' : ''} onClick={() => onFlag(photo.flag === 1 ? 0 : 1)} title="Pick (P)">⚑ Pick</button>
-          <button className={photo.flag === -1 ? 'on reject' : ''} onClick={() => onFlag(photo.flag === -1 ? 0 : -1)} title="Reject (X)">✕ Reject</button>
+          <button className={photo.flag === 1 ? 'on pick' : ''} onClick={() => onFlag(photo.flag === 1 ? 0 : 1)} title={withKey('Pick', 'photo.pick')}>⚑ Pick</button>
+          <button className={photo.flag === -1 ? 'on reject' : ''} onClick={() => onFlag(photo.flag === -1 ? 0 : -1)} title={withKey('Reject', 'photo.reject')}>✕ Reject</button>
         </div>
         <div className="label-buttons" role="group" aria-label="Color label">
           {[1, 2, 3, 4, 5].map((c) => (
@@ -68,7 +69,7 @@ export function InfoPanel({ photo, count, onRating, onFlag, onColor, onDevelop, 
             />
           </label>
         )}
-        <button className="button small" onClick={onVirtualCopy} title="Another version of this photo with its own edits, rating and keywords; the file isn't copied (Ctrl+')">
+        <button className="button small" onClick={onVirtualCopy} title={withKey("Another version of this photo with its own edits, rating and keywords; the file isn't copied", 'library.virtualCopy')}>
           Make virtual copy
         </button>
       </section>
