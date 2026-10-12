@@ -2,6 +2,7 @@ import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import { lensfun } from './lensfun-plugin.ts'
 import { serviceWorker } from './sw-plugin.ts'
 
 const commit = (() => {
@@ -19,7 +20,8 @@ const releases = JSON.parse(readFileSync(new URL('./src/pwa/release-notes.json',
 export default defineConfig({
   base: process.env.BASE_PATH ?? '/',
   // serviceWorker: offline use + COOP/COEP on GitHub Pages (production build only; see sw-plugin.ts).
-  plugins: [react(), serviceWorker({ version, releases })],
+  // lensfun: the Lensfun lens database as one JSON file, downloaded on first use (lensfun-plugin.ts).
+  plugins: [react(), lensfun(), serviceWorker({ version, releases })],
   define: { __APP_VERSION__: JSON.stringify(version) },
   worker: { format: 'es' },
   // These packages locate their .wasm files at runtime; pre-bundling breaks that.

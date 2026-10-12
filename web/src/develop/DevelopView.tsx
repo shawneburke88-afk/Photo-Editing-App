@@ -19,6 +19,9 @@ import { exposureText } from '../library/format'
 import { BasicPanel } from './BasicPanel'
 import { CropPanel, type GeometryEdit } from './CropPanel'
 import { CropOverlay } from './CropOverlay'
+import { LensPanel } from './LensPanel'
+import { LEGACY_LENS, type LensStatus } from '../engine/lens/correction'
+import { lensfunState, loadLensfun, subscribeLensfun } from '../engine/lens/lens-db'
 import { ToolStack, type GroupId } from './ToolStack'
 import { CROP_OVERLAYS, GROUP_ICONS, type CropOverlayKind } from './tools'
 import { Histogram } from './Histogram'
@@ -172,6 +175,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const saving = useRef<Promise<void> | null>(null)
 
   const defaults = defaultsFor(info?.kind ?? 'raw')
+  // The Lensfun database's state (downloaded on first use), so the Lens section and the photo update when it arrives.
+  const lensDb = useSyncExternalStore(subscribeLensfun, lensfunState)
   const settings = history ? current(history) : defaults
   /** Hover preview of a preset (its Auto, if any, runs only when it is applied). */
   const hover = useMemo(
@@ -307,11 +312,12 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   latest.current = { settings, info, view, before, indicators, hover, draft, bypass }
   /** The settings drawn: Before shows the defaults; a preset hovered, the crop being edited and switched-off groups apply on top. */
   const shownOf = (x: typeof latest.current, inf: SensorInfo): DevelopSettings => {
-    if (x.before) return defaultsFor(inf.kind)
+    // Before is the photo as shot: the defaults without lens corrections.
+    if (x.before) return { ...defaultsFor(inf.kind), lens: LEGACY_LENS }
     let s = x.hover ?? x.settings
     if (x.bypass.basic) s = withoutBasic(s, defaultsFor(inf.kind))
     if (x.draft) return { ...s, geometry: x.draft }
-    return x.bypass.crop ? { ...s, geometry: DEFAULT_GEOMETRY } : s
+    return x.bypass.crop ? { ...s, geometry: DEFAULT_GEOMETRY, lens: LEGACY_LENS } : s
   }
 
   // Histogram: measured on a small rendering of the (cropped) result shortly after each redraw (throttled, one at
@@ -383,7 +389,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   useEffect(() => {
     if (status.kind === 'ready') requestRender()
-  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, requestRender])
+  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, requestRender, lensDb])
 
   useEffect(() => {
     const el = stageRef.current
@@ -646,6 +652,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setCropOverlay({ kind: CROP_OVERLAYS[(i + 1) % CROP_OVERLAYS.length].id })
   }
   const updateProcess = () => change(`Update to process ${CURRENT_PROCESS}`, { ...settings, process: CURRENT_PROCESS })
+  // What the Lens section shows: resolved by the engine with the database as it is now (lensDb re-renders this).
+  const lensStatus: LensStatus = status.kind === 'ready' && engineRef.current ? engineRef.current.lensNow(settings.lens).status : { state: info?.lens ? 'loading' : 'not-raw', exifLens: '' }
 
   const selectedTarget = targets.find((t) => t.id === targetId) ?? BUILT_IN_TARGETS[0]
   const infoLine = photo ? exposureText(photo) : ''
@@ -1115,7 +1123,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           {before && <div className="dbadge">Before</div>}
           {!before && hoverPreset && !draft && <div className="dbadge">Preview: {hoverPreset.name}</div>}
           {!before && !draft && (bypass.crop || bypass.basic) && (
-            <div className="dbadge">Hidden: {[bypass.crop && 'Crop', bypass.basic && 'Basic'].filter(Boolean).join(', ')}</div>
+            <div className="dbadge">Hidden: {[bypass.crop && 'Crop & Lens', bypass.basic && 'Basic'].filter(Boolean).join(', ')}</div>
           )}
           {(overlay || rawOverlay) && (
             <div className="dbadge right">
@@ -1179,12 +1187,13 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             {
               id: 'crop',
               label: 'Crop',
-              title: 'Crop',
+              title: 'Crop & Lens',
               icon: GROUP_ICONS.crop,
-              bypass: isIdentityGeometry(settings.geometry) && !bypass.crop
+              bypass: isIdentityGeometry(settings.geometry) && lensStatus.state !== 'applied' && !bypass.crop
                 ? undefined
-                : { off: bypass.crop, onToggle: () => setBypass((b) => ({ ...b, crop: !b.crop })), title: bypass.crop ? 'Show the crop again' : 'Show the photo without crop, straighten, rotate and flip (nothing is changed)' },
+                : { off: bypass.crop, onToggle: () => setBypass((b) => ({ ...b, crop: !b.crop })), title: bypass.crop ? 'Show the crop and lens corrections again' : 'Show the photo without crop, straighten, rotate, flip and lens corrections (nothing is changed)' },
               content: (
+                <>
                 <CropPanel
                   geometry={geometry}
                   frame={info ? frameOf(geometry) : null}
@@ -1201,6 +1210,17 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   onOverlay={(kind) => setCropOverlay({ kind })}
                   onEdit={editGeometry}
                 />
+                <LensPanel
+                  lens={settings.lens}
+                  status={lensStatus}
+                  meta={info?.lens ?? null}
+                  db={lensDb}
+                  disabled={status.kind !== 'ready'}
+                  showHint={hintsPref === 1}
+                  onLoadDb={() => void loadLensfun(true)}
+                  onChange={(label, lens) => change(label, { ...settings, lens })}
+                />
+                </>
               ),
             },
             {

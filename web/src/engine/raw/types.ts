@@ -1,5 +1,7 @@
 /** Data extracted from a camera RAW file by the decoder worker. */
 
+import type { LensMeta } from '../lens/meta'
+
 export interface PhotoInfo {
   make: string
   model: string
@@ -75,6 +77,8 @@ export interface DecodeResult {
   rgb?: RgbImage
   /** Set when the file decoded but its sensor layout is not supported yet (e.g. X-Trans, Foveon). */
   sensorUnsupported?: string
+  /** RAW files: what lens corrections need (engine/lens/meta.ts). */
+  lens?: LensMeta
   timings: DecodeTimings
 }
 

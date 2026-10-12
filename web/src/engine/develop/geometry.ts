@@ -21,6 +21,7 @@
 // its kernel `_maketaps_bicubic` is the a = −0.5 cubic), and caches the result.
 
 import type { Mat3 } from '../color/matrix'
+import type { LensWarp } from '../lens/correction'
 import { constrained, cropFitAngle, fitAbout, fromCenter, rectCenter, rectHeight, rectWidth, scaleRect, UNIT_RECT, withAngle, type CropGeometry, type Rect } from './crop'
 
 export type AspectId = 'original' | '1:1' | '4:5' | '5:7' | '2:3' | '16:9' | 'custom'
@@ -286,6 +287,11 @@ export interface ResolvedGeometry {
   exact: boolean
   /** Identifies the map, for caching a warped image. */
   key: string
+  /**
+   * Lens correction (Part 2, `withLens`): when set, `toSensor` ends in the corrected image (sensor orientation,
+   * the sensor's size) and this function takes that position to the sensor; `uvToSensor` ignores it.
+   */
+  lens?: LensWarp
 }
 
 /**
@@ -349,6 +355,17 @@ export function resolveGeometry(g: GeometrySettings, sw: number, sh: number, exi
     exact,
     key: `${sw}x${sh}/${exifFlip}/${g.turns}/${g.mirror}/${g.angle}/${x0},${y0},${x1},${y1}`,
   }
+}
+
+/**
+ * Lens correction joins the map (Phase 3, Part 2; engine/lens/correction.ts): darktable's lens module comes first
+ * in the pipe, so in the inverse map (output → sensor) it comes last, after the 3×3 map above, which then ends in
+ * the corrected image. The corrected image has the sensor image's size (the automatic scale keeps it filled), so
+ * crops stay where they are. Still one resample (engine/gpu/warp.wgsl); the map is no longer whole-pixel.
+ */
+export function withLens(r: ResolvedGeometry, lens: LensWarp | null, lensKey: string): ResolvedGeometry {
+  if (!lens) return r
+  return { ...r, exact: false, lens, key: `${r.key}/lens:${lensKey}` }
 }
 
 export type { Rect } from './crop'

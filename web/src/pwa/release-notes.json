@@ -10,6 +10,9 @@
       "The crop is used everywhere: histogram, Auto, thumbnails, Export, 100 % views, and Paste, Sync and presets (tick Crop to copy it).",
       "Develop's tools are now one scrolling list with a jump bar (Crop, Basic); groups can be closed, and an eye shows the photo without a group.",
       "Process versions: each edit remembers which version of LightBench's rendering it uses, so later changes never alter it until you choose “Update to current process”.",
+      "Lens corrections: distortion, chromatic aberration and dark corners are corrected with the camera's own data (Sony, and Fujifilm, Olympus, DNG and Panasonic as darktable reads them) or a Lensfun profile. On for new photos; earlier edits stay as they were until you tick Lens corrections.",
+      "The Lens section (in Crop & Lens) shows which data corrected the photo, lets you pick the camera or lens when the match is wrong, and has Distortion and Vignetting amounts.",
+      "Lensfun's lens data is downloaded the first time a photo needs it, then works offline.",
       "Back up the whole library (catalog, thumbnails and settings) to one checked file, and restore it safely.",
       "LightBench notices when Lightroom, darktable or another app changes a photo's sidecar, and asks before overwriting it."
     ],
