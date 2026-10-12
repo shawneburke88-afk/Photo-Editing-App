@@ -1,4 +1,3 @@
-import { isSliderKey, isTextEntry } from '../lib/keys'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { getCatalog, requestPersistentStorage } from '../catalog/client'
 import { deleteThumbs, forgetThumbUrl, loadThumb, saveThumb } from '../catalog/thumbs'
@@ -18,6 +17,7 @@ import { launched } from '../pwa/launch'
 import { supportsFolderAccess } from '../platform/folders'
 import { getRootHandle } from '../platform/roots'
 import { sidecars } from '../sidecar/sync'
+import { hintLine, keyText, rangeText, useKeymapVersion, useShortcuts, withKey } from '../settings/shortcuts'
 import { FilterBar } from './FilterBar'
 import { FolderPanel, type FolderSelection } from './FolderPanel'
 import { gridCandidate } from './compare'
@@ -476,7 +476,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   /** Survey (N): the selected photos only, tiled. */
   const startSurvey = useCallback(() => {
     const picks = rows.filter((r) => selected.has(r.id))
-    if (picks.length < 2) return showNotice('Survey shows the selected photos: select two or more (Ctrl+click or Shift+click), then press N.')
+    if (picks.length < 2) return showNotice(`Survey shows the selected photos: select two or more (Ctrl+click or Shift+click), then ${keyText('library.survey') ? `press ${keyText('library.survey')}` : 'click Survey'}.`)
     setCulling({ rows: picks, start: focus !== null && selected.has(focus) ? focus : picks[0].id, layout: 'survey' })
   }, [rows, focus, selected])
 
@@ -556,90 +556,93 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     setFocus(id)
   }
 
-  // Lightroom-style keyboard shortcuts.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!active || importing || culling || draft || autoStacking || launchFiles.length || pasting || status !== 'ready') return
-      const t = e.target as HTMLElement
-      if (isTextEntry(t) || isSliderKey(e)) return
-      const idx = focus === null ? -1 : rows.findIndex((r) => r.id === focus)
-      const move = (delta: number) => {
-        if (!rows.length) return
-        const next = rows[Math.min(rows.length - 1, Math.max(0, idx + delta))]
-        setFocus(next.id)
-        setSelected(new Set([next.id]))
-        anchor.current = next.id
-        e.preventDefault()
-      }
-      const grid = document.querySelector('.grid-scroll')
-      const cols = view === 'grid' && grid ? Math.max(1, Math.floor((grid.clientWidth - 8) / (cellSize + 8))) : 1
-      const k = e.key.toLowerCase()
-      if (e.ctrlKey || e.metaKey) {
-        if (k === 'a') {
-          setSelected(new Set(rows.map((r) => r.id)))
-          e.preventDefault()
-        } else if (e.key === "'") {
-          // Lightroom: Ctrl+' creates a virtual copy.
-          e.preventDefault()
-          void makeVirtualCopy()
-        } else if (k === 'g') {
-          // Lightroom: Ctrl+G stacks the selection, Ctrl+Shift+G unstacks.
-          e.preventDefault()
-          void (e.shiftKey ? unstackSelected() : stackSelected())
-        } else if (k === 'k' && targets().length) {
-          // Lightroom: Ctrl+K goes to the keyword box.
-          e.preventDefault()
-          keywordInput.current?.focus()
-        } else if (k === 'o' && supportsFolderAccess()) {
-          e.preventDefault()
-          void openFolder()
-        } else if (k === 'e' && e.shiftKey && targets().length) {
-          // Lightroom: Ctrl+Shift+E opens Export.
-          onExport(targets())
-          e.preventDefault()
-        } else if (k === 'c' && focus !== null) {
-          // Ctrl+C (and Lightroom's Ctrl+Shift+C) always asks which develop settings to copy.
-          e.preventDefault()
-          void openCopy('copy')
-        } else if (k === 'v') {
-          e.preventDefault()
-          openPaste()
-        } else if (k === 's' && e.shiftKey) {
-          e.preventDefault()
-          void openCopy('sync')
-        }
-        return
-      }
-      if (k === 'arrowright') move(1)
-      else if (k === 'arrowleft') move(-1)
-      else if (k === 'arrowdown') move(view === 'grid' ? cols : 1)
-      else if (k === 'arrowup') move(view === 'grid' ? -cols : -1)
-      else if (k === 'home') move(-rows.length)
-      else if (k === 'end') move(rows.length)
-      else if (k >= '0' && k <= '5') void apply('rating', Number(k))
-      else if (k >= '6' && k <= '9') void apply('color', Number(k) - 5)
-      else if (k === 'p') void apply('flag', 1)
-      else if (k === 'x') void apply('flag', -1)
-      else if (k === 'u') void apply('flag', 0)
-      else if (k === 'e' || k === 'enter') setView('loupe')
-      else if (k === 'f') startCulling()
-      else if (k === 'c') startCompare()
-      else if (k === 'n') startSurvey()
-      else if (k === 'd' && focus !== null) onDevelop(focus, rows.map((r) => r.id))
-      else if (k === 'g' || k === 'escape') setView('grid')
-      else if (k === 'b') void toggleQuick(targets())
-      else if (k === 's' && focus !== null) void (e.shiftKey ? makeTop(focus) : toggleStack(focus))
-      else if ((k === 'delete' || k === 'backspace') && activeCollection && activeCollection.kind !== 'smart') {
-        // Like Lightroom: in a collection, Delete takes photos out of the collection, not the library.
-        void removeFromCollection(activeCollection.id, targets())
-      } else if (k === 'delete' || k === 'backspace') void removeSelected()
-      else return
-      // Auto-advance after flagging/rating with Caps Lock, like Lightroom.
-      if (e.getModifierState('CapsLock') && /^[0-9pxu]$/.test(k)) move(1)
+  // Keyboard shortcuts (Lightroom's keys by default; see settings/actions.ts). Paused while a dialog or
+  // the culling view is open.
+  const keysOn = active && !importing && !culling && !draft && !autoStacking && !launchFiles.length && !pasting && status === 'ready'
+  useShortcuts(['library'], keysOn, (id, e) => {
+    const idx = focus === null ? -1 : rows.findIndex((r) => r.id === focus)
+    const move = (delta: number) => {
+      if (!rows.length) return
+      const next = rows[Math.min(rows.length - 1, Math.max(0, idx + delta))]
+      setFocus(next.id)
+      setSelected(new Set([next.id]))
+      anchor.current = next.id
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    const grid = document.querySelector('.grid-scroll')
+    const cols = view === 'grid' && grid ? Math.max(1, Math.floor((grid.clientWidth - 8) / (cellSize + 8))) : 1
+    switch (id) {
+      case 'library.selectAll': setSelected(new Set(rows.map((r) => r.id))); break
+      case 'library.virtualCopy': void makeVirtualCopy(); break
+      case 'library.stack': void stackSelected(); break
+      case 'library.unstack': void unstackSelected(); break
+      case 'library.keywords':
+        if (!targets().length) return false
+        keywordInput.current?.focus()
+        break
+      case 'library.openFolder':
+        if (!supportsFolderAccess()) return false
+        void openFolder()
+        break
+      case 'library.import':
+        if (!supportsFolderAccess()) return false
+        openImport()
+        break
+      case 'export':
+        if (!targets().length) return false
+        onExport(targets())
+        break
+      // Copy always asks which develop settings to copy.
+      case 'settings.copy':
+        if (focus === null) return false
+        void openCopy('copy')
+        break
+      case 'settings.paste': openPaste(); break
+      case 'settings.sync': void openCopy('sync'); break
+      case 'library.next': move(1); break
+      case 'library.prev': move(-1); break
+      case 'library.down': move(view === 'grid' ? cols : 1); break
+      case 'library.up': move(view === 'grid' ? -cols : -1); break
+      case 'library.first': move(-rows.length); break
+      case 'library.last': move(rows.length); break
+      case 'photo.rate0': case 'photo.rate1': case 'photo.rate2': case 'photo.rate3': case 'photo.rate4': case 'photo.rate5':
+        void apply('rating', Number(id.slice(-1)))
+        break
+      case 'photo.label1': case 'photo.label2': case 'photo.label3': case 'photo.label4':
+        void apply('color', Number(id.slice(-1)))
+        break
+      case 'photo.pick': void apply('flag', 1); break
+      case 'photo.reject': void apply('flag', -1); break
+      case 'photo.unflag': void apply('flag', 0); break
+      case 'library.loupe': setView('loupe'); break
+      case 'library.cull': startCulling(); break
+      case 'library.compare': startCompare(); break
+      case 'library.survey': startSurvey(); break
+      case 'photo.develop':
+        if (focus === null) return false
+        onDevelop(focus, rows.map((r) => r.id))
+        break
+      case 'library.grid': setView('grid'); break
+      case 'photo.quick': void toggleQuick(targets()); break
+      case 'library.stackToggle':
+        if (focus === null) return false
+        void toggleStack(focus)
+        break
+      case 'library.stackTop':
+        if (focus === null) return false
+        void makeTop(focus)
+        break
+      case 'library.remove':
+        // Like Lightroom: in a collection, Delete takes photos out of the collection, not the library.
+        if (activeCollection && activeCollection.kind !== 'smart') void removeFromCollection(activeCollection.id, targets())
+        else void removeSelected()
+        break
+      default:
+        return false
+    }
+    // Auto-advance after a flag, star or label with Caps Lock, like Lightroom.
+    if (/^photo\.(rate|label|pick|reject|unflag)/.test(id) && e?.getModifierState('CapsLock')) move(1)
   })
+  useKeymapVersion()
 
   const total = useMemo(() => folders.reduce((n, f) => n + f.count, 0), [folders])
 
@@ -666,16 +669,16 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           className="button primary import-btn"
           onClick={() => void openFolder()}
           disabled={!supportsFolderAccess()}
-          title="Add a folder where it is, without copying, and start culling at once (Ctrl+O)"
+          title={withKey('Add a folder where it is, without copying, and start culling at once', 'library.openFolder')}
         >
           Open folder…
         </button>
-        <button className="button card-btn" onClick={openImport} disabled={!supportsFolderAccess()} title="Copy photos from a memory card into your photo folder">
+        <button className="button card-btn" onClick={openImport} disabled={!supportsFolderAccess()} title={withKey('Copy photos from a memory card into your photo folder', 'library.import')}>
           Import from card…
         </button>
         <NewPhotosPreset />
         <NewPhotosMetadataPreset />
-        <button className="button export-btn" onClick={() => onExport(targets())} disabled={!targets().length} title="Export the selected photos (Ctrl+Shift+E)">
+        <button className="button export-btn" onClick={() => onExport(targets())} disabled={!targets().length} title={withKey('Export the selected photos', 'export')}>
           Export…
         </button>
         <IndexProgress status={indexing} />
@@ -794,7 +797,25 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
               <Loupe photo={detail} />
             )}
             <p className="hint muted small">
-              Keys: arrows move · P pick · X reject · U unflag · 0–5 stars · 6–9 colour labels · Ctrl+K keywords · B Quick Collection · S stack · Ctrl+C / Ctrl+V settings · E loupe · F cull · C compare · N survey · G grid · D develop · Delete removes from {activeCollection && activeCollection.kind !== 'smart' ? 'this collection' : 'library'}
+              {hintLine(['library.next', 'library.prev', 'library.down', 'library.up'].map(keyText).join('') === '→←↓↑' ? 'Keys: arrows move' : 'Keys:', [
+                [keyText('photo.pick'), 'pick'],
+                [keyText('photo.reject'), 'reject'],
+                [keyText('photo.unflag'), 'unflag'],
+                [rangeText(['photo.rate0', 'photo.rate1', 'photo.rate2', 'photo.rate3', 'photo.rate4', 'photo.rate5']), 'stars'],
+                [rangeText(['photo.label1', 'photo.label2', 'photo.label3', 'photo.label4']), 'colour labels'],
+                [keyText('library.keywords'), 'keywords'],
+                [keyText('photo.quick'), 'Quick Collection'],
+                [keyText('library.stackToggle'), 'stack'],
+                [[keyText('settings.copy'), keyText('settings.paste')].filter(Boolean).join(' / '), 'settings'],
+                [keyText('library.loupe'), 'loupe'],
+                [keyText('library.cull'), 'cull'],
+                [keyText('library.compare'), 'compare'],
+                [keyText('library.survey'), 'survey'],
+                [keyText('library.grid'), 'grid'],
+                [keyText('photo.develop'), 'develop'],
+                [keyText('library.remove'), `removes from ${activeCollection && activeCollection.kind !== 'smart' ? 'this collection' : 'library'}`],
+                [keyText('app.shortcuts'), 'all shortcuts'],
+              ])}
             </p>
           </>
         )}
@@ -830,13 +851,13 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
         <section className="keywords" aria-label="Develop settings">
           <h3 className="panel-title">Develop settings</h3>
           <div className="dleft-actions">
-            <button className="button small" onClick={() => void openCopy('copy')} title="Choose develop settings to copy from this photo (Ctrl+C)">Copy…</button>
-            <button className="button small" disabled={!hasClip} onClick={openPaste} title="Paste the copied settings onto the selected photos (Ctrl+V)">Paste…</button>
+            <button className="button small" onClick={() => void openCopy('copy')} title={withKey('Choose develop settings to copy from this photo', 'settings.copy')}>Copy…</button>
+            <button className="button small" disabled={!hasClip} onClick={openPaste} title={withKey('Paste the copied settings onto the selected photos', 'settings.paste')}>Paste…</button>
             <button
               className="button small"
               disabled={targets().filter((x) => x !== focus).length === 0}
               onClick={() => void openCopy('sync')}
-              title="Apply settings from the photo with the focus to the other selected photos (Ctrl+Shift+S)"
+              title={withKey('Apply settings from the photo with the focus to the other selected photos', 'settings.sync')}
             >
               Sync…
             </button>

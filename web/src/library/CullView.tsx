@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { getCatalog } from '../catalog/client'
 import type { PhotoDetail, PhotoRow } from '../catalog/types'
-import { isSliderKey, isTextEntry } from '../lib/keys'
+import { hintLine, keyText, rangeText, useKeymapVersion, useShortcuts, withKey } from '../settings/shortcuts'
 import { makeSelect, startCompare, stepCandidate, swapCompare, type CompareState } from './compare'
 import { CullPane, type ZoomCenter } from './CullPane'
 import { captureText, COLOR_NAMES, exposureText } from './format'
@@ -294,66 +294,125 @@ export function CullView({ rows, startId, layout: openAs = 'one', candidateId, o
     onExit(target?.id ?? startId, survey ? items.map((r) => r.id) : undefined)
   }
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (isTextEntry(e.target) || isSliderKey(e) || e.ctrlKey || e.metaKey || e.altKey) return
-      const k = e.key.toLowerCase()
-      const auto = layout !== 'survey' && (advance || e.getModifierState('CapsLock'))
-      if (k >= '0' && k <= '5') apply('rating', Number(k), auto)
-      else if (k >= '6' && k <= '9') apply('color', Number(k) - 5, auto)
-      else if (k === 'p') apply('flag', 1, auto)
-      else if (k === 'x') apply('flag', -1, auto)
-      else if (k === 'u') apply('flag', 0, auto)
-      else if (k === 'b' && target) {
-        const id = target.id
-        void onToggleQuick(id).then((added) => setItems((list) => list.map((r) => (r.id === id ? { ...r, quick: added } : r))))
-      } else if (k === 'i') setShowInfo((s) => !s)
-      else if (k === 'd' && target) onDevelop(target.id, items.map((r) => r.id))
-      else if (layout === 'survey') {
-        const moveTile = (d: number) => setTile((t) => Math.min(n - 1, Math.max(0, t + d)))
-        if (k === 'arrowright' || k === ' ' || (k === 'tab' && !e.shiftKey)) moveTile(1)
-        else if (k === 'arrowleft' || k === 'tab') moveTile(-1)
-        else if (k === 'arrowdown') moveTile(grid.cols)
-        else if (k === 'arrowup') moveTile(-grid.cols)
-        else if (k === 'home') moveTile(-n)
-        else if (k === 'end') moveTile(n)
-        else if (k === 'enter') showOne(tile)
-        else if (k === 'delete' || k === 'backspace') drop(tile)
-        else if (k === 'c') showCompare(tile)
-        else if (k === 'escape' || k === 'g' || k === 'n' || k === 'e' || k === 'f') exit()
-        else return
-      } else {
-        const compare = layout === 'compare'
-        if (k === 'arrowright' || k === ' ' || (!compare && k === 'arrowdown')) step(1)
-        else if (k === 'arrowleft' || (!compare && k === 'arrowup')) step(-1)
-        // Lightroom's Compare keys: ↑ Make Select, ↓ Swap.
-        else if (k === 'arrowup') promote()
-        else if (k === 'arrowdown') swap()
-        else if (k === 'home') step(-n)
-        else if (k === 'end') step(n)
-        else if (k === 'z') setZoom((z) => (z ? null : { u: 0.5, v: 0.5 }))
-        else if (k === 'c') {
-          if (compare) toOne()
-          else showCompare(index)
-        } else if (k === 'tab' && compare) setActive((a) => (a ? 0 : 1))
-        else if (k === 'a') toggleAdvance()
-        else if (survey && (k === 'escape' || k === 'n')) showSurvey()
-        else if (k === 'escape' || k === 'g' || k === 'e' || k === 'f') exit()
-        else return
+  // Keys (see settings/actions.ts): flags, stars, labels and B go to the photo on screen, the active pane
+  // or the active tile.
+  useShortcuts(['cull', layout === 'one' ? 'cull-one' : layout], true, (id, e) => {
+    const auto = layout !== 'survey' && (advance || !!e?.getModifierState('CapsLock'))
+    const moveTile = (d: number) => setTile((t) => Math.min(n - 1, Math.max(0, t + d)))
+    switch (id) {
+      case 'photo.rate0': case 'photo.rate1': case 'photo.rate2': case 'photo.rate3': case 'photo.rate4': case 'photo.rate5':
+        apply('rating', Number(id.slice(-1)), auto)
+        break
+      case 'photo.label1': case 'photo.label2': case 'photo.label3': case 'photo.label4':
+        apply('color', Number(id.slice(-1)), auto)
+        break
+      case 'photo.pick': apply('flag', 1, auto); break
+      case 'photo.reject': apply('flag', -1, auto); break
+      case 'photo.unflag': apply('flag', 0, auto); break
+      case 'photo.quick': {
+        if (!target) return false
+        const tid = target.id
+        void onToggleQuick(tid).then((added) => setItems((list) => list.map((r) => (r.id === tid ? { ...r, quick: added } : r))))
+        break
       }
-      e.preventDefault()
+      case 'cull.info': setShowInfo((s) => !s); break
+      case 'photo.develop':
+        if (!target) return false
+        onDevelop(target.id, items.map((r) => r.id))
+        break
+      // Survey
+      case 'survey.next': moveTile(1); break
+      case 'survey.prev': moveTile(-1); break
+      case 'survey.down': moveTile(grid.cols); break
+      case 'survey.up': moveTile(-grid.cols); break
+      case 'survey.first': moveTile(-n); break
+      case 'survey.last': moveTile(n); break
+      case 'survey.one': showOne(tile); break
+      case 'survey.drop': drop(tile); break
+      case 'survey.close': exit(); break
+      // One photo and Compare
+      case 'one.next': case 'compare.next': step(1); break
+      case 'one.prev': case 'compare.prev': step(-1); break
+      case 'one.first': case 'compare.first': step(-n); break
+      case 'one.last': case 'compare.last': step(n); break
+      // Lightroom's Compare keys: ↑ Make Select, ↓ Swap.
+      case 'compare.makeSelect': promote(); break
+      case 'compare.swap': swap(); break
+      case 'compare.switch': setActive((a) => (a ? 0 : 1)); break
+      case 'cull.zoom': setZoom((z) => (z ? null : { u: 0.5, v: 0.5 })); break
+      case 'cull.compare':
+        if (layout === 'compare') toOne()
+        else showCompare(layout === 'survey' ? tile : index)
+        break
+      case 'cull.advance': toggleAdvance(); break
+      case 'cull.back':
+        if (survey) showSurvey()
+        else exit()
+        break
+      case 'cull.survey':
+        if (!survey) return false
+        showSurvey()
+        break
+      case 'cull.close': exit(); break
+      default:
+        return false
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
   })
+  useKeymapVersion()
 
   if (!target) return null
   const d = shownDetail?.id === target.id ? shownDetail : null
   const focusAt = layout === 'compare' ? cmp.candidate : index
   const lo = Math.max(0, focusAt - FILMSTRIP_SPAN)
   const strip = items.slice(lo, focusAt + FILMSTRIP_SPAN + 1)
-  const escText = survey ? 'Esc survey · G grid' : 'Esc close'
-  const keysText = 'P pick · X reject · U unflag · 0–5 stars · 6–9 labels · B Quick Collection'
+  const flagKeys: [string, string][] = [
+    [keyText('photo.pick'), 'pick'],
+    [keyText('photo.reject'), 'reject'],
+    [keyText('photo.unflag'), 'unflag'],
+    [rangeText(['photo.rate0', 'photo.rate1', 'photo.rate2', 'photo.rate3', 'photo.rate4', 'photo.rate5']), 'stars'],
+    [rangeText(['photo.label1', 'photo.label2', 'photo.label3', 'photo.label4']), 'labels'],
+    [keyText('photo.quick'), 'Quick Collection'],
+  ]
+  const escKeys: [string, string][] = survey
+    ? [[keyText('cull.back'), 'survey'], [keyText('cull.close'), 'grid']]
+    : [[keyText('cull.back') || keyText('cull.close'), 'close']]
+  const moveKeys = (next: string, prev: string) => [keyText(prev), keyText(next)].filter(Boolean).join('/')
+  const hints =
+    layout === 'survey'
+      ? hintLine('', [
+            ...flagKeys,
+          [keyText('survey.next') === '→' && keyText('survey.prev') === '←' ? 'arrows or Tab' : moveKeys('survey.next', 'survey.prev'), 'move'],
+          [[keyText('survey.one'), 'click'].filter(Boolean).join(' or ') + ':', '1-up'],
+          [[keyText('survey.drop'), '✕'].filter(Boolean).join(' or '), 'drop from survey'],
+          [keyText('cull.compare'), 'compare'],
+          [keyText('cull.info'), 'info'],
+          [keyText('photo.develop'), 'develop'],
+          [keyText('survey.close'), 'grid'],
+        ])
+      : layout === 'compare'
+        ? hintLine('', [
+            ...flagKeys,
+            [moveKeys('compare.next', 'compare.prev'), 'next Candidate'],
+            [keyText('compare.makeSelect'), 'Make Select'],
+            [keyText('compare.swap'), 'Swap'],
+            [keyText('compare.switch'), 'switch photo'],
+            [[keyText('cull.zoom'), 'click'].filter(Boolean).join(' or ') + ':', '100 %'],
+            [keyText('cull.compare'), '1-up'],
+            [keyText('cull.advance'), 'auto-advance'],
+            [keyText('cull.info'), 'info'],
+            [keyText('photo.develop'), 'develop'],
+            ...escKeys,
+          ])
+        : hintLine('', [
+            ...flagKeys,
+            [moveKeys('one.next', 'one.prev'), 'move'],
+            [[keyText('cull.zoom'), 'click'].filter(Boolean).join(' or ') + ':', '100 %'],
+            [keyText('cull.compare'), 'compare'],
+            [keyText('cull.advance'), 'auto-advance'],
+            [keyText('cull.info'), 'info'],
+            [keyText('photo.develop'), 'develop'],
+            ...escKeys,
+          ])
 
   return (
     <div className="cull" role="dialog" aria-label={layout === 'survey' ? 'Survey view' : layout === 'compare' ? 'Compare view' : 'Culling view'}>
@@ -364,7 +423,7 @@ export function CullView({ rows, startId, layout: openAs = 'one', candidateId, o
             <Stars value={target.rating} size="small" />
             {target.flag === 1 && <span className="flag-text pick">⚑ Picked</span>}
             {target.flag === -1 && <span className="flag-text reject">✕ Rejected</span>}
-            {target.quick && <span className="muted" title="In the Quick Collection (B)">● Quick</span>}
+            {target.quick && <span className="muted" title={withKey('In the Quick Collection', 'photo.quick')}>● Quick</span>}
             {target.color > 0 && <span className="label-text"><span className={`label label-${target.color}`} /> {COLOR_NAMES[target.color]}</span>}
             {d && (
               <span className="muted">
@@ -385,30 +444,30 @@ export function CullView({ rows, startId, layout: openAs = 'one', candidateId, o
           </span>
           {layout === 'compare' && (
             <>
-              <button className="button small" onClick={swap} title="Swap the Select and the Candidate (↓)">⇄ Swap</button>
-              <button className="button small" onClick={promote} title="The Candidate wins: it becomes the Select and the next photo becomes the Candidate (↑)">Make Select</button>
+              <button className="button small" onClick={swap} title={withKey('Swap the Select and the Candidate', 'compare.swap')}>⇄ Swap</button>
+              <button className="button small" onClick={promote} title={withKey('The Candidate wins: it becomes the Select and the next photo becomes the Candidate', 'compare.makeSelect')}>Make Select</button>
             </>
           )}
           <div className="seg" role="group" aria-label="Layout">
-            <button className={layout === 'one' ? 'on' : ''} onClick={toOne} title="One photo (C)">
+            <button className={layout === 'one' ? 'on' : ''} onClick={toOne} title={withKey('One photo', 'cull.compare')}>
               1-up
             </button>
-            <button className={layout === 'compare' ? 'on' : ''} disabled={n < 2} onClick={() => layout !== 'compare' && showCompare(layout === 'survey' ? tile : index)} title="Compare: the Select stays on the left, the Candidate on the right changes (C)">
+            <button className={layout === 'compare' ? 'on' : ''} disabled={n < 2} onClick={() => layout !== 'compare' && showCompare(layout === 'survey' ? tile : index)} title={withKey('Compare: the Select stays on the left, the Candidate on the right changes', 'cull.compare')}>
               Compare
             </button>
             {survey && (
-              <button className={layout === 'survey' ? 'on' : ''} onClick={() => layout !== 'survey' && showSurvey()} title="Survey: the selected photos side by side (N)">
+              <button className={layout === 'survey' ? 'on' : ''} onClick={() => layout !== 'survey' && showSurvey()} title={withKey('Survey: the selected photos side by side', 'cull.survey')}>
                 Survey
               </button>
             )}
           </div>
           {layout !== 'survey' && (
-            <label className="check small" title="Move to the next photo (in Compare, the next Candidate) after a flag, star or label key (A). Caps Lock also does this.">
+            <label className="check small" title={`${withKey('Move to the next photo (in Compare, the next Candidate) after a flag, star or label key', 'cull.advance')}. Caps Lock also does this.`}>
               <input type="checkbox" checked={advance} onChange={toggleAdvance} />
               Auto-advance
             </label>
           )}
-          <button className="button small" onClick={exit} title="Back to the grid (Esc)">✕ Close</button>
+          <button className="button small" onClick={exit} title={withKey('Back to the grid', survey ? 'cull.close' : 'cull.back')}>✕ Close</button>
         </div>
       </header>
 
@@ -452,11 +511,7 @@ export function CullView({ rows, startId, layout: openAs = 'one', candidateId, o
       )}
 
       <p className="cull-hints muted small">
-        {layout === 'survey'
-          ? `${keysText} · arrows or Tab move · Enter or click: 1-up · Delete or ✕ drop from survey · C compare · I info · D develop · Esc grid`
-          : layout === 'compare'
-            ? `${keysText} · ←/→ next Candidate · ↑ Make Select · ↓ Swap · Tab switch photo · Z or click: 100 % · C 1-up · A auto-advance · I info · D develop · ${escText}`
-            : `${keysText} · ←/→ move · Z or click: 100 % · C compare · A auto-advance · I info · D develop · ${escText}`}
+        {hints}
       </p>
 
       {layout !== 'survey' && (

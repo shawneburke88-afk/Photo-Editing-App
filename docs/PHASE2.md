@@ -320,3 +320,112 @@ Catalog schema v8: `photos.version` (0 = original) and `photos.version_name`; un
 - Metadata changes have no undo (the history is for develop settings). Metadata presets don't hold keywords, contact details or other IPTC fields.
 - Import presets don't remember the source (it changes with each card). In the tests the folders were in the browser's private storage, which never asks for permission, so the permission prompt on choosing a preset wasn't seen; it needs checking on Windows.
 - Presets live in this browser's catalog: no export or import as files yet.
+
+## Part 12: Keyboard and display settings
+
+**What it does.** A **Settings** window with **Keyboard** and **Display** sections, where every shortcut can be changed and the interface size and the background behind photos can be chosen. Owner's choices (2026-10-12):
+- One Settings window, opened with the **gear** at the right of the top bar or **Ctrl+,**. It is built as a list of sections so later preferences can be added. Settings are remembered in this browser (not in the library or the photo folders), and the window says so.
+- Every shortcut can be changed. Two shortcut sets: **LightBench** (today's keys) and **Lightroom Classic** (Lightroom's key wherever LightBench differs). Any change is saved as **Custom**, based on the set it started from.
+- Keys follow the letter printed on the key, also on non-US keyboards. No shortcut runs while typing in a text box or while a dialog is open.
+- Full keyboard access through three things (not panel jumping): a **shortcut list on ?**, **command search on Ctrl+Shift+P**, and **slider keys**.
+- **Interface size** 90 / 100 / 110 / 125 / 150 %, also with **Ctrl+Alt+=** and **Ctrl+Alt+−**, with the photo kept sharp. **Background behind photos**: Black, Dark grey (as before) or Mid grey. No high-contrast theme (not chosen).
+
+Lightroom sources: Adobe's help site (helpx.adobe.com) could not be opened from the build environment (its name did not resolve). The Lightroom keys below were checked through web-search excerpts of Adobe's own pages, mainly “Keyboard shortcuts for Lightroom Classic”; this is marked **Adobe (excerpt)**. Keys taken from third-party lists are marked **secondary**, and keys not checked at all are marked **not checked**.
+
+| Behaviour | Detail | Source |
+|---|---|---|
+| Settings window | Gear button or **Ctrl+,**. Sections on the left (Keyboard, Display); Esc or ✕ closes. Saved as `lightbench.settings` in the browser's local storage, read and written inside try/catch: if storage is blocked, the settings still apply for the visit. Interface size and background are applied before the first paint. | Owner's choice. Lightroom Classic opens Preferences with Ctrl+, (Adobe (excerpt)) |
+| One list of actions | `settings/actions.ts`: every action has an id, a plain name, where it works (Everywhere, Library, culling/Compare/Survey, one photo, Compare, Survey, Develop) and its keys in each set. The views only say what each action does (`useShortcuts`), and one keydown listener matches the key and runs the action in the view on screen. The Library, culling and Develop handlers and Develop's G (in `App.tsx`) were moved onto it with the same keys. | LightBench |
+| Shortcut sets | **LightBench**: the keys of 0.1.0, plus the new Settings, ?, Ctrl+/, Ctrl+Shift+P and Ctrl+Alt+=/− keys. **Lightroom Classic** differs in three places: Show clipping is J only (LightBench also has darktable's O), Copy and Paste settings are Ctrl+Shift+C and Ctrl+Shift+V only (Ctrl+C and Ctrl+V are left to the browser), and Import from card… has Ctrl+Shift+I (no key in the LightBench set). | Owner's choice; darktable registers O (overexposed) and Shift+O (raw overexposed) in `src/views/darkroom.c` |
+| Custom | Changing a key saves only that action's keys; the window shows “Custom (based on Lightroom Classic): 2 changed”. Setting an action back to the set's keys counts as unchanged. Choosing the other set asks first when there are changes, then drops them. | Owner's choice |
+| Changing a key | Click a key to replace it, then press the new key (Esc cancels). **+ Add** gives a second key, **×** removes one, **Reset** puts one action back, **Reset all** the whole set. The search box finds actions by name, place or key. Hints, tooltips and the Library and culling key lines show the keys in use. | Owner's choice |
+| Conflicts | Two actions can't share a key where both can run: the Library grid, culling with one photo, Compare, Survey and Develop are checked separately, and an Everywhere key counts in all of them (Z can be zoom in both culling and Develop). A taken key shows “X: already used by Reject. Replace?”; **Replace** moves the key (Reject is left without it), **Cancel** keeps everything. Both sets are free of conflicts (unit test). Stored settings that somehow contain a conflict show a warning listing it (not tested end to end). | Owner's choice. darktable asks the same when a new shortcut clashes: “clashing shortcuts exist” / “remove these existing shortcuts?” (`_insert_shortcut`, `src/gui/accelerators.c`) |
+| Which key was pressed | Letters by `KeyboardEvent.key`, upper or lower case (so Caps Lock doesn't matter and the key marked P on an AZERTY keyboard is P). Symbols and digits include Shift already (`?` is Shift+ß on a German keyboard, digits need Shift on a French one), so Shift is ignored for them. AltGr (which Windows reports as Ctrl+Alt) is ignored, so `\` typed with AltGr works. A key with Shift that has no Shift shortcut acts as without Shift, as before (Shift+P picks, Shift+→ moves). On layouts that type no Latin letters (Russian, Greek), or when macOS Option changes the character, the key's US position is tried next. Ctrl also means ⌘. | Owner's choice (printed letter); the rest LightBench |
+| When keys don't run | In text boxes and lists (as before), on a focused slider's own keys, while an input method is composing, while any dialog is open, and Enter on a focused button (the button gets it). Before, Develop's keys still ran behind the Export window, and the Library's behind the metadata preset window (from reading the 0.1.0 code; not reproduced). | LightBench |
+| Shortcut list (**?**, also **Ctrl+/**) | The keys of the view on screen first, then Everywhere, with the keys in use (Custom included) and a search box. **Change shortcuts…** opens Settings › Keyboard. | Owner's choice. darktable shows its shortcuts while H is held (“show accels window”, `src/control/control.c`); Lightroom Classic shows the current module's shortcuts with Ctrl+/ (Adobe (excerpt), regional copy of the page) |
+| Command search (**Ctrl+Shift+P**) | Type part of a name (also a place or a key), ↑/↓ choose, Enter or click runs it. Lists the actions of the view on screen and the Everywhere ones, each with its keys, including actions without a key (e.g. Import from card… in the LightBench set). | Owner's choice. darktable's shortcut window has “search actions list” and “search shortcuts list” boxes (`src/gui/accelerators.c`), but they find shortcuts to edit, not actions to run. |
+| Slider keys | With a develop slider focused: ←/→ (or ↓/↑) move it by 1/200 of its range, at least one step (Exposure 0.05 EV, Contrast 1); Shift+arrows ten times as far; **Home** goes back to the slider's default instead of its minimum. Double-click still resets. End and Page Up/Down keep the browser's behaviour. The tooltips say “Double-click or Home to reset”. | Owner's choice; the step sizes are LightBench's |
+| Interface size | 90 / 100 / 110 / 125 / 150 % in Settings › Display; **Ctrl+Alt+=** (or Ctrl+Alt++) and **Ctrl+Alt+−** step through them from anywhere and stop at the ends. Text, buttons, panels, dialogs and the grid all scale. | Owner's choice |
+| How size is scaled, and why photos stay sharp | CSS `zoom` on the whole app (its height and the few `100vw`/`100vh` sizes are divided by the size so it still fills the window). The four areas that show photos (Develop's photo, the culling and Compare panes, Survey and the Library loupe) undo the zoom, so their canvases measure exactly what they are drawn at and keep one backing pixel per device pixel; the labels drawn over photos are zoomed back. The histogram takes the zoom into account (`currentCSSZoom`). Measured in Chromium 141: inside a box zoomed to 125 %, a canvas's `clientWidth` reads 300 px while it covers 375 px on screen, so sizing it from `clientWidth × devicePixelRatio` (as all LightBench's canvases do) would stretch a 300-pixel image over 375 pixels. Scaling the root font size instead wasn't possible: the stylesheet and many inline sizes are in pixels. | LightBench (CSS `zoom`, measured in Chromium 141) |
+| Background behind photos | **Black** `#000000`, **Dark grey** `#111215` (the colour Develop and the Library loupe already used) and **Mid grey** `#777777` (about L* 50, half-way between black and white in lightness; LightBench's choice). Used behind the photo in Develop, culling, Compare, Survey and the Library loupe. Culling's slightly darker `#0c0d0f` and Survey's black tile edges now follow the setting too. | Owner's choice. Lightroom Classic sets a “fill color” for the main and secondary window under Preferences › Interface › Background (Adobe (excerpt); the names of its shades were not confirmed) |
+| Release notes | `package.json` 0.2.0 with a 0.2.0 entry: Compare and Survey, metadata editing and metadata/import presets (these two lines moved out of 0.1.0, which had been deployed without them), and this Part. No bug fixes listed. | Owner's release rules (Part 9) |
+
+### Shortcuts in both sets
+
+“Same” means the Lightroom Classic set uses the LightBench key.
+
+| Action | Where | LightBench | Lightroom Classic set | Lightroom key checked |
+|---|---|---|---|---|
+| Settings | Everywhere | Ctrl+, | same | Adobe (excerpt): Preferences |
+| Find an action by name | Everywhere | Ctrl+Shift+P | same | LightBench (no Lightroom equivalent) |
+| Show keyboard shortcuts | Everywhere | ?, Ctrl+/ | same | Ctrl+/: Adobe (excerpt). ?: LightBench |
+| Larger / smaller interface | Everywhere | Ctrl+Alt+= (Ctrl+Alt++), Ctrl+Alt+− | same | LightBench |
+| Pick / Reject / Remove flag | Library, culling | P / X / U | same | Adobe (excerpt); for U the excerpts disagreed (one listed “Unflag photo: U”, one didn't show it) |
+| No stars, 1–5 stars | Library, culling | 0, 1–5 | same | Adobe (excerpt) |
+| Red, Yellow, Green, Blue label | Library, culling | 6, 7, 8, 9 | same | Adobe (excerpt) |
+| Quick Collection | Library, culling | B | same | Adobe (excerpt) |
+| Open in Develop | Library, culling | D | same | Adobe (excerpt) |
+| Copy develop settings… | Library, Develop | Ctrl+C, Ctrl+Shift+C | **Ctrl+Shift+C** | Adobe (excerpt) |
+| Paste develop settings… | Library, Develop | Ctrl+V, Ctrl+Shift+V | **Ctrl+Shift+V** | Adobe (excerpt) |
+| Sync settings… | Library, Develop | Ctrl+Shift+S | same | Adobe (excerpt) |
+| Export… | Library, Develop | Ctrl+Shift+E | same | Adobe (excerpt) |
+| Next / previous / below / above photo, first / last | Library | → ← ↓ ↑, Home / End | same | not checked |
+| Select all | Library | Ctrl+A | same | not checked |
+| Grid | Library | G, Esc | same | G: Adobe (excerpt); Esc not checked |
+| Loupe | Library | E, Enter | same | E: Adobe (excerpt); Enter not checked |
+| Cull (full screen) | Library | F | same | LightBench's view. Lightroom's F is a full-screen mode (excerpts differ by version) |
+| Compare / Survey | Library | C / N | same | Adobe (excerpt) |
+| Remove from the library (in a collection: from it) | Library | Delete, Backspace | same | Adobe (excerpt) lists them for “Delete selected photo(s)”; LightBench never deletes files |
+| Expand or collapse a stack / Move to top of stack | Library | S / Shift+S | same | Adobe (excerpt): “Toggle stack”, “Move to top of stack” |
+| Stack / Unstack | Library | Ctrl+G / Ctrl+Shift+G | same | Adobe (excerpt) |
+| Make a virtual copy | Library | Ctrl+' | same | Adobe (excerpt) |
+| Add keywords | Library | Ctrl+K | same | not checked |
+| Open folder… | Library | Ctrl+O | same | LightBench (what Lightroom uses Ctrl+O for wasn't checked) |
+| Import from card… | Library | — | **Ctrl+Shift+I** | Adobe (excerpt): “Import photos from disk” |
+| Show or hide the info line | Culling, Compare, Survey | I | same | not checked |
+| One photo ⇄ Compare | One photo, Compare, Survey | C | same | LightBench (C opens Compare in Lightroom) |
+| Zoom to 100 % and back | One photo, Compare | Z | same | Adobe (excerpt): “Toggle Zoom view” |
+| Auto-advance on or off | One photo, Compare | A | same | LightBench (Caps Lock also advances, Part 2) |
+| Back (to the survey, or the grid) / Close / Back to the survey | One photo, Compare | Esc / G, E, F / N | same | LightBench |
+| Next / previous photo, first / last | One photo | →, ↓, Space / ←, ↑; Home / End | same | not checked |
+| Next / previous / first / last Candidate | Compare | →, Space / ← / Home / End | same | not checked |
+| Make Select / Swap | Compare | ↑ / ↓ | same | secondary (Part 10) |
+| Switch the active photo | Compare | Tab | same | LightBench |
+| Move between tiles | Survey | → Space Tab / ← Shift+Tab / ↓ / ↑ / Home / End | same | LightBench |
+| Active tile alone / Drop from survey / Back to the grid | Survey | Enter / Delete, Backspace / Esc, G, N, E, F | same | LightBench (Part 10) |
+| Undo / Redo | Develop | Ctrl+Z / Ctrl+Y, Ctrl+Shift+Z | same | Adobe (excerpt) |
+| Before / after | Develop | \ | same | Adobe (excerpt): “View Before only” |
+| Show clipping | Develop | J, O | **J** | J: Adobe (excerpt). O is darktable's (`src/views/darkroom.c`); Lightroom uses O for the mask overlay (Adobe (excerpt)) |
+| Show sensor clipping | Develop | Shift+O | same | darktable (`src/views/darkroom.c`). No Lightroom equivalent; Lightroom's Shift+O cycles mask overlay colours (Adobe (excerpt)), and LightBench has no masks yet |
+| Zoom to 100 % and back | Develop | Z | same | Adobe (excerpt), for the Library; Develop not checked |
+| Next / previous photo | Develop | → / ← | same | not checked |
+| White balance picker | Develop | W | same | Adobe (excerpt) |
+| Cancel the picker and fit the photo | Develop | Esc | same | LightBench |
+| Back to the Library grid | Develop | G | same | Adobe (excerpt) |
+
+**Verified** (headless Chromium 141 with software WebGPU, scratch script `e2e-keyboard`, A.NEF (D700), B.NEF (D80) and C.jpg; 89 of 89 checks passed):
+- **Default keys, grid:** P picked A; → then 3 and 6 gave B 3 stars and the red label; X rejected B and U unflagged it; Ctrl+A selected all 3; E showed the loupe and G the grid; Shift+P still picked.
+- **Non-US keyboards** (key events sent with a `key` and a different `code`): `x` on the physical B key rejected C (no Quick Collection); `p` on the physical R key picked; on a Russian layout, `з` (P position) and then `г` (U position) picked and unflagged through the US-position fallback; on a French layout, Shift + the 3 key typing “3” gave 3 stars. Typing “c” in the search box typed it and opened no Compare.
+- **? list:** groups “Library” and “Everywhere”, Pick shown as P, no Develop actions; searching “stack” left 4 rows; Esc closed it.
+- **Command search:** Ctrl+Shift+P, “loupe” found “Loupe (one large photo) · Library” with E and Enter; Enter showed the loupe; “grid” + Enter went back.
+- **Rebinding:** Settings opened on Keyboard, LightBench, unchanged. Pick changed to K: “Custom (based on LightBench): 1 changed”; P no longer picked B, K did; the Library hint line read “K pick”; in culling K picked too and the hint line started “K pick”. Reset (Pick only) gave P back.
+- **Conflict:** adding X to Pick showed “X: already used by Reject. Replace?”; Replace gave Pick P and X and left Reject without a key, and X then picked. Adding B to Remove flag and pressing Cancel left B on the Quick Collection. Searching “quick” left one row. Reset all went back to the LightBench set and X rejected again.
+- **Develop:** J and O showed clipping (“Clipping shown (J)”), Shift+O sensor clipping, \ the Before badge, Z zoomed, W started the white balance picker and Esc cancelled it, Ctrl+C opened the copy checklist, → went to B.NEF, G back to the Library.
+- **Slider keys** (Exposure, range −5…5): → 0 → 0.05, Shift+→ 0.55, ← 0.50, Home 0 (the default, not −5); double-click still reset.
+- **Lightroom Classic set:** Show clipping listed J only; O did nothing and J showed clipping; Ctrl+C opened nothing and Ctrl+Shift+C opened the copy checklist.
+- **Interface size** (1440 × 900 window): the top bar went from 55.5 px to 69.1 (125 %), 50.0 (90 %) and 82.8 (150 %), and Develop's right panel from 300 px to 375, 270 and 450; no horizontal scrolling and the app still exactly filled the 900 px window. Ctrl+Alt+− and Ctrl+Alt+= stepped 150 → 125 → 150 % and stopped at 150 and 90 %.
+- **Sharpness:** at 100, 125, 90 and 150 % the Develop canvas's backing size equalled its on-screen size × devicePixelRatio (within 1 px of rounding), e.g. 753 × 674 for 752.5 × 674.0 at 125 %. Also the Library loupe (100 % and 125 %) and the culling pane (125 %). With `deviceScaleFactor: 2`: Develop 1780 × 1436 for 890 × 718.4 (100 %), 1506 × 1348 (125 %), 1890 × 1472 (90 %); the histogram 446 × 264, 558 × 330 and 401 × 238; a Survey tile 1408 × 1628 for 704 × 814 and a Compare pane 1414 × 1496 for 707 × 748.5 (90 %). Negative control: with the counter-zoom removed at 125 %, the same check failed (backing 1204 × 1078 for 752.5 × 674 on screen at 2×), so the check does detect a soft photo.
+- **Background:** dark grey `rgb(17, 18, 21)` by default in Develop, as before; Black and Mid grey applied in Develop, and Mid grey in the Library loupe and the culling view.
+- **Reload:** after choosing the Lightroom set, Pick on K, 125 % and Mid grey, a reload kept all four (“Custom (based on Lightroom Classic): 1 changed”).
+- **Earlier scripts re-run, unchanged results:** Part 2's culling script (auto-advance, X without advance, Tab + 7 on the right-hand photo, the 100 % render in 14 s, the grid afterwards); Part 10's Compare and Survey script, all 34 checks passed (“ALL PASSED”); Part 7's paste script (A +0.75 EV / Blacks −85, B −0.20 / −4, C −0.20 / −5, Sync and Auto Sync reaching B.xmp, strength 50 % giving Blacks −42).
+- Screenshots of Settings (Keyboard, a conflict, Display), the ? list, command search, Develop at 125 %, culling at 125 % with Mid grey and Compare at 2× and 90 % were checked by eye.
+- **Unit tests** (`npx vitest run`, 205 passing): `settings/keymap.test.ts` (chord normal form; Shift ignored for symbols and kept for letters, with the fallback; AZERTY, Russian and macOS Option keys; AltGr; recording; display text; both sets free of conflicts; every 0.1.0 key in the LightBench set; the Lightroom differences; custom keys over a set; conflicts only where both actions run; Replace; add, remove and reset; reading broken stored settings) and `settings/store.test.ts` (saving and reading back, defaults for broken or blocked storage, the size steps, the CSS variables, slider step sizes, key hints). `npx tsc -b`, `npx oxlint` (only the two existing warnings) and `npm run build` passed.
+
+**Limitations:**
+- The Lightroom keys were checked only through search-engine excerpts of Adobe's pages, not by reading the pages or by using Lightroom; some keys are not checked at all (see the table). Lightroom's Shift+1–5 and Shift+U (rate or unflag, then go to the next photo; Adobe (excerpt)) are not in either set; Shift with a number rates without moving, as before.
+- Esc can't be recorded as a new key (it cancels recording); the default Esc keys stay and come back with Reset. Keys the browser keeps for itself (such as Ctrl+W or Ctrl+T) never reach the page and can't be used.
+- The Lightroom set changes keys only; it doesn't add Lightroom features LightBench lacks.
+- Settings live in this browser only: another browser or computer starts with the defaults, and clearing the site's data resets them. There is no export or import of shortcut sets.
+- Interface size uses CSS `zoom`, so it relies on the browser's `zoom` behaving as Chromium 141's did; only Chromium was tested (not Firefox or Safari). The photo areas measure their own size, so other layouts that read sizes in a zoomed area (none known now) would need the same care.
+- Real non-US keyboards weren't used: the layouts were imitated with synthetic key events (`key` and `code` as Chrome reports them on those layouts). AltGr handling and macOS ⌘/Option were covered by unit tests only.
+- Screen readers weren't tested with the Settings window, the list or command search.
