@@ -1,11 +1,11 @@
 import { isSliderKey, isTextEntry } from '../lib/keys'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { getCatalog } from '../catalog/client'
 import { forgetThumbUrl, loadThumb, saveThumb, thumbUrl } from '../catalog/thumbs'
 import type { PhotoDetail } from '../catalog/types'
 import { multipliersToTemperature } from '../engine/color/temperature'
-import { BUILT_IN_TARGETS, metricsFromStats, solveAuto, statsFromPixels, targetFromMetrics, type AutoTarget } from '../engine/develop/auto'
-import { defaultsFor, displayUniforms, normalizeSettings, type DevelopSettings } from '../engine/develop/settings'
+import { AUTO_SLIDERS, BUILT_IN_TARGETS, metricsFromStats, solveAuto, statsFromPixels, targetFromMetrics, type AutoKey, type AutoTarget } from '../engine/develop/auto'
+import { defaultsFor, displayUniforms, type DevelopSettings } from '../engine/develop/settings'
 import { DevelopEngine, type ImageStats, type RawStageOptions, type ViewState } from '../engine/gpu/develop-engine'
 import { RawDecoder } from '../engine/raw/decoder'
 import { Thumb } from '../library/Thumb'
@@ -18,13 +18,21 @@ import { BasicPanel } from './BasicPanel'
 import { Histogram } from './Histogram'
 import { ResizeHandle } from './ResizeHandle'
 import { WbLoupe } from './WbLoupe'
-import { loadIntoEngine, multipliers, stageOptions, type SensorInfo } from './source'
+import { loadIntoEngine, multipliers, renderThumbnail, stageOptions, type SensorInfo } from './source'
 import { sidecars } from '../sidecar/sync'
-import { canRedo, canUndo, current, jump, record, redo, startHistory, undo, type History } from './history'
+import { canRedo, canUndo, current, jump, loadHistory, record, redo, replaceCurrent, savedForm, undo, type History } from './history'
+import { batch, rerunAuto } from './batch'
+import { applyPaste, changedKeys, rememberedChoice, settingsClipboard, type Clipboard, type PasteKey } from './paste'
+import { PasteDialog } from './PasteDialog'
+import { PresetPanel } from './PresetPanel'
+import { blendSettings, presetClip, type Preset, type PresetData } from './presets'
+import { loadPresets, presetsChanged } from './presetStore'
 
 interface Props {
   ids: number[]
   id: number
+  /** Photos selected in the Library along with this one: Sync and Auto Sync apply to them. */
+  selected: number[]
   onNavigate: (id: number) => void
   onEdited: () => void
   onExport: (ids: number[]) => void
@@ -38,13 +46,26 @@ const sameStage = (a: RawStageOptions | null, b: RawStageOptions) =>
   !!a && a.highlightMode === b.highlightMode && a.highlightClip === b.highlightClip && a.demosaic === b.demosaic &&
   a.wb.every((v, i) => Math.abs(v - b.wb[i]) < 1e-6)
 
-/** Saved form of the history (timestamps are not stored). */
-interface SavedHistory {
-  steps: { label: string; settings: DevelopSettings }[]
-  index: number
+/** Auto's options (owner's decision: tunable strength and a choice of sliders). */
+interface AutoOptionsState {
+  strength: number
+  sliders: AutoKey[]
+}
+const DEFAULT_AUTO_OPTIONS: AutoOptionsState = { strength: 1, sliders: AUTO_SLIDERS.map((x) => x.key) }
+
+type PasteMode = { mode: 'copy' | 'sync' | 'paste' | 'preset'; clip: Clipboard }
+
+/** The preset just applied: its Amount can be changed until the photo is changed another way. */
+interface AppliedPreset {
+  preset: Preset
+  before: DevelopSettings
+  after: DevelopSettings
+  amount: number
+  /** The settings now shown, as set by the preset (when they change otherwise, the Amount goes away). */
+  result: DevelopSettings
 }
 
-export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) {
+export function DevelopView({ ids, id, selected: initialSelection, onNavigate, onEdited, onExport }: Props) {
   const catalog = getCatalog()
   const stageRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<DevelopEngine | null>(null)
@@ -84,6 +105,16 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
       // not remembered this time
     }
   }
+  const [autoOptions, setAutoOptions] = useStoredJson('lightbench.auto.options', DEFAULT_AUTO_OPTIONS)
+  /** Filmstrip selection (starts as the Library's): Sync goes from this photo to the others. */
+  const [selection, setSelection] = useState(() => new Set(initialSelection.includes(id) ? initialSelection : [id]))
+  const [autoSync, setAutoSync] = useState(false)
+  const [pasting, setPasting] = useState<PasteMode | null>(null)
+  const [reloads, setReloads] = useState(0)
+  const [presets, setPresets] = useState<Preset[]>([])
+  const [hoverPreset, setHoverPreset] = useState<Preset | null>(null)
+  const [applied, setApplied] = useState<AppliedPreset | null>(null)
+  const hasClip = useSyncExternalStore(settingsClipboard.subscribe, () => !!settingsClipboard.get())
   const [leftW, setLeftW] = useStoredNumber('lightbench.develop.left', 240)
   const [rightW, setRightW] = useStoredNumber('lightbench.develop.right', 300)
   const [histH, setHistH] = useStoredNumber('lightbench.develop.histogram', 170)
@@ -96,6 +127,11 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
 
   const defaults = defaultsFor(info?.kind ?? 'raw')
   const settings = history ? current(history) : defaults
+  /** Hover preview of a preset (its Auto, if any, runs only when it is applied). */
+  const hover = useMemo(
+    () => (hoverPreset && info ? applyPaste(settings, { ...presetClip(hoverPreset), rerunAuto: false }, info.kind) : null),
+    [hoverPreset, info, settings],
+  )
 
   // ---- engine lifetime
   useEffect(() => {
@@ -160,17 +196,7 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
       const sensorInfo = loadIntoEngine(engine, r)
       const kind = sensorInfo.kind
 
-      const saved = await catalog.getEdit(id)
-      let h = startHistory(defaultsFor(kind))
-      if (saved) {
-        try {
-          const sh = JSON.parse(saved.history) as SavedHistory
-          const steps = sh.steps.map((st) => ({ label: st.label, settings: normalizeSettings(st.settings, kind), at: 0 }))
-          h = steps.length ? { steps, index: Math.min(sh.index, steps.length - 1) } : startHistory(normalizeSettings(JSON.parse(saved.settings), kind))
-        } catch {
-          h = startHistory(normalizeSettings(JSON.parse(saved.settings), kind))
-        }
-      }
+      const h = loadHistory(await catalog.getEdit(id), kind)
       const opts = stageOptions(current(h), sensorInfo)
       const ms = await engine.process(opts)
       if (stale()) return
@@ -180,7 +206,17 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
       setHistory(h)
       setStatus({ kind: 'ready' })
     })().catch((e: Error) => !stale() && setStatus({ kind: 'error', message: e.message }))
-  }, [catalog, id])
+  }, [catalog, id, reloads])
+
+  // A Paste or Sync running in the background just changed the photo shown: show its new settings, unless
+  // there are unsaved changes here (then this photo's next save keeps them).
+  useEffect(
+    () =>
+      batch.onUpdated((pid) => {
+        if (pid === id && !pendingSave.current) setReloads((r) => r + 1)
+      }),
+    [id],
+  )
 
   // ---- re-run the raw stage when white balance / highlights / demosaic change (debounced)
   useEffect(() => {
@@ -208,8 +244,8 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
     () => ({ clip: clipSettings, showClip: overlay, raw: rawClipSettings, showRaw: rawOverlay }),
     [clipSettings, overlay, rawClipSettings, rawOverlay],
   )
-  const latest = useRef({ settings, info, view, before, indicators })
-  latest.current = { settings, info, view, before, indicators }
+  const latest = useRef({ settings, info, view, before, indicators, hover })
+  latest.current = { settings, info, view, before, indicators, hover }
 
   // Histogram: measured on a small rendering shortly after each redraw (throttled).
   const statsTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -218,9 +254,9 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
     statsTimer.current = setTimeout(async () => {
       statsTimer.current = null
       const engine = engineRef.current
-      const { settings: s, info: inf, before: b, indicators: ind } = latest.current
+      const { settings: s, info: inf, before: b, indicators: ind, hover: hv } = latest.current
       if (!engine || !inf) return
-      const shown = b ? defaultsFor(inf.kind) : s
+      const shown = b ? defaultsFor(inf.kind) : (hv ?? s)
       try {
         setStats(await engine.renderStats(displayUniforms(shown), b ? inf.asShotWb : multipliers(shown, inf), 256, ind))
       } catch {
@@ -238,9 +274,9 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
       while (pending.current) {
         pending.current = false
         const engine = engineRef.current
-        const { settings: s, info: inf, view: v, before: b, indicators: o } = latest.current
+        const { settings: s, info: inf, view: v, before: b, indicators: o, hover: hv } = latest.current
         if (!engine || !inf) break
-        const shown = b ? defaultsFor(inf.kind) : s
+        const shown = b ? defaultsFor(inf.kind) : (hv ?? s)
         try {
           const ms = await engine.render(displayUniforms(shown), b ? inf.asShotWb : multipliers(shown, inf), v, o)
           setTiming((x) => ({ ...x, frame: ms }))
@@ -255,7 +291,7 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
 
   useEffect(() => {
     if (status.kind === 'ready') requestRender()
-  }, [status.kind, settings, view, before, indicators, requestRender])
+  }, [status.kind, settings, view, before, indicators, hover, requestRender])
 
   useEffect(() => {
     const el = stageRef.current
@@ -273,16 +309,11 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
     const engine = engineRef.current
     const run = async () => {
       const s = current(history)
-      const saved: SavedHistory = { steps: history.steps.map(({ label, settings: st }) => ({ label, settings: st })), index: history.index }
-      await catalog.saveEdit(photoId, JSON.stringify(s), JSON.stringify(saved))
+      await catalog.saveEdit(photoId, JSON.stringify(s), JSON.stringify(savedForm(history)))
       sidecars.schedule([photoId])
       try {
         if (engine) {
-          const img = await engine.renderImage(displayUniforms(s), multipliers(s, info), 512)
-          const c = new OffscreenCanvas(img.width, img.height)
-          c.getContext('2d')!.putImageData(img, 0, 0)
-          const blob = await c.convertToBlob({ type: 'image/jpeg', quality: 0.82 })
-          await saveThumb(photoId, new Uint8Array(await blob.arrayBuffer()))
+          await saveThumb(photoId, await renderThumbnail(engine, s, info))
           forgetThumbUrl(photoId)
         }
       } catch {
@@ -307,9 +338,19 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
     [id],
   )
 
-  const change = useCallback((label: string, next: DevelopSettings) => {
+  /**
+   * Records a change. Moving one of the sliders Auto set, by hand, ends the photo's Auto record (so a later Paste
+   * copies the numbers instead of re-running Auto); `keepAuto` is for changes Auto and Paste make themselves.
+   */
+  const change = useCallback((label: string, next: DevelopSettings, keepAuto = false) => {
     dirty.current = true
-    setHistory((h) => (h ? record(h, label, next) : h))
+    setHistory((h) => {
+      if (!h) return h
+      const prev = current(h)
+      const a = next.auto
+      const s = a && !keepAuto && a.sliders.some((k) => next[k] !== prev[k]) ? { ...next, auto: null } : next
+      return record(h, label, s)
+    })
   }, [])
 
   const reset = () => change('Reset', defaults)
@@ -318,25 +359,46 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
   const targets = useMemo(() => [...BUILT_IN_TARGETS, ...(refTarget ? [refTarget] : []), ...savedTargets], [refTarget, savedTargets])
 
   const runAuto = useCallback(
-    async (target: AutoTarget) => {
+    async (target: AutoTarget, options: AutoOptionsState = autoOptions) => {
       const engine = engineRef.current
       if (!engine || !info || !history) return
       setAutoBusy(true)
       try {
         // Like Lightroom's Auto, this leaves white balance alone (owner's decision, 2026-10-11).
         const start = current(history)
-        const r = await solveAuto(start, target, async (s) =>
-          metricsFromStats(await engine.renderStats(displayUniforms(s), multipliers(s, info), 256)),
+        const r = await solveAuto(
+          start,
+          target,
+          async (s) => metricsFromStats(await engine.renderStats(displayUniforms(s), multipliers(s, info), 256)),
+          12,
+          options,
         )
-        change(`Auto: ${target.name}`, r.settings)
+        change(`Auto: ${target.name}`, r.settings, true)
       } catch (e) {
         if (engineRef.current === engine) setStatus({ kind: 'error', message: `Auto failed: ${e instanceof Error ? e.message : e}` })
       } finally {
         setAutoBusy(false)
       }
     },
-    [info, history, change],
+    [info, history, change, autoOptions],
   )
+
+  // Changing Auto's strength or sliders re-runs it on a photo whose tone came from Auto (after a short pause).
+  const lastOptions = useRef(autoOptions)
+  const runAutoRef = useRef(runAuto)
+  runAutoRef.current = runAuto
+  const autoRecord = settings.auto ?? null
+  const autoRecordRef = useRef(autoRecord)
+  autoRecordRef.current = autoRecord
+  useEffect(() => {
+    if (lastOptions.current === autoOptions) return
+    lastOptions.current = autoOptions
+    const t = setTimeout(() => {
+      const a = autoRecordRef.current
+      if (a) void runAutoRef.current(a.target, autoOptions)
+    }, 350)
+    return () => clearTimeout(t)
+  }, [autoOptions])
 
   /** Uses another photo's look (its current thumbnail rendering) as the Auto target. */
   async function matchReference(refId: number) {
@@ -385,15 +447,182 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
   const selectedTarget = targets.find((t) => t.id === targetId) ?? BUILT_IN_TARGETS[0]
   const infoLine = photo ? exposureText(photo) : ''
 
+  // ---- copy / paste / sync (Lightroom: Ctrl+Shift+C, Ctrl+Shift+V, Sync…, Auto Sync)
+  const others = useMemo(() => ids.filter((x) => x !== id && selection.has(x)), [ids, id, selection])
+  const clipFor = useCallback(
+    (keys: PasteKey[], rerun: boolean): Clipboard | null =>
+      info && photo ? { settings, keys, rerunAuto: rerun, sourceKind: info.kind, sourceName: photo.fileName } : null,
+    [info, photo, settings],
+  )
+  const openCopy = (mode: 'copy' | 'sync') => {
+    const { keys, rerunAuto: rerun } = rememberedChoice()
+    const clip = clipFor(keys, rerun)
+    if (clip && status.kind === 'ready' && (mode === 'copy' || others.length)) setPasting({ mode, clip })
+  }
+  const openPaste = () => {
+    const clip = settingsClipboard.get()
+    if (clip && status.kind === 'ready') setPasting({ mode: 'paste', clip })
+  }
+
+  /** Pastes onto the photo shown (in Develop, Paste goes to this photo only; Sync covers the others). */
+  async function pasteHere(clip: Clipboard) {
+    const engine = engineRef.current
+    if (!engine || !info) return
+    let next = applyPaste(settings, clip, info.kind)
+    if (clip.rerunAuto && clip.settings.auto) {
+      setAutoBusy(true)
+      try {
+        next = await rerunAuto(engine, { ...next, auto: clip.settings.auto }, info)
+        builtStage.current = stageOptions(next, info)
+      } catch (e) {
+        setStatus({ kind: 'error', message: `Auto failed: ${e instanceof Error ? e.message : e}` })
+        return
+      } finally {
+        setAutoBusy(false)
+      }
+    }
+    change('Paste settings', next, true)
+  }
+
+  function confirmPaste(clip: Clipboard, name: string) {
+    const mode = pasting?.mode
+    setPasting(null)
+    if (mode === 'preset') void savePreset(clip, name)
+    else if (mode === 'copy') settingsClipboard.set(clip)
+    else if (mode === 'paste') void pasteHere(clip)
+    else if (mode === 'sync') batch.run({ label: 'Sync settings', ids: others, clip })
+  }
+
+  // ---- presets
+  useEffect(() => {
+    const load = () => void loadPresets().then(setPresets)
+    load()
+    return presetsChanged.subscribe(load)
+  }, [])
+
+  // The Amount slider stays while the photo shows what the preset set; any other change (or another photo) ends it.
+  const amountFor = applied && applied.result === settings ? applied : null
+
+  async function applyPreset(p: Preset) {
+    const engine = engineRef.current
+    if (!engine || !info || status.kind !== 'ready') return
+    setHoverPreset(null)
+    const before = settings
+    let after = applyPaste(before, presetClip(p), info.kind)
+    if (p.rerunAuto && p.settings.auto) {
+      setAutoBusy(true)
+      try {
+        after = await rerunAuto(engine, { ...after, auto: p.settings.auto }, info)
+        builtStage.current = stageOptions(after, info)
+      } catch (e) {
+        setStatus({ kind: 'error', message: `Auto failed: ${e instanceof Error ? e.message : e}` })
+        return
+      } finally {
+        setAutoBusy(false)
+      }
+    }
+    change(`Preset: ${p.name}`, after, true)
+    setApplied({ preset: p, before, after, amount: 1, result: after })
+  }
+
+  function changeAmount(amount: number) {
+    if (!amountFor || !info) return
+    const result = blendSettings(amountFor.before, amountFor.after, amount, info.asShot)
+    dirty.current = true
+    setHistory((h) => (h && current(h) === amountFor.result ? replaceCurrent(h, result) : h))
+    setApplied({ ...amountFor, amount, result })
+  }
+
+  function openNewPreset() {
+    // Pre-tick what differs from the defaults, so a preset holds what was actually changed.
+    const changed = changedKeys(defaults, settings)
+    const { keys } = rememberedChoice()
+    const clip = clipFor(changed.length ? changed : keys, !!settings.auto)
+    if (clip && status.kind === 'ready') setPasting({ mode: 'preset', clip })
+  }
+
+  async function savePreset(clip: Clipboard, name: string) {
+    const data: PresetData = { keys: clip.keys, settings: clip.settings, rerunAuto: clip.rerunAuto && !!clip.settings.auto, sourceKind: clip.sourceKind }
+    await catalog.savePreset(name, JSON.stringify(data))
+    presetsChanged.emit()
+  }
+
+  async function removePreset(p: Preset) {
+    if (p.starter || !window.confirm(`Delete the preset “${p.name}”? Photos it was applied to keep their settings.`)) return
+    await catalog.deletePreset(Number(p.id.slice('user:'.length)))
+    presetsChanged.emit()
+  }
+
+  // Auto Sync: each change here goes to the other selected photos, a moment after the last one.
+  const syncFrom = useRef<{ id: number; settings: DevelopSettings } | null>(null)
+  const syncPending = useRef<{ keys: Set<PasteKey>; auto: boolean; job: { clip: Clipboard; to: number[] } | null; timer: ReturnType<typeof setTimeout> | null }>({
+    keys: new Set(),
+    auto: false,
+    job: null,
+    timer: null,
+  })
+  const flushSync = useCallback(() => {
+    const p = syncPending.current
+    if (p.timer) clearTimeout(p.timer)
+    const job = p.job
+    Object.assign(p, { keys: new Set(), auto: false, job: null, timer: null })
+    if (job && job.to.length) batch.run({ label: 'Auto Sync', ids: job.to, clip: job.clip })
+  }, [])
+  useEffect(() => {
+    const prev = syncFrom.current
+    syncFrom.current = history ? { id, settings } : null
+    if (!autoSync || !dirty.current || !prev || prev.id !== id || prev.settings === settings) return
+    const p = syncPending.current
+    changedKeys(prev.settings, settings).forEach((k) => p.keys.add(k))
+    if (settings.auto && JSON.stringify(prev.settings.auto) !== JSON.stringify(settings.auto)) p.auto = true
+    const clip = clipFor([...p.keys], p.auto)
+    if (!clip || (!p.keys.size && !p.auto)) return
+    p.job = { clip, to: others }
+    if (p.timer) clearTimeout(p.timer)
+    p.timer = setTimeout(flushSync, 700)
+  }, [autoSync, history, id, settings, clipFor, others, flushSync])
+  // Moving to another photo or switching Auto Sync off sends what is still waiting.
+  useEffect(() => flushSync, [id, autoSync, flushSync])
+
+  /** Filmstrip and arrow keys: Ctrl+click adds or removes a photo, Shift+click a range; moving within the selection keeps it. */
+  function pick(pid: number, e?: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) {
+    if (e && (e.ctrlKey || e.metaKey)) {
+      const next = new Set(selection)
+      if (next.has(pid) && pid !== id) next.delete(pid)
+      else next.add(pid)
+      setSelection(next)
+      return
+    }
+    if (e?.shiftKey) {
+      const a = ids.indexOf(id)
+      const b = ids.indexOf(pid)
+      setSelection(new Set([...selection, ...ids.slice(Math.min(a, b), Math.max(a, b) + 1)]))
+      return
+    }
+    if (!selection.has(pid)) setSelection(new Set([pid]))
+    onNavigate(pid)
+  }
+
   // ---- keyboard
   const index = ids.indexOf(id)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (isTextEntry(e.target) || isSliderKey(e)) return
+      if (isTextEntry(e.target) || isSliderKey(e) || pasting) return
       const k = e.key.toLowerCase()
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && k === 'e') {
         e.preventDefault()
         onExport([id])
+      } else if ((e.ctrlKey || e.metaKey) && k === 'c') {
+        // Ctrl+C (and Lightroom's Ctrl+Shift+C) always asks which settings to copy.
+        e.preventDefault()
+        openCopy('copy')
+      } else if ((e.ctrlKey || e.metaKey) && k === 'v') {
+        e.preventDefault()
+        openPaste()
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && k === 's') {
+        // Lightroom: Ctrl+Shift+S syncs settings to the selected photos.
+        e.preventDefault()
+        openCopy('sync')
       } else if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) {
         e.preventDefault()
         dirty.current = true
@@ -409,9 +638,9 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
       } else if (k === 'z') {
         setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center }))
       } else if (k === 'arrowright' && index < ids.length - 1) {
-        onNavigate(ids[index + 1])
+        pick(ids[index + 1])
       } else if (k === 'arrowleft' && index > 0) {
-        onNavigate(ids[index - 1])
+        pick(ids[index - 1])
       } else if (k === 'w' && !e.ctrlKey && !e.metaKey) {
         // Lightroom: W selects the white balance picker.
         setWbPick((p) => !p)
@@ -425,7 +654,7 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [ids, id, index, onNavigate, onExport])
+  })
 
   // ---- click to zoom, drag to pan
   const drag = useRef<{ x: number; y: number; center: [number, number]; moved: boolean } | null>(null)
@@ -551,6 +780,16 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
           />
         </section>
         <ResizeHandle axis="y" value={histH} min={90} max={480} onChange={setHistH} label="Resize histogram" />
+        <PresetPanel
+          presets={presets}
+          applied={amountFor ? { id: amountFor.preset.id, amount: amountFor.amount } : null}
+          disabled={status.kind !== 'ready' || autoBusy}
+          onHover={setHoverPreset}
+          onApply={(p) => void applyPreset(p)}
+          onAmount={changeAmount}
+          onNew={openNewPreset}
+          onDelete={(p) => void removePreset(p)}
+        />
         <h3 className="panel-title">History</h3>
         <ol className="history" reversed>
           {history &&
@@ -573,6 +812,10 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
           <button className="button small" disabled={!history || !canRedo(history)} onClick={() => { dirty.current = true; setHistory((h) => (h ? redo(h) : h)) }} title="Redo (Ctrl+Shift+Z)">Redo</button>
           <button className="button small" disabled={status.kind !== 'ready'} onClick={reset}>Reset all</button>
         </div>
+        <div className="dleft-actions">
+          <button className="button small" disabled={status.kind !== 'ready'} onClick={() => openCopy('copy')} title="Choose settings to copy (Ctrl+C)">Copy…</button>
+          <button className="button small" disabled={status.kind !== 'ready' || !hasClip} onClick={openPaste} title="Paste settings onto this photo (Ctrl+V)">Paste…</button>
+        </div>
         {timing.stage !== undefined && (
           <p className="muted small pad">
             Processing {Math.round(timing.stage)} ms{timing.frame !== undefined ? ` · redraw ${timing.frame.toFixed(1)} ms` : ''}
@@ -590,6 +833,20 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
           <button className="button small" onClick={() => setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center }))} disabled={status.kind !== 'ready'} title="Zoom (Z)">
             {view.zoom === 'fit' ? 'Fit' : '100 %'}
           </button>
+          <span className="sync-group">
+            <button
+              className="button small"
+              disabled={status.kind !== 'ready' || !others.length}
+              onClick={() => openCopy('sync')}
+              title={others.length ? `Apply settings from this photo to the ${others.length} other selected (Ctrl+Shift+S)` : 'Ctrl+click photos in the filmstrip to select them, then sync'}
+            >
+              Sync…{others.length ? ` (${others.length})` : ''}
+            </button>
+            <label className="check small" title="Every change here also goes to the other selected photos">
+              <input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} disabled={!others.length} />
+              Auto Sync
+            </label>
+          </span>
           <button className="button small" onClick={() => onExport([id])} title="Export this photo (Ctrl+Shift+E)">Export…</button>
         </div>
         <div
@@ -605,6 +862,7 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
           {status.kind === 'error' && <div className="dmessage error">{status.message}</div>}
           {engineError && <div className="dmessage error">{engineError}</div>}
           {before && <div className="dbadge">Before</div>}
+          {!before && hoverPreset && <div className="dbadge">Preview: {hoverPreset.name}</div>}
           {(overlay || rawOverlay) && (
             <div className="dbadge right">
               {[overlay && 'Clipping shown (J)', rawOverlay && 'Sensor clipping shown (Shift+O)'].filter(Boolean).join(' · ')}
@@ -613,15 +871,16 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
           {wbPick && <div className="dbadge pick">Click something that should be neutral grey or white · Esc to cancel</div>}
           {wbPick && loupe && <WbLoupe x={loupe.x} y={loupe.y} image={loupe.image} zoom={LOUPE_ZOOM} />}
           {picking && <div className="dbadge pick">Click a photo in the filmstrip to match its look · Esc to cancel</div>}
+          {autoSync && others.length > 0 && <div className="dbadge sync">Auto Sync: changes also go to {others.length} other {others.length === 1 ? 'photo' : 'photos'}</div>}
         </div>
         <div className="filmstrip" role="listbox" aria-label="Filmstrip">
           {strip.map((pid) => (
             <button
               key={pid}
-              className={`fs-cell ${pid === id ? 'on' : ''} ${picking ? 'picking' : ''}`}
-              onClick={() => (picking ? void matchReference(pid) : onNavigate(pid))}
-              aria-selected={pid === id}
-              title={picking ? 'Use this photo as the reference look' : undefined}
+              className={`fs-cell ${pid === id ? 'on' : ''} ${selection.has(pid) ? 'selected' : ''} ${picking ? 'picking' : ''}`}
+              onClick={(e) => (picking ? void matchReference(pid) : pick(pid, e))}
+              aria-selected={selection.has(pid)}
+              title={picking ? 'Use this photo as the reference look' : 'Click to open · Ctrl+click to select for Sync'}
             >
               <Thumb id={pid} />
             </button>
@@ -653,9 +912,22 @@ export function DevelopView({ ids, id, onNavigate, onEdited, onExport }: Props) 
             onPickReference: () => setPicking((p) => !p),
             onSaveTarget: () => void saveCurrentAsTarget(),
             onDeleteTarget: (tid) => void deleteTarget(tid),
+            strength: autoOptions.strength,
+            sliders: autoOptions.sliders,
+            onOptions: (o) => setAutoOptions({ ...autoOptions, ...o }),
+            record: autoRecord,
           }}
         />
       </aside>
+      {pasting && (
+        <PasteDialog
+          mode={pasting.mode}
+          clip={pasting.clip}
+          targets={pasting.mode === 'sync' ? { count: others.length } : pasting.mode === 'paste' ? { count: 1, kind: info?.kind ?? 'raw' } : undefined}
+          onConfirm={confirmPaste}
+          onClose={() => setPasting(null)}
+        />
+      )}
     </div>
   )
 }

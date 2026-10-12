@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { BatchProgress } from './develop/BatchProgress'
+import { batch } from './develop/batch'
+import { startNewPhotosPreset } from './develop/presetStore'
 import { DevelopView } from './develop/DevelopView'
 import { isTextEntry } from './lib/keys'
 import { LibraryView } from './library/LibraryView'
@@ -15,7 +18,8 @@ export default function App() {
   const [module, setModule] = useState<Module>(() => (location.hash === '#syscheck' ? 'syscheck' : 'library'))
   const [focus, setFocus] = useState<{ id: number | null; ids: number[]; targets: number[] }>({ id: null, ids: [], targets: [] })
   const [exporting, setExporting] = useState<number[] | null>(null)
-  const [developing, setDeveloping] = useState<{ id: number; ids: number[] } | null>(null)
+  /** The photo being developed, the filmstrip, and the photos selected with it (for Sync). */
+  const [developing, setDeveloping] = useState<{ id: number; ids: number[]; selected: number[] } | null>(null)
   const [libraryVersion, setLibraryVersion] = useState(0)
 
   const go = useCallback((m: Module) => {
@@ -23,15 +27,38 @@ export default function App() {
     history.replaceState(null, '', m === 'library' ? location.pathname : `#${m}`)
   }, [])
 
-  const onFocusChange = useCallback((id: number | null, ids: number[], targets: number[]) => setFocus({ id, ids, targets }), [])
+  const focusRef = useRef(focus)
+  const onFocusChange = useCallback((id: number | null, ids: number[], targets: number[]) => {
+    focusRef.current = { id, ids, targets }
+    setFocus({ id, ids, targets })
+  }, [])
   const openDevelop = useCallback(
     (id: number, ids: number[]) => {
-      setDeveloping({ id, ids })
+      const { targets } = focusRef.current
+      setDeveloping({ id, ids, selected: targets.includes(id) ? targets : [id] })
       go('develop')
     },
     [go],
   )
   const onEdited = useCallback(() => setLibraryVersion((v) => v + 1), [])
+
+  // Paste and Sync change photos in the background: refresh the Library as they finish (at most a few times a second).
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const off = batch.onUpdated(() => {
+      timer ??= setTimeout(() => {
+        timer = null
+        setLibraryVersion((v) => v + 1)
+      }, 400)
+    })
+    return () => {
+      off()
+      if (timer) clearTimeout(timer)
+    }
+  }, [])
+
+  // Develop new photos (Open folder, Import) with the preset chosen for them.
+  useEffect(() => startNewPhotosPreset(), [])
 
   // Photos opened with the installed app are added from the Library, which asks for their folder.
   useEffect(() => launched.subscribe(() => launched.get().length > 0 && go('library')), [go])
@@ -83,7 +110,7 @@ export default function App() {
                   setExporting(module === 'develop' && developing ? [developing.id] : focus.targets)
                   return
                 }
-                if (m.id === 'develop' && focus.id !== null && (!developing || module !== 'develop')) setDeveloping({ id: focus.id, ids: focus.ids })
+                if (m.id === 'develop' && focus.id !== null && (!developing || module !== 'develop')) setDeveloping({ id: focus.id, ids: focus.ids, selected: focus.targets.includes(focus.id) ? focus.targets : [focus.id] })
                 go(m.id)
               }}
             >
@@ -101,6 +128,7 @@ export default function App() {
           <DevelopView
             ids={developing.ids}
             id={developing.id}
+            selected={developing.selected}
             onNavigate={(id) => setDeveloping((d) => (d ? { ...d, id } : d))}
             onEdited={onEdited}
             onExport={setExporting}
@@ -108,6 +136,7 @@ export default function App() {
         )}
         {module === 'syscheck' && <SystemCheck />}
       </main>
+      <BatchProgress />
       {exporting && <ExportDialog ids={exporting} onClose={() => setExporting(null)} />}
       <UpdateNotice />
     </div>

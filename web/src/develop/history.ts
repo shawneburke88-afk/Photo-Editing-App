@@ -1,7 +1,7 @@
 // Edit history (Lightroom's History panel): every change is a step; rapid changes to the same
 // control (e.g. dragging a slider) merge into one step.
 
-import type { DevelopSettings } from '../engine/develop/settings'
+import { defaultsFor, normalizeSettings, type DevelopSettings, type SourceKind } from '../engine/develop/settings'
 
 export interface HistoryStep {
   label: string
@@ -42,3 +42,35 @@ export const undo = (h: History): History => ({ ...h, index: Math.max(0, h.index
 export const redo = (h: History): History => ({ ...h, index: Math.min(h.steps.length - 1, h.index + 1) })
 export const jump = (h: History, index: number): History => ({ ...h, index: Math.min(h.steps.length - 1, Math.max(0, index)) })
 export const current = (h: History) => h.steps[h.index].settings
+
+/** Changes the settings of the step shown, without adding a step (a preset's Amount after applying it). */
+export function replaceCurrent(h: History, settings: DevelopSettings): History {
+  const steps = [...h.steps]
+  steps[h.index] = { ...steps[h.index], settings }
+  return { ...h, steps }
+}
+
+/** Saved form of the history (timestamps are not stored). */
+export interface SavedHistory {
+  steps: { label: string; settings: DevelopSettings }[]
+  index: number
+}
+
+export const savedForm = (h: History): SavedHistory => ({ steps: h.steps.map(({ label, settings }) => ({ label, settings })), index: h.index })
+
+/** A photo's history as saved in the catalog (or a fresh one at the defaults for its kind). */
+export function loadHistory(saved: { settings: string; history: string } | null, kind: SourceKind): History {
+  if (!saved) return startHistory(defaultsFor(kind))
+  try {
+    const sh = JSON.parse(saved.history) as SavedHistory
+    const steps = sh.steps.map((st) => ({ label: st.label, settings: normalizeSettings(st.settings, kind), at: 0 }))
+    if (steps.length) return { steps, index: Math.min(sh.index, steps.length - 1) }
+  } catch {
+    // fall back to the settings alone
+  }
+  try {
+    return startHistory(normalizeSettings(JSON.parse(saved.settings), kind))
+  } catch {
+    return startHistory(defaultsFor(kind))
+  }
+}

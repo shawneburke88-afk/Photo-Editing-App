@@ -124,6 +124,73 @@ Catalog schema v8: `photos.version` (0 = original) and `photos.version_name`; un
 
 **Verified** (headless Chromium, `e2e-copies`): Ctrl+' made “Copy 1” stacked with A; renaming to “B&W” and rating it 4 stars wrote `[B&W:4★]` to A.xmp; a second copy was added and deleting it removed it from A.xmp; after removing everything and opening the folder again, “B&W” came back with 4 stars in A's stack; removing A removed its copy too. Export naming is covered by unit tests (`template.test.ts`), not run end to end.
 
+## Part 7: Copy, paste and sync settings, and a tunable Auto
+
+**What it does.** Applies one photo's develop settings to others, choosing which settings travel, and lets Auto be tuned. Owner's choices (2026-10-12): Ctrl+C always opens the checklist; when the copied tone came from Auto, Auto is re-run on each photo by default instead of copying its numbers; a paste preview, a Sync button and Auto Sync are all included. Earlier (after round 2): Auto gets a strength slider and a choice of sliders.
+
+| Behaviour | Detail | Source |
+|---|---|---|
+| Copy | **Ctrl+C** (and Lightroom's **Ctrl+Shift+C**) or **Copy…** opens a checklist grouped as White balance, Tone, Presence and Advanced (darktable modules), with each setting's value. The choice is remembered in this browser; the advanced modules are unticked by default. | Lightroom Copy Settings; darktable "selective copy" (`src/libs/copy_history.c`) |
+| Paste | **Ctrl+V** (or Ctrl+Shift+V) or **Paste…** first shows a preview of what will change, with **Choose settings…** to adjust it. In the Library it pastes onto every selected photo; in Develop onto the photo shown (Sync covers the others). Pasting replaces only the chosen settings and adds one “Paste settings” step to each photo's history, so it can be undone there. | Lightroom Paste Settings. darktable's default paste appends to the history instead (`plugins/lighttable/copy_history/pastemode` = 0) |
+| Auto re-run | If the copied tone came from Auto, **Re-run Auto on each photo** (on by default) runs the same look, strength and sliders on each photo's own pixels, so each gets its own values. Unticking it copies the numbers. | Owner's choice |
+| White balance | “As Shot” travels as a mode, so each photo keeps its own camera white balance; a custom temperature/tint is copied as numbers. | Lightroom; round 2, lesson 12 |
+| File types | The advanced darktable modules (base exposure, sigmoid, highlight reconstruction, demosaic) only go to photos of the same type (RAW to RAW, JPEG to JPEG); the dialog says when they will be skipped. | darktable's RAW and JPEG defaults differ (+0.7 EV base exposure for RAW only) |
+| Sync | **Sync…** (Library right panel, Develop toolbar) or **Ctrl+Shift+S** applies settings from the photo with the focus to the other selected photos, with the same checklist. In Develop, Ctrl+click photos in the filmstrip to add them to the selection (Shift+click for a range); the selection starts as the Library's. | Lightroom Sync Settings |
+| Auto Sync | A checkbox next to Sync in Develop: each change to the photo shown also goes to the other selected photos, about 0.7 s after the last change; Auto changes re-run Auto on each photo. Off each time Develop opens. A badge shows it is on. | Lightroom Auto Sync |
+| Background work | Paste and Sync develop each photo in the background (decode, Auto if asked, history step, thumbnail, sidecar) with a progress box and **Stop**, then a summary with any problems. Develop stays usable meanwhile. | — |
+| Auto options | Under **Auto options**: **Strength** 0–150 % (how far Auto moves its sliders; double-click resets to 100 %) and which sliders Auto may change (Exposure, Contrast, Highlights, Whites, Blacks, Vibrance). Changing them re-runs Auto on a photo whose tone came from Auto. With some sliders unticked, Auto leaves those and Shadows as they are. | Owner's choice (round 2) |
+| Auto record | A photo remembers the Auto that set its tone (look, strength, sliders), shown under the Auto button, saved in the edit and its sidecar. Moving one of those sliders by hand ends the record, so a later copy pastes numbers. | — |
+
+**Verified** (headless Chromium with software WebGPU, `e2e-paste`):
+- Auto on A, then Ctrl+C: the dialog listed the settings with A's values and offered “Re-run Auto on each photo — Natural, 100 %”.
+- In the Library, B.NEF and C.JPG were selected and Ctrl+V pressed. The preview listed the Auto re-run, white balance As Shot, Shadows and Saturation.
+- Paste finished in 21 s for the two photos (software GPU). Each got its own Auto result: A Exposure +0.75 / Blacks −85; B −0.20 / −4; C −0.20 / −5. C kept the JPEG base exposure 0. All three show the edited badge, and their sidecars hold the Auto record.
+- Develop on A with B selected: Sync of Saturation −40 reached B.xmp. Auto Sync of Saturation +25 reached B.xmp.
+- Strength set to 50 % re-ran Auto on A (Blacks −85 → −42). Moving Exposure by hand then cleared the Auto record.
+- Unit tests: `paste.test.ts` (choice, As Shot mode, file-type skipping, Auto keys, changed keys) and `auto.test.ts` (slider choice, strength, Shadows rule).
+
+**Limitations:**
+- Paste in the Library goes to the selected grid cells. A collapsed stack contributes only its top photo, so expand it to paste onto all of its photos.
+- If a background paste changes the photo open in Develop while it has unsaved changes, Develop's own save comes last and wins.
+- The copied settings last for this visit only; they are not kept after reloading the page.
+- The checklist covers today's Basic panel and advanced modules. Phase 3 tools (crop, curves, masks…) will join it as they are built.
+- Re-running Auto takes several seconds per photo on the software GPU used for testing. It still needs measuring on the owner's GPU.
+
+## Part 8: Presets
+
+**What it does.** Saves chosen develop settings under a name and applies them to one photo or many. Owner's choices (2026-10-12):
+- A preset holds the settings ticked when it was saved (the same checklist as Copy).
+- It is applied with an **Amount** from 0 to 200 %, previews on **hover**, and a few **starters** are included.
+- One preset can be chosen to **develop new photos** when a folder is opened or imported.
+- darktable-style rules by camera, lens or ISO were not chosen for now.
+
+| Behaviour | Detail | Source |
+|---|---|---|
+| Presets panel | Develop's left panel, above History, as in Lightroom. Groups: **My presets**, then **Starters**. | Lightroom Develop Presets panel |
+| Hover preview | Hovering a preset (or tabbing to it) shows the photo and histogram with it applied and a “Preview: …” badge; the sliders don't move until it is clicked. A preset that runs Auto previews only its other settings. Switches that need the RAW reprocessed (highlight reconstruction, demosaic) aren't previewed. | Lightroom (preview in the Navigator); owner's choice |
+| Apply | Click: adds one “Preset: name” history step. Only the settings the preset holds change; RAW-only advanced settings skip JPEGs, as with Paste. | Lightroom; Part 7 |
+| Amount | After applying, an **Amount** slider (0–200 %, double-click for 100 %) moves each setting between the photo before the preset (0 %) and the preset (100 %), or beyond it (200 %), within each slider's range. It changes the same history step rather than adding steps. It goes away once the photo is changed another way. White balance blends in mireds (temperature) and log steps (tint). Sliders set by an Auto in the preset scale from 0, so the Auto record stays true (50 % = Auto at half strength). | Lightroom's preset Amount; owner's choice |
+| New preset | **New preset…** opens the Copy checklist with a name field. The settings that differ from the defaults are ticked. If the tone came from Auto, **Run Auto on each photo** is offered, so the preset runs Auto (look, strength, sliders) on each photo instead of storing numbers. | Lightroom New Develop Preset |
+| Delete | ✕ on hover, for your own presets (starters can't be deleted). Photos it was applied to keep their settings. | — |
+| Starters | Auto tone (Natural), Black & white (Saturation −100), Punchy, Soft, Bright & airy. They are starting points chosen by eye, not standards. More will come with the Phase 3 tools. | Owner's choice |
+| Library | **Apply preset…** in the right panel's Develop settings applies one to the selected photos in the background (Part 7's progress box). | Lightroom Quick Develop “Saved Preset” |
+| New photos | **Develop new photos with** (Library left panel, and the Import dialog's Develop settings) picks a preset for photos added by Open folder or Import. Photos that already have edits (e.g. from their sidecars) are left alone and counted in the summary. Remembered in this browser. | Lightroom Import “Develop Settings” |
+| Storage | Your presets are in the catalog (schema v9, `presets` table, as JSON). The starters are in the code. | — |
+
+**Verified** (headless Chromium with software WebGPU, `e2e-presets`):
+- **New photos:** with “Punchy” chosen, Open folder of A.NEF, B.NEF and C.JPG developed all three in the background (“Preset: Punchy: 3 photos updated”). A.xmp and C.xmp hold Contrast +25, Whites +10, Blacks −10, Vibrance +30.
+- **Hover and Amount:** hovering “Black & white” showed the photo in black and white with a “Preview” badge while the Saturation slider stayed at 0; leaving removed the badge. Clicking “Soft” set Contrast −20, Shadows +20, Saturation −10. Amount 50 % gave Contrast +3 (between Punchy's +25 and Soft's −20), Highlights −10, Shadows +10, Saturation −5, with one “Preset: Soft” history step. Moving a slider by hand removed the Amount slider.
+- **New preset and Library apply:** New preset… ticked the seven changed settings; “Muted” was saved and listed under My presets. Applied from the Library to B and C, both sidecars got its values.
+- **Auto tone starter:** set Exposure +0.75 / Blacks −85 with the Auto note at 100 %. Amount 50 % gave +0.38 / −42 and “at 50 %”.
+- **Delete:** deleting “Muted” left only Starters.
+- **Unit tests:** `presets.test.ts` (holds only its settings, Amount and ranges, Auto scaling, white balance blend, JPEG skipping, saved rows) and `history.test.ts` (replacing the current step).
+
+**Limitations:**
+- Presets live in this browser's catalog. There is no export or import as files yet, and clearing the browser's storage removes them.
+- Renaming a preset and updating it with the current settings aren't in the UI yet. To change one, delete it and save it again.
+- Developing new photos decodes each RAW to refresh its thumbnail, so a large folder takes a while (in the background, with Stop).
+- The hover preview doesn't run Auto or reprocess the RAW stage (highlight reconstruction, demosaic).
+
 ## Part 9: Installable, offline app (PWA)
 
 **What it does.** LightBench can be installed as an app (the install button in Chrome or Edge's address bar) and works without a connection after the first visit. Owner's choices (2026-10-12): the icons come from the existing brand mark; every file of the app is stored for offline use, including the WebAssembly decoders and the workers (photos and the catalog were already on the user's computer); an update downloads in the background and waits behind an **Update ready** notice with the new version's notes and a **Reload** button, so nothing changes until it is clicked; and the installed app opens RAW and JPEG files from the computer's file manager. The library works on folders, so a launched photo brings up a dialog with **Open its folder…**, which opens the photo's folder like Open folder and then shows the photo.

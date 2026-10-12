@@ -7,7 +7,7 @@ import { burstGroups, collapseStacks } from './stacks'
 import type { CollectionInfo, DuplicateKey, FolderNode, LibraryRoot, NewPhoto, PhotoDetail, PhotoQuery, PhotoRow } from './types'
 
 const DB_FILE = '/lightbench-catalog.sqlite3'
-const SCHEMA_VERSION = 8
+const SCHEMA_VERSION = 9
 
 let db: Database | null = null
 let persistent = false
@@ -226,6 +226,17 @@ function migrate(d: Database) {
       `)
       const broken = d.selectObjects('PRAGMA foreign_key_check')
       if (broken.length) throw new Error(`Catalog upgrade found ${broken.length} broken references; nothing was changed.`)
+    }
+    if (version < 9) {
+      // Develop presets saved by the user (JSON of develop/presets.ts PresetData). Starters live in the code.
+      d.exec(`
+        CREATE TABLE presets (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          preset TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+      `)
     }
     d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     d.exec('COMMIT')
@@ -1006,6 +1017,23 @@ function deleteTarget(id: number) {
   conn().exec({ sql: 'DELETE FROM auto_targets WHERE id = ?', bind: [id] })
 }
 
+function listPresets(): { id: number; name: string; preset: string }[] {
+  return conn().selectObjects('SELECT id, name, preset FROM presets ORDER BY name COLLATE NOCASE') as unknown as { id: number; name: string; preset: string }[]
+}
+
+function savePreset(name: string, preset: string): number {
+  conn().exec({ sql: 'INSERT INTO presets (name, preset, created_at) VALUES (?, ?, ?)', bind: [name, preset, Math.floor(Date.now() / 1000)] })
+  return Number(conn().selectValue('SELECT last_insert_rowid()'))
+}
+
+function renamePreset(id: number, name: string) {
+  conn().exec({ sql: 'UPDATE presets SET name = ? WHERE id = ?', bind: [name, id] })
+}
+
+function deletePreset(id: number) {
+  conn().exec({ sql: 'DELETE FROM presets WHERE id = ?', bind: [id] })
+}
+
 /** Everything needed to write a photo's sidecar. */
 function sidecarSource(requested: number) {
   // A virtual copy's settings live in its original's sidecar, so writing for a copy writes the original's.
@@ -1063,6 +1091,10 @@ const handlers = {
   listTargets,
   saveTarget,
   deleteTarget,
+  listPresets,
+  savePreset,
+  renamePreset,
+  deletePreset,
   sidecarSource,
   listKeywords,
   keywordsOf,
