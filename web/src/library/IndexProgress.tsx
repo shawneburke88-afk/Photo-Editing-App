@@ -3,10 +3,10 @@ import { indexer, type IndexStatus } from './indexer'
 
 /** Progress of Open folder in the left panel: what is being read, how far along, and a Stop button. */
 export function IndexProgress({ status }: { status: IndexStatus }) {
-  const { active, queued, failed, lastResult } = status
-  const [dismissed, setDismissed] = useState<string | null>(null)
+  const { active, queued, failed, lastResult, runs } = status
+  const [dismissed, setDismissed] = useState(-1)
   if (!active) {
-    if (!lastResult || dismissed === lastResult) return null
+    if (!lastResult || dismissed === runs) return null
     return (
       <div className="index-progress done" role="status">
         <span className="small">{lastResult}</span>
@@ -16,7 +16,7 @@ export function IndexProgress({ status }: { status: IndexStatus }) {
             <ul>{failed.map((f) => <li key={f.name}>{f.name}: {f.error}</li>)}</ul>
           </details>
         )}
-        <button className="button small" onClick={() => setDismissed(lastResult)}>OK</button>
+        <button className="button small" onClick={() => setDismissed(runs)}>OK</button>
       </div>
     )
   }

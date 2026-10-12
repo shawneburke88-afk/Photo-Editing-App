@@ -36,6 +36,11 @@ export interface SidecarData {
   develop: string | null
   /** Keyword paths ("Places|Canada|Ottawa"); undefined leaves the sidecar's keywords as they are. */
   keywords?: string[]
+  /**
+   * Names of the manual collections holding the photo, in LightBench's own namespace so they can be rebuilt
+   * from the sidecars (Lightroom keeps collections only in its catalog). Undefined leaves them as they are.
+   */
+  collections?: string[]
 }
 
 /** Separator between keyword levels, as in darktable's tags and Lightroom's lr:hierarchicalSubject. */
@@ -166,8 +171,10 @@ export function writeXmp(existing: string | null, data: SidecarData, now = new D
   }
   const kw = data.keywords
   const flat = kw ? flatKeywords(kw) : []
+  const cols = data.collections
+  const collectionsSame = !cols || sameSet(getBag(doc, NS.lightbench, 'Collections'), cols)
   const keywordsSame = !kw || (sameSet(getBag(doc, NS.dc, 'subject'), flat) && sameSet(getBag(doc, NS.lr, 'hierarchicalSubject'), kw))
-  if (existing !== null && keywordsSame && wanted.every(([ns, , local, value]) => getProp(doc, ns, local) === value)) return null
+  if (existing !== null && keywordsSame && collectionsSame && wanted.every(([ns, , local, value]) => getProp(doc, ns, local) === value)) return null
 
   for (const [ns, , local] of wanted) removeProp(doc, ns, local)
   removeProp(doc, NS.xmp, 'MetadataDate')
@@ -178,6 +185,10 @@ export function writeXmp(existing: string | null, data: SidecarData, now = new D
     removeProp(doc, NS.lr, 'hierarchicalSubject')
     if (flat.length) setBag(doc, desc, NS.dc, 'dc', 'subject', flat)
     if (kw.length) setBag(doc, desc, NS.lr, 'lr', 'hierarchicalSubject', kw)
+  }
+  if (cols && !collectionsSame) {
+    removeProp(doc, NS.lightbench, 'Collections')
+    if (cols.length) setBag(doc, desc, NS.lightbench, 'lightbench', 'Collections', cols)
   }
   // XMP: MetadataDate records when the metadata last changed.
   setProp(desc, NS.xmp, 'xmp', 'MetadataDate', now.toISOString().replace(/\.\d{3}Z$/, 'Z'))
@@ -195,6 +206,8 @@ export interface SidecarRead {
   develop?: string
   /** Keyword paths ("Places|Canada|Ottawa"). */
   keywords?: string[]
+  /** LightBench manual collection names. */
+  collections?: string[]
 }
 
 /** Reads ratings, flags, labels and LightBench edits from any XMP sidecar (Lightroom, Bridge, darktable, …). */
@@ -221,6 +234,8 @@ export function readXmp(text: string): SidecarRead {
     ?.map(normalizeKeyword)
     .filter((k): k is string => !!k && !k.toLowerCase().startsWith('darktable|'))
   if (kws?.length) out.keywords = [...new Map(kws.map((k) => [k.toLowerCase(), k])).values()]
+  const cols = getBag(doc, NS.lightbench, 'Collections')
+  if (cols?.length) out.collections = cols
   const develop = getProp(doc, NS.lightbench, 'Develop')
   if (develop) {
     try {

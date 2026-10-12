@@ -30,7 +30,8 @@ export function FilterBar({ value, onChange, view, onView, onCull, cellSize, onC
       </div>
       <input
         type="search"
-        placeholder="Search name, camera, lens, keyword"
+        placeholder="Search name, keyword…"
+        title="Searches file names, camera, lens and keywords"
         value={value.text ?? ''}
         onChange={(e) => set({ text: e.target.value })}
         aria-label="Search"

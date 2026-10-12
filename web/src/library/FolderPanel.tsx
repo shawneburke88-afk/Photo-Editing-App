@@ -41,6 +41,8 @@ interface Props {
   folders: FolderNode[]
   total: number
   selection: FolderSelection
+  /** True when All Photographs is shown (no folder or collection). */
+  allActive: boolean
   disconnected: Set<number>
   onSelect: (s: FolderSelection) => void
   /** Looks for new photos in a folder. */
@@ -49,19 +51,22 @@ interface Props {
   busy: boolean
   /** Shown below the folders, in the same scrolling column (the keyword list). */
   children?: React.ReactNode
+  /** Shown between All Photographs and the folders (Quick Collection and collections). */
+  collections?: React.ReactNode
 }
 
-export function FolderPanel({ roots, folders, total, selection, disconnected, onSelect, onRescan, busy, children }: Props) {
+export function FolderPanel({ roots, folders, total, selection, allActive, disconnected, onSelect, onRescan, busy, children, collections }: Props) {
   const trees = useMemo(
     () => roots.map((r) => ({ root: r, tree: buildTree(folders.filter((f) => f.rootId === r.id)) })),
     [roots, folders],
   )
   return (
     <nav className="folders" aria-label="Folders">
-      <button className={`folder-row top ${selection === null ? 'on' : ''}`} onClick={() => onSelect(null)}>
+      <button className={`folder-row top ${allActive ? 'on' : ''}`} onClick={() => onSelect(null)}>
         <span>All Photographs</span>
         <span className="count">{total.toLocaleString()}</span>
       </button>
+      {collections}
       <h3 className="panel-title">Folders</h3>
       {trees.map(({ root, tree }) => (
         <FolderBranch

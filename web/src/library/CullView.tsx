@@ -21,6 +21,8 @@ interface Props {
   startId: number
   onApply: (ids: number[], field: CullField, value: number) => void
   onExit: (id: number) => void
+  /** B: Quick Collection in/out; resolves true when added. */
+  onToggleQuick: (id: number) => Promise<boolean>
   onDevelop: (id: number, ids: number[]) => void
 }
 
@@ -35,7 +37,7 @@ function loadAdvance(): boolean {
   }
 }
 
-export function CullView({ rows, startId, onApply, onExit, onDevelop }: Props) {
+export function CullView({ rows, startId, onApply, onExit, onDevelop, onToggleQuick }: Props) {
   const catalog = getCatalog()
   const [items, setItems] = useState(rows)
   const [index, setIndex] = useState(() => Math.max(0, rows.findIndex((r) => r.id === startId)))
@@ -171,7 +173,10 @@ export function CullView({ rows, startId, onApply, onExit, onDevelop }: Props) {
       else if (k === 'p') apply('flag', 1, auto)
       else if (k === 'x') apply('flag', -1, auto)
       else if (k === 'u') apply('flag', 0, auto)
-      else if (k === 'z') setZoom((z) => (z ? null : { u: 0.5, v: 0.5 }))
+      else if (k === 'b' && target) {
+        const id = target.id
+        void onToggleQuick(id).then((added) => setItems((list) => list.map((r) => (r.id === id ? { ...r, quick: added } : r))))
+      } else if (k === 'z') setZoom((z) => (z ? null : { u: 0.5, v: 0.5 }))
       else if (k === 'c') {
         setTwoUp((t) => !t)
         setActive(0)
@@ -201,6 +206,7 @@ export function CullView({ rows, startId, onApply, onExit, onDevelop }: Props) {
             <Stars value={target.rating} size="small" />
             {target.flag === 1 && <span className="flag-text pick">⚑ Picked</span>}
             {target.flag === -1 && <span className="flag-text reject">✕ Rejected</span>}
+            {target.quick && <span className="muted" title="In the Quick Collection (B)">● Quick</span>}
             {target.color > 0 && <span className="label-text"><span className={`label label-${target.color}`} /> {COLOR_NAMES[target.color]}</span>}
             {d && (
               <span className="muted">
@@ -244,7 +250,7 @@ export function CullView({ rows, startId, onApply, onExit, onDevelop }: Props) {
       </div>
 
       <p className="cull-hints muted small">
-        P pick · X reject · U unflag · 0–5 stars · 6–9 labels · ←/→ move · Z or click: 100 % · C 1-up/2-up{twoUp ? ' · Tab switch photo' : ''} · A auto-advance · I info · D develop · Esc close
+        P pick · X reject · U unflag · 0–5 stars · 6–9 labels · B Quick Collection · ←/→ move · Z or click: 100 % · C 1-up/2-up{twoUp ? ' · Tab switch photo' : ''} · A auto-advance · I info · D develop · Esc close
       </p>
 
       <nav className="cull-strip" aria-label="Filmstrip">

@@ -2,10 +2,11 @@
 // The library catalog: one SQLite database stored in the browser's private storage (OPFS).
 import sqlite3InitModule, { type Database } from '@sqlite.org/sqlite-wasm'
 import { exposeRpc } from '../lib/rpc'
-import type { DuplicateKey, FolderNode, LibraryRoot, NewPhoto, PhotoDetail, PhotoQuery, PhotoRow } from './types'
+import { compileSmart, type SmartRules } from './smart'
+import type { CollectionInfo, DuplicateKey, FolderNode, LibraryRoot, NewPhoto, PhotoDetail, PhotoQuery, PhotoRow } from './types'
 
 const DB_FILE = '/lightbench-catalog.sqlite3'
-const SCHEMA_VERSION = 5
+const SCHEMA_VERSION = 6
 
 let db: Database | null = null
 let persistent = false
@@ -137,6 +138,27 @@ function migrate(d: Database) {
         );
         CREATE INDEX photo_keywords_keyword ON photo_keywords(keyword_id);
         ALTER TABLE photos ADD COLUMN keywords_read INTEGER NOT NULL DEFAULT 0;
+      `)
+    }
+    if (version < 6) {
+      // Collections: manual ones (also written to each photo's sidecar so they can be rebuilt), smart ones
+      // (saved rules), and Lightroom's Quick Collection. Names are unique, ignoring case.
+      d.exec(`
+        CREATE TABLE collections (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+          kind TEXT NOT NULL CHECK (kind IN ('manual', 'smart', 'quick')),
+          rules TEXT,
+          created_at INTEGER NOT NULL
+        );
+        CREATE TABLE collection_photos (
+          collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+          photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+          added_at INTEGER NOT NULL,
+          PRIMARY KEY (collection_id, photo_id)
+        );
+        CREATE INDEX collection_photos_photo ON collection_photos(photo_id);
+        INSERT INTO collections (name, kind, created_at) VALUES ('Quick Collection', 'quick', strftime('%s', 'now'));
       `)
     }
     d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
@@ -271,6 +293,19 @@ function queryPhotos(q: PhotoQuery): PhotoRow[] {
     where.push('p.color_label = ?')
     bind.push(q.color)
   }
+  if (q.collection !== undefined) {
+    const c = conn().selectObject('SELECT kind, rules FROM collections WHERE id = ?', [q.collection]) as { kind: string; rules: string | null } | undefined
+    if (!c) {
+      where.push('0')
+    } else if (c.kind === 'smart') {
+      const smart = compileSmart(parseRules(c.rules))
+      where.push(smart.sql)
+      bind.push(...smart.bind)
+    } else {
+      where.push('p.id IN (SELECT photo_id FROM collection_photos WHERE collection_id = ?)')
+      bind.push(q.collection)
+    }
+  }
   if (q.keyword) {
     where.push(`EXISTS (SELECT 1 FROM photo_keywords pk JOIN keywords k ON k.id = pk.keyword_id WHERE pk.photo_id = p.id AND ${KEYWORD_UNDER})`)
     bind.push(q.keyword, q.keyword, q.keyword)
@@ -284,10 +319,12 @@ function queryPhotos(q: PhotoQuery): PhotoRow[] {
   const order =
     q.sort === 'name' ? 'p.file_name COLLATE NOCASE' : q.sort === 'captureAsc' ? 'p.captured_at, p.file_name' : 'p.captured_at DESC, p.file_name DESC'
   const sql = `SELECT p.id, p.file_name AS fileName, p.captured_at AS capturedAt, p.rating, p.flag,
-      p.color_label AS color, p.orientation, EXISTS (SELECT 1 FROM edits e WHERE e.photo_id = p.id) AS edited
+      p.color_label AS color, p.orientation, EXISTS (SELECT 1 FROM edits e WHERE e.photo_id = p.id) AS edited,
+      EXISTS (SELECT 1 FROM collection_photos cp JOIN collections c ON c.id = cp.collection_id
+              WHERE cp.photo_id = p.id AND c.kind = 'quick') AS quick
     FROM photos p ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order}`
-  type Row = Omit<PhotoRow, 'edited'> & { edited: number }
-  return (conn().selectObjects(sql, bind) as unknown as Row[]).map((r) => ({ ...r, edited: !!r.edited }))
+  type Row = Omit<PhotoRow, 'edited' | 'quick'> & { edited: number; quick: number }
+  return (conn().selectObjects(sql, bind) as unknown as Row[]).map((r) => ({ ...r, edited: !!r.edited, quick: !!r.quick }))
 }
 
 // ---- keywords
@@ -385,6 +422,145 @@ function markKeywordsRead(photoId: number) {
   conn().exec({ sql: 'UPDATE photos SET keywords_read = 1 WHERE id = ?', bind: [photoId] })
 }
 
+// ---- collections
+
+function parseRules(text: string | null): SmartRules {
+  try {
+    const r = JSON.parse(text ?? '') as SmartRules
+    return r && Array.isArray(r.rules) ? r : { match: 'all', rules: [] }
+  } catch {
+    return { match: 'all', rules: [] }
+  }
+}
+
+function countSmart(rules: SmartRules): number {
+  const c = compileSmart(rules)
+  return Number(conn().selectValue(`SELECT COUNT(*) FROM photos p WHERE ${c.sql}`, c.bind))
+}
+
+/** All collections with their photo counts (smart ones counted by running their rules). */
+function listCollections(): CollectionInfo[] {
+  const rows = conn().selectObjects(
+    `SELECT c.id, c.name, c.kind, c.rules, (SELECT COUNT(*) FROM collection_photos cp WHERE cp.collection_id = c.id) AS count
+     FROM collections c ORDER BY c.kind = 'quick' DESC, c.name COLLATE NOCASE`,
+  ) as unknown as (CollectionInfo & { rules: string | null })[]
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    kind: r.kind,
+    count: r.kind === 'smart' ? countSmart(parseRules(r.rules)) : r.count,
+    rules: r.kind === 'smart' ? parseRules(r.rules) : undefined,
+  }))
+}
+
+function nameTaken(name: string, exceptId = -1): boolean {
+  return conn().selectValue('SELECT 1 FROM collections WHERE name = ? AND id <> ?', [name, exceptId]) !== undefined
+}
+
+/** Creates a manual or smart collection; throws a user-facing message if the name is taken. */
+function createCollection(name: string, kind: 'manual' | 'smart', rules?: SmartRules): number {
+  const n = name.trim()
+  if (!n) throw new Error('Give the collection a name.')
+  if (nameTaken(n)) throw new Error(`There is already a collection called “${n}”.`)
+  conn().exec({
+    sql: 'INSERT INTO collections (name, kind, rules, created_at) VALUES (?, ?, ?, ?)',
+    bind: [n, kind, kind === 'smart' ? JSON.stringify(rules ?? { match: 'all', rules: [] }) : null, Math.floor(Date.now() / 1000)],
+  })
+  return Number(conn().selectValue('SELECT last_insert_rowid()'))
+}
+
+function memberIds(id: number): number[] {
+  return (conn().selectObjects('SELECT photo_id AS id FROM collection_photos WHERE collection_id = ?', [id]) as unknown as { id: number }[]).map((r) => r.id)
+}
+
+/** Renames a collection (and replaces a smart collection's rules); returns members whose sidecars name it. */
+function updateCollection(id: number, name: string, rules?: SmartRules): number[] {
+  const n = name.trim()
+  if (!n) throw new Error('Give the collection a name.')
+  if (nameTaken(n, id)) throw new Error(`There is already a collection called “${n}”.`)
+  const kind = conn().selectValue('SELECT kind FROM collections WHERE id = ?', [id])
+  if (kind === 'quick') throw new Error('The Quick Collection can’t be renamed.')
+  conn().exec({ sql: 'UPDATE collections SET name = ?, rules = COALESCE(?, rules) WHERE id = ?', bind: [n, rules ? JSON.stringify(rules) : null, id] })
+  return kind === 'manual' ? memberIds(id) : []
+}
+
+/** Deletes a collection (never the photos); returns members whose sidecars named it. */
+function deleteCollection(id: number): number[] {
+  const kind = conn().selectValue('SELECT kind FROM collections WHERE id = ?', [id])
+  if (kind === 'quick') throw new Error('The Quick Collection can’t be deleted; clear it instead.')
+  const ids = kind === 'manual' ? memberIds(id) : []
+  conn().exec({ sql: 'DELETE FROM collections WHERE id = ?', bind: [id] })
+  return ids
+}
+
+function addToCollection(id: number, ids: number[]) {
+  inTransaction(() => {
+    const now = Math.floor(Date.now() / 1000)
+    const stmt = conn().prepare('INSERT OR IGNORE INTO collection_photos (collection_id, photo_id, added_at) VALUES (?, ?, ?)')
+    for (const pid of ids) stmt.bind([id, pid, now]).stepReset()
+    stmt.finalize()
+  })
+}
+
+function removeFromCollection(id: number, ids: number[]) {
+  inTransaction(() => {
+    const stmt = conn().prepare('DELETE FROM collection_photos WHERE collection_id = ? AND photo_id = ?')
+    for (const pid of ids) stmt.bind([id, pid]).stepReset()
+    stmt.finalize()
+  })
+}
+
+const quickId = () => Number(conn().selectValue("SELECT id FROM collections WHERE kind = 'quick'"))
+
+/** Lightroom's B: adds the photos to the Quick Collection, or removes them if they are all in it already. */
+function toggleQuick(ids: number[]): boolean {
+  const q = quickId()
+  const inside = Number(conn().selectValue(
+    `SELECT COUNT(*) FROM collection_photos WHERE collection_id = ? AND photo_id IN (${ids.map(() => '?').join(',') || 'NULL'})`,
+    [q, ...ids],
+  ))
+  if (inside === ids.length) {
+    removeFromCollection(q, ids)
+    return false
+  }
+  addToCollection(q, ids)
+  return true
+}
+
+function clearQuick() {
+  conn().exec({ sql: 'DELETE FROM collection_photos WHERE collection_id = ?', bind: [quickId()] })
+}
+
+/** Manual collections holding any of `ids`, with how many of them each holds. */
+function collectionsOf(ids: number[]): { id: number; name: string; count: number }[] {
+  if (!ids.length) return []
+  return conn().selectObjects(
+    `SELECT c.id, c.name, COUNT(*) AS count FROM collection_photos cp JOIN collections c ON c.id = cp.collection_id
+     WHERE c.kind = 'manual' AND cp.photo_id IN (${ids.map(() => '?').join(',')}) GROUP BY c.id ORDER BY c.name COLLATE NOCASE`,
+    ids,
+  ) as unknown as { id: number; name: string; count: number }[]
+}
+
+/** From a sidecar: puts the photo into manual collections by name, creating any that don't exist. */
+function addToCollectionsByName(photoId: number, names: string[]) {
+  for (const raw of names) {
+    const name = raw.trim()
+    if (!name) continue
+    const row = conn().selectObject('SELECT id, kind FROM collections WHERE name = ?', [name]) as { id: number; kind: string } | undefined
+    // A smart collection or the Quick Collection with the same name: leave it alone rather than mixing kinds.
+    if (row && row.kind !== 'manual') continue
+    addToCollection(row ? row.id : createCollection(name, 'manual'), [photoId])
+  }
+}
+
+function photoCollections(photoId: number): string[] {
+  return (conn().selectObjects(
+    `SELECT c.name FROM collection_photos cp JOIN collections c ON c.id = cp.collection_id
+     WHERE cp.photo_id = ? AND c.kind = 'manual' ORDER BY c.name COLLATE NOCASE`,
+    [photoId],
+  ) as unknown as { name: string }[]).map((r) => r.name)
+}
+
 function getEdit(photoId: number): { settings: string; history: string } | null {
   return (conn().selectObject('SELECT settings, history FROM edits WHERE photo_id = ?', [photoId]) as { settings: string; history: string } | undefined) ?? null
 }
@@ -474,7 +650,7 @@ function sidecarSource(photoId: number) {
   ) as unknown as { fileType: string }[]
   const owner = !(isJpeg && twins.some((t) => !/^jpe?g$/i.test(t.fileType)))
   const keywordsRead = Number(conn().selectValue('SELECT keywords_read FROM photos WHERE id = ?', [photoId])) === 1
-  return { photo: p, settings: edit?.settings ?? null, owner, keywords: photoKeywords(photoId), keywordsRead }
+  return { photo: p, settings: edit?.settings ?? null, owner, keywords: photoKeywords(photoId), keywordsRead, collections: photoCollections(photoId) }
 }
 
 function markSidecarWritten(photoId: number, at: number) {
@@ -518,6 +694,17 @@ const handlers = {
   photoKeywords,
   markKeywordsRead,
   photosWithUnreadKeywords,
+  listCollections,
+  countSmart,
+  createCollection,
+  updateCollection,
+  deleteCollection,
+  addToCollection,
+  removeFromCollection,
+  toggleQuick,
+  clearQuick,
+  collectionsOf,
+  addToCollectionsByName,
   markSidecarWritten,
   stats,
 }

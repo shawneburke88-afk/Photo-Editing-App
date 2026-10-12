@@ -10,13 +10,15 @@ interface Props {
   cellSize: number
   onClick: (id: number, e: React.MouseEvent) => void
   onOpen: (id: number) => void
+  /** Dragging photos out of the grid (onto a collection). */
+  onDragStart?: (id: number, e: React.DragEvent) => void
 }
 
 const GAP = 8
 const FOOTER = 34
 
 /** Virtualised thumbnail grid: only the rows on screen are rendered, so 50,000 photos scroll smoothly. */
-export function Grid({ rows, selected, focus, cellSize, onClick, onOpen }: Props) {
+export function Grid({ rows, selected, focus, cellSize, onClick, onOpen, onDragStart }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(800)
   const [height, setHeight] = useState(600)
@@ -64,6 +66,8 @@ export function Grid({ rows, selected, focus, cellSize, onClick, onOpen }: Props
           style={{ left: GAP + c * (cellW + GAP), top: GAP + r * rowH, width: cellW, height: cellW + FOOTER }}
           onClick={(e) => onClick(row.id, e)}
           onDoubleClick={() => onOpen(row.id)}
+          draggable={!!onDragStart}
+          onDragStart={onDragStart ? (e) => onDragStart(row.id, e) : undefined}
           data-id={row.id}
           role="gridcell"
           aria-selected={selected.has(row.id)}
@@ -73,6 +77,7 @@ export function Grid({ rows, selected, focus, cellSize, onClick, onOpen }: Props
             {row.flag === 1 && <span className="flag pick" title="Picked">⚑</span>}
             {row.flag === -1 && <span className="flag reject" title="Rejected">✕</span>}
             {row.edited && <span className="edited-badge" title="Edited in Develop">✎</span>}
+            {row.quick && <span className="quick-badge" title="In the Quick Collection (B)">●</span>}
           </div>
           <div className="cell-foot">
             <Stars value={row.rating} size="small" />

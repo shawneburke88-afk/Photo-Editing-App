@@ -56,6 +56,8 @@ export interface PhotoRow {
   orientation: number
   /** Has develop edits. */
   edited: boolean
+  /** In the Quick Collection. */
+  quick: boolean
 }
 
 export interface PhotoDetail extends PhotoMeta {
@@ -76,6 +78,8 @@ export interface PhotoQuery {
   minRating?: number
   flag?: 'picked' | 'rejected' | 'unflagged' | 'notRejected'
   color?: ColorLabel
+  /** Collection id: a manual collection's photos, or a smart collection's matches. */
+  collection?: number
   /** Keyword path; photos with it or any keyword below it. */
   keyword?: string
   text?: string
@@ -87,4 +91,13 @@ export interface DuplicateKey {
   originalName: string
   capturedAt: number
   fileSize: number
+}
+
+export interface CollectionInfo {
+  id: number
+  name: string
+  kind: 'manual' | 'smart' | 'quick'
+  count: number
+  /** Smart collections only. */
+  rules?: import('./smart').SmartRules
 }

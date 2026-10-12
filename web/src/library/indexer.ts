@@ -39,6 +39,8 @@ export interface IndexStatus {
   failed: { name: string; error: string }[]
   /** Summary of the last finished run, e.g. "Added 120 photos from Trip". */
   lastResult: string | null
+  /** Counts finished runs, so a summary dismissed by the user isn't confused with an identical later one. */
+  runs: number
 }
 
 interface Job {
@@ -52,7 +54,7 @@ const FLUSH_MS = 400
 const FLUSH_COUNT = 48
 
 class FolderIndexer {
-  status: IndexStatus = { active: null, queued: 0, added: 0, changes: 0, failed: [], lastResult: null }
+  status: IndexStatus = { active: null, queued: 0, added: 0, changes: 0, failed: [], lastResult: null, runs: 0 }
   private queue: Job[] = []
   private running = false
   private stopped = false
@@ -108,7 +110,7 @@ class FolderIndexer {
         try {
           await this.run(job)
         } catch (e) {
-          this.set({ lastResult: `Could not read “${job.dir.name}”: ${e instanceof Error ? e.message : String(e)}` })
+          this.set({ lastResult: `Could not read “${job.dir.name}”: ${e instanceof Error ? e.message : String(e)}`, runs: this.status.runs + 1 })
         }
       }
     } finally {
@@ -211,7 +213,7 @@ class FolderIndexer {
       : todo.length === 0
         ? `No new photos in ${where}`
         : `Added ${added} ${added === 1 ? 'photo' : 'photos'} from ${where}`
-    this.set({ failed, lastResult: failed.length ? `${result} · ${failed.length} could not be read` : result })
+    this.set({ failed, lastResult: failed.length ? `${result} · ${failed.length} could not be read` : result, runs: this.status.runs + 1 })
   }
 }
 

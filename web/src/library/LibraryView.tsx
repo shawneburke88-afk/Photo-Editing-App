@@ -2,7 +2,8 @@ import { isSliderKey, isTextEntry } from '../lib/keys'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getCatalog, requestPersistentStorage } from '../catalog/client'
 import { deleteThumbs, forgetThumbUrl } from '../catalog/thumbs'
-import type { ColorLabel, Flag, FolderNode, LibraryRoot, PhotoDetail, PhotoQuery, PhotoRow } from '../catalog/types'
+import type { CollectionInfo, ColorLabel, Flag, FolderNode, LibraryRoot, PhotoDetail, PhotoQuery, PhotoRow } from '../catalog/types'
+import type { SmartRules } from '../catalog/smart'
 import { ImportDialog } from '../import/ImportDialog'
 import { supportsFolderAccess } from '../platform/folders'
 import { getRootHandle } from '../platform/roots'
@@ -10,6 +11,9 @@ import { sidecars } from '../sidecar/sync'
 import { FilterBar } from './FilterBar'
 import { FolderPanel, type FolderSelection } from './FolderPanel'
 import { CullView, type CullField } from './CullView'
+import { CollectionChips } from './CollectionChips'
+import { CollectionDialog, type CollectionDraft } from './CollectionDialog'
+import { CollectionList, PHOTOS_DRAG_TYPE } from './CollectionList'
 import { Grid } from './Grid'
 import { IndexProgress } from './IndexProgress'
 import { useIndexStatus } from './useIndexStatus'
@@ -51,6 +55,11 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   const [folders, setFolders] = useState<FolderNode[]>([])
   const [disconnected, setDisconnected] = useState<Set<number>>(new Set())
   const [folder, setFolder] = useState<FolderSelection>(null)
+  /** The collection shown instead of a folder (undefined: a folder or All Photographs). */
+  const [collection, setCollection] = useState<number | undefined>(undefined)
+  const [collections, setCollections] = useState<CollectionInfo[]>([])
+  const [targetCollections, setTargetCollections] = useState<{ id: number; name: string; count: number }[]>([])
+  const [draft, setDraft] = useState<CollectionDraft | null>(null)
   const [filters, setFilters] = useState<Filters>({ sort: 'captureDesc' })
   const [rows, setRows] = useState<PhotoRow[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -91,6 +100,12 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     })
   }, [refresh])
 
+  /** Shows a folder (or All Photographs for null), leaving any collection. */
+  function selectFolder(s: FolderSelection) {
+    setFolder(s)
+    setCollection(undefined)
+  }
+
   function toggleSubfolders(on: boolean) {
     setSubfolders(on)
     try {
@@ -112,7 +127,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     }
     void requestPersistentStorage()
     try {
-      setFolder(await indexer.open(dir))
+      selectFolder(await indexer.open(dir))
       refresh()
     } catch (e) {
       setFolderError(`Could not open “${dir.name}”: ${e instanceof Error ? e.message : String(e)}`)
@@ -148,7 +163,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   useEffect(() => {
     if (status !== 'ready') return
     let live = true
-    void catalog.queryPhotos({ ...filters, folder: folder ? { ...folder, recursive: subfolders } : undefined }).then((r) => {
+    void catalog.queryPhotos({ ...filters, collection, folder: folder ? { ...folder, recursive: subfolders } : undefined }).then((r) => {
       if (!live) return
       setRows(r)
       setSelected((s) => new Set([...s].filter((id) => r.some((x) => x.id === id))))
@@ -157,7 +172,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     return () => {
       live = false
     }
-  }, [catalog, status, folder, filters, subfolders, version, externalVersion])
+  }, [catalog, status, folder, collection, filters, subfolders, version, externalVersion])
 
   // Details of the focused photo.
   useEffect(() => {
@@ -242,6 +257,74 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     refresh()
   }
 
+  // Collections: the list (left panel) and those holding the photos being edited (right panel).
+  useEffect(() => {
+    if (status !== 'ready') return
+    let live = true
+    void catalog.listCollections().then((c) => live && setCollections(c))
+    return () => {
+      live = false
+    }
+  }, [catalog, status, version, externalVersion])
+
+  useEffect(() => {
+    if (status !== 'ready') return
+    let live = true
+    void catalog.collectionsOf(targetKey ? targetKey.split(',').map(Number) : []).then((c) => live && setTargetCollections(c))
+    return () => {
+      live = false
+    }
+  }, [catalog, status, targetKey, version])
+
+  const activeCollection = collections.find((c) => c.id === collection)
+
+  async function addToCollection(id: number, ids: number[]) {
+    if (!ids.length) return
+    await catalog.addToCollection(id, ids)
+    sidecars.schedule(ids)
+    refresh()
+  }
+
+  async function removeFromCollection(id: number, ids: number[]) {
+    await catalog.removeFromCollection(id, ids)
+    sidecars.schedule(ids)
+    refresh()
+  }
+
+  /** Lightroom's B: in or out of the Quick Collection (not written to sidecars: it is a temporary pile). */
+  const toggleQuick = useCallback(
+    async (ids: number[]) => {
+      if (!ids.length) return false
+      const added = await catalog.toggleQuick(ids)
+      refresh()
+      return added
+    },
+    [catalog, refresh],
+  )
+
+  async function saveCollection(name: string, rules: SmartRules | undefined, includeSelection: boolean) {
+    if (!draft) return
+    if (draft.mode === 'new') {
+      const id = await catalog.createCollection(name, draft.kind, rules)
+      if (draft.kind === 'manual' && includeSelection) await addToCollection(id, targets())
+      if (draft.kind === 'smart') {
+        setFolder(null)
+        setCollection(id)
+      }
+    } else {
+      sidecars.schedule(await catalog.updateCollection(draft.id, name, rules))
+    }
+    setDraft(null)
+    refresh()
+  }
+
+  async function deleteCollection(c: CollectionInfo) {
+    if (!window.confirm(`Delete the collection “${c.name}”?\n\nThe photos stay in your library and on disk.`)) return
+    sidecars.schedule(await catalog.deleteCollection(c.id))
+    if (collection === c.id) setCollection(undefined)
+    refresh()
+  }
+
   /** Full-screen culling of the photos shown, starting at the focused one. */
   const startCulling = useCallback(() => {
     if (rows.length) setCulling({ rows, start: focus ?? rows[0].id })
@@ -291,7 +374,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   // Lightroom-style keyboard shortcuts.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!active || importing || culling || status !== 'ready') return
+      if (!active || importing || culling || draft || status !== 'ready') return
       const t = e.target as HTMLElement
       if (isTextEntry(t) || isSliderKey(e)) return
       const idx = focus === null ? -1 : rows.findIndex((r) => r.id === focus)
@@ -339,7 +422,11 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
       else if (k === 'f') startCulling()
       else if (k === 'd' && focus !== null) onDevelop(focus, rows.map((r) => r.id))
       else if (k === 'g' || k === 'escape') setView('grid')
-      else if (k === 'delete' || k === 'backspace') void removeSelected()
+      else if (k === 'b') void toggleQuick(targets())
+      else if ((k === 'delete' || k === 'backspace') && activeCollection && activeCollection.kind !== 'smart') {
+        // Like Lightroom: in a collection, Delete takes photos out of the collection, not the library.
+        void removeFromCollection(activeCollection.id, targets())
+      } else if (k === 'delete' || k === 'backspace') void removeSelected()
       else return
       // Auto-advance after flagging/rating with Caps Lock, like Lightroom.
       if (e.getModifierState('CapsLock') && /^[0-9pxu]$/.test(k)) move(1)
@@ -390,17 +477,33 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           folders={folders}
           total={total}
           selection={folder}
+          allActive={folder === null && collection === undefined}
           disconnected={disconnected}
-          onSelect={setFolder}
+          onSelect={selectFolder}
           onRescan={(rootId, path) => void rescan(rootId, path)}
           busy={!!indexing.active}
+          collections={
+            <CollectionList
+              collections={collections}
+              active={collection}
+              onSelect={(id) => {
+                setFolder(null)
+                setCollection(id)
+              }}
+              onNew={(kind) => setDraft(kind === 'manual' ? { mode: 'new', kind, withPhotos: targets().length } : { mode: 'new', kind })}
+              onEdit={(c) => setDraft(c.kind === 'smart' ? { mode: 'edit', kind: 'smart', id: c.id, name: c.name, rules: c.rules! } : { mode: 'edit', kind: 'manual', id: c.id, name: c.name })}
+              onDelete={(c) => void deleteCollection(c)}
+              onDropPhotos={(id, ids) => void (collections.find((c) => c.id === id)?.kind === 'quick' ? catalog.addToCollection(id, ids).then(refresh) : addToCollection(id, ids))}
+              onClearQuick={() => void catalog.clearQuick().then(refresh)}
+            />
+          }
         >
           <KeywordList
             keywords={allKeywords}
             active={filters.keyword}
             onSelect={(path) => {
               setFilters((f) => ({ ...f, keyword: path }))
-              if (path) setFolder(null)
+              if (path) selectFolder(null)
             }}
             onDelete={(path) => void deleteKeyword(path)}
           />
@@ -448,13 +551,25 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
               rows.length === 0 && indexing.active ? (
                 <div className="center muted">Reading photos… they appear here as they are found.</div>
               ) : (
-                <Grid rows={rows} selected={selected} focus={focus} cellSize={cellSize} onClick={clickCell} onOpen={(id) => { setFocus(id); setView('loupe') }} />
+                <Grid
+                  rows={rows}
+                  selected={selected}
+                  focus={focus}
+                  cellSize={cellSize}
+                  onClick={clickCell}
+                  onOpen={(id) => { setFocus(id); setView('loupe') }}
+                  onDragStart={(id, e) => {
+                    const ids = selected.has(id) ? [...selected] : [id]
+                    e.dataTransfer.setData(PHOTOS_DRAG_TYPE, JSON.stringify(ids))
+                    e.dataTransfer.effectAllowed = 'copy'
+                  }}
+                />
               )
             ) : (
               <Loupe photo={detail} />
             )}
             <p className="hint muted small">
-              Keys: arrows move · P pick · X reject · U unflag · 0–5 stars · 6–9 colour labels · Ctrl+K keywords · E loupe · F cull · G grid · D develop · Delete removes from library
+              Keys: arrows move · P pick · X reject · U unflag · 0–5 stars · 6–9 colour labels · Ctrl+K keywords · B Quick Collection · E loupe · F cull · G grid · D develop · Delete removes from {activeCollection && activeCollection.kind !== 'smart' ? 'this collection' : 'library'}
             </p>
           </>
         )}
@@ -476,6 +591,14 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           onAdd={(paths) => void addKeywords(paths)}
           onRemove={(path) => void removeKeyword(path)}
         />
+        <CollectionChips
+          member={targetCollections}
+          total={targets().length}
+          all={collections}
+          onAdd={(id) => void addToCollection(id, targets())}
+          onRemove={(id) => void removeFromCollection(id, targets())}
+          onNew={() => setDraft({ mode: 'new', kind: 'manual', withPhotos: targets().length })}
+        />
       </InfoPanel>
 
       {culling && (
@@ -483,11 +606,23 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           rows={culling.rows}
           startId={culling.start}
           onApply={(ids, field, value) => void applyTo(ids, field, value)}
+          onToggleQuick={(id) => toggleQuick([id])}
           onExit={endCulling}
           onDevelop={(id, ids) => {
             endCulling(id)
             onDevelop(id, ids)
           }}
+        />
+      )}
+
+      {draft && (
+        <CollectionDialog
+          draft={draft}
+          keywords={allKeywords.map((k) => k.path)}
+          roots={roots}
+          folders={folders}
+          onSave={saveCollection}
+          onClose={() => setDraft(null)}
         />
       )}
 
