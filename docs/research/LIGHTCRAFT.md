@@ -55,6 +55,8 @@ Each catalogue ends with "Revisit completed LightBench features" (keep / improve
 - **Process versions first**, before Phase 3 changes any rendering, so existing edits never change look silently.
 - **Scheduled as separate PRs:** phone DNG + X-Trans; catalog backup/restore; sidecar change detection; an extras
   bundle (own sidecar for RAW+JPEG twins, correct Adobe RGB thumbnails, GPS from RAWs, IPTC from JPEGs, P3 display).
+  The extras bundle is built on `lightbench/extras` ([PHASE3.md Part 4](../PHASE3.md#part-4-extras--twin-sidecars-preview-colour-gps-iptc-display-p3-jpeg-tint)),
+  with the JPEG Tint fix from PHASE2.md.
 - **Lightroom catalog import stays postponed:** LightCraft's table map (`crates/engine/src/lightroom_catalog.rs`) and
   synthetic-catalog test technique are recorded here for when a real catalog can be tested. It does not import stacks.
 - **Phase 3 engineering, adopted by default:** port LightCraft's crop model (`crates/geom/src/crop.rs`,

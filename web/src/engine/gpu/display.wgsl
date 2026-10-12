@@ -9,6 +9,10 @@ struct View {
   saturation: f32,
   flip: u32,      // LibRaw orientation code
   background: vec4f,
+  displayP3: u32, // 1 = the canvas is Display P3 (wide-gamut screen, display-space.ts)
+  toP3_0: vec4f,  // linear sRGB → linear Display P3, rows (icc.ts)
+  toP3_1: vec4f,
+  toP3_2: vec4f,
 }
 
 @group(0) @binding(0) var img: texture_2d<f32>;
@@ -53,5 +57,8 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let xk = pow(c, vec3f(k));
   c = xk / (xk + pow(g, k));
 
+  if (V.displayP3 == 1u) {
+    c = vec3f(dot(V.toP3_0.xyz, c), dot(V.toP3_1.xyz, c), dot(V.toP3_2.xyz, c));
+  }
   return vec4f(srgbOetf(clamp(c, vec3f(0.0), vec3f(1.0))), 1.0);
 }

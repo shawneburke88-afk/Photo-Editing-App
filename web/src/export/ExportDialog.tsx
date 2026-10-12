@@ -317,7 +317,7 @@ export function ExportDialog({ ids, onClose }: Props) {
               <input type="checkbox" checked={s.metadata.description !== false} onChange={(e) => set({ metadata: { ...s.metadata, description: e.target.checked } })} />
               Title, caption, creator, copyright and location
             </label>
-            <p className="muted small">Location (GPS) is never included yet: LightBench doesn’t store it.</p>
+            <p className="muted small">Location (GPS) is never included in exports yet.</p>
           </fieldset>
 
           {s.format !== 'jpeg' && s.bits === 8 && (

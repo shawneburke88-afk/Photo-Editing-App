@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { PhotoRow } from '../catalog/types'
+import { currentDisplaySpace } from '../engine/gpu/display-space'
 import { drawFitted, type Preview } from './preview'
 import { Stars } from './Stars'
 import { Thumb } from './Thumb'
@@ -29,7 +30,7 @@ export function SurveyTile({ row, preview, note, width, height, active, onOpen, 
     const ch = Math.round(canvas.clientHeight * dpr)
     canvas.width = cw
     canvas.height = ch
-    const ctx = canvas.getContext('2d')!
+    const ctx = canvas.getContext('2d', { colorSpace: currentDisplaySpace() })!
     ctx.clearRect(0, 0, cw, ch)
     drawFitted(ctx, cw, ch, preview)
   }, [preview, width, height])

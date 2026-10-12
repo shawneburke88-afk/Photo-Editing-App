@@ -36,6 +36,10 @@ export interface PhotoMeta {
   height: number
   /** LibRaw orientation code: 0, 3 (180°), 5 (90° CCW), 6 (90° CW). */
   orientation: number
+  /** Where it was taken (EXIF GPS): degrees north and east, metres above sea level; null or absent when not recorded. */
+  gpsLat?: number | null
+  gpsLon?: number | null
+  gpsAlt?: number | null
 }
 
 export interface NewPhoto extends PhotoMeta {

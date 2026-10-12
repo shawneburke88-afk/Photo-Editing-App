@@ -1,5 +1,7 @@
 // Minimal EXIF reader for JPEG files: just the fields the library needs.
 
+import { gpsFromDms, type GpsPosition } from './gps'
+
 export interface ExifInfo {
   make: string
   model: string
@@ -24,6 +26,8 @@ export interface ExifInfo {
   artist: string
   copyright: string
   description: string
+  /** Position from the GPS IFD (0x8825), or null. */
+  gps: GpsPosition | null
 }
 
 const EXIF_TO_FLIP: Record<number, number> = { 1: 0, 3: 3, 6: 6, 8: 5 }
@@ -61,7 +65,7 @@ function readTiff(v: DataView, base: number, end: number): ExifInfo | null {
   const info: ExifInfo = {
     make: '', model: '', lens: '', orientation: 0, capturedAt: 0,
     iso: 0, shutter: 0, aperture: 0, focalLength: 0, width: 0, height: 0, interopIndex: '', colorSpace: 0,
-    artist: '', copyright: '', description: '',
+    artist: '', copyright: '', description: '', gps: null,
   }
 
   const TYPE_SIZE: Record<number, number> = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8 }
@@ -113,14 +117,18 @@ function readTiff(v: DataView, base: number, end: number): ExifInfo | null {
     return 0
   }
 
+  const rationals = (type: number, count: number, o: number) => Array.from({ length: count }, (_, i) => num(type, o + 8 * i))
+
   let exifIfd = 0
   let interopIfd = 0
+  let gpsIfd = 0
   readEntries(u32(base + 4), (tag, type, count, o) => {
     if (tag === 0x010f) info.make = str(o, count)
     else if (tag === 0x0110) info.model = str(o, count)
     else if (tag === 0x0112) info.orientation = EXIF_TO_FLIP[num(type, o)] ?? 0
     else if (tag === 0x0132 && !info.capturedAt) info.capturedAt = parseExifDate(str(o, count))
     else if (tag === 0x8769) exifIfd = num(type, o)
+    else if (tag === 0x8825) gpsIfd = num(type, o)
     else if (tag === 0x013b) info.artist = text(o, count)
     else if (tag === 0x8298) info.copyright = text(o, count)
     else if (tag === 0x010e) info.description = text(o, count)
@@ -141,6 +149,16 @@ function readTiff(v: DataView, base: number, end: number): ExifInfo | null {
   readEntries(interopIfd, (tag, _type, count, o) => {
     if (tag === 0x0001) info.interopIndex = str(o, count)
   })
+  const g: { latRef: string; lat: number[] | null; lonRef: string; lon: number[] | null; altRef?: number; alt?: number } = { latRef: '', lat: null, lonRef: '', lon: null }
+  readEntries(gpsIfd, (tag, type, count, o) => {
+    if (tag === 0x0001) g.latRef = str(o, count)
+    else if (tag === 0x0002 && type === 5) g.lat = rationals(type, Math.min(count, 3), o)
+    else if (tag === 0x0003) g.lonRef = str(o, count)
+    else if (tag === 0x0004 && type === 5) g.lon = rationals(type, Math.min(count, 3), o)
+    else if (tag === 0x0005) g.altRef = v.getUint8(o)
+    else if (tag === 0x0006 && type === 5) g.alt = num(type, o)
+  })
+  info.gps = gpsFromDms(g.lat, g.latRef, g.lon, g.lonRef, g.alt, g.altRef)
   return info
 }
 

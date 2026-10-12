@@ -4,6 +4,9 @@ import { LibRaw } from '@colorhythm/libraw-wasm'
 import wasmUrl from '@colorhythm/libraw-wasm/libraw.wasm?url'
 import type { PhotoMeta, PhotoMetadata } from '../catalog/types'
 import { readJpegExif } from '../engine/meta/exif'
+import { gpsFromLibRaw, type GpsPosition } from '../engine/meta/gps'
+import { readJpegIptc } from '../engine/meta/iptc'
+import { embeddedPreviewColorSpace, jpegFileBlob, tagPreview } from '../engine/meta/preview-space'
 import { exposeRpc } from '../lib/rpc'
 import { extractJpegXmp } from '../sidecar/xmp-packet'
 
@@ -12,8 +15,14 @@ export interface ProbeResult {
   thumb: Uint8Array<ArrayBuffer> | null
   /** XMP embedded in a JPEG (ratings, labels, keywords written by Lightroom, Bridge or the camera). */
   xmp?: string
-  /** Creator, caption and copyright the camera wrote in EXIF (Artist, ImageDescription, Copyright), when set. */
+  /**
+   * Title, caption, creator, copyright, headline and location embedded in the file: a JPEG's IPTC-IIM, else the
+   * camera's EXIF (Artist, ImageDescription, Copyright). They fill only what the XMP (sidecar or embedded) leaves
+   * empty, so XMP wins, then IPTC, then EXIF, as Adobe's XMP Toolkit reconciles them (iptc.ts).
+   */
   camera?: Partial<PhotoMetadata>
+  /** Keywords from a JPEG's IPTC-IIM, used only when the XMP has none (Adobe's XMP Toolkit, Import2WayIPTC). */
+  iptcKeywords?: string[]
 }
 
 const THUMB_SIZE = 512
@@ -63,6 +72,9 @@ async function makeThumb(bmp: ImageBitmap, rotate: 0 | 90 | 180 | 270): Promise<
   return new Uint8Array(await blob.arrayBuffer())
 }
 
+/** The catalog's GPS fields (null when the file records no position). */
+const gpsColumns = (g: GpsPosition | null) => ({ gpsLat: g?.lat ?? null, gpsLon: g?.lon ?? null, gpsAlt: g?.alt ?? null })
+
 const FLIP_TO_ROTATION: Record<number, 0 | 90 | 180 | 270> = { 0: 0, 3: 180, 5: 270, 6: 90 }
 
 async function probeRaw(file: File): Promise<ProbeResult> {
@@ -70,7 +82,10 @@ async function probeRaw(file: File): Promise<ProbeResult> {
   const lr = new LibRaw()
   await lr.waitUntilReady()
   try {
-    lr.open(await file.arrayBuffer())
+    const buffer = await file.arrayBuffer()
+    // Adobe RGB camera previews are tagged so the thumbnail isn't washed out (preview-space.ts).
+    const previewSpace = embeddedPreviewColorSpace(new Uint8Array(buffer))
+    lr.open(buffer)
     const ip = lr.getIParams()
     const other = lr.getImgOther()
     const lens = lr.getLensInfo()
@@ -91,6 +106,7 @@ async function probeRaw(file: File): Promise<ProbeResult> {
       width: lr.getActiveWidth(),
       height: lr.getActiveHeight(),
       orientation: flip,
+      ...gpsColumns(gpsFromLibRaw(other.parsed_gps)),
     }
     let thumb: Uint8Array<ArrayBuffer> | null = null
     try {
@@ -98,7 +114,7 @@ async function probeRaw(file: File): Promise<ProbeResult> {
       const img = lr.dcrawMakeMemThumb()
       let bmp: ImageBitmap | null = null
       if (img.type_ === 'LIBRAW_IMAGE_JPEG') {
-        bmp = await createImageBitmap(new Blob([new Uint8Array(img.data)], { type: 'image/jpeg' }))
+        bmp = await createImageBitmap(new Blob([tagPreview(new Uint8Array(img.data), previewSpace)], { type: 'image/jpeg' }))
       } else if (img.type_ === 'LIBRAW_IMAGE_BITMAP' && img.colors === 3 && img.bits === 8) {
         const rgba = new Uint8ClampedArray(img.width * img.height * 4)
         for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
@@ -129,7 +145,7 @@ async function probeJpeg(file: File): Promise<ProbeResult> {
   const head = new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer())
   const exif = readJpegExif(head)
   // The browser applies the EXIF orientation while decoding, so the thumbnail comes out upright.
-  const bmp = await createImageBitmap(file)
+  const bmp = await createImageBitmap(jpegFileBlob(file, head))
   const meta: PhotoMeta = {
     fileName: file.name,
     fileSize: file.size,
@@ -146,12 +162,18 @@ async function probeJpeg(file: File): Promise<ProbeResult> {
     width: exif?.width || bmp.width,
     height: exif?.height || bmp.height,
     orientation: exif?.orientation ?? 0,
+    ...gpsColumns(exif?.gps ?? null),
   }
+  const iptc = readJpegIptc(head)
+  const fromExif = exif ? cameraText({ creator: exif.artist, copyright: exif.copyright, caption: exif.description }) : undefined
+  // IPTC over EXIF for the fields both have (Adobe XMP Toolkit, ReconcileTIFF.cpp Import3WayItems).
+  const camera = iptc ? { ...fromExif, ...cameraText(iptc.metadata) } : fromExif
   return {
     meta,
     thumb: await makeThumb(bmp, 0),
     xmp: extractJpegXmp(head) ?? undefined,
-    camera: exif ? cameraText({ creator: exif.artist, copyright: exif.copyright, caption: exif.description }) : undefined,
+    camera: camera && Object.keys(camera).length ? camera : undefined,
+    iptcKeywords: iptc?.keywords.length ? iptc.keywords : undefined,
   }
 }
 

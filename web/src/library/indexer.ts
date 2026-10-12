@@ -11,12 +11,13 @@ import { getCatalog } from '../catalog/client'
 import { photosAdded } from './added'
 import { saveThumb } from '../catalog/thumbs'
 import { ProbePool } from '../import/probe'
-import { applySidecar, findSidecar } from '../import/run'
+import { applyEmbedded, applySidecar, findSidecar } from '../import/run'
 import { joinPath } from '../import/plan'
 import { scanSource, sidecarKey, type ScannedFile } from '../import/scan'
 import { getDirAt, getRootHandle, resolveRoot } from '../platform/roots'
 import { filesToAdd } from './index-plan'
 import { fieldsFromRead } from '../sidecar/changes'
+import { stemOwners } from '../sidecar/naming'
 import { checkFolder } from '../sidecar/watch'
 import { readXmp } from '../sidecar/xmp'
 import { sidecars } from '../sidecar/sync'
@@ -131,6 +132,8 @@ class FolderIndexer {
     const files = await scanSource(dir, (found) => this.set({ active: { name, phase: 'scanning', found, total: 0, done: 0 } }), xmpFiles)
     if (this.stopped) return
     const todo = filesToAdd(files, new Set(await catalog.listFiles(rootId, subPath)), subPath)
+    // Which file of RAW+JPEG twins owns name.xmp; the other reads and writes name.JPG.xmp (sidecar/naming.ts).
+    const owners = stemOwners(files)
     let done = 0
     let added = 0
     const failed: IndexStatus['failed'] = []
@@ -165,13 +168,15 @@ class FolderIndexer {
           // A sidecar from Lightroom, darktable or LightBench brings its ratings, labels and edits along.
           if (!dirs.has(file.dir)) dirs.set(file.dir, await getDirAt(dir, file.dir).catch(() => null))
           const folder = dirs.get(file.dir)
-          const sidecar = folder ? await findSidecar(folder, file.name) : null
+          const sidecar = folder ? await findSidecar(folder, file.name, owners.has(`${file.dir}/${file.name}`)) : null
           const xmpText = sidecar?.text ?? result.xmp
-          if (xmpText) await applySidecar(catalog, id, xmpText).catch(() => {})
-          // Remember the sidecar as read, so a later change by another app is noticed (sidecar/changes.ts).
-          if (sidecar) await catalog.recordSidecar(id, sidecar.modified, sidecar.size, JSON.stringify(fieldsFromRead(readXmp(sidecar.text))))
-          // Like darktable, the camera's Artist, Copyright and ImageDescription fill what the sidecar leaves empty.
-          if (result.camera) await catalog.fillMetadata([id], result.camera)
+          const read = xmpText ? await applySidecar(catalog, id, xmpText, !!sidecar?.borrowed).catch(() => null) : null
+          // Remember the sidecar as read, so a later change by another app is noticed (sidecar/changes.ts). A
+          // borrowed one is the RAW twin's, not this photo's.
+          if (sidecar && !sidecar.borrowed) await catalog.recordSidecar(id, sidecar.modified, sidecar.size, JSON.stringify(fieldsFromRead(readXmp(sidecar.text))))
+          // Like darktable, the camera's Artist, Copyright and ImageDescription fill what the sidecar leaves empty; a
+          // JPEG's IPTC comes before them, and its keywords count when the XMP has none (import/run.ts applyEmbedded).
+          await applyEmbedded(catalog, id, read, result.camera, result.iptcKeywords)
         }
         // RAW+JPEG pairs become stacks with the RAW on top (darktable-style).
         const newIds = ids.filter((id): id is number => id !== null)
@@ -212,8 +217,9 @@ class FolderIndexer {
     // Photos added before LightBench had keywords or metadata: bring in their sidecar's now.
     for (const p of await catalog.photosWithUnreadSidecar(rootId, subPath)) {
       if (this.stopped) break
-      const folder = await getDirAt(dir, relativeTo(subPath, p.folderPath)).catch(() => null)
-      const sidecar = folder ? await findSidecar(folder, p.fileName) : null
+      const rel = relativeTo(subPath, p.folderPath)
+      const folder = await getDirAt(dir, rel).catch(() => null)
+      const sidecar = folder ? await findSidecar(folder, p.fileName, owners.has(`${rel}/${p.fileName}`)) : null
       const read = sidecar ? readXmp(sidecar.text) : {}
       const kws = p.keywordsRead ? undefined : read.keywords
       const meta = p.metadataRead ? undefined : read.metadata

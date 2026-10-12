@@ -3,13 +3,17 @@
 
 import type { Catalog } from '../catalog/client'
 import { fieldsFromCatalog, fieldsFromRead, judge, needsRead } from './changes'
-import { isValidXmp, readXmp, sidecarName } from './xmp'
+import { sidecarCandidates } from './naming'
+import { isValidXmp, readXmp } from './xmp'
 
 type Source = NonNullable<Awaited<ReturnType<Catalog['sidecarCompare']>>>
 
-/** A photo's sidecar: Lightroom-style `name.xmp` (what LightBench writes), else darktable's `name.ext.xmp`. */
-export async function locateSidecar(dir: FileSystemDirectoryHandle, photoName: string): Promise<{ name: string; file: File } | null> {
-  for (const name of [sidecarName(photoName), `${photoName}.xmp`]) {
+/**
+ * A photo's sidecar (naming.ts): for the file that owns it, Lightroom-style `name.xmp` (what LightBench writes), else
+ * darktable's `name.ext.xmp`; for a JPEG next to its RAW, only its own `name.JPG.xmp` (the RAW's isn't its own).
+ */
+export async function locateSidecar(dir: FileSystemDirectoryHandle, photoName: string, owner = true): Promise<{ name: string; file: File } | null> {
+  for (const name of sidecarCandidates(photoName, owner)) {
     try {
       return { name, file: await (await dir.getFileHandle(name)).getFile() }
     } catch {

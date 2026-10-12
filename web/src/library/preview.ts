@@ -8,6 +8,7 @@ import { outputTrc, rec2020ToProfile, SRGB_PROFILE } from '../engine/color/icc'
 import { displayUniforms } from '../engine/develop/settings'
 import { DevelopEngine } from '../engine/gpu/develop-engine'
 import { RawDecoder } from '../engine/raw/decoder'
+import { jpegFileBlob } from '../engine/meta/preview-space'
 import { openPhotoFile } from '../platform/roots'
 
 export interface Preview {
@@ -50,7 +51,10 @@ async function shrink(bmp: ImageBitmap, maxEdge?: number): Promise<ImageBitmap> 
 export async function loadFullPreview(photo: PhotoDetail, maxEdge?: number): Promise<Preview> {
   const file = await openPhotoFile(photo.rootId, photo.folderPath, photo.fileName)
   if (!file) throw new Error('Showing a small preview. Reconnect this photo’s folder to see it full size.')
-  if (isJpeg(photo)) return { bmp: await shrink(await createImageBitmap(file), maxEdge), rotate: 0, camera: false }
+  if (isJpeg(photo)) {
+    const head = new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer())
+    return { bmp: await shrink(await createImageBitmap(jpegFileBlob(file, head)), maxEdge), rotate: 0, camera: false }
+  }
   decoder ??= new RawDecoder()
   const r = await decoder.decode(file, false)
   if (!r.preview || r.preview.format !== 'jpeg') throw new Error('This file has no full-size preview; open it in Develop to see the RAW.')

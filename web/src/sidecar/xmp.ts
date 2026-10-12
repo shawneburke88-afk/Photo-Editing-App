@@ -113,11 +113,8 @@ export function normalizeKeyword(path: string): string | null {
   return parts.length ? parts.join(KEYWORD_SEP) : null
 }
 
-/** Lightroom-style sidecar name: the file name with its extension replaced by .xmp. */
-export function sidecarName(fileName: string): string {
-  const dot = fileName.lastIndexOf('.')
-  return `${dot > 0 ? fileName.slice(0, dot) : fileName}.xmp`
-}
+/** Lightroom-style sidecar name: the file name with its extension replaced by .xmp (see naming.ts for twins). */
+export { stemSidecarName as sidecarName } from './naming'
 
 const SKELETON = `<x:xmpmeta xmlns:x="${NS.x}" x:xmptk="LightBench">
  <rdf:RDF xmlns:rdf="${NS.rdf}">

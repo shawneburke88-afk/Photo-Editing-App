@@ -1,7 +1,7 @@
 // Loading a photo into the develop engine, shared by Develop and Export so both render identically.
 
 import { invert, mul, REC2020_TO_XYZ, type Mat3, type Vec3 } from '../engine/color/matrix'
-import { multipliersToTemperature, temperatureToMultipliers } from '../engine/color/temperature'
+import { multipliersToTemperature, RAW_MULTIPLIER_LIMIT, RGB_MULTIPLIER_LIMIT, temperatureToMultipliers } from '../engine/color/temperature'
 import { defaultsFor, displayUniforms, normalizeSettings, type DevelopSettings, type SourceKind } from '../engine/develop/settings'
 import type { DevelopEngine, RawStageOptions } from '../engine/gpu/develop-engine'
 import type { DecodeResult } from '../engine/raw/types'
@@ -52,7 +52,7 @@ export function loadIntoEngine(engine: DevelopEngine, r: DecodeResult): SensorIn
 export function multipliers(s: DevelopSettings, info: SensorInfo): Vec3 {
   return s.whiteBalance.mode === 'as-shot'
     ? info.asShotWb
-    : temperatureToMultipliers(s.whiteBalance.temperature, s.whiteBalance.tint, info.xyzToCam)
+    : temperatureToMultipliers(s.whiteBalance.temperature, s.whiteBalance.tint, info.xyzToCam, info.kind === 'rgb' ? RGB_MULTIPLIER_LIMIT : RAW_MULTIPLIER_LIMIT)
 }
 
 export function stageOptions(s: DevelopSettings, info: SensorInfo): RawStageOptions {

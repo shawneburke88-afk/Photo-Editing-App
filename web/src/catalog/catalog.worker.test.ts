@@ -1,4 +1,5 @@
-// The catalog upgrade to schema 11 (sidecars changed by other apps), on SQLite's in-memory database in Node.
+// The catalog upgrades to schema 11 (sidecars changed by other apps) and 12 (GPS), on SQLite's in-memory database
+// in Node.
 import sqlite3InitModule, { type Database } from '@sqlite.org/sqlite-wasm'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { NEWER_CATALOG_MESSAGE } from './errors'
@@ -17,13 +18,14 @@ beforeAll(async () => {
 })
 
 const NEW_COLUMNS = ['sidecar_modified', 'sidecar_size', 'sidecar_fields', 'sidecar_external']
+const GPS_COLUMNS = ['gps_lat', 'gps_lon', 'gps_alt']
 const columns = (d: Database) => (d.selectObjects('PRAGMA table_info(photos)') as { name: string; dflt_value: string | null; notnull: number }[])
 
-/** A schema-10 catalog: today's schema without the version-11 columns, holding one photo. */
+/** A schema-10 catalog: today's schema without the version-11 and 12 columns, holding one photo. */
 function v10(): Database {
   const d = new sqlite3.oo1.DB(':memory:', 'c')
   migrate(d)
-  for (const c of NEW_COLUMNS) d.exec(`ALTER TABLE photos DROP COLUMN ${c}`)
+  for (const c of [...NEW_COLUMNS, ...GPS_COLUMNS]) d.exec(`ALTER TABLE photos DROP COLUMN ${c}`)
   d.exec(`
     INSERT INTO roots (id, name) VALUES (1, 'Photos');
     INSERT INTO folders (id, root_id, path) VALUES (1, 1, 'day1');
@@ -38,15 +40,15 @@ describe('catalog schema 11', () => {
   it('a new catalog gets the sidecar columns', () => {
     const d = new sqlite3.oo1.DB(':memory:', 'c')
     migrate(d)
-    expect(d.selectValue('PRAGMA user_version')).toBe(11)
-    expect(columns(d).map((c) => c.name)).toEqual(expect.arrayContaining(NEW_COLUMNS))
+    expect(d.selectValue('PRAGMA user_version')).toBe(12)
+    expect(columns(d).map((c) => c.name)).toEqual(expect.arrayContaining([...NEW_COLUMNS, ...GPS_COLUMNS]))
   })
 
   it('upgrades a version-10 catalog, keeping its photos, with no record yet', () => {
     const d = v10()
     expect(columns(d).map((c) => c.name)).not.toContain('sidecar_modified')
     migrate(d)
-    expect(d.selectValue('PRAGMA user_version')).toBe(11)
+    expect(d.selectValue('PRAGMA user_version')).toBe(12)
     const row = d.selectObject('SELECT id, rating, sidecar_written_at, sidecar_modified, sidecar_size, sidecar_fields, sidecar_external FROM photos')
     expect(row).toEqual({ id: 7, rating: 4, sidecar_written_at: 1700000000, sidecar_modified: null, sidecar_size: null, sidecar_fields: null, sidecar_external: 0 })
     expect(d.selectValue('PRAGMA foreign_key_check')).toBeUndefined()
@@ -55,9 +57,19 @@ describe('catalog schema 11', () => {
   it('refuses a newer catalog without changing it', () => {
     const d = new sqlite3.oo1.DB(':memory:', 'c')
     migrate(d)
-    d.exec('PRAGMA user_version = 12')
+    d.exec('PRAGMA user_version = 13')
     expect(() => migrate(d)).toThrow(NEWER_CATALOG_MESSAGE)
+    expect(d.selectValue('PRAGMA user_version')).toBe(13)
+  })
+
+  it('upgrades a version-11 catalog to 12: GPS columns, empty for photos already there', () => {
+    const d = v10()
+    migrate(d)
+    for (const c of GPS_COLUMNS) d.exec(`ALTER TABLE photos DROP COLUMN ${c}`)
+    d.exec('PRAGMA user_version = 11')
+    migrate(d)
     expect(d.selectValue('PRAGMA user_version')).toBe(12)
+    expect(d.selectObject('SELECT id, rating, gps_lat, gps_lon, gps_alt FROM photos')).toEqual({ id: 7, rating: 4, gps_lat: null, gps_lon: null, gps_alt: null })
   })
 
   it('opening an up-to-date catalog again changes nothing', () => {
@@ -75,14 +87,17 @@ describe('sidecar records', () => {
     cameraMake: '', cameraModel: '', lens: '', iso: 0, shutter: 0, aperture: 0, focalLength: 0, width: 1, height: 1, orientation: 0,
   })
 
-  it('lists photos that own their sidecar, records reads and writes, and marks changes by other apps', async () => {
+  it('lists photos with their sidecar owner, records reads and writes, and marks changes by other apps', async () => {
     await api.open({ inMemory: true })
     const root = api.addRoot('Photos')
     const [a, b, bj, c] = api.addPhotos([photo('A.NEF'), photo('B.NEF'), photo('B.JPG'), photo('C.jpg', 'day2')].map((p) => ({ ...p, rootId: root })))
     const copy = api.createVirtualCopy(a!)
-    const listed = api.sidecarStates(root, '').map((r) => r.fileName).sort()
-    // B.JPG's sidecar belongs to B.NEF; the virtual copy lives in A's sidecar.
-    expect(listed).toEqual(['A.NEF', 'B.NEF', 'C.jpg'])
+    const listed = api.sidecarStates(root, '').map((r) => `${r.fileName}:${r.owner}`).sort()
+    // B.NEF owns B.xmp; B.JPG has its own B.JPG.xmp. The virtual copy lives in A's sidecar.
+    expect(listed).toEqual(['A.NEF:true', 'B.JPG:false', 'B.NEF:true', 'C.jpg:true'])
+    expect(api.sidecarSource(b!)!.owner).toBe(true)
+    expect(api.sidecarSource(bj!)!.owner).toBe(false)
+    expect(api.sidecarSource(c!)!.owner).toBe(true)
     expect(api.sidecarStates(root, 'day2').map((r) => r.id)).toEqual([c])
     expect(api.sidecarStates(root, '').find((r) => r.id === a)).toMatchObject({ modified: null, size: null, external: false, writtenAt: null })
 
@@ -99,5 +114,16 @@ describe('sidecar records', () => {
     expect(api.externalSidecars()).toEqual([b])
     expect(api.sidecarSource(a!)!.sidecar).toMatchObject({ modified: 999, writtenAt: 1700000000 })
     expect(bj).not.toBeNull()
+  })
+
+  it('stores and returns where a photo was taken', async () => {
+    await api.open({ inMemory: true })
+    const root = api.addRoot('GPS')
+    const [a, b] = api.addPhotos([
+      { ...photo('G.NEF'), rootId: root, gpsLat: 45.4215, gpsLon: -75.6972, gpsAlt: 70.5 },
+      { ...photo('H.jpg'), rootId: root },
+    ])
+    expect(api.getPhoto(a!)).toMatchObject({ gpsLat: 45.4215, gpsLon: -75.6972, gpsAlt: 70.5 })
+    expect(api.getPhoto(b!)).toMatchObject({ gpsLat: null, gpsLon: null, gpsAlt: null })
   })
 })

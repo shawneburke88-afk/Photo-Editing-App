@@ -1,4 +1,5 @@
 import type { ColorLabel, Flag, PhotoDetail } from '../catalog/types'
+import { formatGps } from '../engine/meta/gps'
 import { bytes } from '../syscheck/format'
 import { captureText, COLOR_NAMES, exposureText } from './format'
 import { Stars } from './Stars'
@@ -28,6 +29,7 @@ export function InfoPanel({ photo, count, onRating, onFlag, onColor, onDevelop, 
     ['Exposure', exposureText(photo)],
     ['Size', photo.width ? `${photo.width} × ${photo.height}  ·  ${bytes(photo.fileSize)}` : bytes(photo.fileSize)],
   ]
+  if (photo.gpsLat != null && photo.gpsLon != null) rows.push(['GPS', formatGps({ lat: photo.gpsLat, lon: photo.gpsLon, alt: photo.gpsAlt })])
   if (photo.originalName !== photo.fileName) rows.splice(1, 0, ['Original name', photo.originalName])
   return (
     <aside className="info">

@@ -19,14 +19,20 @@
       "Guided Upright (Shift+T): draw 2–4 lines along edges that should be vertical or horizontal; drag their ends to adjust, Delete removes one.",
       "Transform sliders: Vertical, Horizontal, Rotate, Aspect, Scale and X/Y Offset. The photo is enlarged so no empty corners show.",
       "Auto straighten in the crop group (or double-click with Level on) levels the photo along the lines it finds.",
-      "Paste, Sync and presets: Upright Auto, Level, Vertical and Full are detected again on each photo; the Transform sliders are copied as they are."
+      "Paste, Sync and presets: Upright Auto, Level, Vertical and Full are detected again on each photo; the Transform sliders are copied as they are.",
+      "A JPEG shot alongside a RAW now keeps its own sidecar (IMG_1.JPG.xmp), so the two no longer share stars and edits.",
+      "Thumbnails and previews of RAWs shot in Adobe RGB show their real colours instead of looking washed out.",
+      "Where a photo was taken (GPS) is read from RAWs and JPEGs and shown in the Library's info panel.",
+      "Title, caption, creator, copyright, location and keywords written by older apps (IPTC) are read from JPEGs.",
+      "On wide-gamut (Display P3) screens, Develop shows colours beyond sRGB."
     ],
     "bugFixes": [
       "Star ratings changed in Lightroom or Bridge are no longer overridden when LightBench re-reads the sidecar.",
       "Keywords that other apps store only as plain (flat) keywords are no longer dropped.",
       "Photos copied from a card are now checked byte-for-byte; a bad copy is reported instead of being added.",
       "A library saved by a newer LightBench is refused untouched, with a Reload button.",
-      "Notices when the browser may clear the library, or when a save fails."
+      "Notices when the browser may clear the library, or when a save fails.",
+      "Extreme Tint or Temp settings on a JPEG no longer turn its colours inside out (e.g. Tint +150)."
     ]
   },
   {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PhotoDetail } from '../catalog/types'
+import { currentDisplaySpace } from '../engine/gpu/display-space'
 import { checkPhoto } from '../sidecar/watch'
 import { loadFullPreview, loadThumbPreview, type Preview } from './preview'
 
@@ -57,7 +58,7 @@ export function Loupe({ photo }: { photo: PhotoDetail }) {
       const iw = sideways ? bmp.height : bmp.width
       const ih = sideways ? bmp.width : bmp.height
       const scale = Math.min(cw / iw, ch / ih)
-      const ctx = canvas.getContext('2d')!
+      const ctx = canvas.getContext('2d', { colorSpace: currentDisplaySpace() })!
       ctx.imageSmoothingQuality = 'high'
       ctx.clearRect(0, 0, cw, ch)
       ctx.translate(cw / 2, ch / 2)

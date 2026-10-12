@@ -6,7 +6,8 @@
 // Geometry (when crop, straighten, rotate or flip change): one combined map from output pixels to the scene
 //   (engine/develop/geometry.ts). Whole-pixel maps are sampled directly; others are warped once with bicubic
 //   interpolation into a cached texture (with its own mip chain), so slider moves never warp again.
-// Stage B (every slider move): exposure → tone equalizer → presence → sigmoid → sRGB, at screen size.
+// Stage B (every slider move): exposure → tone equalizer → presence → sigmoid → sRGB, at screen size; on wide-gamut
+//   screens the canvas is Display P3 and Stage B writes Display P3 (display-space.ts).
 
 import { apply, invert, mul, SRGB_TO_REC2020, type Mat3, type Vec3 } from '../color/matrix'
 import { clipUniforms, DEFAULT_CLIP, DEFAULT_RAW_CLIP, RAW_COLOURS, rawModeCode, rawThresholds, type Indicators } from '../develop/indicators'
@@ -23,6 +24,7 @@ import mipWgsl from './mip.wgsl?raw'
 import rawWgsl from './raw-pipeline.wgsl?raw'
 import rgbInputWgsl from './rgb-input.wgsl?raw'
 import exportWgsl from './export.wgsl?raw'
+import { currentDisplaySpace, REC2020_TO_DISPLAY_P3, srgbColourIn, watchDisplaySpace, type DisplaySpace } from './display-space'
 import statsWgsl from './stats.wgsl?raw'
 import warpWgsl from './warp.wgsl?raw'
 
@@ -105,7 +107,7 @@ const STATS_WORDS = 1028
 
 const IDENTITY: Mat3 = [1, 0, 0, 0, 1, 0, 0, 0, 1]
 const RAW_PARAMS_SIZE = 160
-const VIEW_SIZE = 368
+const VIEW_SIZE = 416
 
 // Without explicit indicators (e.g. for Auto), clipping is counted on screen values only: sensor
 // clipping can't be fixed by moving sliders.
@@ -170,6 +172,11 @@ export class DevelopEngine {
   /** The white balance the scene texture was built with (for live previews of WB changes). */
   private builtWb: Vec3 = [1, 1, 1]
   private camToWorking: Mat3 = IDENTITY
+  /** What the canvas holds: Display P3 on wide-gamut screens (display-space.ts), else sRGB. */
+  private displaySpace: DisplaySpace
+  private readonly unwatchDisplay: () => void
+  /** The last `render` call, to draw again when the screen's gamut changes. */
+  private lastRender: Parameters<DevelopEngine['render']> | null = null
 
   private constructor(device: GPUDevice, mode: PresentMode) {
     this.device = device
@@ -177,14 +184,24 @@ export class DevelopEngine {
     this.canvas = document.createElement('canvas')
     this.canvas.className = 'develop-canvas'
     this.format = mode === 'canvas' ? navigator.gpu.getPreferredCanvasFormat() : 'rgba8unorm'
+    this.displaySpace = currentDisplaySpace()
     if (mode === 'canvas') {
       const ctx = this.canvas.getContext('webgpu')
       if (!ctx) throw new Error('Could not create a WebGPU canvas context')
-      ctx.configure({ device, format: this.format, alphaMode: 'opaque' })
+      ctx.configure({ device, format: this.format, alphaMode: 'opaque', colorSpace: this.displaySpace })
       this.gpuCtx = ctx
     } else {
-      this.ctx2d = this.canvas.getContext('2d')
+      this.ctx2d = this.canvas.getContext('2d', { colorSpace: this.displaySpace })
     }
+    // Moved to a screen with another gamut: a WebGPU canvas is configured again and redrawn. A read-back canvas
+    // keeps the colour space it was made with (a 2D context's can't change); the browser converts it, so its
+    // colours stay right, only without the wider gamut until the next photo view.
+    this.unwatchDisplay = watchDisplaySpace((space) => {
+      if (!this.gpuCtx || space === this.displaySpace) return
+      this.displaySpace = space
+      this.gpuCtx.configure({ device, format: this.format, alphaMode: 'opaque', colorSpace: space })
+      if (this.lastRender && !this.lost) void this.render(...this.lastRender).catch(() => {})
+    })
     device.addEventListener('uncapturederror', (e) => console.error('WebGPU error:', (e as GPUUncapturedErrorEvent).error.message))
     void device.lost.then((info) => {
       this.lost = true
@@ -802,7 +819,8 @@ export class DevelopEngine {
     return mul(mul(m, d), invert(m))
   }
 
-  private writeView(u: DisplayUniforms, wb: Vec3, src: Source, rect: { x: number; y: number; w: number; h: number }, lod: number, ind: Indicators = NO_INDICATORS, pass: 0 | 1 | 2 = 0) {
+  /** `display`: the colour space of the target (only the on-screen canvas is ever Display P3). */
+  private writeView(u: DisplayUniforms, wb: Vec3, src: Source, rect: { x: number; y: number; w: number; h: number }, lod: number, ind: Indicators = NO_INDICATORS, pass: 0 | 1 | 2 = 0, display: DisplaySpace = 'srgb') {
     const statsPass = pass === 1
     const v = new ArrayBuffer(VIEW_SIZE)
     const f = new Float32Array(v)
@@ -822,10 +840,10 @@ export class DevelopEngine {
     ui[41] = ind.showClip || statsPass ? clip.mode : 0
     f[42] = clip.upper
     f[43] = clip.lower
-    f.set([...clip.upperColour, 1, ...clip.lowerColour, 1], 44)
+    f.set([...srgbColourIn(display, clip.upperColour), 1, ...srgbColourIn(display, clip.lowerColour), 1], 44)
     const s = this.sensor!
     f.set(rawThresholds(s, ind.raw.threshold), 52)
-    f.set([...RAW_COLOURS[ind.raw.colour], 1], 56)
+    f.set([...srgbColourIn(display, RAW_COLOURS[ind.raw.colour]), 1], 56)
     ui[60] = ind.showRaw && !statsPass ? rawModeCode(ind.raw.mode) : 0
     ui[61] = s.width
     ui[62] = s.height
@@ -835,6 +853,10 @@ export class DevelopEngine {
     const r = src.rawMap
     f.set([t[0], t[1], t[2], 0, t[3], t[4], t[5], 0, t[6], t[7], t[8], 0], 68)
     f.set([r[0], r[1], r[2], 0, r[3], r[4], r[5], 0, r[6], r[7], r[8], 0], 80)
+    // Display P3 output (render only): the Display P3 export's matrix; sRGB keeps the shader's own path.
+    ui[65] = display === 'display-p3' ? 1 : 0
+    const d = REC2020_TO_DISPLAY_P3
+    f.set([d[0], d[1], d[2], 0, d[3], d[4], d[5], 0, d[6], d[7], d[8], 0], 92)
     this.device.queue.writeBuffer(this.viewBuf, 0, v)
   }
 
@@ -869,14 +891,15 @@ export class DevelopEngine {
       this.canvas.width = cw
       this.canvas.height = ch
     }
+    this.lastRender = [u, wb, view, indicators]
     const src = await this.source(u.geometry, !!view.frame, u.lens)
     const l = this.layout(view, cw, ch, [src.w, src.h])
     this.shown = { w: src.w, h: src.h, rawMap: src.rawMap, lens: src.lens }
-    this.writeView(u, wb, src, l, l.lod, indicators)
+    this.writeView(u, wb, src, l, l.lod, indicators, 0, this.displaySpace)
     const target = this.gpuCtx
       ? this.gpuCtx.getCurrentTexture()
       : this.device.createTexture({ size: [cw, ch], format: this.format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
-    const pixels = await this.draw(this.displayPipe, target, src.tex, cw, ch, !this.gpuCtx)
+    const pixels = await this.draw(this.displayPipe, target, src.tex, cw, ch, !this.gpuCtx, this.displaySpace)
     if (pixels) {
       this.ctx2d!.putImageData(pixels, 0, 0)
       target.destroy()
@@ -1093,7 +1116,7 @@ export class DevelopEngine {
     })
   }
 
-  private async draw(pipe: GPURenderPipeline, target: GPUTexture, tex: GPUTexture, w: number, h: number, readback: boolean): Promise<ImageData | null> {
+  private async draw(pipe: GPURenderPipeline, target: GPUTexture, tex: GPUTexture, w: number, h: number, readback: boolean, space: DisplaySpace = 'srgb'): Promise<ImageData | null> {
     const { device } = this
     const enc = device.createCommandEncoder()
     const pass = enc.beginRenderPass({ colorAttachments: [{ view: target.createView(), loadOp: 'clear', storeOp: 'store' }] })
@@ -1112,7 +1135,7 @@ export class DevelopEngine {
     device.queue.submit([enc.finish()])
     await read.mapAsync(GPUMapMode.READ)
     const src = new Uint8Array(read.getMappedRange())
-    const img = new ImageData(w, h)
+    const img = new ImageData(w, h, { colorSpace: space })
     for (let y = 0; y < h; y++) img.data.set(src.subarray(y * bytesPerRow, y * bytesPerRow + w * 4), y * w * 4)
     read.unmap()
     read.destroy()
@@ -1120,6 +1143,8 @@ export class DevelopEngine {
   }
 
   destroy() {
+    this.unwatchDisplay()
+    this.lastRender = null
     this.rgbInput?.texture.destroy()
     this.warp?.tex.destroy()
     this.lensOnly?.tex.destroy()

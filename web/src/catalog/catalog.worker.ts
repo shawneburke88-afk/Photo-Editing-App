@@ -6,6 +6,7 @@ import { isStorageFailure, NEWER_CATALOG_MESSAGE } from './errors'
 import { compileSmart, type SmartRules } from './smart'
 import { burstGroups, collapseStacks } from './stacks'
 import type { SidecarState } from '../sidecar/changes'
+import { ownsStem, stemOwners } from '../sidecar/naming'
 import { checkCatalogImage, discardStaged, exportCatalog, removeLeftovers, stageCatalog } from './backup-db'
 import { SCHEMA_VERSION } from './schema'
 import { activeSlot, type Slot } from './slot'
@@ -307,6 +308,15 @@ export function migrate(d: Database) {
         ALTER TABLE photos ADD COLUMN sidecar_external INTEGER NOT NULL DEFAULT 0;
       `)
     }
+    if (version < 12) {
+      // Where the photo was taken, from its EXIF GPS (JPEG) or LibRaw's parsed GPS (RAW): degrees (north and east
+      // positive) and metres; NULL when not recorded. Photos added earlier have none until they are added again.
+      d.exec(`
+        ALTER TABLE photos ADD COLUMN gps_lat REAL;
+        ALTER TABLE photos ADD COLUMN gps_lon REAL;
+        ALTER TABLE photos ADD COLUMN gps_alt REAL;
+      `)
+    }
     d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     d.exec('COMMIT')
   } catch (err) {
@@ -406,13 +416,13 @@ function addPhotos(photos: NewPhoto[]): (number | null)[] {
     const stmt = d.prepare(`
       INSERT OR IGNORE INTO photos (folder_id, file_name, original_name, file_type, file_size, file_modified,
         captured_at, imported_at, camera_make, camera_model, lens, iso, shutter, aperture, focal_length,
-        width, height, orientation, keywords_read, metadata_read)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)`)
+        width, height, orientation, gps_lat, gps_lon, gps_alt, keywords_read, metadata_read)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)`)
     for (const p of photos) {
       stmt.bind([
         folderId(p.rootId, p.folderPath), p.fileName, p.originalName, p.fileType, p.fileSize, p.fileModified,
         p.capturedAt, now, p.cameraMake, p.cameraModel, p.lens, p.iso, p.shutter, p.aperture, p.focalLength,
-        p.width, p.height, p.orientation,
+        p.width, p.height, p.orientation, p.gpsLat ?? null, p.gpsLon ?? null, p.gpsAlt ?? null,
       ])
       stmt.step()
       stmt.reset()
@@ -1161,7 +1171,8 @@ function getPhoto(id: number): PhotoDetail | null {
        p.file_size AS fileSize, p.file_modified AS fileModified, p.captured_at AS capturedAt,
        p.imported_at AS importedAt, p.camera_make AS cameraMake, p.camera_model AS cameraModel, p.lens,
        p.iso, p.shutter, p.aperture, p.focal_length AS focalLength, p.width, p.height, p.orientation,
-       p.rating, p.flag, p.color_label AS color, p.version, p.version_name AS versionName
+       p.rating, p.flag, p.color_label AS color, p.version, p.version_name AS versionName,
+       p.gps_lat AS gpsLat, p.gps_lon AS gpsLon, p.gps_alt AS gpsAlt
      FROM photos p JOIN folders f ON f.id = p.folder_id WHERE p.id = ?`,
     [id],
   )
@@ -1244,19 +1255,19 @@ function sidecarSource(requested: number) {
   const p = getPhoto(photoId)
   if (!p) return null
   const edit = getEdit(photoId)
-  // Lightroom-style sidecars (name.xmp) are shared by files with the same base name. Like Lightroom with
-  // RAW+JPEG pairs, the RAW owns it: a JPEG doesn't write one when a non-JPEG twin is in the library.
+  // Lightroom-style sidecars (name.xmp) are shared by files with the same base name. The RAW owns it; its JPEG twin
+  // uses name.JPG.xmp (sidecar/naming.ts).
   const dot = p.fileName.lastIndexOf('.')
   const base = dot > 0 ? p.fileName.slice(0, dot) : p.fileName
-  const isJpeg = /^jpe?g$/i.test(p.fileType)
   const twins = conn().selectObjects(
-    `SELECT file_type AS fileType FROM photos
+    `SELECT file_name AS fileName FROM photos
      WHERE folder_id = ?1 AND id <> ?2 AND version = 0
        AND lower(substr(file_name, 1, length(?3) + 1)) = lower(?3) || '.'
        AND instr(substr(file_name, length(?3) + 2), '.') = 0`,
     [p.folderId, photoId, base],
-  ) as unknown as { fileType: string }[]
-  const owner = !(isJpeg && twins.some((t) => !/^jpe?g$/i.test(t.fileType)))
+  ) as unknown as { fileName: string }[]
+  /** Whether the photo owns name.xmp; when not, its sidecar is name.ext.xmp. */
+  const owner = ownsStem(p.fileName, twins.map((t) => t.fileName))
   const read = conn().selectObject('SELECT keywords_read AS k, metadata_read AS m FROM photos WHERE id = ?', [photoId]) as { k: number; m: number }
   return {
     photo: p, settings: edit?.settings ?? null, owner, keywords: photoKeywords(photoId), keywordsRead: read.k === 1, collections: photoCollections(photoId),
@@ -1289,25 +1300,19 @@ function sidecarCompare(photoId: number) {
 }
 
 /**
- * The sidecar records of the photos under a folder that own their sidecar: originals only (virtual copies live in
- * their original's sidecar), and not a JPEG whose RAW twin is in the same folder (the RAW owns the shared sidecar).
+ * The sidecar records of the photos under a folder: originals only (virtual copies live in their original's
+ * sidecar). `owner`: the photo owns name.xmp; a JPEG whose RAW twin is in the same folder doesn't, and uses
+ * name.JPG.xmp (sidecar/naming.ts).
  */
-function sidecarStates(rootId: number, path: string): (Omit<SidecarState, 'fields'> & { id: number; folderPath: string; fileName: string })[] {
+function sidecarStates(rootId: number, path: string): (Omit<SidecarState, 'fields'> & { id: number; folderPath: string; fileName: string; owner: boolean })[] {
   const rows = conn().selectObjects(
     `SELECT p.id, f.path AS folderPath, p.file_name AS fileName, p.file_type AS fileType, ${SIDECAR_STATE}
      FROM photos p JOIN folders f ON f.id = p.folder_id
      WHERE p.version = 0 AND f.root_id = ?1 AND (?2 = '' OR f.path = ?2 OR substr(f.path, 1, length(?2) + 1) = ?2 || '/')`,
     [rootId, path],
   ) as unknown as (StateRow & { id: number; folderPath: string; fileName: string; fileType: string })[]
-  const isJpeg = (t: string) => /^jpe?g$/i.test(t)
-  const base = (r: { folderPath: string; fileName: string }) => {
-    const dot = r.fileName.lastIndexOf('.')
-    return `${r.folderPath}/${(dot > 0 ? r.fileName.slice(0, dot) : r.fileName).toLowerCase()}`
-  }
-  const rawBases = new Set(rows.filter((r) => !isJpeg(r.fileType)).map(base))
-  return rows
-    .filter((r) => !(isJpeg(r.fileType) && rawBases.has(base(r))))
-    .map(({ fileType: _t, ...r }) => ({ ...r, external: !!r.external }))
+  const owners = stemOwners(rows.map((r) => ({ dir: r.folderPath, name: r.fileName })))
+  return rows.map(({ fileType: _t, ...r }) => ({ ...r, external: !!r.external, owner: owners.has(`${r.folderPath}/${r.fileName}`) }))
 }
 
 /**
