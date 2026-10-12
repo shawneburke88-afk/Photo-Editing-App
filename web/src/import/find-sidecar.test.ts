@@ -1,5 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import { findSidecar } from './run'
+import { applyEmbedded, findSidecar } from './run'
+
+describe('metadata embedded in the file (XMP over IPTC over EXIF)', () => {
+  const fake = () => {
+    const calls: [string, unknown][] = []
+    const catalog = {
+      addKeywords: async (_ids: number[], k: string[]) => void calls.push(['keywords', k]),
+      fillMetadata: async (_ids: number[], m: unknown) => void calls.push(['fill', m]),
+    } as unknown as Parameters<typeof applyEmbedded>[0]
+    return { calls, catalog }
+  }
+
+  it('takes IPTC keywords only when the XMP has none, and fills only what the XMP left empty', async () => {
+    const a = fake()
+    await applyEmbedded(a.catalog, 1, { keywords: ['From XMP'] }, { title: 'IPTC title' }, ['iptc'])
+    expect(a.calls).toEqual([['fill', { title: 'IPTC title' }]])
+    const b = fake()
+    await applyEmbedded(b.catalog, 1, null, undefined, ['iptc'])
+    expect(b.calls).toEqual([['keywords', ['iptc']]])
+  })
+})
 
 /** A folder holding text files, as far as findSidecar uses it. */
 function folder(files: Record<string, string>): FileSystemDirectoryHandle {

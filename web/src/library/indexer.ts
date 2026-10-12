@@ -11,7 +11,7 @@ import { getCatalog } from '../catalog/client'
 import { photosAdded } from './added'
 import { saveThumb } from '../catalog/thumbs'
 import { ProbePool } from '../import/probe'
-import { applySidecar, findSidecar } from '../import/run'
+import { applyEmbedded, applySidecar, findSidecar } from '../import/run'
 import { joinPath } from '../import/plan'
 import { scanSource, sidecarKey, type ScannedFile } from '../import/scan'
 import { getDirAt, getRootHandle, resolveRoot } from '../platform/roots'
@@ -170,12 +170,13 @@ class FolderIndexer {
           const folder = dirs.get(file.dir)
           const sidecar = folder ? await findSidecar(folder, file.name, owners.has(`${file.dir}/${file.name}`)) : null
           const xmpText = sidecar?.text ?? result.xmp
-          if (xmpText) await applySidecar(catalog, id, xmpText, !!sidecar?.borrowed).catch(() => {})
+          const read = xmpText ? await applySidecar(catalog, id, xmpText, !!sidecar?.borrowed).catch(() => null) : null
           // Remember the sidecar as read, so a later change by another app is noticed (sidecar/changes.ts). A
           // borrowed one is the RAW twin's, not this photo's.
           if (sidecar && !sidecar.borrowed) await catalog.recordSidecar(id, sidecar.modified, sidecar.size, JSON.stringify(fieldsFromRead(readXmp(sidecar.text))))
-          // Like darktable, the camera's Artist, Copyright and ImageDescription fill what the sidecar leaves empty.
-          if (result.camera) await catalog.fillMetadata([id], result.camera)
+          // Like darktable, the camera's Artist, Copyright and ImageDescription fill what the sidecar leaves empty; a
+          // JPEG's IPTC comes before them, and its keywords count when the XMP has none (import/run.ts applyEmbedded).
+          await applyEmbedded(catalog, id, read, result.camera, result.iptcKeywords)
         }
         // RAW+JPEG pairs become stacks with the RAW on top (darktable-style).
         const newIds = ids.filter((id): id is number => id !== null)

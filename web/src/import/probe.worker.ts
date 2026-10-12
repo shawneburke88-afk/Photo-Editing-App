@@ -5,6 +5,7 @@ import wasmUrl from '@colorhythm/libraw-wasm/libraw.wasm?url'
 import type { PhotoMeta, PhotoMetadata } from '../catalog/types'
 import { readJpegExif } from '../engine/meta/exif'
 import { gpsFromLibRaw, type GpsPosition } from '../engine/meta/gps'
+import { readJpegIptc } from '../engine/meta/iptc'
 import { embeddedPreviewColorSpace, jpegFileBlob, tagPreview } from '../engine/meta/preview-space'
 import { exposeRpc } from '../lib/rpc'
 import { extractJpegXmp } from '../sidecar/xmp-packet'
@@ -14,8 +15,14 @@ export interface ProbeResult {
   thumb: Uint8Array<ArrayBuffer> | null
   /** XMP embedded in a JPEG (ratings, labels, keywords written by Lightroom, Bridge or the camera). */
   xmp?: string
-  /** Creator, caption and copyright the camera wrote in EXIF (Artist, ImageDescription, Copyright), when set. */
+  /**
+   * Title, caption, creator, copyright, headline and location embedded in the file: a JPEG's IPTC-IIM, else the
+   * camera's EXIF (Artist, ImageDescription, Copyright). They fill only what the XMP (sidecar or embedded) leaves
+   * empty, so XMP wins, then IPTC, then EXIF, as Adobe's XMP Toolkit reconciles them (iptc.ts).
+   */
   camera?: Partial<PhotoMetadata>
+  /** Keywords from a JPEG's IPTC-IIM, used only when the XMP has none (Adobe's XMP Toolkit, Import2WayIPTC). */
+  iptcKeywords?: string[]
 }
 
 const THUMB_SIZE = 512
@@ -157,11 +164,16 @@ async function probeJpeg(file: File): Promise<ProbeResult> {
     orientation: exif?.orientation ?? 0,
     ...gpsColumns(exif?.gps ?? null),
   }
+  const iptc = readJpegIptc(head)
+  const fromExif = exif ? cameraText({ creator: exif.artist, copyright: exif.copyright, caption: exif.description }) : undefined
+  // IPTC over EXIF for the fields both have (Adobe XMP Toolkit, ReconcileTIFF.cpp Import3WayItems).
+  const camera = iptc ? { ...fromExif, ...cameraText(iptc.metadata) } : fromExif
   return {
     meta,
     thumb: await makeThumb(bmp, 0),
     xmp: extractJpegXmp(head) ?? undefined,
-    camera: exif ? cameraText({ creator: exif.artist, copyright: exif.copyright, caption: exif.description }) : undefined,
+    camera: camera && Object.keys(camera).length ? camera : undefined,
+    iptcKeywords: iptc?.keywords.length ? iptc.keywords : undefined,
   }
 }
 

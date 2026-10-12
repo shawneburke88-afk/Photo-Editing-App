@@ -10,7 +10,7 @@ import { copyVerified } from './copy'
 import { baseNameOf, dateFolder, extensionOf, JPEG_EXTENSIONS, joinPath, renamedFile, type RenameTemplate } from './plan'
 import type { ScannedFile } from './scan'
 import { fullSidecarName, sidecarCandidates, stemOwners, stemSidecarName } from '../sidecar/naming'
-import { readXmp } from '../sidecar/xmp'
+import { readXmp, type SidecarRead } from '../sidecar/xmp'
 
 export interface ImportItem {
   file: ScannedFile
@@ -18,8 +18,10 @@ export interface ImportItem {
   thumb: Uint8Array<ArrayBuffer> | null
   /** XMP embedded in a JPEG, used when there is no sidecar. */
   xmp?: string
-  /** Creator, caption, copyright from the camera's EXIF, filling fields the sidecar leaves empty. */
+  /** Title, caption, creator… from the file's IPTC or EXIF, filling fields the sidecar leaves empty. */
   camera?: Partial<PhotoMetadata>
+  /** Keywords from the file's IPTC, used when the sidecar has none. */
+  iptcKeywords?: string[]
 }
 
 export interface ImportOptions {
@@ -100,14 +102,14 @@ export async function findSidecar(dir: FileSystemDirectoryHandle, photoName: str
  * LightBench edits) to a newly imported photo. A `borrowed` sidecar (the RAW twin's) gives only stars, flag, label,
  * keywords and metadata: its edits, virtual copies, stack and collections are the RAW's.
  */
-export async function applySidecar(catalog: Catalog, id: number, text: string, borrowed = false) {
+export async function applySidecar(catalog: Catalog, id: number, text: string, borrowed = false): Promise<SidecarRead> {
   const r = readXmp(text)
   if (r.metadata) await catalog.setMetadata([id], r.metadata)
   if (r.rating !== undefined) await catalog.setRating([id], r.rating)
   if (r.flag !== undefined) await catalog.setFlag([id], r.flag)
   if (r.color !== undefined) await catalog.setColor([id], r.color)
   if (r.keywords?.length) await catalog.addKeywords([id], r.keywords)
-  if (borrowed) return
+  if (borrowed) return r
   if (r.collections?.length) await catalog.addToCollectionsByName(id, r.collections)
   if (r.stack) await catalog.joinStackByUid(id, r.stack.uid, r.stack.top)
   if (r.versions?.length) {
@@ -120,6 +122,16 @@ export async function applySidecar(catalog: Catalog, id: number, text: string, b
     const history = JSON.stringify({ steps: [{ label: 'From sidecar', settings: JSON.parse(r.develop) }], index: 0 })
     await catalog.saveEdit(id, r.develop, history)
   }
+  return r
+}
+
+/**
+ * Fills a newly added photo's metadata and keywords from the file itself (IPTC, EXIF), where its XMP said nothing:
+ * Adobe's XMP Toolkit order (XMP over IPTC over EXIF; IPTC keywords only without XMP keywords).
+ */
+export async function applyEmbedded(catalog: Catalog, id: number, read: SidecarRead | null, camera?: Partial<PhotoMetadata>, iptcKeywords?: string[]) {
+  if (iptcKeywords?.length && !read?.keywords?.length) await catalog.addKeywords([id], iptcKeywords)
+  if (camera) await catalog.fillMetadata([id], camera)
 }
 
 export async function runImport(
@@ -190,8 +202,8 @@ export async function runImport(
         ;(JPEG_EXTENSIONS.includes(extensionOf(item.file.name)) ? jpegs : raws).set(pairKey(item.file), id)
         if (item.thumb) await saveThumb(id, item.thumb)
         const xmpText = sidecar?.text ?? item.xmp
-        if (xmpText) await applySidecar(catalog, id, xmpText, !!sidecar?.borrowed)
-        if (item.camera) await catalog.fillMetadata([id], item.camera)
+        const read = xmpText ? await applySidecar(catalog, id, xmpText, !!sidecar?.borrowed) : null
+        await applyEmbedded(catalog, id, read, item.camera, item.iptcKeywords)
       }
     } catch (err) {
       progress.failed.push({ name: item.file.name, error: err instanceof Error ? err.message : String(err) })
