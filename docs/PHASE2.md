@@ -501,7 +501,7 @@ A review comparing LightBench with LightCraft (an MIT/Apache Rust editor) found 
 - The check reads the copy back through the browser, which may be served from the operating system's cache rather than the disk itself. So it catches a bad write path (browser, cable or card reader errors that change bytes), but not necessarily a disk that loses data later. Each file is read from the card once, so a reader that returns the same wrong bytes every time can't be detected.
 - The Import window's “Already imported” badge still compares only name and size, because reading every file to mark it would be slow. Importing then checks the content.
 - Not checked here: whether installing the app makes Chrome or Edge grant persistent storage (Chrome decides by its own rules). The notice only says it may.
-- Found while writing the Tint test and **not changed**: on an sRGB JPEG at its as-shot 6500 K, Tint +150 asks for a white outside sRGB, and the red multiplier comes out negative (about −7.9; +100 gives about 9.5). For RAW files (D700) the multipliers stay positive across the whole range.
+- Found while writing the Tint test and **not changed**: on an sRGB JPEG at its as-shot 6500 K, Tint +150 asks for a white outside sRGB, and the red multiplier comes out negative (about −7.9; +100 gives about 9.5). For RAW files (D700) the multipliers stay positive across the whole range. (Since fixed: [PHASE3.md Part 4](PHASE3.md#jpeg-tint-150). Over the whole Temp range, RAW multipliers could also turn negative at warm Temp with Tint far to the green side; that is limited too.)
 
 ## Library backup and restore
 
