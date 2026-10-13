@@ -35,6 +35,7 @@ import {
 } from '../engine/develop/tone-curve'
 import { CURVE_GUIDE, HELP } from './help'
 import { Slider } from './Slider'
+import { withKey } from '../settings/shortcuts'
 
 export type CurveMode = 'regions' | 'point'
 export interface CurveView {
@@ -531,14 +532,14 @@ export function ToneCurvePanel(p: Props) {
             aria-pressed={p.tat}
             disabled={disabled}
             onClick={p.onTat}
-            title={`Targeted adjustment: drag up or down on the photo to brighten or darken the tones under the pointer (${view.mode === 'regions' ? 'moves their region' : 'adds a point'}); ↑ ↓ while hovering nudge them; Esc ends`}
+            aria-label="Targeted adjustment"
+            title={withKey(`Targeted adjustment: drag up or down on the photo to brighten or darken the tones under the pointer (${view.mode === 'regions' ? 'moves their region' : 'adds a point'}); ↑ ↓ while hovering nudge them; Esc ends`, 'develop.curveTarget')}
           >
             <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
               <circle cx="8" cy="8" r="5.2" fill="none" stroke="currentColor" strokeWidth="1.4" />
               <circle cx="8" cy="8" r="1.6" fill="currentColor" />
               <path stroke="currentColor" strokeWidth="1.4" d="M8 0.5v3M8 12.5v3M0.5 8h3M12.5 8h3" />
             </svg>
-            Target
           </button>
         </div>
         <div className={`curve-graph ${view.mode}`}>
