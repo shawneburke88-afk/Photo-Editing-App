@@ -59,9 +59,21 @@ describe('Lightroom Noise Reduction → darktable force curves (LightBench mappi
     const contrast = denoiseCurves(withNoise({ luminance: 60, luminanceContrast: 100 }).noise)
     expect(contrast.y0[0]).toBeCloseTo(base.y0[0] * 2 ** -1.5, 12)
     expect(contrast.y0[6]).toBeCloseTo(base.y0[6], 12)
-    const smooth = denoiseCurves(withNoise({ color: 60, colorSmoothness: 100 }).noise)
-    expect(smooth.uv[0]).toBeCloseTo(base.uv[0] * 2, 12)
-    expect(smooth.uv[6]).toBeCloseTo(base.uv[6], 12)
+    const base40 = denoiseCurves(withNoise({ color: 40 }).noise)
+    const smooth = denoiseCurves(withNoise({ color: 40, colorSmoothness: 100 }).noise)
+    expect(smooth.uv[0]).toBeCloseTo(base40.uv[0] * 2, 12)
+    expect(smooth.uv[6]).toBeCloseTo(base40.uv[6], 12)
+  })
+
+  it('clamps every force to 0…1, as darktable\'s curves do', () => {
+    // Luminance 80, Detail 30: the finest band would be 0.8 · 2^0.4 = 1.056; Color 60, Smoothness 100: 1.2.
+    const c = denoiseCurves(withNoise({ luminance: 80, luminanceDetail: 30, color: 60, colorSmoothness: 100 }).noise)
+    expect(c.y0[6]).toBe(1)
+    expect(c.y0[5]).toBeCloseTo(0.8 * 2 ** (0.4 * (2 / 3) ** 2), 12)
+    expect(c.uv[0]).toBe(1)
+    for (const v of [...c.y0, ...c.uv]) expect(v).toBeLessThanOrEqual(1)
+    const all = denoiseCurves(withNoise({ luminance: 100, luminanceDetail: 0, color: 100, colorSmoothness: 100 }).noise)
+    expect([...all.y0, ...all.uv].every((v) => v === 1)).toBe(true)
   })
 
   it('maps the Sharpening sliders onto the interim method', () => {

@@ -153,6 +153,7 @@ export const DENOISE_BANDS = 7
 const fineWeight = (x: number) => Math.max(0, (x - 0.5) / 0.5) ** 2
 const coarseWeight = (x: number) => (1 - x) ** 2
 const contrastWeight = (x: number) => 1 - x
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v))
 
 /**
  * The Y0 (luminance) and U0V0 (chroma) force curves of darktable's denoise (profiled), one value per band (band 0
@@ -169,7 +170,10 @@ const contrastWeight = (x: number) => 1 - x
  *  - Color C → every U0V0 band at C / 100 (Color 50 = darktable's default strength on chroma);
  *  - Color Detail: like Luminance Detail on U0V0 (higher protects thin colour edges, lower removes more speckles);
  *  - Color Smoothness S: coarse U0V0 bands × 2^((S − 50) / 50 · (1 − x)²) (higher removes larger colour blotches).
- * Forces above 1 are allowed (darktable's GUI stops at 1 but its maths doesn't).
+ * Each force is clamped to 0…1, as darktable does: it evaluates its curves through `dt_draw_curve_calc_values`, whose
+ * curve has a y range of 0…1 (src/gui/draw.h `dt_draw_curve_new`) and clamps every sample to it (src/common/curve_tools.c
+ * `CurveDataSample`). Without the clamp LightBench removed 4–9 % more noise than darktable with non-flat curves
+ * (PHASE3.md Part 13).
  */
 export function denoiseCurves(n: NoiseSettings): { y0: number[]; uv: number[] } {
   const y0: number[] = []
@@ -180,8 +184,8 @@ export function denoiseCurves(n: NoiseSettings): { y0: number[]; uv: number[] } 
     const lContrast = 2 ** (-1.5 * (n.luminanceContrast / 100) * contrastWeight(x))
     const cDetail = 2 ** ((-(n.colorDetail - 50) / 50) * fineWeight(x))
     const cSmooth = 2 ** (((n.colorSmoothness - 50) / 50) * coarseWeight(x))
-    y0.push((n.luminance / 100) * lDetail * lContrast)
-    uv.push((n.color / 100) * cDetail * cSmooth)
+    y0.push(clamp01((n.luminance / 100) * lDetail * lContrast))
+    uv.push(clamp01((n.color / 100) * cDetail * cSmooth))
   }
   return { y0, uv }
 }
