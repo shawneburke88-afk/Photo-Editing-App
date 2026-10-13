@@ -922,7 +922,6 @@ export class DevelopEngine {
     const words = o.width * o.height * (o.bits === 16 ? 2 : 1)
     const outBuf = device.createBuffer({ size: words * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC })
     const read = device.createBuffer({ size: words * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
-    const bufs: GPUBuffer[] = []
     const dispatch = (pipe: GPUComputePipeline, entries: GPUBindGroupEntry[], x: number, y: number) => {
       const pass = enc.beginComputePass()
       pass.setPipeline(pipe)
@@ -932,6 +931,7 @@ export class DevelopEngine {
     }
     let mid: GPUTexture | null = null
     const temps: GPUTexture[] = []
+    let sharpBuf: GPUBuffer | null = null
     const sh = o.sharpen
     if (sh) {
       // Resize (unless full size) into `img`, blur L* across, then blur down, mix and encode.
@@ -962,7 +962,7 @@ export class DevelopEngine {
       sf[26] = sh.amount
       sf[27] = sh.threshold
       sf[28] = sh.halo
-      const sharpBuf = device.createBuffer({ size: sp.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+      sharpBuf = device.createBuffer({ size: sp.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
       device.queue.writeBuffer(sharpBuf, 0, sp)
       const blur = device.createTexture({ size: [o.width, o.height], format: 'r32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING })
       temps.push(blur)
@@ -979,7 +979,6 @@ export class DevelopEngine {
         { binding: 7, resource: img.createView() },
         { binding: 9, resource: blur.createView() },
       ], o.width, o.height)
-      bufs.push(sharpBuf)
     } else if (o.width === iw && o.height === ih) {
       dispatch(pipes.encodeOnly, [
         { binding: 0, resource: { buffer: paramBuf } },
@@ -1016,7 +1015,7 @@ export class DevelopEngine {
       paramBuf.destroy()
       mid?.destroy()
       for (const t of temps) t.destroy()
-      for (const b of bufs) b.destroy()
+      sharpBuf?.destroy()
       dev.destroy()
     }
   }
