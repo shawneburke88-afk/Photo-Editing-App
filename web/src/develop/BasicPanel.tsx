@@ -190,7 +190,7 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, layo
                     <select value={layout !== 'xtrans' && s.advanced.demosaic === 'markesteijn3' ? 'rcd' : s.advanced.demosaic} disabled={disabled}
                       onChange={(e) => setAdv('Demosaic', { demosaic: e.target.value as DemosaicMethod })}>
                       <option value="rcd">{layout === 'xtrans' ? 'Markesteijn 1-pass' : 'RCD'}</option>
-                      {layout === 'xtrans' && <option value="markesteijn3" title="darktable's Markesteijn 3-pass: three refinement passes and eight directions; fewer colour artefacts on fine detail, about twice as slow to open">Markesteijn 3-pass (slower)</option>}
+                      {layout === 'xtrans' && <option value="markesteijn3" title="darktable's Markesteijn 3-pass: three refinement passes and eight directions instead of one and four. Several times slower to develop and about twice the GPU memory.">Markesteijn 3-pass (slower)</option>}
                       <option value="bilinear">{layout === 'xtrans' ? 'linear (fast preview)' : 'bilinear (fast preview)'}</option>
                     </select>
                   </label>
