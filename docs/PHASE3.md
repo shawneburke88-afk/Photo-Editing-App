@@ -763,9 +763,9 @@ Headless Chromium with software WebGPU (SwiftShader), scripts in `scratchpad/fol
   - The unit tests in `auto.test.ts` use their own measurement model and are unaffected.
 - **In Develop** (`e2e-develop-v2.mjs`): the version-1 XMP showed "This photo was edited with process version 1" and the offer. The button's tooltip now ends with what each newer version changes. **Update to current process** changed the rendering, recorded "Update to process 2" and showed "Process version 2 (current)". An unedited photo is version 2. Shadows +80 / Highlights −80 at fit and 100 %, the histogram and Auto all worked.
 - **Speed (SwiftShader, on a CPU shared with other test runs; noisy):**
-  - Computing a mask took 108–150 ms for the 1.6 MP JPEG, 0.49–0.84 s for the 12 MP D700 and 1.44–1.87 s for the 24 MP Sony.
-  - Develop's redraw of the 24 MP Sony was 668 ms with a new mask, then 367–422 ms per slider move.
-  - With the mask cached, thumbnails and histogram renders were within the run-to-run noise. Full-size exports took 13–17 % longer (D700 7.4 → 8.7 s, 24 MP Sony 23.2 → 26.2 s), which includes noise.
+  - Over two runs, computing a mask took 0.10–0.27 s for the 1.6 MP JPEG, 0.49–1.09 s for the 12 MP D700 and 1.44–2.02 s for the 24 MP Sony.
+  - Develop's redraw of a 24 MP Sony (ILCE-6300) was 668 ms with a new mask, then 367–422 ms per slider move.
+  - With the mask cached, thumbnails and histogram renders were within the run-to-run noise. Full-size exports were within noise too: version 2 against version 1 took +17 % and −4 % on the D700 (7.4 → 8.7 s, 14.5 → 13.9 s) and +13 % and −11 % on the 24 MP Sony in the two runs.
   - **Real GPUs were not measured.** Estimate: the mask's first pass reads each full-size pixel once (24 M bilinear samples for 24 MP), which a GPU doing 10–100 Gtexel/s would finish in roughly 0.3–3 ms. The other passes touch about 20 k cells. The per-pixel cost in the display shader is four texture loads and about 25 arithmetic operations. A mask is recomputed only for a new photo, crop, angle, lens setting or white balance.
 - **Unit tests:**
   - `engine/color/tone-mask.test.ts` (8): the estimators; darktable's radius (149 px at 6000, 39 at 1600; 2.5 % at any size); the plan; the statistics against an exact Gaussian (E[I] within 2 %, var within 5 % inside the frame; within 0.1 EV of mask in the corners); the mask against the literal darktable port (mean < 0.01 EV, 98 % within 0.05 EV); edges kept and flat areas smoothed; exact scaling with exposure; `eigf_blending_no_mask`.
@@ -778,4 +778,4 @@ Headless Chromium with software WebGPU (SwiftShader), scripts in `scratchpad/fol
 - The Gaussian is sampled on a grid of 16–32 px cells with an edge repeated per cell. darktable uses a recursive Gaussian on a quarter-size grid with point samples. The comparison above measures the result: 0.016 EV mean against darktable 4.6.1 on one photo. Other photos and darktable's current version weren't compared.
 - Version 2's Highlights and Whites weights were settled by eye on three photos. They are LightBench's choice, not darktable's: darktable has no such sliders.
 - For RAWs, the camera RGB comes from LightBench's camera matrix (LibRaw's), not darktable's input profile. For the D700 the two gave the same match; other cameras weren't checked.
-- Real-GPU speed is an estimate. During a live white-balance drag, or while turning the photo in the crop tool, the mask is recomputed every frame (a full-size pass); on SwiftShader that adds 0.5–1.9 s per frame for 12–24 MP photos.
+- Real-GPU speed is an estimate. During a live white-balance drag, or while turning the photo in the crop tool, the mask is recomputed every frame (a full-size pass); on SwiftShader that adds 0.5–2 s per frame for 12–24 MP photos.
