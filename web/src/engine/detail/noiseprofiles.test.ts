@@ -1,9 +1,9 @@
-import { readFileSync } from 'node:fs'
+import fileText from '../../../noiseprofiles/noiseprofiles.json?raw'
 import { describe, expect, it } from 'vitest'
 import { chooseProfile, compactNoiseProfiles, f32Text, GENERIC_PROFILE, interpolateProfile, matchingProfiles, type NoiseProfileData } from './noiseprofiles'
 
 const SOURCE = { repo: 'r', commit: 'c', date: 'd', licence: 'l' }
-const real: NoiseProfileData = compactNoiseProfiles(readFileSync(new URL('../../../noiseprofiles/noiseprofiles.json', import.meta.url), 'utf8'), SOURCE)
+const real: NoiseProfileData = compactNoiseProfiles(fileText, SOURCE)
 
 const file = (profiles: object[], extra: object[] = []) =>
   JSON.stringify({
@@ -41,7 +41,7 @@ describe('noise profiles: the compact copy', () => {
     const size = JSON.stringify(real).length
     expect(size).toBeGreaterThan(600_000)
     expect(size).toBeLessThan(800_000)
-    const raw = JSON.parse(readFileSync(new URL('../../../noiseprofiles/noiseprofiles.json', import.meta.url), 'utf8')) as { noiseprofiles: { models: { profiles: { skip?: boolean }[] }[] }[] }
+    const raw = JSON.parse(fileText) as { noiseprofiles: { models: { profiles: { skip?: boolean }[] }[] }[] }
     const count = raw.noiseprofiles.flatMap((m) => m.models.flatMap((x) => x.profiles)).filter((p) => !p.skip).length
     expect(real.makers.flatMap((m) => m[1].flatMap((x) => x[1])).length).toBe(count)
   })

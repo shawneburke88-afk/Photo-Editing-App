@@ -19,6 +19,10 @@ import { BasicPanel } from './BasicPanel'
 import { CropPanel, type GeometryEdit } from './CropPanel'
 import { CropOverlay } from './CropOverlay'
 import { LensPanel } from './LensPanel'
+import { DetailPanel } from './DetailPanel'
+import { detailOn } from '../engine/detail/settings'
+import type { ProfileChoice } from '../engine/detail/noiseprofiles'
+import { loadNoiseProfiles, noiseProfilesState, subscribeNoiseProfiles } from '../engine/detail/noise-db'
 import { LEGACY_LENS, lensWarpKey, type LensStatus } from '../engine/lens/correction'
 import { lensfunState, loadLensfun, subscribeLensfun } from '../engine/lens/lens-db'
 import { GuidedOverlay } from './GuidedOverlay'
@@ -90,6 +94,7 @@ const sameCropSession = (a: GeometrySettings, b: GeometrySettings) =>
 interface Bypass {
   crop: boolean
   basic: boolean
+  detail: boolean
 }
 
 /** The preset just applied: its Amount can be changed until the photo is changed another way. */
@@ -172,7 +177,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
    */
   const detection = useRef<{ id: number; lens: string; job: Promise<Detection> } | null>(null)
   /** Groups switched off with their eye (a view only). */
-  const [bypass, setBypass] = useState<Bypass>({ crop: false, basic: false })
+  const [bypass, setBypass] = useState<Bypass>({ crop: false, basic: false, detail: false })
+  /** Sharpening's Masking preview (Alt-drag on Masking, or Show mask): a view only. */
+  const [maskPreview, setMaskPreview] = useState(false)
+  /** The noise profile the last render used, for the Noise Reduction section. */
+  const [noiseProfile, setNoiseProfile] = useState<ProfileChoice | null>(null)
   const [reveal, setReveal] = useState<{ id: GroupId; n: number } | null>(null)
   // Sublabels next to each slider: 1 = shown, 2 = hidden (tooltips are always available on hover).
   const [hintsPref, setHintsPref] = useStoredNumber('lightbench.develop.hints', 1)
@@ -193,6 +202,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const defaults = defaultsFor(info?.kind ?? 'raw')
   // The Lensfun database's state (downloaded on first use), so the Lens section and the photo update when it arrives.
   const lensDb = useSyncExternalStore(subscribeLensfun, lensfunState)
+  // darktable's noise profiles (downloaded the first time noise reduction is used).
+  const noiseDb = useSyncExternalStore(subscribeNoiseProfiles, noiseProfilesState)
   const settings = history ? current(history) : defaults
   /** Hover preview of a preset (its Auto, if any, runs only when it is applied). */
   const hover = useMemo(
@@ -329,14 +340,15 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     () => ({ clip: clipSettings, showClip: overlay, raw: rawClipSettings, showRaw: rawOverlay }),
     [clipSettings, overlay, rawClipSettings, rawOverlay],
   )
-  const latest = useRef({ settings, info, view, before, indicators, hover, draft, bypass, guiding })
-  latest.current = { settings, info, view, before, indicators, hover, draft, bypass, guiding }
+  const latest = useRef({ settings, info, view, before, indicators, hover, draft, bypass, guiding, maskPreview })
+  latest.current = { settings, info, view, before, indicators, hover, draft, bypass, guiding, maskPreview }
   /** The settings drawn: Before shows the defaults; a preset hovered, the crop being edited and switched-off groups apply on top. */
   const shownOf = (x: typeof latest.current, inf: SensorInfo): DevelopSettings => {
     // Before is the photo as shot: the defaults without lens corrections.
     if (x.before) return { ...defaultsFor(inf.kind), lens: LEGACY_LENS }
     let s = x.hover ?? x.settings
     if (x.bypass.basic) s = withoutBasic(s, defaultsFor(inf.kind))
+    if (x.bypass.detail && s.detail) s = { ...s, detail: undefined }
     if (x.draft) return { ...s, geometry: x.draft }
     return x.bypass.crop ? { ...s, geometry: DEFAULT_GEOMETRY, lens: LEGACY_LENS } : s
   }
@@ -391,8 +403,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         // While cropping (or drawing Guided Upright lines), the whole straightened photo is shown.
         const v: ViewState = (x.draft || x.guiding) && !x.before ? { zoom: 'fit', center: [0.5, 0.5], frame: true } : x.view
         try {
-          const ms = await engine.render(displayUniforms(shown), x.before ? inf.asShotWb : multipliers(shown, inf), v, x.indicators)
+          const du = displayUniforms(shown)
+          const ms = await engine.render(x.maskPreview && !x.before ? { ...du, detailMask: true } : du, x.before ? inf.asShotWb : multipliers(shown, inf), v, x.indicators)
           setTiming((t) => ({ ...t, frame: ms }))
+          setNoiseProfile((p) => (p === engine.lastProfile ? p : engine.lastProfile))
           if (v.frame) {
             const dpr = window.devicePixelRatio || 1
             const l = engine.layout(v, engine.canvas.width, engine.canvas.height)
@@ -410,7 +424,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   useEffect(() => {
     if (status.kind === 'ready') requestRender()
-  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, guiding, requestRender, lensDb])
+  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, guiding, requestRender, lensDb, maskPreview, noiseDb])
 
   useEffect(() => {
     const el = stageRef.current
@@ -1343,9 +1357,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           )}
           {before && <div className="dbadge">Before</div>}
           {!before && hoverPreset && !draft && <div className="dbadge">Preview: {hoverPreset.name}</div>}
-          {!before && !draft && (bypass.crop || bypass.basic) && (
-            <div className="dbadge">Hidden: {[bypass.crop && 'Crop & Lens', bypass.basic && 'Basic'].filter(Boolean).join(', ')}</div>
+          {!before && !draft && (bypass.crop || bypass.basic || (bypass.detail && detailOn(settings.detail))) && (
+            <div className="dbadge">Hidden: {[bypass.crop && 'Crop & Lens', bypass.basic && 'Basic', bypass.detail && detailOn(settings.detail) && 'Detail'].filter(Boolean).join(', ')}</div>
           )}
+          {maskPreview && !before && <div className="dbadge right">Sharpening mask: white is sharpened, black is not</div>}
           {(overlay || rawOverlay) && (
             <div className="dbadge right">
               {[overlay && withKey('Clipping shown', 'develop.clipping'), rawOverlay && withKey('Sensor clipping shown', 'develop.sensorClipping')].filter(Boolean).join(' · ')}
@@ -1500,6 +1515,29 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             record: autoRecord,
           }}
         />
+              ),
+            },
+            {
+              id: 'detail',
+              label: 'Detail',
+              title: 'Detail',
+              icon: GROUP_ICONS.detail,
+              bypass: detailOn(settings.detail) || bypass.detail
+                ? { off: bypass.detail, onToggle: () => setBypass((b) => ({ ...b, detail: !b.detail })), title: bypass.detail ? 'Show sharpening and noise reduction again' : 'Show the photo without sharpening and noise reduction (nothing is changed)' }
+                : undefined,
+              content: (
+                <DetailPanel
+                  detail={settings.detail}
+                  kind={info?.kind ?? 'raw'}
+                  disabled={status.kind !== 'ready'}
+                  showHint={hintsPref === 1}
+                  profile={noiseProfile}
+                  db={noiseDb}
+                  onLoadDb={() => void loadNoiseProfiles(true).then(() => requestRender())}
+                  zoomedOut={view.zoom === 'fit' || (typeof view.zoom === 'number' && view.zoom < 1)}
+                  onChange={(label, detail) => change(label, { ...settings, detail })}
+                  onMaskPreview={setMaskPreview}
+                />
               ),
             },
           ]}
