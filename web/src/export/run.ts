@@ -154,7 +154,7 @@ export async function runExport(
         const decoded = await decoder.decode(file, true)
         const info = loadIntoEngine(engine, decoded)
         const saved = await catalog.getEdit(id)
-        const settings = savedSettings(saved, info.kind)
+        const settings = savedSettings(saved, info.kind, info.iso)
         await engine.process(stageOptions(settings, info))
         // The crop at 100 % (the whole photo when it isn't cropped).
         const [iw, ih] = engine.outputSize(settings.geometry)

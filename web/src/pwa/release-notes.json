@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.5.4",
+    "date": "2026-10-13",
+    "newFeatures": [
+      "New Detail group in Develop. Sharpening (Amount, Radius, Detail, Masking) uses darktable's capture sharpening, which undoes the slight blur of the lens and sensor. Radius is a multiple of each photo's own measured blur, and holding Alt while dragging Masking shows which areas are sharpened.",
+      "Noise reduction (Luminance with Detail and Contrast, Color with Detail and Smoothness) uses darktable's denoise (profiled), with a noise profile for your camera and ISO when darktable has one. The profiles download the first time you use noise reduction, then work offline.",
+      "New RAW photos are lightly sharpened (Amount 40, or 25 above ISO 1000). Noise reduction stays off until you turn it up. Photos you edited before look exactly as they did.",
+      "Lightroom's Sharpening and Noise Reduction values are read from and written to its .xmp files, under the same rules as the other Lightroom settings."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.5.3",
     "date": "2026-10-13",
     "newFeatures": [

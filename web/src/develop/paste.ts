@@ -6,6 +6,7 @@ import type { DevelopSettings, SourceKind } from '../engine/develop/settings'
 import { AUTO_SLIDERS, type AutoKey } from '../engine/develop/auto'
 import { pasteCrop, setAngle, withOrientation, type GeometrySettings } from '../engine/develop/geometry'
 import { DEFAULT_TRANSFORM, normalizeTransform, ZERO_PERSPECTIVE, type TransformSettings } from '../engine/develop/upright'
+import { DEFAULT_DETAIL, withDetail, type DetailSettings } from '../engine/detail/settings'
 import { CURVE_NORMS, DEFAULT_TONE_CURVE, isLinear, REGION_KEYS, REGION_NAMES, withToneCurve, type ToneCurveSettings } from '../engine/develop/tone-curve'
 import { describeSpots } from '../engine/develop/spots'
 
@@ -16,13 +17,14 @@ export type PasteKey =
   | 'toneCurve'
   | 'rotate' | 'straighten' | 'crop' | 'upright' | 'transform'
   | 'lensProfile' | 'lensAmounts' | 'lensCa'
+  | 'sharpening' | 'luminanceNoise' | 'colorNoise'
   | 'spots'
   | 'process' | 'baseExposure' | 'toneMapper' | 'highlightReconstruction' | 'demosaic'
 
 export interface PasteItem {
   key: PasteKey
   label: string
-  group: 'White balance' | 'Tone' | 'Presence' | 'Tone Curve' | 'Crop' | 'Lens' | 'Remove' | 'Advanced (darktable modules)'
+  group: 'White balance' | 'Tone' | 'Presence' | 'Tone Curve' | 'Detail' | 'Crop' | 'Lens' | 'Remove' | 'Advanced (darktable modules)'
   /**
    * Only pasted between photos of the same kind (RAW to RAW, JPEG to JPEG): a RAW's +0.7 EV base exposure or its
    * camera white balance would be wrong on a JPEG, which is already rendered.
@@ -80,6 +82,17 @@ const slider = (key: 'exposure' | 'contrast' | 'highlights' | 'shadows' | 'white
   show: (s) => (key === 'exposure' ? signed(s.exposure, 2, ' EV') : signed(s[key])),
 })
 
+/** Detail items (Part 13): parts of the Detail settings, copied as they are (absent = off). */
+const detailItem = (key: 'sharpening' | 'luminanceNoise' | 'colorNoise', label: string, copy: (to: DetailSettings, from: DetailSettings) => DetailSettings, show: (d: DetailSettings) => string): PasteItem => ({
+  key,
+  label,
+  group: 'Detail',
+  copy: (to, from) => withDetail(to, copy(to.detail ?? DEFAULT_DETAIL, from.detail ?? DEFAULT_DETAIL)),
+  // Compared on the Detail settings themselves (withDetail moves the key, which a whole-settings comparison would see).
+  changed: (before, after) => JSON.stringify(copy(before.detail ?? DEFAULT_DETAIL, after.detail ?? DEFAULT_DETAIL)) !== JSON.stringify(before.detail ?? DEFAULT_DETAIL),
+  show: (s) => show(s.detail ?? DEFAULT_DETAIL),
+})
+
 export const PASTE_ITEMS: PasteItem[] = [
   {
     key: 'whiteBalance',
@@ -106,6 +119,13 @@ export const PASTE_ITEMS: PasteItem[] = [
     copy: (to, from) => withToneCurve(to, from.toneCurve),
     show: (s) => describeCurve(s.toneCurve),
   },
+  // Lightroom's Copy Settings lists Sharpening and Noise Reduction (Luminance, Color) (from general knowledge).
+  detailItem('sharpening', 'Sharpening', (to, from) => ({ ...to, sharpen: { ...from.sharpen } }), (d) =>
+    d.sharpen.amount === 0 ? 'off' : `Amount ${d.sharpen.amount}, Radius ${d.sharpen.radius.toFixed(1)} × each photo’s own radius, Detail ${d.sharpen.detail}, Masking ${d.sharpen.masking}`),
+  detailItem('luminanceNoise', 'Noise reduction: Luminance', (to, from) => ({ ...to, noise: { ...to.noise, luminance: from.noise.luminance, luminanceDetail: from.noise.luminanceDetail, luminanceContrast: from.noise.luminanceContrast } }), (d) =>
+    d.noise.luminance === 0 ? 'off' : `${d.noise.luminance}, Detail ${d.noise.luminanceDetail}, Contrast ${d.noise.luminanceContrast} (each photo’s own noise profile)`),
+  detailItem('colorNoise', 'Noise reduction: Color', (to, from) => ({ ...to, noise: { ...to.noise, color: from.noise.color, colorDetail: from.noise.colorDetail, colorSmoothness: from.noise.colorSmoothness } }), (d) =>
+    d.noise.color === 0 ? 'off' : `${d.noise.color}, Detail ${d.noise.colorDetail}, Smoothness ${d.noise.colorSmoothness} (each photo’s own noise profile)`),
   // Crop items come in this order when pasted: orientation first (the crop rectangle is relative to it), then the
   // angle, then the rectangle (kept inside the photo at the new angle).
   {
@@ -285,11 +305,11 @@ export const PASTE_GROUPS = [...new Set(PASTE_ITEMS.map((i) => i.group))]
 /**
  * Default choice: everything except the crop items and the advanced darktable modules. Lightroom leaves its expert
  * items to the user; not copying the crop unless ticked is Lightroom's default as the owner described it
- * (2026-10-12; not checked against Lightroom here), and LightBench's choice either way. The Lens items are unticked
- * too (LightBench's choice), so copying tone from an edit made before lens corrections doesn't turn them off. So are
- * the spots (Part 11): they belong to one photo.
+ * (2026-10-12; not checked against Lightroom here), and LightBench's choice either way. The Lens and Detail items are
+ * unticked too (LightBench's choice), so copying tone from an edit made before lens corrections or sharpening existed
+ * doesn't turn them off on new photos. So are the spots (Part 11): they belong to one photo.
  */
-export const DEFAULT_PASTE_KEYS: PasteKey[] = PASTE_ITEMS.filter((i) => i.group !== 'Advanced (darktable modules)' && i.group !== 'Crop' && i.group !== 'Lens' && i.group !== 'Remove').map((i) => i.key)
+export const DEFAULT_PASTE_KEYS: PasteKey[] = PASTE_ITEMS.filter((i) => i.group !== 'Advanced (darktable modules)' && i.group !== 'Crop' && i.group !== 'Lens' && i.group !== 'Detail' && i.group !== 'Remove').map((i) => i.key)
 
 /** What a copy carries. */
 export interface Clipboard {

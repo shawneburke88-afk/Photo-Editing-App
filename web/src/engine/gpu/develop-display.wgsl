@@ -48,7 +48,7 @@ struct View {
                       // 3, 4 = the Tone Curve's input (its graphs' histogram, the targeted adjustment tool)
   displaySpace: u32,  // 0 = sRGB; 1 = Display P3 (the on-screen canvas on a wide-gamut screen, display-space.ts)
   rawLayout: u32,     // sensor data: 0 Bayer (2×2 `cfa`), 1 X-Trans (6×6 `xt`), 2 linear DNG (three values per pixel)
-  pad2: f32,
+  showMask: u32,      // 1 = Sharpening's Masking preview: the bound texture's alpha (the mask) as grey (Part 13)
   // The geometry stage (engine/develop/geometry.ts) as projective 3×3 maps from the shown image's uv, rows padded:
   texMap0: vec4f,     // → uv of the bound texture (the scene, or its warped copy: then identity)
   texMap1: vec4f,
@@ -485,6 +485,11 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   if (V.frame == 0u && (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0)))) { return V.background; }
   let tuv = applyMap(V.texMap0, V.texMap1, V.texMap2, uv);
   if (V.frame == 1u && (any(tuv < vec2f(0.0)) || any(tuv > vec2f(1.0)))) { return V.background; }
+  if (V.showMask == 1u) {
+    // Lightroom's Alt-drag on Masking: white where sharpening applies, black where it is masked out.
+    let m = textureSampleLevel(img, samp, tuv, V.lod).a;
+    return vec4f(vec3f(m), 1.0);
+  }
   let scene = textureSampleLevel(img, samp, tuv, V.lod).rgb;
   if (V.statsPass >= 3u) {
     // The Tone Curve's input on its own axis (sRGB-encoded Rec.2020): 3 = before the curve (the RGB curve's graph and

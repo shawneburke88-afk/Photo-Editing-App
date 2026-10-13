@@ -24,6 +24,11 @@ import { BasicPanel } from './BasicPanel'
 import { CropPanel, type GeometryEdit } from './CropPanel'
 import { CropOverlay } from './CropOverlay'
 import { LensPanel } from './LensPanel'
+import { DetailPanel } from './DetailPanel'
+import { detailOn, withDetail } from '../engine/detail/settings'
+import type { ProfileChoice } from '../engine/detail/noiseprofiles'
+import type { RadiusChoice } from '../engine/detail/capture'
+import { loadNoiseProfiles, noiseProfilesState, subscribeNoiseProfiles } from '../engine/detail/noise-db'
 import { LEGACY_LENS, lensWarpKey, type LensStatus } from '../engine/lens/correction'
 import { lensfunState, loadLensfun, subscribeLensfun } from '../engine/lens/lens-db'
 import { GuidedOverlay } from './GuidedOverlay'
@@ -100,6 +105,7 @@ interface Bypass {
   remove: boolean
   basic: boolean
   curve: boolean
+  detail: boolean
 }
 
 /** Settings without their spots (the field left out, as in edits that never had any). */
@@ -192,7 +198,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
    */
   const detection = useRef<{ id: number; lens: string; job: Promise<Detection> } | null>(null)
   /** Groups switched off with their eye (a view only). */
-  const [bypass, setBypass] = useState<Bypass>({ crop: false, remove: false, basic: false, curve: false })
+  const [bypass, setBypass] = useState<Bypass>({ crop: false, remove: false, basic: false, curve: false, detail: false })
   /**
    * The Tone Curve (PHASE3.md Part 12): the graph shown, its targeted adjustment tool and the tone under the pointer,
    * the curve shown while a drag is in progress (one history step when it ends), clipping shown during a drag, and the
@@ -217,6 +223,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   /** Where the photo sits on the stage (CSS pixels) after the last drawing, while the Remove brush is on. */
   const [shownBox, setShownBox] = useState<{ x: number; y: number; w: number; h: number; n: number } | null>(null)
   const [engineReady, setEngineReady] = useState(false)
+  /** Sharpening's Masking preview (Alt-drag on Masking, or Show mask): a view only. */
+  const [maskPreview, setMaskPreview] = useState(false)
+  /** The noise profile and sharpening radius the last render used, for the Detail group. */
+  const [noiseProfile, setNoiseProfile] = useState<ProfileChoice | null>(null)
+  const [sharpenRadius, setSharpenRadius] = useState<RadiusChoice | null>(null)
   const [reveal, setReveal] = useState<{ id: GroupId; n: number } | null>(null)
   // Sublabels next to each slider: 1 = shown, 2 = hidden (tooltips are always available on hover).
   const [hintsPref, setHintsPref] = useStoredNumber('lightbench.develop.hints', 1)
@@ -234,9 +245,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const pendingSave = useRef<(() => Promise<void>) | null>(null)
   const saving = useRef<Promise<void> | null>(null)
 
-  const defaults = defaultsFor(info?.kind ?? 'raw')
+  const defaults = defaultsFor(info?.kind ?? 'raw', info?.iso)
   // The Lensfun database's state (downloaded on first use), so the Lens section and the photo update when it arrives.
   const lensDb = useSyncExternalStore(subscribeLensfun, lensfunState)
+  // darktable's noise profiles (downloaded the first time noise reduction is used).
+  const noiseDb = useSyncExternalStore(subscribeNoiseProfiles, noiseProfilesState)
   const settings = history ? current(history) : defaults
   /** Hover preview of a preset (its Auto, if any, runs only when it is applied). */
   const hover = useMemo(
@@ -331,7 +344,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       const sensorInfo = loadIntoEngine(engine, r)
       const kind = sensorInfo.kind
 
-      const h = loadHistory(await catalog.getEdit(id), kind)
+      const h = loadHistory(await catalog.getEdit(id), kind, sensorInfo.iso)
       const opts = stageOptions(current(h), sensorInfo)
       const ms = await engine.process(opts)
       if (stale()) return
@@ -380,17 +393,18 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     () => ({ clip: clipSettings, showClip: overlay || (curveDragClip && clipWhileDragging === 1), raw: rawClipSettings, showRaw: rawOverlay }),
     [clipSettings, overlay, rawClipSettings, rawOverlay, curveDragClip, clipWhileDragging],
   )
-  const latest = useRef({ settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing })
-  latest.current = { settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing }
+  const latest = useRef({ settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview })
+  latest.current = { settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview }
   /** The settings drawn: Before shows the defaults; a preset hovered, the crop being edited and switched-off groups apply on top. */
   const shownOf = (x: typeof latest.current, inf: SensorInfo): DevelopSettings => {
-    // Before is the photo as shot: the defaults without lens corrections.
-    if (x.before) return { ...defaultsFor(inf.kind), lens: LEGACY_LENS }
+    // Before is the photo as shot: the defaults without lens corrections or sharpening.
+    if (x.before) return { ...defaultsFor(inf.kind), lens: LEGACY_LENS, detail: undefined }
     let s = x.hover ?? x.settings
     if (x.curveDraft && !x.hover) s = withToneCurve(s, x.curveDraft.tc)
-    if (x.bypass.basic) s = withoutBasic(s, defaultsFor(inf.kind))
+    if (x.bypass.basic) s = withoutBasic(s, defaultsFor(inf.kind, inf.iso))
     if (x.bypass.curve) s = withToneCurve(s, undefined)
     if (x.bypass.remove) s = withoutSpots(s)
+    if (x.bypass.detail && s.detail) s = { ...s, detail: undefined }
     if (x.draft) return { ...s, geometry: x.draft }
     return x.bypass.crop ? { ...s, geometry: DEFAULT_GEOMETRY, lens: LEGACY_LENS } : s
   }
@@ -438,6 +452,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     pending.current = true
     if (rendering.current) return
     rendering.current = true
+    // Set on the element directly (no React render per frame): assistive tech, and tests, can tell a frame is coming.
+    stageRef.current?.setAttribute('aria-busy', 'true')
     void (async () => {
       while (pending.current) {
         pending.current = false
@@ -449,8 +465,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         // While cropping (or drawing Guided Upright lines), the whole straightened photo is shown.
         const v: ViewState = (x.draft || x.guiding) && !x.before ? { zoom: 'fit', center: [0.5, 0.5], frame: true } : x.view
         try {
-          const ms = await engine.render(displayUniforms(shown), x.before ? inf.asShotWb : multipliers(shown, inf), v, x.indicators)
+          const du = displayUniforms(shown)
+          const ms = await engine.render(x.maskPreview && !x.before ? { ...du, detailMask: true } : du, x.before ? inf.asShotWb : multipliers(shown, inf), v, x.indicators)
           setTiming((t) => ({ ...t, frame: ms }))
+          setNoiseProfile((p) => (p === engine.lastProfile ? p : engine.lastProfile))
+          setSharpenRadius((r) => (r === engine.lastRadius ? r : engine.lastRadius))
           if (v.frame) {
             const dpr = window.devicePixelRatio || 1
             const l = engine.layout(v, engine.canvas.width, engine.canvas.height)
@@ -469,12 +488,13 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         }
       }
       rendering.current = false
+      stageRef.current?.setAttribute('aria-busy', 'false')
     })()
   }, [scheduleStats])
 
   useEffect(() => {
     if (status.kind === 'ready') requestRender()
-  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, guiding, removing, requestRender, lensDb, curveDraft])
+  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, guiding, removing, requestRender, lensDb, curveDraft, maskPreview, noiseDb])
   // Another curve graph shown: its histogram is measured again.
   useEffect(() => {
     if (status.kind === 'ready') scheduleStats()
@@ -1691,14 +1711,15 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           )}
           {before && <div className="dbadge">Before</div>}
           {!before && hoverPreset && !draft && <div className="dbadge">Preview: {hoverPreset.name}</div>}
-          {!before && !draft && (bypass.crop || bypass.remove || bypass.basic || bypass.curve) && (
-            <div className="dbadge">Hidden: {[bypass.crop && 'Crop & Lens', bypass.remove && 'Remove', bypass.basic && 'Basic', bypass.curve && 'Tone Curve'].filter(Boolean).join(', ')}</div>
+          {!before && !draft && (bypass.crop || bypass.remove || bypass.basic || bypass.curve || (bypass.detail && detailOn(settings.detail))) && (
+            <div className="dbadge">Hidden: {[bypass.crop && 'Crop & Lens', bypass.remove && 'Remove', bypass.basic && 'Basic', bypass.curve && 'Tone Curve', bypass.detail && detailOn(settings.detail) && 'Detail'].filter(Boolean).join(', ')}</div>
           )}
           {curveTarget && !draft && !guiding && !before && (
             <div className="dbadge pick curve-hint">
               Tone curve: drag up or down on the photo to change those tones · ↑ ↓ nudge · Esc ends
             </div>
           )}
+          {maskPreview && !before && <div className="dbadge right">Sharpening mask: white is sharpened, black is not</div>}
           {(overlay || rawOverlay) && (
             <div className="dbadge right">
               {[overlay && withKey('Clipping shown', 'develop.clipping'), rawOverlay && withKey('Sensor clipping shown', 'develop.sensorClipping')].filter(Boolean).join(' · ')}
@@ -1909,6 +1930,31 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   onDragClip={setCurveDragClip}
                   clipWhileDragging={clipWhileDragging === 1}
                   onClipWhileDragging={(on) => setClipWhileDragging(on ? 1 : 2)}
+                />
+              ),
+            },
+            {
+              id: 'detail',
+              label: 'Detail',
+              title: 'Detail',
+              icon: GROUP_ICONS.detail,
+              bypass: detailOn(settings.detail) || bypass.detail
+                ? { off: bypass.detail, onToggle: () => setBypass((b) => ({ ...b, detail: !b.detail })), title: bypass.detail ? 'Show sharpening and noise reduction again' : 'Show the photo without sharpening and noise reduction (nothing is changed)' }
+                : undefined,
+              content: (
+                <DetailPanel
+                  detail={settings.detail}
+                  kind={info?.kind ?? 'raw'}
+                  defaults={defaults.detail}
+                  disabled={status.kind !== 'ready'}
+                  showHint={hintsPref === 1}
+                  profile={noiseProfile}
+                  radius={sharpenRadius}
+                  db={noiseDb}
+                  onLoadDb={() => void loadNoiseProfiles(true).then(() => requestRender())}
+                  zoomedOut={view.zoom === 'fit' || (typeof view.zoom === 'number' && view.zoom < 1)}
+                  onChange={(label, detail) => change(label, withDetail(settings, detail))}
+                  onMaskPreview={setMaskPreview}
                 />
               ),
             },
