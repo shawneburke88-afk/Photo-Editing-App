@@ -47,6 +47,10 @@ import type { ProfileChoice } from '../detail/noiseprofiles'
 import { diffractionRadius, measureRadius, type RadiusChoice } from '../detail/capture'
 import type { Spot } from '../develop/spots'
 import { RetouchStage, type RetouchProgress } from './retouch-stage'
+import { displayToSensorAt, sensorToDisplayAt, type ShownMap } from '../develop/shown-map'
+import { presentMode, type PresentMode } from './present'
+
+export type { PresentMode } from './present'
 
 export interface RawStageOptions {
   /** White balance multipliers [R, G, B], green = 1. */
@@ -101,7 +105,79 @@ interface Source {
   release: () => void
 }
 
-export type PresentMode = 'canvas' | 'readback'
+/**
+ * The GPU failed while doing work for `DevelopEngine.guarded` (PHASE3.md, Part 14). After any of these, read-backs
+ * hold zeros (a black image), so the result must not be used.
+ * - `lost`: the device went away (a driver reset, the browser reclaimed it, or another tab's GPU work crashed it);
+ * - `out-of-memory`: an allocation failed;
+ * - `validation`: a command was rejected (LightBench asked for something the card doesn't allow); retrying is useless;
+ * - `internal`: the driver failed for another reason.
+ * The message is meant for people; `detail` holds the browser's own text (logged to the console).
+ */
+export class GpuWorkError extends Error {
+  readonly kind: 'lost' | 'out-of-memory' | 'validation' | 'internal'
+  readonly detail: string
+  constructor(kind: GpuWorkError['kind'], detail = '') {
+    super(GPU_WORK_MESSAGES[kind])
+    this.name = 'GpuWorkError'
+    this.kind = kind
+    this.detail = detail
+  }
+}
+
+const GPU_WORK_MESSAGES: Record<GpuWorkError['kind'], string> = {
+  'lost': 'The graphics card stopped responding (it was reset, or the browser took it back). Try again.',
+  'out-of-memory': 'The graphics card ran out of memory. Try a smaller size, or close other tabs and apps that use graphics.',
+  'validation': 'The graphics card rejected the work for this photo. Try a smaller size; if it keeps happening, please report it.',
+  'internal': 'The graphics card reported an internal error. Try again.',
+}
+
+/** Worth trying again on a fresh engine: the device was lost, ran out of memory or failed internally (never a validation error). */
+export function retryableGpuError(e: unknown): boolean {
+  return e instanceof GpuWorkError && e.kind !== 'validation'
+}
+
+/**
+ * Runs `work` inside validation, out-of-memory and internal error scopes of `device` and throws a GpuWorkError if
+ * any caught an error, if the device was lost meanwhile (`isLost`), or if `work` failed with an AbortError (a
+ * mapAsync on a lost device). Other errors from `work` pass through unchanged.
+ */
+export async function guardGpuWork<T>(device: GPUDevice, isLost: () => boolean, work: () => Promise<T>): Promise<T> {
+  if (isLost()) throw new GpuWorkError('lost')
+  device.pushErrorScope('internal')
+  device.pushErrorScope('out-of-memory')
+  device.pushErrorScope('validation')
+  let result: T | undefined
+  let failure: unknown = null
+  let failed = false
+  try {
+    result = await work()
+  } catch (e) {
+    failure = e
+    failed = true
+  }
+  // Popped in reverse order of pushing; on a lost device popErrorScope rejects (nothing to report).
+  const pop = () => device.popErrorScope().catch(() => null)
+  const validation = await pop()
+  const oom = await pop()
+  const internal = await pop()
+  const caught = validation ?? oom ?? internal
+  if (caught) console.error('WebGPU error:', caught.message)
+  // A loss can be reported a moment after the work it broke failed (e.g. "A valid external Instance reference no
+  // longer exists." from a read-back): give it that moment before deciding the failure is something else.
+  let lostNow = isLost()
+  if (failed && !lostNow && !caught && device.lost) {
+    lostNow = await Promise.race([device.lost.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 250))])
+  }
+  if (lostNow || isLost() || (failure instanceof DOMException && failure.name === 'AbortError')) {
+    throw new GpuWorkError('lost', failure instanceof Error ? failure.message : '')
+  }
+  if (oom) throw new GpuWorkError('out-of-memory', oom.message)
+  if (validation) throw new GpuWorkError('validation', validation.message)
+  if (internal) throw new GpuWorkError('internal', internal.message)
+  if (failed) throw failure
+  return result as T
+}
 
 /** How `renderOutput` produces an exported image. */
 export interface OutputOptions {
@@ -250,7 +326,9 @@ export class DevelopEngine {
   /** The scene corrected for the lens only, for the crop tool's view (kept apart from `warp`). */
   private lensOnly: { key: string; gen: number; tex: GPUTexture } | null = null
   private lost = false
-  private probing = false
+  /** Set by `destroy` (a loss caused by it is not reported). */
+  private destroyed = false
+  private readonly lostListeners = new Set<(message: string) => void>()
   /** The white balance the scene texture was built with (for live previews of WB changes). */
   private builtWb: Vec3 = [1, 1, 1]
   private camToWorking: Mat3 = IDENTITY
@@ -319,7 +397,9 @@ export class DevelopEngine {
     device.addEventListener('uncapturederror', (e) => console.error('WebGPU error:', (e as GPUUncapturedErrorEvent).error.message))
     void device.lost.then((info) => {
       this.lost = true
-      if (info.reason !== 'destroyed' && !this.probing) console.error('WebGPU device lost:', info.message)
+      if (this.destroyed) return
+      if (info.reason !== 'destroyed') console.error('WebGPU device lost:', info.message)
+      for (const fn of [...this.lostListeners]) fn(info.message)
     })
 
     this.rawModule = device.createShaderModule({ code: rawWgsl })
@@ -364,30 +444,13 @@ export class DevelopEngine {
     })
   }
 
-  /** Creates an engine, falling back to read-back output where WebGPU canvases can't be shown. */
+  /**
+   * Creates an engine. 'auto' uses the page's display mode, tested once per page (present.ts); every mode waits for
+   * that test first, so no device is made while it runs.
+   */
   static async create(mode: PresentMode | 'auto' = 'auto'): Promise<DevelopEngine> {
-    if (mode !== 'auto') return new DevelopEngine(await DevelopEngine.device(), mode)
-    const direct = new DevelopEngine(await DevelopEngine.device(), 'canvas')
-    if (await direct.presentWorks()) return direct
-    direct.destroy()
-    return new DevelopEngine(await DevelopEngine.device(), 'readback')
-  }
-
-  private async presentWorks(): Promise<boolean> {
-    this.probing = true
-    this.canvas.width = 1
-    this.canvas.height = 1
-    const enc = this.device.createCommandEncoder()
-    enc.beginRenderPass({ colorAttachments: [{ view: this.gpuCtx!.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store' }] }).end()
-    this.device.queue.submit([enc.finish()])
-    try {
-      await this.device.queue.onSubmittedWorkDone()
-    } catch {
-      return false
-    }
-    await new Promise((r) => setTimeout(r, 50))
-    this.probing = false
-    return !this.lost
+    const chosen = await presentMode().catch((): PresentMode => 'readback')
+    return new DevelopEngine(await DevelopEngine.device(), mode === 'auto' ? chosen : mode)
   }
 
   /** The GPU device was lost (a driver reset, or the browser reclaimed it); a new engine is needed. */
@@ -396,7 +459,68 @@ export class DevelopEngine {
   }
 
   private checkAlive() {
-    if (this.lost) throw new Error('The graphics device was lost (driver reset). Reload the page to continue.')
+    if (this.lost) throw new GpuWorkError('lost')
+  }
+
+  /**
+   * Calls `fn` once if the device is lost (not when the engine is destroyed). Returns the function that stops it.
+   * Develop uses it to make a new engine (PHASE3.md, Part 14).
+   */
+  onLost(fn: (message: string) => void): () => void {
+    this.lostListeners.add(fn)
+    return () => void this.lostListeners.delete(fn)
+  }
+
+  /**
+   * Runs `work` and throws a GpuWorkError if the device reported an error or was lost meanwhile (`guardGpuWork`).
+   * WebGPU otherwise only reports such errors to the console and drops the command buffer, so a read-back returns
+   * zeros: a black image.
+   *
+   * Error scopes belong to the whole device: anything else using this engine's device at the same time would have
+   * its errors caught here, and its own scopes would catch this work's. So use this only on an engine that nothing
+   * else uses concurrently (Export's, the batch developer's, the Library's 100 % renderer), never on Develop's.
+   */
+  guarded<T>(work: () => Promise<T>): Promise<T> {
+    return guardGpuWork(this.device, () => this.lost, work)
+  }
+
+  /**
+   * Frees the photo's GPU memory: the scene, its warped and lens-corrected copies, the retouched copy, the tone
+   * masks, the Detail stage's results and their warps, the Tone Curve's table and the uploaded sensor data or pixels.
+   * The engine keeps its pipelines; load a photo again before using it. Background engines call this after each
+   * photo (PHASE3.md, Part 14).
+   */
+  unload() {
+    this.retouch.reset()
+    if (this.scene) {
+      this.retouch.forget(this.scene)
+      this.retireTex(this.scene)
+    }
+    this.scene = null
+    this.sceneGen++
+    if (this.warp) this.retireTex(this.warp.tex)
+    this.warp = null
+    if (this.lensOnly) this.retireTex(this.lensOnly.tex)
+    this.lensOnly = null
+    for (const m of this.maskCache) m.tex.destroy()
+    this.maskCache = []
+    // The Detail stage's results and their warps (Part 13); its kernel table and pipelines stay.
+    this.dropDetail()
+    // The Tone Curve's table is small, but belongs to the photo's settings: made again by the next drawing.
+    this.curveTex?.tex.destroy()
+    this.curveTex = null
+    this.boundCurve = null
+    this.rawBuf?.destroy()
+    this.rawBuf = null
+    this.rgbInput?.texture.destroy()
+    this.rgbInput = null
+    this.sensor = null
+    this.shown = null
+    this.lastRender = null
+    this.lensMeta = null
+    this.lensResolved = null
+    this.builtStage = null
+    this.canonicalStage = null
   }
 
   /**
@@ -1254,12 +1378,20 @@ export class DevelopEngine {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
     const { device } = this
+    const max = device.limits.maxTextureDimension2D
+    if (o.width > max || o.height > max) throw new Error(`The export size is larger than this GPU allows (${max} px)`)
+    // The encoded image is one storage buffer (4 bytes a pixel, 8 at 16 bits) plus its read-back copy: over the
+    // device's limits the work would be rejected and read back as zeros.
+    const outBytes = o.width * o.height * (o.bits === 16 ? 8 : 4)
+    const maxBytes = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize)
+    if (outBytes > maxBytes) {
+      const mb = (n: number) => Math.round(n / 2 ** 20)
+      throw new Error(`The export is too large for this graphics card: ${o.width}×${o.height} at ${o.bits} bits needs ${mb(outBytes)} MB in one piece, and the card allows ${mb(maxBytes)} MB. Choose a smaller size${o.bits === 16 ? ' or 8 bits' : ''}.`)
+    }
     // Exports develop the full-size photo, so the Detail stage runs at full size (Remove then works on its result).
     const src = await this.detailSource(u.geometry, false, u.lens, await this.detailFor(u, 0), u.spots)
     const maskSrc = await this.toneSource(u, src)
     const { w: iw, h: ih } = src
-    const max = device.limits.maxTextureDimension2D
-    if (o.width > max || o.height > max) throw new Error(`The export size is larger than this GPU allows (${max} px)`)
     const pipes = (this.exportPipes ??= this.createExportPipes())
 
     const dev = device.createTexture({ size: [iw, ih], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING })
@@ -1679,6 +1811,19 @@ export class DevelopEngine {
     }
   }
 
+  /**
+   * How the image last drawn on the canvas maps to the sensor, as a snapshot (engine/develop/shown-map.ts); null before
+   * a photo is loaded. Take it when a drawing has finished: `shown` changes as soon as the next one starts.
+   */
+  shownSnapshot(): ShownMap | null {
+    const s = this.sensor
+    if (!s) return null
+    // Nothing drawn yet: the whole photo in its camera orientation.
+    const g = this.shown ? null : this.geometry(DEFAULT_GEOMETRY)
+    const shown = this.shown ?? { w: g!.size[0], h: g!.size[1], rawMap: g!.uvToSensor, lens: undefined }
+    return { rawMap: shown.rawMap, lens: shown.lens, w: shown.w, h: shown.h, sensor: [s.width, s.height] }
+  }
+
   /** Maps uv on the image last drawn on the canvas to sensor-image uv (through its orientation, crop, angle and lens). */
   private sourceUv(u: number, v: number): [number, number] {
     const uv = applyMap(this.shown ? this.shown.rawMap : this.geometry(DEFAULT_GEOMETRY).uvToSensor, u, v)
@@ -1691,31 +1836,14 @@ export class DevelopEngine {
 
   /** Displayed-image uv (the image last drawn) → sensor pixel position (continuous; pixel i covers [i, i + 1)). */
   displayToSensor(u: number, v: number): [number, number] {
-    const [su, sv] = this.sourceUv(u, v)
-    const s = this.sensor
-    return s ? [su * s.width, sv * s.height] : [su, sv]
+    const m = this.shownSnapshot()
+    return m ? displayToSensorAt(m, u, v) : [u, v]
   }
 
   /** Sensor pixel position → displayed-image uv of the image last drawn: the inverse of `displayToSensor`. */
   sensorToDisplay(x: number, y: number): [number, number] {
-    const s = this.sensor
-    if (!s) return [x, y]
-    let cx = x - 0.5
-    let cy = y - 0.5
-    const lens = this.shown?.lens
-    if (lens) {
-      // The lens function's inverse by fixed-point steps (the correction is close to the identity).
-      const px = cx
-      const py = cy
-      for (let i = 0; i < 30; i++) {
-        const [lx, ly] = lensSourcePoint(lens, cx, cy)
-        cx += px - lx
-        cy += py - ly
-        if (Math.abs(px - lx) + Math.abs(py - ly) < 1e-4) break
-      }
-    }
-    const inv = invert(this.shown ? this.shown.rawMap : this.geometry(DEFAULT_GEOMETRY).uvToSensor)
-    return applyMap(inv, (cx + 0.5) / s.width, (cy + 0.5) / s.height)
+    const m = this.shownSnapshot()
+    return m ? sensorToDisplayAt(m, x, y) : [x, y]
   }
 
   /** Remove, Heal and Clone: progress, and each new retouched scene (Develop draws again then). */
@@ -2070,6 +2198,8 @@ export class DevelopEngine {
   }
 
   destroy() {
+    this.destroyed = true
+    this.lostListeners.clear()
     this.unwatchDisplay()
     this.lastRender = null
     this.rgbInput?.texture.destroy()

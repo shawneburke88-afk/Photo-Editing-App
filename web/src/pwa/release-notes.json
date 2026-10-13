@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.5.5",
+    "date": "2026-10-13",
+    "newFeatures": [
+      "If the graphics card stops responding, LightBench now recovers on its own: Develop rebuilds its view of the photo (unsaved changes kept), and Export, Paste/Sync and the 100 % view retry the photo once instead of asking you to reload the page.",
+      "Background work (Paste, Sync, presets, thumbnails, the 100 % view) now waits while Develop is busy, so editing stays responsive and less graphics memory is used at once."
+    ],
+    "bugFixes": [
+      "Export no longer saves an all-black file when the graphics card runs out of memory or rejects the work. The photo is listed as failed with a plain explanation, and nothing is written.",
+      "Opening Develop while Paste or Sync was running could make the background work fail on some computers. Fixed.",
+      "Remove spot pins now always line up with the photo on screen, including right after rotating or cropping."
+    ]
+  },
+  {
     "version": "0.5.4",
     "date": "2026-10-13",
     "newFeatures": [
