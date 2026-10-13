@@ -16,6 +16,7 @@ import { RemovePanel } from './RemovePanel'
 import { DEFAULT_BRUSH, SIZE_RANGE, type BrushSettings } from './removeBrush'
 import { RawDecoder } from '../engine/raw/decoder'
 import type { DecodeResult } from '../engine/raw/types'
+import { displayToSensorAt, sensorToDisplayAt, type ShownMap } from '../engine/develop/shown-map'
 import { Thumb } from '../library/Thumb'
 import { openPhotoFile } from '../platform/roots'
 import { useStoredJson } from '../lib/useStoredJson'
@@ -113,6 +114,16 @@ function withoutSpots(s: DevelopSettings): DevelopSettings {
 
 /** Settings with a new spot list (left out when empty). */
 const withSpots = (s: DevelopSettings, spots: Spot[]): DevelopSettings => (spots.length ? { ...s, spots } : withoutSpots(s))
+
+/** A finished drawing's place on the stage (CSS pixels) and its map to the sensor; `n` counts drawings. */
+interface ShownBox {
+  x: number
+  y: number
+  w: number
+  h: number
+  map: ShownMap | null
+  n: number
+}
 
 /** The preset just applied: its Amount can be changed until the photo is changed another way. */
 interface AppliedPreset {
@@ -216,8 +227,14 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [retouch, setRetouch] = useState<RetouchProgress>({ busy: false })
   const [placing, setPlacing] = useState(false)
   const [spotError, setSpotError] = useState<string | null>(null)
-  /** Where the photo sits on the stage (CSS pixels) after the last drawing, while the Remove brush is on. */
-  const [shownBox, setShownBox] = useState<{ x: number; y: number; w: number; h: number; n: number } | null>(null)
+  /**
+   * Where the photo sits on the stage (CSS pixels) after the last drawing, and how that drawing maps to the sensor,
+   * while the Remove brush is on. Box and map come from the same finished drawing, so the pins always match the photo
+   * on screen, also while the next drawing is being made (PHASE3.md, Part 14).
+   */
+  const [shownBox, setShownBox] = useState<ShownBox | null>(null)
+  /** The same for the last finished drawing, whatever the tool (shown at once when the Remove brush opens). */
+  const lastDraw = useRef<Omit<ShownBox, 'n'> | null>(null)
   /** Counts engines made ready (a new one after a lost device), so effects that use the engine run again. */
   const [engineReady, setEngineReady] = useState(0)
   /** Bumped when the GPU device was lost: the engine is made again (PHASE3.md, Part 14). */
@@ -532,11 +549,13 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             const box = { x: l.x / dpr, y: l.y / dpr, w: l.w / dpr, h: l.h / dpr }
             setFrameBox((b) => (b && Math.abs(b.x - box.x) + Math.abs(b.y - box.y) + Math.abs(b.w - box.w) + Math.abs(b.h - box.h) < 0.01 ? b : box))
           }
-          if (x.removing) {
-            // The Remove overlay maps through what was just drawn.
+          {
+            // The Remove overlay maps through what was just drawn: its place and its map, taken together.
             const dpr = window.devicePixelRatio || 1
             const l = engine.layout(v, engine.canvas.width, engine.canvas.height)
-            setShownBox((b) => ({ x: l.x / dpr, y: l.y / dpr, w: l.w / dpr, h: l.h / dpr, n: (b?.n ?? 0) + 1 }))
+            const drawn = { x: l.x / dpr, y: l.y / dpr, w: l.w / dpr, h: l.h / dpr, map: engine.shownSnapshot() }
+            lastDraw.current = drawn
+            if (x.removing) setShownBox((b) => ({ ...drawn, n: (b?.n ?? 0) + 1 }))
           }
           scheduleStats()
         } catch (e) {
@@ -1029,6 +1048,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setPicking(false)
     setBefore(false)
     setBypass((b) => ({ ...b, remove: false }))
+    // The pins map through the drawing on screen now, not one from an earlier time the brush was on.
+    const drawn = lastDraw.current
+    if (drawn) setShownBox((b) => ({ ...drawn, n: (b?.n ?? 0) + 1 }))
     setRemoving(true)
     setReveal({ id: 'remove', n: Date.now() })
   }
@@ -1740,10 +1762,14 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                 key={id}
                 box={b}
                 toView={(x, y) => {
-                  const [u, v] = engine.sensorToDisplay(x, y)
+                  const [u, v] = b.map ? sensorToDisplayAt(b.map, x, y) : engine.sensorToDisplay(x, y)
                   return [b.x + u * b.w, b.y + v * b.h]
                 }}
-                fromView={(x, y) => engine.displayToSensor((x - b.x) / b.w, (y - b.y) / b.h)}
+                fromView={(x, y) => {
+                  const u = (x - b.x) / b.w
+                  const v = (y - b.y) / b.h
+                  return b.map ? displayToSensorAt(b.map, u, v) : engine.displayToSensor(u, v)
+                }}
                 spots={spots}
                 sensor={sensorSize()}
                 brush={{ radius: brush.size, feather: brush.feather / 100 }}

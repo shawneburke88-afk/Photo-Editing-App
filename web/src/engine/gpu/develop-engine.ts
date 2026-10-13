@@ -41,6 +41,7 @@ import warpWgsl from './warp.wgsl?raw'
 import lensWgsl from './lens.wgsl?raw'
 import type { Spot } from '../develop/spots'
 import { RetouchStage, type RetouchProgress } from './retouch-stage'
+import { displayToSensorAt, sensorToDisplayAt, type ShownMap } from '../develop/shown-map'
 import { presentMode, type PresentMode } from './present'
 
 export type { PresentMode } from './present'
@@ -1595,6 +1596,19 @@ export class DevelopEngine {
     }
   }
 
+  /**
+   * How the image last drawn on the canvas maps to the sensor, as a snapshot (engine/develop/shown-map.ts); null before
+   * a photo is loaded. Take it when a drawing has finished: `shown` changes as soon as the next one starts.
+   */
+  shownSnapshot(): ShownMap | null {
+    const s = this.sensor
+    if (!s) return null
+    // Nothing drawn yet: the whole photo in its camera orientation.
+    const g = this.shown ? null : this.geometry(DEFAULT_GEOMETRY)
+    const shown = this.shown ?? { w: g!.size[0], h: g!.size[1], rawMap: g!.uvToSensor, lens: undefined }
+    return { rawMap: shown.rawMap, lens: shown.lens, w: shown.w, h: shown.h, sensor: [s.width, s.height] }
+  }
+
   /** Maps uv on the image last drawn on the canvas to sensor-image uv (through its orientation, crop, angle and lens). */
   private sourceUv(u: number, v: number): [number, number] {
     const uv = applyMap(this.shown ? this.shown.rawMap : this.geometry(DEFAULT_GEOMETRY).uvToSensor, u, v)
@@ -1607,31 +1621,14 @@ export class DevelopEngine {
 
   /** Displayed-image uv (the image last drawn) → sensor pixel position (continuous; pixel i covers [i, i + 1)). */
   displayToSensor(u: number, v: number): [number, number] {
-    const [su, sv] = this.sourceUv(u, v)
-    const s = this.sensor
-    return s ? [su * s.width, sv * s.height] : [su, sv]
+    const m = this.shownSnapshot()
+    return m ? displayToSensorAt(m, u, v) : [u, v]
   }
 
   /** Sensor pixel position → displayed-image uv of the image last drawn: the inverse of `displayToSensor`. */
   sensorToDisplay(x: number, y: number): [number, number] {
-    const s = this.sensor
-    if (!s) return [x, y]
-    let cx = x - 0.5
-    let cy = y - 0.5
-    const lens = this.shown?.lens
-    if (lens) {
-      // The lens function's inverse by fixed-point steps (the correction is close to the identity).
-      const px = cx
-      const py = cy
-      for (let i = 0; i < 30; i++) {
-        const [lx, ly] = lensSourcePoint(lens, cx, cy)
-        cx += px - lx
-        cy += py - ly
-        if (Math.abs(px - lx) + Math.abs(py - ly) < 1e-4) break
-      }
-    }
-    const inv = invert(this.shown ? this.shown.rawMap : this.geometry(DEFAULT_GEOMETRY).uvToSensor)
-    return applyMap(inv, (cx + 0.5) / s.width, (cy + 0.5) / s.height)
+    const m = this.shownSnapshot()
+    return m ? sensorToDisplayAt(m, x, y) : [x, y]
   }
 
   /** Remove, Heal and Clone: progress, and each new retouched scene (Develop draws again then). */
