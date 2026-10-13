@@ -68,7 +68,8 @@ export type UprightOutcome = { ok: true; geometry: GeometrySettings; note?: stri
 
 /** Applies an Upright mode (Off, Auto, Level, Vertical, Full) to a geometry. */
 export function uprightGeometry(engine: DevelopEngine, g: GeometrySettings, mode: Exclude<UprightMode, 'guided'>, det: Detection | null, info: SensorInfo | null): UprightOutcome {
-  const base: TransformSettings = { ...DEFAULT_TRANSFORM, ...g.transform, focal: g.transform?.focal ?? focalFor(info) }
+  // A mode applied here is LightBench's own, so a "read from Lightroom" note no longer applies.
+  const base: TransformSettings = { ...DEFAULT_TRANSFORM, ...g.transform, focal: g.transform?.focal ?? focalFor(info), lightroom: undefined }
   if (mode === 'off') return { ok: true, geometry: withTransform(engine, g, { ...base, upright: 'off', solved: ZERO_PERSPECTIVE, guides: [] }, false) }
   if (!det) return { ok: false, message: 'The photo isn’t ready yet.' }
   const { width, height, flip } = engine.sensorLayout
@@ -83,7 +84,7 @@ export function guidedGeometry(engine: DevelopEngine, g: GeometrySettings, guide
   const { width, height, flip } = engine.sensorLayout
   const focal = g.transform?.focal ?? focalFor(info)
   const r = solveGuided(guides, orientationOf(g, flip), width, height, focal)
-  const t: TransformSettings = { ...DEFAULT_TRANSFORM, ...g.transform, focal, upright: 'guided', guides, solved: r.ok ? r.solved : ZERO_PERSPECTIVE }
+  const t: TransformSettings = { ...DEFAULT_TRANSFORM, ...g.transform, focal, upright: 'guided', guides, solved: r.ok ? r.solved : ZERO_PERSPECTIVE, lightroom: undefined }
   return { geometry: withTransform(engine, g, t, true), message: r.ok ? undefined : r.message }
 }
 

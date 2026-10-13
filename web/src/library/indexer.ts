@@ -19,6 +19,7 @@ import { filesToAdd } from './index-plan'
 import { fieldsFromRead } from '../sidecar/changes'
 import { stemOwners } from '../sidecar/naming'
 import { checkFolder } from '../sidecar/watch'
+import { lrFrame } from '../sidecar/lightroom'
 import { readXmp } from '../sidecar/xmp'
 import { sidecars } from '../sidecar/sync'
 import type { ProbeResult } from '../import/probe'
@@ -173,7 +174,7 @@ class FolderIndexer {
           const read = xmpText ? await applySidecar(catalog, id, xmpText, !!sidecar?.borrowed).catch(() => null) : null
           // Remember the sidecar as read, so a later change by another app is noticed (sidecar/changes.ts). A
           // borrowed one is the RAW twin's, not this photo's.
-          if (sidecar && !sidecar.borrowed) await catalog.recordSidecar(id, sidecar.modified, sidecar.size, JSON.stringify(fieldsFromRead(readXmp(sidecar.text))))
+          if (sidecar && !sidecar.borrowed) await catalog.recordSidecar(id, sidecar.modified, sidecar.size, JSON.stringify(fieldsFromRead(readXmp(sidecar.text), lrFrame(result.meta))))
           // Like darktable, the camera's Artist, Copyright and ImageDescription fill what the sidecar leaves empty; a
           // JPEG's IPTC comes before them, and its keywords count when the XMP has none (import/run.ts applyEmbedded).
           await applyEmbedded(catalog, id, read, result.camera, result.iptcKeywords)

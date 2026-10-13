@@ -127,8 +127,8 @@ export const PASTE_ITEMS: PasteItem[] = [
       const mode = f?.upright ?? 'off'
       const next: TransformSettings =
         mode === 'guided'
-          ? { ...t, upright: 'guided', solved: f!.solved, guides: [], focal: f!.focal }
-          : { ...t, upright: mode, solved: ZERO_PERSPECTIVE, guides: [] }
+          ? { ...t, upright: 'guided', solved: f!.solved, guides: [], focal: f!.focal, lightroom: undefined }
+          : { ...t, upright: mode, solved: ZERO_PERSPECTIVE, guides: [], lightroom: undefined }
       return { ...to, geometry: setTransform(to.geometry, next) }
     },
     show: (s) => {

@@ -58,6 +58,11 @@ export interface TransformSettings {
   offsetY: number
   /** 35 mm-equivalent focal length used by darktable's model (from EXIF; 28 mm when unknown, as darktable). */
   focal: number
+  /**
+   * The Upright mode was read from Lightroom's sidecar fields (sidecar/lightroom.ts) and solved again by LightBench, so
+   * the Transform section says the result may differ slightly from Lightroom's. Absent otherwise; doesn't render.
+   */
+  lightroom?: UprightMode
 }
 
 export const ZERO_PERSPECTIVE: Perspective = { rotation: 0, vertical: 0, horizontal: 0, shear: 0 }
@@ -119,6 +124,8 @@ export function normalizeTransform(t: Partial<TransformSettings> | null | undefi
     offsetY: clamp(finite(t.offsetY, 0), -100, 100),
     focal: clamp(finite(t.focal, d.focal), 1, 2000),
   }
+  // The "read from Lightroom" note holds only while the mode is still the one read.
+  if (t.lightroom && t.lightroom !== 'off' && t.lightroom === out.upright) out.lightroom = t.lightroom
   return isIdentityTransform(out) && out.upright === 'off' && !out.guides.length ? undefined : out
 }
 

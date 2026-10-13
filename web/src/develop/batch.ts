@@ -16,6 +16,7 @@ import { current, loadHistory, record, savedForm } from './history'
 import { applyPaste, mergeClipboards, type Clipboard } from './paste'
 import { loadIntoEngine, multipliers, renderThumbnail, stageOptions, type SensorInfo } from './source'
 import { ownFocal, rerunUpright, wantsUprightRerun } from './uprightRun'
+import { fromLightroom, lrFrame, parseLrKey, UPRIGHT_CODE } from '../sidecar/lightroom'
 
 export interface BatchJob {
   /** History step added to each photo, e.g. "Paste settings". */
@@ -24,6 +25,24 @@ export interface BatchJob {
   clip: Clipboard
   /** Leave photos that already have edits alone (the preset for new photos; edits may come from their sidecars). */
   onlyUnedited?: boolean
+  /**
+   * Lightroom's crop, orientation and Transform to apply to each photo (sidecar/lightroom.ts `lrKey`, by photo id),
+   * after the copy. An Upright mode read from Lightroom is solved again on the photo, like a pasted one.
+   */
+  lightroom?: Record<number, string>
+}
+
+/** The history step of a crop or Transform read from a Lightroom sidecar when a photo is added. */
+export const LIGHTROOM_STEP = 'Lightroom crop & Transform'
+
+/** An edit whose only step is the Lightroom geometry read when the photo was added (the preset for new photos still applies). */
+function onlyFromLightroom(history: string): boolean {
+  try {
+    const h = JSON.parse(history) as { steps?: { label?: string }[] }
+    return !!h.steps?.length && h.steps.every((s) => s.label === LIGHTROOM_STEP)
+  } catch {
+    return false
+  }
 }
 
 export interface BatchStatus {
@@ -86,6 +105,11 @@ class BatchDeveloper {
     const waiting = this.running ? this.queue.indexOf(last) > 0 : !!last
     if (last && waiting && last.label === job.label && !last.onlyUnedited === !job.onlyUnedited && last.ids.length === job.ids.length && last.ids.every((id, i) => id === job.ids[i])) {
       last.clip = mergeClipboards(last.clip, job.clip)
+      if (job.lightroom) last.lightroom = { ...last.lightroom, ...job.lightroom }
+    } else if (last && waiting && job.lightroom && last.lightroom && last.label === job.label && job.label === LIGHTROOM_STEP) {
+      // Photos added one by one with Lightroom crops: one job for all of them.
+      for (const id of job.ids) if (!last.ids.includes(id)) last.ids.push(id)
+      last.lightroom = { ...last.lightroom, ...job.lightroom }
     } else {
       this.queue.push({ ...job, ids: [...job.ids] })
     }
@@ -148,12 +172,16 @@ class BatchDeveloper {
     const catalog = getCatalog()
     const p = await catalog.getPhoto(id)
     if (!p) throw new Error('Photo not found in the library')
-    if (job.onlyUnedited && (await catalog.getEdit(id))) return false
+    if (job.onlyUnedited) {
+      const edit = await catalog.getEdit(id)
+      if (edit && !onlyFromLightroom(edit.history)) return false
+    }
     onName(p.fileName)
     const file = await openPhotoFile(p.rootId, p.folderPath, p.fileName)
     const wantsAuto = job.clip.rerunAuto && !!job.clip.settings.auto
     // Upright's Auto, Level, Vertical and Full are detected again on each photo, like Auto tone.
-    const wantsUpright = job.clip.keys.includes('upright') && wantsUprightRerun(job.clip.settings)
+    const lightroom = parseLrKey(job.lightroom?.[id])
+    const wantsUpright = (job.clip.keys.includes('upright') && wantsUprightRerun(job.clip.settings)) || (!!lightroom && lightroom.upright !== UPRIGHT_CODE.off && lightroom.upright !== UPRIGHT_CODE.guided)
     let engine: DevelopEngine | null = null
     let info: SensorInfo | null = null
     if (file && 'gpu' in navigator) {
@@ -170,10 +198,25 @@ class BatchDeveloper {
     const h = loadHistory(await catalog.getEdit(id), kind)
     let next = applyPaste(current(h), job.clip, kind, engine && info ? engine.imageSize : undefined)
     if (info) next = ownFocal(next, info)
-    if (wantsUpright && engine && info) {
+    if (job.clip.keys.includes('upright') && wantsUprightRerun(job.clip.settings) && engine && info) {
       // Lines are found on the developed scene (the RAW stage must have run).
       await engine.process(stageOptions(next, info))
       next = await rerunUpright(engine, next, info)
+    }
+    if (lightroom) {
+      const r = fromLightroom(next.geometry, lightroom, lrFrame(p))
+      next = { ...next, geometry: r.geometry }
+      if (info) next = ownFocal(next, info)
+      if (r.rerun && engine && info) {
+        // LightBench's own Upright for the mode Lightroom used. Upright resets the straighten angle, but Lightroom's
+        // crop and angle were read with it, so they are put back.
+        const { crop, angle } = next.geometry
+        const mode = next.geometry.transform?.lightroom
+        await engine.process(stageOptions(next, info))
+        next = await rerunUpright(engine, next, info)
+        const t = next.geometry.transform
+        next = { ...next, geometry: { ...next.geometry, crop, angle, ...(t ? { transform: { ...t, lightroom: mode } } : {}) } }
+      }
     }
     if (wantsAuto && engine && info) next = await rerunAuto(engine, { ...next, auto: job.clip.settings.auto }, info)
     await catalog.saveEdit(id, JSON.stringify(next), JSON.stringify(savedForm(record(h, job.label, next))))

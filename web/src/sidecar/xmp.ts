@@ -16,6 +16,7 @@
 
 import type { MetadataKey, PhotoMetadata } from '../catalog/types'
 import { creatorList, joinCreators, METADATA_KEYS } from '../library/metadata'
+import { lrValues, NS_CRS, NS_TIFF, type LrFields, type LrRead, type LrWritePlan } from './lightroom'
 
 export const NS = {
   x: 'adobe:ns:meta/',
@@ -61,6 +62,11 @@ export interface SidecarData {
   versions?: SidecarVersion[]
   /** Title, caption, creator, copyright and location ('' = not set); undefined leaves them as they are. */
   metadata?: PhotoMetadata
+  /**
+   * Lightroom's crop, orientation and Transform fields to write (sidecar/lightroom.ts `planLightroomWrite`). Undefined
+   * or no groups: Lightroom's fields are left exactly as they are.
+   */
+  lightroom?: LrWritePlan
 }
 
 /** One virtual copy as stored in its original's sidecar. */
@@ -271,6 +277,26 @@ function setProp(desc: Element, ns: string, preferredPrefix: string, local: stri
   desc.setAttributeNS(ns, `${prefix}:${local}`, value)
 }
 
+/** Sets a simple property where it is (attribute or element), or adds it as an attribute next to its namespace's others. */
+function setInPlace(doc: Document, ns: string, preferredPrefix: string, local: string, value: string) {
+  const all = descriptions(doc)
+  for (const d of all) {
+    const attr = d.getAttributeNodeNS(ns, local)
+    if (attr) {
+      attr.value = value
+      return
+    }
+    for (const c of Array.from(d.children)) {
+      if (c.namespaceURI === ns && c.localName === local) {
+        c.textContent = value
+        return
+      }
+    }
+  }
+  const home = all.find((d) => Array.from(d.attributes).some((a) => a.namespaceURI === ns) || Array.from(d.children).some((c) => c.namespaceURI === ns)) ?? all[0]
+  setProp(home, ns, preferredPrefix, local, value)
+}
+
 /** The managed properties and the values LightBench wants them to have (null = absent). */
 function managedValues(d: SidecarData): [ns: string, prefix: string, local: string, value: string | null][] {
   const stack: [string, string, string, string | null][] =
@@ -313,7 +339,9 @@ export function writeXmp(existing: string | null, data: SidecarData, now = new D
   const keywordsSame = !kw || (sameSet(getBag(doc, NS.dc, 'subject'), flat) && sameSet(getBag(doc, NS.lr, 'hierarchicalSubject'), kw))
   const meta = data.metadata
   const metadataSame = !meta || METADATA_KEYS.every((k) => getMetadataField(doc, k) === wantedField(meta, k))
-  if (existing !== null && keywordsSame && collectionsSame && metadataSame && wanted.every(([ns, , local, value]) => getProp(doc, ns, local) === value)) return null
+  const lr = data.lightroom
+  const lrSame = !lr || lr.groups.every((g) => lrValues(lr.state, g).every(([ns, local, value]) => getProp(doc, ns, local) === value))
+  if (existing !== null && keywordsSame && collectionsSame && metadataSame && lrSame && wanted.every(([ns, , local, value]) => getProp(doc, ns, local) === value)) return null
 
   for (const [ns, , local] of wanted) removeProp(doc, ns, local)
   removeProp(doc, NS.xmp, 'MetadataDate')
@@ -330,6 +358,15 @@ export function writeXmp(existing: string | null, data: SidecarData, now = new D
     if (cols.length) setBag(doc, desc, NS.lightbench, 'lightbench', 'Collections', cols)
   }
   if (meta && !metadataSame) setMetadata(doc, desc, meta)
+  if (lr && !lrSame) {
+    // Lightroom's fields are changed where they are (attribute or element), so the file keeps its layout; new ones join
+    // the description that already holds Camera Raw settings.
+    for (const g of lr.groups) for (const [ns, local, value] of lrValues(lr.state, g)) setInPlace(doc, ns, ns === NS_TIFF ? 'tiff' : 'crs', local, value)
+  }
+  if (lr?.marker !== undefined) {
+    removeProp(doc, NS.lightbench, 'LightroomGeometry')
+    setProp(desc, NS.lightbench, 'lightbench', 'LightroomGeometry', lr.marker)
+  }
   // XMP: MetadataDate records when the metadata last changed.
   setProp(desc, NS.xmp, 'xmp', 'MetadataDate', now.toISOString().replace(/\.\d{3}Z$/, 'Z'))
 
@@ -368,6 +405,46 @@ export interface SidecarRead {
   versions?: SidecarVersion[]
   /** Title, caption, creator… (only the fields that are set). */
   metadata?: Partial<PhotoMetadata>
+  /** Lightroom's crop, orientation and Transform fields (sidecar/lightroom.ts), when the file has any. */
+  lightroom?: LrRead
+}
+
+/** Lightroom's geometry fields, Camera Raw's process version and already-applied flag, and LightBench's marker. */
+function readLightroom(doc: Document): LrRead | undefined {
+  const num = (ns: string, local: string) => {
+    const v = getProp(doc, ns, local)
+    return v !== null && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : undefined
+  }
+  const bool = (local: string) => {
+    const v = getProp(doc, NS_CRS, local)?.trim().toLowerCase()
+    return v === 'true' ? true : v === 'false' ? false : undefined
+  }
+  const fields: LrFields = {
+    orientation: num(NS_TIFF, 'Orientation'),
+    hasCrop: bool('HasCrop'),
+    cropLeft: num(NS_CRS, 'CropLeft'),
+    cropTop: num(NS_CRS, 'CropTop'),
+    cropRight: num(NS_CRS, 'CropRight'),
+    cropBottom: num(NS_CRS, 'CropBottom'),
+    cropAngle: num(NS_CRS, 'CropAngle'),
+    upright: num(NS_CRS, 'PerspectiveUpright'),
+    vertical: num(NS_CRS, 'PerspectiveVertical'),
+    horizontal: num(NS_CRS, 'PerspectiveHorizontal'),
+    rotate: num(NS_CRS, 'PerspectiveRotate'),
+    scale: num(NS_CRS, 'PerspectiveScale'),
+    aspect: num(NS_CRS, 'PerspectiveAspect'),
+    x: num(NS_CRS, 'PerspectiveX'),
+    y: num(NS_CRS, 'PerspectiveY'),
+  }
+  const segments = [0, 1, 2, 3].filter((i) => (getProp(doc, NS_CRS, `UprightFourSegments_${i}`) ?? '').trim() !== '').length
+  const guides = num(NS_CRS, 'UprightFourSegmentsCount') ?? (segments || undefined)
+  if (guides !== undefined) fields.guides = guides
+  for (const k of Object.keys(fields) as (keyof LrFields)[]) if (fields[k] === undefined) delete fields[k]
+  const processVersion = getProp(doc, NS_CRS, 'ProcessVersion') !== null
+  const applied = bool('AlreadyApplied') === true
+  const marker = getProp(doc, NS.lightbench, 'LightroomGeometry') ?? undefined
+  if (!Object.keys(fields).length && !processVersion && !applied && marker === undefined) return undefined
+  return { fields, processVersion, applied, ...(marker !== undefined ? { marker } : {}) }
 }
 
 /** Reads ratings, flags, labels, keywords, metadata and LightBench edits from any XMP sidecar (Lightroom, Bridge, darktable, …). */
@@ -416,6 +493,8 @@ export function readXmp(text: string): SidecarRead {
     if (v) metadata[k] = v
   }
   if (Object.keys(metadata).length) out.metadata = metadata
+  const lightroom = readLightroom(doc)
+  if (lightroom) out.lightroom = lightroom
   const develop = getProp(doc, NS.lightbench, 'Develop')
   if (develop) {
     try {
