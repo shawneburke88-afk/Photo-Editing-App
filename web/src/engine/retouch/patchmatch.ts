@@ -69,8 +69,12 @@ export function rng(seed: number) {
  * without these features the fill drifts to the flattest texture around). Known pixels only enter the features.
  */
 const NC = 5
-/** Weight of the texture features against the colours. */
-const TEXTURE = 1
+/**
+ * Weight of the texture features against the colours. At 1, a fill of gravel still drifted to smooth patches (the
+ * colour term of a noisy patch against the blurry estimate outweighs the features); 3 keeps the grain in the
+ * scratch tests on gravel, grass and brick without changing the synthetic errors.
+ */
+const TEXTURE = 3
 
 function patchVectors(w: number, h: number, image: Float32Array, hole: Uint8Array): Float32Array {
   const e = new Float32Array(w * h * NC)
