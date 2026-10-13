@@ -420,7 +420,8 @@ function randomValid(L: Level, rand: () => number): number {
  * from the source keeps thin structures that cross a thin hole (brick courses across a wire); starting smoothly
  * avoids copying the source when the source itself is wrong (another object). The one kept has the lower score: the
  * mean distance between each target patch and its match at the end (the energy Wexler et al. minimise, without the
- * source preference) plus how new its colours are to the hole's surroundings (`novelty`). LightBench's choice,
+ * source preference), plus how new its colours are to the hole's surroundings (`novelty`) and how much flatter it is
+ * than they are (`flatness`). LightBench's choice,
  * measured on the synthetic cases (PHASE3.md, Part 11).
  */
 export function complete(input: CompletionInput): Completion {
@@ -496,6 +497,42 @@ function novelty(L: Level, r: number): number {
   return n ? sum / n : 0
 }
 
+/**
+ * How much flatter the fill is than its surroundings: the shortfall of the fill's mean absolute Laplacian (a measure
+ * of fine texture) against the surroundings', squared. Patch completion is drawn to smooth fills, which match smooth
+ * patches well (a known bias of the method); this keeps a textured fill when the surroundings are textured.
+ */
+function flatness(L: Level, r: number): number {
+  const { w, h, e, hole } = L
+  const near = boxSum(w, h, hole, 2 * r)
+  let ring = 0
+  let nr = 0
+  let fill = 0
+  let nf = 0
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const p = y * w + x
+      const inHole = hole[p] === 1
+      if (!inHole && !(near[p] > 0)) continue
+      let lap = 0
+      for (let c = 0; c < 3; c++) {
+        const v = 4 * e[p * 3 + c] - e[(p - 1) * 3 + c] - e[(p + 1) * 3 + c] - e[(p - w) * 3 + c] - e[(p + w) * 3 + c]
+        lap += v < 0 ? -v : v
+      }
+      if (inHole) {
+        fill += lap
+        nf++
+      } else {
+        ring += lap
+        nr++
+      }
+    }
+  }
+  if (!nf || !nr) return 0
+  const d = ring / nr - fill / nf
+  return d > 0 ? d * d : 0
+}
+
 /** One coarse-to-fine completion (see `complete`). */
 function solve(pyr: Level[], r: number, init: [number, number] | null, start: 'source' | 'smooth', rand: () => number, onProgress: (f: number) => void): { completion: Completion; energy: number } {
   const top = pyr.length - 1
@@ -567,7 +604,7 @@ function solve(pyr: Level[], r: number, init: [number, number] | null, start: 's
   let energy = 0
   for (let j = 0; j < F.centres.length; j++) energy += F.dist[j]
   energy /= Math.max(1, F.centres.length)
-  energy += novelty(F, r)
+  energy += novelty(F, r) + flatness(F, r)
   computeDistances(F, r, init ? [Math.round(init[0]), Math.round(init[1])] : null)
   setWeights(F)
   return { completion: { width: F.w, height: F.h, radius: r, centres: F.centres, sources: F.src, weights: F.weight }, energy }
