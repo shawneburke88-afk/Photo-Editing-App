@@ -129,13 +129,14 @@ export function withKey(text: string, id: string): string {
 }
 
 /**
- * The keys of several actions in a row, for hint lines: "0–5" when they are the default consecutive digits,
- * otherwise each one's first key joined by "/" (actions without a key are left out).
+ * The keys of several actions in a row, for hint lines: "0–5" (or "Shift+0–5") when they are consecutive digits
+ * with the same modifiers, otherwise each one's first key joined by "/" (actions without a key are left out).
  */
 export function rangeText(ids: string[]): string {
   const keys = ids.map(keyText)
-  const digits = keys.every((k, i) => i === 0 || (/^\d$/.test(k) && /^\d$/.test(keys[i - 1]) && Number(k) === Number(keys[i - 1]) + 1))
-  if (digits && keys.length > 2 && /^\d$/.test(keys[0])) return `${keys[0]}–${keys[keys.length - 1]}`
+  const parts = keys.map((k) => /^(.*?)(\d)$/.exec(k))
+  const digits = parts.every((m, i) => m && (i === 0 || (m[1] === parts[i - 1]![1] && Number(m[2]) === Number(parts[i - 1]![2]) + 1)))
+  if (digits && keys.length > 2) return `${keys[0]}–${parts[parts.length - 1]![2]}`
   return keys.filter(Boolean).join('/')
 }
 
