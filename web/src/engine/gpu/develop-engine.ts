@@ -1531,6 +1531,35 @@ export class DevelopEngine {
   }
 
   /**
+   * The scene at a mip level, or after the Detail stage for these settings at that level, as RGBA floats in the
+   * working space (tests and measurements: the GPU kernels against their CPU reference, PHASE3.md Part 13).
+   */
+  async detailImage(u: DisplayUniforms | null, level = 0): Promise<{ rgba: Float32Array; width: number; height: number; camToWorking: Mat3; run: DetailRun | null }> {
+    this.checkAlive()
+    if (!this.scene) throw new Error('No photo processed')
+    const run = u ? await this.detailFor(u, level) : null
+    const tex = run ? await this.detailed(run) : this.scene
+    const lv = run ? 0 : Math.min(level, this.scene.mipLevelCount - 1)
+    const w = Math.max(1, tex.width >> lv)
+    const h = Math.max(1, tex.height >> lv)
+    const bytesPerRow = 256 * Math.ceil((w * 8) / 256)
+    const read = this.device.createBuffer({ size: bytesPerRow * h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
+    const enc = this.device.createCommandEncoder()
+    enc.copyTextureToBuffer({ texture: tex, mipLevel: lv }, { buffer: read, bytesPerRow }, [w, h])
+    this.device.queue.submit([enc.finish()])
+    try {
+      await read.mapAsync(GPUMapMode.READ)
+      const half = new Uint16Array(read.getMappedRange())
+      const rgba = new Float32Array(w * h * 4)
+      for (let y = 0; y < h; y++) for (let x = 0; x < 4 * w; x++) rgba[4 * y * w + x] = halfToFloat(half[(y * bytesPerRow) / 2 + x])
+      return { rgba, width: w, height: h, camToWorking: this.camToWorking, run }
+    } finally {
+      if (read.mapState === 'mapped') read.unmap()
+      read.destroy()
+    }
+  }
+
+  /**
    * Upright's line detection input: the scene-linear photo in its sensor orientation, before the perspective,
    * at most `maxSize` px on its long edge (a level of the scene's mip chain, so nothing new is rendered), as
    * interleaved RGB, with its scale over the full-size photo.
