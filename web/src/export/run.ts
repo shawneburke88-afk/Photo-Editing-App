@@ -1,12 +1,19 @@
 // Runs an export: for each photo, develop it with its saved settings at full resolution, resize, convert to
 // the output colour space, encode, and write it to the destination folder.
+//
+// GPU failures (PHASE3.md, Part 14; docs/diagnosis/EXPORT_BLANK_FILE.md): each photo's GPU work runs inside the
+// engine's error scopes (`guarded`), so a rejected or failed command buffer, which reads back as zeros, fails the
+// photo instead of writing a black file. A lost engine is replaced before the next photo, and a photo whose device
+// was lost, ran out of memory or failed internally is tried once more on a fresh engine (never after a validation
+// error, which would only fail again). A failed photo writes no file and is listed with a message for people.
 
 import { getCatalog } from '../catalog/client'
 import type { PhotoDetail } from '../catalog/types'
 import { loadIntoEngine, multipliers, savedSettings, stageOptions } from '../develop/source'
 import { buildIcc, OUTPUT_SPACES, outputTrc, rec2020ToProfile, type OutputSpace } from '../engine/color/icc'
 import { displayUniforms } from '../engine/develop/settings'
-import { DevelopEngine } from '../engine/gpu/develop-engine'
+import { DevelopEngine, retryableGpuError } from '../engine/gpu/develop-engine'
+import { gpuGate } from '../engine/gpu/gate'
 import { RawDecoder } from '../engine/raw/decoder'
 import { getDirAt, getRootHandle, openPhotoFile } from '../platform/roots'
 import { buildExif } from './exif-writer'
@@ -87,6 +94,9 @@ export interface ExportProgress {
 
 const EXTENSIONS: Record<ExportFormat, string> = { jpeg: 'jpg', png: 'png', tiff: 'tif' }
 
+/** An export started by the user waits at most this long for Develop's drawing between photos (engine/gpu/gate.ts). */
+const EXPORT_MAX_WAIT = 1000
+
 /** Strips alpha from RGBA output. */
 function toRgb(rgba: Uint8ClampedArray | Uint16Array): Uint8Array | Uint16Array {
   const n = rgba.length / 4
@@ -138,7 +148,12 @@ export async function runExport(
   const catalog = getCatalog()
   const progress: ExportProgress = { done: 0, total: ids.length, current: '', written: [], skipped: [], failed: [] }
   const decoder = new RawDecoder()
-  const engine = await DevelopEngine.create('readback')
+  // Private to this export, so its device's error scopes see only its own work (DevelopEngine.guarded).
+  let engine = await DevelopEngine.create('readback')
+  const freshEngine = async () => {
+    engine.destroy()
+    engine = await DevelopEngine.create('readback')
+  }
   const space = OUTPUT_SPACES[s.space]
   const icc = buildIcc(space.profile)
   try {
@@ -152,25 +167,45 @@ export async function runExport(
         const file = await openPhotoFile(p.rootId, p.folderPath, p.fileName)
         if (!file) throw new Error('The photo’s folder isn’t connected. Reconnect it in the Library.')
         const decoded = await decoder.decode(file, true)
-        const info = loadIntoEngine(engine, decoded)
         const saved = await catalog.getEdit(id)
-        const settings = savedSettings(saved, info.kind)
-        await engine.process(stageOptions(settings, info))
-        // The crop at 100 % (the whole photo when it isn't cropped).
-        const [iw, ih] = engine.outputSize(settings.geometry)
-        const { width, height } = outputSize(iw, ih, s.size)
         const ppi = clampPpi(s.ppi ?? DEFAULT_PPI)
         const bits = s.format === 'jpeg' ? 8 : s.bits
-        const out = await engine.renderOutput(displayUniforms(settings), multipliers(settings, info), {
-          width,
-          height,
-          toOutput: rec2020ToProfile(space.profile),
-          trc: outputTrc(space.profile),
-          bits,
-          dither: s.dither && s.format !== 'jpeg' && bits === 8 ? 1 : 0,
-          // The scale actually used (floor rounding included), so screen sharpening follows the pixel size.
-          sharpen: sharpenParams(s.sharpen, Math.min(width / iw, height / ih), ppi),
+        // All of the photo's GPU work, checked for GPU errors; the photo is unloaded afterwards to free its memory.
+        const develop = async () => {
+          await gpuGate.background(EXPORT_MAX_WAIT)
+          const e = engine
+          try {
+            return await e.guarded(async () => {
+              const info = loadIntoEngine(e, decoded)
+              const settings = savedSettings(saved, info.kind)
+              await e.process(stageOptions(settings, info))
+              // The crop at 100 % (the whole photo when it isn't cropped).
+              const [iw, ih] = e.outputSize(settings.geometry)
+              const { width, height } = outputSize(iw, ih, s.size)
+              return e.renderOutput(displayUniforms(settings), multipliers(settings, info), {
+                width,
+                height,
+                toOutput: rec2020ToProfile(space.profile),
+                trc: outputTrc(space.profile),
+                bits,
+                dither: s.dither && s.format !== 'jpeg' && bits === 8 ? 1 : 0,
+                // The scale actually used (floor rounding included), so screen sharpening follows the pixel size.
+                sharpen: sharpenParams(s.sharpen, Math.min(width / iw, height / ih), ppi),
+              })
+            })
+          } finally {
+            if (!e.isLost) e.unload()
+          }
+        }
+        // A device lost on an earlier photo would fail this one too.
+        if (engine.isLost) await freshEngine()
+        const out = await develop().catch(async (e: unknown) => {
+          if (!retryableGpuError(e)) throw e
+          console.warn('Export: trying the photo again on a new graphics device:', e)
+          await freshEngine()
+          return develop()
         })
+        const { width, height } = out
 
         const exif = s.metadata.camera
           ? buildExif(

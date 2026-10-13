@@ -3,16 +3,24 @@
 // Each photo is decoded and developed like in Develop: Auto re-runs on its own pixels when the copy asks for it,
 // the result is added to its history as one step, and its thumbnail and sidecar are refreshed. Jobs run one photo
 // at a time on their own GPU engine, so Develop stays responsive.
+//
+// GPU failures and memory (PHASE3.md, Part 14): the engine is the batch's own, so its work is checked with the
+// engine's error scopes (`guarded`). A photo whose device was lost, ran out of memory or failed internally is tried
+// once more on a fresh engine: the step that failed is repeated (working out the settings, or the thumbnail after
+// they were saved), so a retry never adds a second history step. Each GPU step waits while Develop is busy
+// (engine/gpu/gate.ts), and the photo's textures are freed when it is done (`unload`).
 
 import { getCatalog } from '../catalog/client'
 import { forgetThumbUrl, saveThumb } from '../catalog/thumbs'
 import { metricsFromStats, solveAuto } from '../engine/develop/auto'
 import { displayUniforms, type DevelopSettings, type SourceKind } from '../engine/develop/settings'
-import { DevelopEngine } from '../engine/gpu/develop-engine'
+import { DevelopEngine, retryableGpuError } from '../engine/gpu/develop-engine'
+import { gpuGate } from '../engine/gpu/gate'
 import { isRawFile, RawDecoder } from '../engine/raw/decoder'
+import type { DecodeResult } from '../engine/raw/types'
 import { openPhotoFile } from '../platform/roots'
 import { sidecars } from '../sidecar/sync'
-import { current, loadHistory, record, savedForm } from './history'
+import { current, loadHistory, record, savedForm, type History } from './history'
 import { applyPaste, mergeClipboards, type Clipboard } from './paste'
 import { loadIntoEngine, multipliers, renderThumbnail, stageOptions, type SensorInfo } from './source'
 import { ownFocal, rerunUpright, wantsUprightRerun } from './uprightRun'
@@ -167,6 +175,37 @@ class BatchDeveloper {
     }
   }
 
+  /** The batch engine, made again when its device was lost (e.g. a driver reset on an earlier photo). */
+  private async liveEngine(): Promise<DevelopEngine> {
+    if (this.engine && (await this.engine.catch(() => null))?.isLost !== false) this.dropEngine()
+    this.engine ??= DevelopEngine.create('readback')
+    return this.engine
+  }
+
+  /** Destroys the engine; the next GPU step makes a new one. */
+  private dropEngine() {
+    const engine = this.engine
+    this.engine = null
+    void engine?.then((e) => e.destroy(), () => {})
+  }
+
+  /**
+   * Runs one GPU step; after a lost device, out-of-memory or internal error (or a device found lost afterwards), runs
+   * it once more on a fresh engine. `reset` forgets what was loaded on the old one.
+   */
+  private async retrying<T>(step: () => Promise<T>, reset: () => void): Promise<T> {
+    try {
+      return await step()
+    } catch (e) {
+      const lost = (await this.engine?.catch(() => null))?.isLost === true
+      if (!retryableGpuError(e) && !lost) throw e
+      console.warn('Batch: trying the photo again on a new graphics device:', e)
+      this.dropEngine()
+      reset()
+      return step()
+    }
+  }
+
   /** Returns false when the photo was left alone (already edited, for `onlyUnedited`). */
   private async applyTo(id: number, job: BatchJob, onName: (name: string) => void): Promise<boolean> {
     const catalog = getCatalog()
@@ -182,56 +221,83 @@ class BatchDeveloper {
     // Upright's Auto, Level, Vertical and Full are detected again on each photo, like Auto tone.
     const lightroom = parseLrKey(job.lightroom?.[id])
     const wantsUpright = (job.clip.keys.includes('upright') && wantsUprightRerun(job.clip.settings)) || (!!lightroom && lightroom.upright !== UPRIGHT_CODE.off && lightroom.upright !== UPRIGHT_CODE.guided)
-    let engine: DevelopEngine | null = null
-    let info: SensorInfo | null = null
+    let decoded: DecodeResult | null = null
     if (file && 'gpu' in navigator) {
-      // A device lost on an earlier photo (e.g. a driver reset) would fail every later one: start a new engine.
-      if (this.engine && (await this.engine.catch(() => null))?.isLost !== false) this.engine = null
-      this.engine ??= DevelopEngine.create('readback')
-      engine = await this.engine
       this.decoder ??= new RawDecoder()
-      info = loadIntoEngine(engine, await this.decoder.decode(file, true))
+      decoded = await this.decoder.decode(file, true)
     } else if (wantsAuto || wantsUpright) {
       const what = wantsAuto ? 'Auto' : 'Upright'
       throw new Error(file ? `${what} needs WebGPU (Chrome or Edge).` : `The photo’s folder isn’t connected, so ${what} can’t look at it. Reconnect it in the Library.`)
     }
-    const kind: SourceKind = info?.kind ?? (isRawFile(p.fileName) ? 'raw' : 'rgb')
-    // Read the edit now rather than when the job was queued, so a change made meanwhile (e.g. in Develop) isn't lost.
-    const h = loadHistory(await catalog.getEdit(id), kind)
-    let next = applyPaste(current(h), job.clip, kind, engine && info ? engine.imageSize : undefined)
-    if (info) next = ownFocal(next, info)
-    if (job.clip.keys.includes('upright') && wantsUprightRerun(job.clip.settings) && engine && info) {
-      // Lines are found on the developed scene (the RAW stage must have run).
-      await engine.process(stageOptions(next, info))
-      next = await rerunUpright(engine, next, info)
-    }
-    if (lightroom) {
-      const r = fromLightroom(next.geometry, lightroom, lrFrame(p))
-      next = { ...next, geometry: r.geometry }
+
+    // The photo loaded on the batch engine (again after a retry on a fresh one).
+    let loaded: { engine: DevelopEngine; info: SensorInfo } | null = null
+    const onGpu = <T>(step: (engine: DevelopEngine, info: SensorInfo) => Promise<T>): Promise<T> =>
+      this.retrying(async () => {
+        if (!loaded || loaded.engine.isLost) {
+          const engine = await this.liveEngine()
+          loaded = { engine, info: loadIntoEngine(engine, decoded!) }
+        }
+        const { engine, info } = loaded
+        await gpuGate.background()
+        return engine.guarded(() => step(engine, info))
+      }, () => (loaded = null))
+
+    /** The photo's new settings (`engine` and `info` are null without the file or WebGPU). */
+    const develop = async (engine: DevelopEngine | null, info: SensorInfo | null): Promise<{ h: History; next: DevelopSettings }> => {
+      const kind: SourceKind = info?.kind ?? (isRawFile(p.fileName) ? 'raw' : 'rgb')
+      // Read the edit now rather than when the job was queued, so a change made meanwhile (e.g. in Develop) isn't lost.
+      const h = loadHistory(await catalog.getEdit(id), kind)
+      let next = applyPaste(current(h), job.clip, kind, engine && info ? engine.imageSize : undefined)
       if (info) next = ownFocal(next, info)
-      if (r.rerun && engine && info) {
-        // LightBench's own Upright for the mode Lightroom used. Upright resets the straighten angle, but Lightroom's
-        // crop and angle were read with it, so they are put back.
-        const { crop, angle } = next.geometry
-        const mode = next.geometry.transform?.lightroom
+      if (job.clip.keys.includes('upright') && wantsUprightRerun(job.clip.settings) && engine && info) {
+        // Lines are found on the developed scene (the RAW stage must have run).
         await engine.process(stageOptions(next, info))
         next = await rerunUpright(engine, next, info)
-        const t = next.geometry.transform
-        next = { ...next, geometry: { ...next.geometry, crop, angle, ...(t ? { transform: { ...t, lightroom: mode } } : {}) } }
       }
+      if (lightroom) {
+        const r = fromLightroom(next.geometry, lightroom, lrFrame(p))
+        next = { ...next, geometry: r.geometry }
+        if (info) next = ownFocal(next, info)
+        if (r.rerun && engine && info) {
+          // LightBench's own Upright for the mode Lightroom used. Upright resets the straighten angle, but Lightroom's
+          // crop and angle were read with it, so they are put back.
+          const { crop, angle } = next.geometry
+          const mode = next.geometry.transform?.lightroom
+          await engine.process(stageOptions(next, info))
+          next = await rerunUpright(engine, next, info)
+          const t = next.geometry.transform
+          next = { ...next, geometry: { ...next.geometry, crop, angle, ...(t ? { transform: { ...t, lightroom: mode } } : {}) } }
+        }
+      }
+      if (wantsAuto && engine && info) next = await rerunAuto(engine, { ...next, auto: job.clip.settings.auto }, info)
+      return { h, next }
     }
-    if (wantsAuto && engine && info) next = await rerunAuto(engine, { ...next, auto: job.clip.settings.auto }, info)
-    await catalog.saveEdit(id, JSON.stringify(next), JSON.stringify(savedForm(record(h, job.label, next))))
-    sidecars.schedule([id])
+
     try {
-      if (!engine || !info) throw new Error('Settings applied; the thumbnail wasn’t refreshed because the photo’s folder isn’t connected.')
-      await engine.process(stageOptions(next, info))
-      await saveThumb(id, await renderThumbnail(engine, next, info))
-      forgetThumbUrl(id)
+      const { h, next } = decoded ? await onGpu(develop) : await develop(null, null)
+      await catalog.saveEdit(id, JSON.stringify(next), JSON.stringify(savedForm(record(h, job.label, next))))
+      sidecars.schedule([id])
+      try {
+        if (!decoded) throw new Error('Settings applied; the thumbnail wasn’t refreshed because the photo’s folder isn’t connected.')
+        // Saved already: a retry from here repeats only the thumbnail, never the history step.
+        const thumb = await onGpu(async (engine, info) => {
+          await engine.process(stageOptions(next, info))
+          return renderThumbnail(engine, next, info)
+        }).catch((e: unknown) => {
+          throw new Error(`Settings applied; the thumbnail wasn’t refreshed. ${e instanceof Error ? e.message : String(e)}`)
+        })
+        await saveThumb(id, thumb)
+        forgetThumbUrl(id)
+      } finally {
+        this.updatedListeners.forEach((fn) => fn(id))
+      }
+      return true
     } finally {
-      this.updatedListeners.forEach((fn) => fn(id))
+      // Frees the photo's textures until the next photo (PHASE3.md, Part 14).
+      const l = loaded as { engine: DevelopEngine } | null
+      if (l && !l.engine.isLost) l.engine.unload()
     }
-    return true
   }
 }
 

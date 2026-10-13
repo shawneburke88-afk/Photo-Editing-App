@@ -6,7 +6,8 @@ import type { PhotoDetail } from '../catalog/types'
 import { loadIntoEngine, multipliers, savedSettings, stageOptions } from '../develop/source'
 import { outputTrc, rec2020ToProfile, SRGB_PROFILE } from '../engine/color/icc'
 import { displayUniforms } from '../engine/develop/settings'
-import { DevelopEngine } from '../engine/gpu/develop-engine'
+import { DevelopEngine, retryableGpuError } from '../engine/gpu/develop-engine'
+import { gpuGate } from '../engine/gpu/gate'
 import { RawDecoder } from '../engine/raw/decoder'
 import { jpegFileBlob } from '../engine/meta/preview-space'
 import { openPhotoFile } from '../platform/roots'
@@ -148,6 +149,11 @@ export class BitmapCache<T extends { bmp: ImageBitmap }> {
 /**
  * Renders photos at full resolution with their saved Develop settings, exactly as Export does (RAW decode,
  * darktable pipeline on the GPU, sRGB output), for a true 100 % view. One render at a time.
+ *
+ * Like Export (PHASE3.md, Part 14): the engine is this renderer's own, so each render is checked with its error
+ * scopes (`guarded`) and a black read-back is never shown; a lost engine is replaced, a render that failed on a lost
+ * device, out of memory or internally is tried once more on a fresh engine, renders wait while Develop is busy
+ * (engine/gpu/gate.ts), and the photo's textures are freed after each render (`unload`).
  */
 export class FullRenderer {
   private engine: Promise<DevelopEngine> | null = null
@@ -172,30 +178,52 @@ export class FullRenderer {
     const file = await openPhotoFile(photo.rootId, photo.folderPath, photo.fileName)
     if (!file) throw new Error('Reconnect this photo’s folder to render it at 100 %.')
     if (!('gpu' in navigator)) throw new Error('Rendering at 100 % needs WebGPU (Chrome or Edge).')
-    this.engine ??= DevelopEngine.create('readback')
-    const engine = await this.engine
     this.raw ??= new RawDecoder()
     const decoded = await this.raw.decode(file, true)
-    const info = loadIntoEngine(engine, decoded)
-    const settings = savedSettings(await getCatalog().getEdit(photo.id), info.kind)
-    await engine.process(stageOptions(settings, info))
-    const [width, height] = engine.outputSize(settings.geometry)
-    const out = await engine.renderOutput(displayUniforms(settings), multipliers(settings, info), {
-      width,
-      height,
-      toOutput: rec2020ToProfile(SRGB_PROFILE),
-      trc: outputTrc(SRGB_PROFILE),
-      bits: 8,
-      dither: 0,
+    const saved = await getCatalog().getEdit(photo.id)
+    const render = async () => {
+      // A device lost earlier (e.g. a driver reset) would fail every later render: start a new engine.
+      if (this.engine && (await this.engine.catch(() => null))?.isLost !== false) this.dropEngine()
+      this.engine ??= DevelopEngine.create('readback')
+      const engine = await this.engine
+      await gpuGate.background()
+      if (this.disposed) throw new Error('cancelled')
+      try {
+        return await engine.guarded(async () => {
+          const info = loadIntoEngine(engine, decoded)
+          const settings = savedSettings(saved, info.kind)
+          await engine.process(stageOptions(settings, info))
+          const [width, height] = engine.outputSize(settings.geometry)
+          return engine.renderOutput(displayUniforms(settings), multipliers(settings, info), {
+            width,
+            height,
+            toOutput: rec2020ToProfile(SRGB_PROFILE),
+            trc: outputTrc(SRGB_PROFILE),
+            bits: 8,
+            dither: 0,
+          })
+        })
+      } finally {
+        if (!engine.isLost) engine.unload()
+      }
+    }
+    const out = await render().catch((e: unknown) => {
+      if (!retryableGpuError(e) || this.disposed) throw e
+      this.dropEngine()
+      return render()
     })
     if (this.disposed) throw new Error('cancelled')
-    return createImageBitmap(new ImageData(out.rgba as Uint8ClampedArray<ArrayBuffer>, width, height))
+    return createImageBitmap(new ImageData(out.rgba as Uint8ClampedArray<ArrayBuffer>, out.width, out.height))
+  }
+
+  private dropEngine() {
+    void this.engine?.then((e) => e.destroy(), () => {})
+    this.engine = null
   }
 
   dispose() {
     this.disposed = true
-    void this.engine?.then((e) => e.destroy(), () => {})
-    this.engine = null
+    this.dropEngine()
     this.raw?.dispose()
     this.raw = null
   }
