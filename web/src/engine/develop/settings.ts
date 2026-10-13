@@ -11,6 +11,7 @@ import type { AutoRecord } from './auto'
 import { DEFAULT_LENS, LEGACY_LENS, normalizeLens, type LensSettings } from '../lens/correction'
 import { DEFAULT_GEOMETRY, normalizeGeometry, type GeometrySettings } from './geometry'
 import { CURRENT_PROCESS, processParams, validProcess, type ToneMask } from './process'
+import { normalizeToneCurve, toneCurveGpu, type ToneCurveGpu, type ToneCurveSettings } from './tone-curve'
 
 /**
  * The demosaic method (Develop › Advanced). The stored value names the method for the photo's sensor as darktable
@@ -72,6 +73,11 @@ export interface DevelopSettings {
    * they render as before; new edits get Auto.
    */
   lens: LensSettings
+  /**
+   * The Tone Curve (tone-curve.ts): Regions, the RGB curve and the Red, Green and Blue curves, after Contrast. Absent
+   * when untouched or reset, so such an edit is exactly one made before the Tone Curve existed (and renders as one).
+   */
+  toneCurve?: ToneCurveSettings
 }
 
 export const DEFAULT_SETTINGS: DevelopSettings = {
@@ -121,7 +127,7 @@ export const defaultsFor = (kind: SourceKind) => (kind === 'rgb' ? DEFAULT_RGB_S
  */
 export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined, kind: SourceKind = 'raw'): DevelopSettings {
   const d = defaultsFor(kind)
-  return {
+  const out: DevelopSettings = {
     ...d,
     ...s,
     whiteBalance: { ...d.whiteBalance, ...s?.whiteBalance },
@@ -131,6 +137,11 @@ export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined
     process: validProcess(s?.process),
     geometry: normalizeGeometry(s?.geometry),
   }
+  // The tone curve is only kept when it isn't at its defaults (an edit without one has no key at all).
+  const tc = normalizeToneCurve(s?.toneCurve)
+  if (tc) out.toneCurve = tc
+  else delete out.toneCurve
+  return out
 }
 
 /** Lightroom-style tint slider (−150 green … +150 magenta) ⇄ darktable tint (1 = neutral, >1 greener). */
@@ -166,6 +177,8 @@ export interface DisplayUniforms {
   huePreservation: number
   /** Crop, straighten, rotate and flip; the engine resolves it against the photo's size. */
   geometry: GeometrySettings
+  /** The Tone Curve's lookup table and options, or null when it changes nothing (the shader skips it). */
+  toneCurve: ToneCurveGpu | null
 }
 
 export function displayUniforms(s: DevelopSettings): DisplayUniforms {
@@ -186,5 +199,6 @@ export function displayUniforms(s: DevelopSettings): DisplayUniforms {
     }),
     huePreservation: Math.min(1, Math.max(0, s.advanced.huePreservation / 100)),
     geometry: s.geometry ?? DEFAULT_GEOMETRY,
+    toneCurve: toneCurveGpu(s.toneCurve),
   }
 }

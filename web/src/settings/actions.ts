@@ -9,7 +9,7 @@
 import type { Chord } from './chords'
 
 /** Where an action works. A view uses `global` plus one or more of the others (see `VIEWS`). */
-export type Context = 'global' | 'library' | 'cull' | 'cull-one' | 'compare' | 'survey' | 'develop' | 'crop' | 'guided'
+export type Context = 'global' | 'library' | 'cull' | 'cull-one' | 'compare' | 'survey' | 'develop' | 'crop' | 'guided' | 'curve'
 
 export const CONTEXT_NAMES: Record<Context, string> = {
   global: 'Everywhere',
@@ -21,6 +21,7 @@ export const CONTEXT_NAMES: Record<Context, string> = {
   develop: 'Develop',
   crop: 'Develop: cropping',
   guided: 'Develop: Guided Upright',
+  curve: 'Develop: tone curve target',
 }
 
 /** The contexts that are active together. Two actions can't share a key if one view has both. */
@@ -34,6 +35,9 @@ export const VIEWS: Context[][] = [
   ['global', 'crop'],
   // While drawing Guided Upright lines, Develop listens to 'guided' instead (Delete removes a line, Esc finishes).
   ['global', 'guided'],
+  // While the Tone Curve's targeted adjustment tool is on, Develop listens to 'curve' instead (↑ ↓ nudge the tones
+  // under the pointer, Esc ends the tool), like the other on-photo tools.
+  ['global', 'curve'],
 ]
 
 export type PresetId = 'lightbench' | 'lightroom'
@@ -152,12 +156,12 @@ export const ACTIONS: ActionDef[] = [
   { id: 'survey.close', label: 'Back to the grid', contexts: ['survey'], keys: ['Escape', 'G', 'N', 'E', 'F'] },
 
   // Develop
-  { id: 'develop.undo', label: 'Undo', contexts: [...DEVELOP_ANY, 'guided'], keys: ['Ctrl+Z'] },
-  { id: 'develop.redo', label: 'Redo', contexts: [...DEVELOP_ANY, 'guided'], keys: ['Ctrl+Y', 'Ctrl+Shift+Z'] },
-  { id: 'develop.before', label: 'Before / after', contexts: ['develop'], keys: ['\\'] },
-  { id: 'develop.clipping', label: 'Show clipping', contexts: ['develop'], keys: ['J', 'O'], lightroom: ['J'] },
+  { id: 'develop.undo', label: 'Undo', contexts: [...DEVELOP_ANY, 'guided', 'curve'], keys: ['Ctrl+Z'] },
+  { id: 'develop.redo', label: 'Redo', contexts: [...DEVELOP_ANY, 'guided', 'curve'], keys: ['Ctrl+Y', 'Ctrl+Shift+Z'] },
+  { id: 'develop.before', label: 'Before / after', contexts: ['develop', 'curve'], keys: ['\\'] },
+  { id: 'develop.clipping', label: 'Show clipping', contexts: ['develop', 'curve'], keys: ['J', 'O'], lightroom: ['J'] },
   { id: 'develop.sensorClipping', label: 'Show sensor clipping', contexts: ['develop'], keys: ['Shift+O'] },
-  { id: 'develop.zoom', label: 'Zoom to 100 % and back', contexts: ['develop'], keys: ['Z'] },
+  { id: 'develop.zoom', label: 'Zoom to 100 % and back', contexts: ['develop', 'curve'], keys: ['Z'] },
   { id: 'develop.next', label: 'Next photo', contexts: ['develop'], keys: ['ArrowRight'] },
   { id: 'develop.prev', label: 'Previous photo', contexts: ['develop'], keys: ['ArrowLeft'] },
   { id: 'develop.whiteBalance', label: 'White balance picker', contexts: ['develop'], keys: ['W'] },
@@ -175,6 +179,18 @@ export const ACTIONS: ActionDef[] = [
   { id: 'develop.uprightAuto', label: 'Transform: Upright Auto', contexts: ['develop'], keys: [] },
   { id: 'develop.uprightOff', label: 'Transform: Upright off', contexts: ['develop'], keys: [] },
   { id: 'develop.transformReset', label: 'Transform: reset Upright and the sliders', contexts: ['develop'], keys: [] },
+
+  // The Tone Curve's targeted adjustment tool. Ctrl+Alt+Shift+T is Lightroom Classic's key for it as remembered, not
+  // checked against Adobe's page here; LightBench uses the same.
+  { id: 'develop.curveTarget', label: 'Tone curve: targeted adjustment (drag on the photo)', contexts: ['develop', 'curve'], keys: ['Ctrl+Alt+Shift+T'] },
+  { id: 'develop.curveReset', label: 'Tone curve: reset', contexts: ['develop'], keys: [] },
+
+  // Develop, while the Tone Curve's targeted adjustment tool is on
+  { id: 'curve.done', label: 'Finish the targeted adjustment', contexts: ['curve'], keys: ['Escape', 'Enter'] },
+  { id: 'curve.up', label: 'Targeted adjustment: brighten the tones under the pointer', contexts: ['curve'], keys: ['ArrowUp'] },
+  { id: 'curve.down', label: 'Targeted adjustment: darken the tones under the pointer', contexts: ['curve'], keys: ['ArrowDown'] },
+  { id: 'curve.upBig', label: 'Targeted adjustment: brighten more', contexts: ['curve'], keys: ['Shift+ArrowUp'] },
+  { id: 'curve.downBig', label: 'Targeted adjustment: darken more', contexts: ['curve'], keys: ['Shift+ArrowDown'] },
 
   // Develop, while drawing Guided Upright lines
   { id: 'guided.done', label: 'Finish Guided Upright', contexts: ['guided'], keys: ['Enter', 'Escape'] },

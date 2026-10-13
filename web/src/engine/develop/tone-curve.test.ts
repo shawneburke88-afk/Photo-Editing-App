@@ -130,15 +130,17 @@ describe('the spline (darktable monotone Hermite)', () => {
 
   it('is monotone when its points are', () => {
     const r = rng(4)
+    let bad = 0
     for (let k = 0; k < 200; k++) {
       const f = curveFunction(randomPoints(r, true))
       let prev = -Infinity
       for (let s = 0; s <= 400; s++) {
         const v = f(s / 400)
-        expect(v).toBeGreaterThanOrEqual(prev - 1e-12)
+        bad += +(v < prev - 1e-12)
         prev = v
       }
     }
+    expect(bad).toBe(0)
   })
 
   it('is flat beyond its end points and clamped to 0…1 (darktable CurveDataSample)', () => {
@@ -165,6 +167,7 @@ describe('Regions (LightBench’s parametric curve)', () => {
 
   it('moves its own region most and stays monotone for any values and splits', () => {
     const r = rng(5)
+    let bad = 0
     for (let k = 0; k < 300; k++) {
       const splits = fixSplits([5 + r() * 90, 5 + r() * 90, 5 + r() * 90].sort((a, b) => a - b), 1)
       const v = () => Math.round(r() * 200 - 100)
@@ -172,12 +175,11 @@ describe('Regions (LightBench’s parametric curve)', () => {
       let prev = -Infinity
       for (let s = 0; s <= 400; s++) {
         const y = f(s / 400)
-        expect(y).toBeGreaterThanOrEqual(prev - 1e-12)
-        expect(y).toBeGreaterThanOrEqual(0)
-        expect(y).toBeLessThanOrEqual(1)
+        bad += +(y < prev - 1e-12 || y < 0 || y > 1)
         prev = y
       }
     }
+    expect(bad).toBe(0)
     const f = masterFunction(tc({ regions: { shadows: 100, darks: 0, lights: 0, highlights: 0, splits: [25, 50, 75] } }))
     expect(f(0.125) - 0.125).toBeCloseTo(0.09375, 6)
     expect(Math.abs(f(0.75) - 0.75)).toBeLessThan(1e-9)
@@ -305,16 +307,15 @@ describe('colour (hue kept, Saturation)', () => {
 
   it('keeps every channel in range rather than clipping a hue', () => {
     const r = rng(6)
+    let bad = 0
     for (let k = 0; k < 2000; k++) {
       const c = [r(), r(), r()].map((v) => v ** 2)
       for (const norm of norms) {
         const o = applyMaster(c, f, norm, 1)
-        for (const v of o) {
-          expect(v).toBeGreaterThanOrEqual(-1e-9)
-          expect(v).toBeLessThanOrEqual(Math.max(1, ...c) + 1e-9)
-        }
+        for (const v of o) bad += +(v < -1e-9 || v > Math.max(1, ...c) + 1e-9)
       }
     }
+    expect(bad).toBe(0)
   })
 
   it('per channel at 100 % is the curve on R, G and B', () => {
@@ -346,9 +347,9 @@ describe('presets, storing and Amount', () => {
     expect(normalizeToneCurve(undefined)).toBeUndefined()
     expect(normalizeToneCurve(DEFAULT_TONE_CURVE)).toBeUndefined()
     expect(normalizeToneCurve({ rgb: [[0, 0], [1, 1]] })).toBeUndefined()
-    const s = withToneCurve({ exposure: 1, toneCurve: tc({ rgb: S2 }) }, undefined)
+    const s = withToneCurve<{ exposure: number; toneCurve?: ToneCurveSettings }>({ exposure: 1, toneCurve: tc({ rgb: S2 }) }, undefined)
     expect('toneCurve' in s).toBe(false)
-    expect(withToneCurve({ exposure: 1 }, tc({ rgb: S2 })).toneCurve?.rgb).toEqual(S2)
+    expect(withToneCurve<{ exposure: number; toneCurve?: ToneCurveSettings }>({ exposure: 1 }, tc({ rgb: S2 })).toneCurve?.rgb).toEqual(S2)
   })
 
   it('stores points sorted, within 0…1, apart and at most 16', () => {

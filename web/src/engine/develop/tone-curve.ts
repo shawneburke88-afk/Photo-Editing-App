@@ -10,9 +10,9 @@
 // coloured pixels, not for where a grey sits).
 //
 // What it is made of, in the order applied:
-//  1. Regions (Lightroom's parametric curve, renamed): Shadows, Darks, Lights and Highlights with three split points.
-//     Lightroom's formula isn't public; this one is LightBench's own, tuned by eye (`regionPoints`).
-//  2. The point curve (RGB), then
+//  1. The point curve (RGB), then
+//  2. Regions (Lightroom's parametric curve, renamed): Shadows, Darks, Lights and Highlights with three split points.
+//     Lightroom's formula isn't public; this one is LightBench's own, tuned by eye (`regionPoints`). Then
 //  3. the Red, Green and Blue point curves. Lightroom applies the RGB curve and then the channel curves; darktable's rgb
 //     curve has either linked or independent channels, never both (src/iop/rgbcurve.c `process`, lines 1904-1939), so
 //     applying both is LightBench's design.
@@ -226,12 +226,15 @@ export function fixSplits(splits: readonly number[], moved = 1): [number, number
 
 // ---- the whole curve
 
-/** The RGB (master) curve: Regions, then the RGB point curve. */
+/**
+ * The RGB (master) curve: the RGB point curve, then Regions. The order is LightBench's (Lightroom's isn't documented):
+ * so a point's input is the tone a pixel has, which the targeted adjustment tool and the graph's hover marker show.
+ */
 export function masterFunction(tc: ToneCurveSettings): (x: number) => number {
   const point = curveFunction(tc.rgb)
   if (regionsAreZero(tc.regions)) return point
   const regions = curveFunction(regionPoints(tc.regions))
-  return (x) => point(regions(x))
+  return (x) => regions(point(x))
 }
 
 /** Whether the RGB curve (with Regions) and the channel curves change anything. */
@@ -415,8 +418,8 @@ export function isDefaultToneCurve(tc: ToneCurveSettings): boolean {
  */
 export function normalizeToneCurve(raw: unknown): ToneCurveSettings | undefined {
   if (!raw || typeof raw !== 'object') return undefined
-  const t = raw as Partial<ToneCurveSettings> & { regions?: Partial<CurveRegions> }
-  const r = t.regions ?? {}
+  const t = raw as Partial<Omit<ToneCurveSettings, 'regions'>> & { regions?: Partial<CurveRegions> }
+  const r: Partial<CurveRegions> = t.regions ?? {}
   const value = (v: unknown) => (finite(v) ? Math.round(clamp(v, -100, 100) * 10) / 10 + 0 : 0)
   const splits = Array.isArray(r.splits) && r.splits.length === 3 ? fixSplits(r.splits as number[], 1) : DEFAULT_SPLITS
   const tc: ToneCurveSettings = {
@@ -434,6 +437,8 @@ export function normalizeToneCurve(raw: unknown): ToneCurveSettings | undefined 
 /** Settings with a tone curve set, or without the key when it is at its defaults. */
 export function withToneCurve<S extends { toneCurve?: ToneCurveSettings }>(s: S, tc: ToneCurveSettings | undefined): S {
   const n = normalizeToneCurve(tc)
+  // Unchanged: the same object, so comparisons (Auto Sync, history) see no change.
+  if (JSON.stringify(n) === JSON.stringify(s.toneCurve) && (n !== undefined || !('toneCurve' in s))) return s
   const { toneCurve: _old, ...rest } = s
   void _old
   return (n ? { ...rest, toneCurve: n } : rest) as S

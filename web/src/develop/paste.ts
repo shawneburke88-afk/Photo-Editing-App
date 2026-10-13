@@ -6,11 +6,13 @@ import type { DevelopSettings, SourceKind } from '../engine/develop/settings'
 import { AUTO_SLIDERS, type AutoKey } from '../engine/develop/auto'
 import { pasteCrop, setAngle, withOrientation, type GeometrySettings } from '../engine/develop/geometry'
 import { DEFAULT_TRANSFORM, normalizeTransform, ZERO_PERSPECTIVE, type TransformSettings } from '../engine/develop/upright'
+import { CURVE_NORMS, isLinear, REGION_KEYS, REGION_NAMES, withToneCurve, type ToneCurveSettings } from '../engine/develop/tone-curve'
 
 export type PasteKey =
   | 'whiteBalance'
   | 'exposure' | 'contrast' | 'highlights' | 'shadows' | 'whites' | 'blacks'
   | 'vibrance' | 'saturation'
+  | 'toneCurve'
   | 'rotate' | 'straighten' | 'crop' | 'upright' | 'transform'
   | 'lensProfile' | 'lensAmounts' | 'lensCa'
   | 'process' | 'baseExposure' | 'toneMapper' | 'highlightReconstruction' | 'demosaic'
@@ -18,7 +20,7 @@ export type PasteKey =
 export interface PasteItem {
   key: PasteKey
   label: string
-  group: 'White balance' | 'Tone' | 'Presence' | 'Crop' | 'Lens' | 'Advanced (darktable modules)'
+  group: 'White balance' | 'Tone' | 'Presence' | 'Tone Curve' | 'Crop' | 'Lens' | 'Advanced (darktable modules)'
   /**
    * Only pasted between photos of the same kind (RAW to RAW, JPEG to JPEG): a RAW's +0.7 EV base exposure or its
    * camera white balance would be wrong on a JPEG, which is already rendered.
@@ -54,6 +56,20 @@ const MANUAL = ['vertical', 'horizontal', 'rotate', 'aspect', 'scale', 'offsetX'
 const RERUN_MODES = ['auto', 'level', 'vertical', 'full']
 
 const signed = (v: number, digits = 0, unit = '') => `${v > 0 ? '+' : ''}${v.toFixed(digits)}${unit}`
+
+/** The tone curve in words, for the paste checklist. */
+export function describeCurve(tc: ToneCurveSettings | undefined): string {
+  if (!tc) return 'none (straight line)'
+  const parts: string[] = []
+  const regions = REGION_KEYS.filter((k) => tc.regions[k] !== 0).map((k) => `${REGION_NAMES[k]} ${signed(tc.regions[k])}`)
+  if (regions.length) parts.push(`Regions ${regions.join(', ')}`)
+  if (!isLinear(tc.rgb)) parts.push(`RGB curve (${tc.rgb.length} points)`)
+  const ch = (['red', 'green', 'blue'] as const).filter((c) => !isLinear(tc[c]))
+  if (ch.length) parts.push(`${ch.map((c) => c[0].toUpperCase() + c.slice(1)).join(', ')} curve${ch.length > 1 ? 's' : ''}`)
+  if (tc.saturation !== 100) parts.push(`Saturation ${tc.saturation} %`)
+  if (tc.norm !== 'power') parts.push(CURVE_NORMS.find((n) => n.id === tc.norm)?.label ?? tc.norm)
+  return parts.length ? parts.join(', ') : 'none (straight line)'
+}
 const slider = (key: 'exposure' | 'contrast' | 'highlights' | 'shadows' | 'whites' | 'blacks' | 'vibrance' | 'saturation', label: string, group: PasteItem['group']): PasteItem => ({
   key,
   label,
@@ -79,6 +95,15 @@ export const PASTE_ITEMS: PasteItem[] = [
   slider('blacks', 'Blacks', 'Tone'),
   slider('vibrance', 'Vibrance', 'Presence'),
   slider('saturation', 'Saturation', 'Presence'),
+  // The whole Tone Curve travels as one item (Lightroom's Copy Settings has one "Tone Curve" box): Regions, the RGB,
+  // Red, Green and Blue curves, its Saturation and brightness measure. A photo without a curve copies "none".
+  {
+    key: 'toneCurve',
+    label: 'Tone Curve',
+    group: 'Tone Curve',
+    copy: (to, from) => withToneCurve(to, from.toneCurve),
+    show: (s) => describeCurve(s.toneCurve),
+  },
   // Crop items come in this order when pasted: orientation first (the crop rectangle is relative to it), then the
   // angle, then the rectangle (kept inside the photo at the new angle).
   {

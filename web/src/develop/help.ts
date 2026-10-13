@@ -171,4 +171,51 @@ export const HELP: Record<string, ControlHelp> = {
     right: 'Moves the photo up.',
     engine: 'LightBench',
   },
+  curveHighlights: {
+    hint: 'Brightest part of the curve',
+    what: 'Bends the tone curve in its brightest region (above the right split point), for the whole photo alike.',
+    left: 'Darker bright tones: calmer skies and highlights.',
+    right: 'Brighter bright tones.',
+    pitfalls: 'Global: no texture is protected, unlike Basic’s Highlights. Use Basic first to recover bright areas, the curve to shape the look.',
+    engine: 'LightBench’s own region curve (Lightroom’s parametric curve isn’t public), after Contrast',
+  },
+  curveLights: {
+    hint: 'Upper mid-tones',
+    what: 'Bends the tone curve between the middle and the right split points.',
+    left: 'Darker upper mid-tones (less contrast with Darks raised).',
+    right: 'Brighter upper mid-tones (more contrast with Darks lowered).',
+    pitfalls: 'Lights up and Darks down together is an S-curve: more contrast and stronger colours (see Saturation below).',
+    engine: 'LightBench’s own region curve, after Contrast',
+  },
+  curveDarks: {
+    hint: 'Lower mid-tones',
+    what: 'Bends the tone curve between the left and the middle split points.',
+    left: 'Darker lower mid-tones.',
+    right: 'Brighter lower mid-tones.',
+    engine: 'LightBench’s own region curve, after Contrast',
+  },
+  curveShadows: {
+    hint: 'Darkest part of the curve',
+    what: 'Bends the tone curve in its darkest region (below the left split point), for the whole photo alike.',
+    left: 'Deeper shadows.',
+    right: 'Lifted shadows.',
+    pitfalls: 'Lifting shadows with the curve flattens their texture; Basic’s Shadows keeps it. Pure black stays black: for a faded look, lift the curve’s end point (Point curve, or the Fade preset).',
+    engine: 'LightBench’s own region curve, after Contrast',
+  },
+  curveSaturation: {
+    hint: 'Colour that comes with contrast',
+    what: 'Where the curve gets steeper (more contrast), colours get stronger too, as in Lightroom. This sets how much. Hue is kept either way.',
+    left: 'Less: at 0 % the curve changes brightness only and colours keep their strength.',
+    right: '100 %: colours get as much stronger as Adobe’s colour-keeping curve makes them (the default).',
+    pitfalls: 'This is not Basic’s Saturation: it only takes back (or keeps) the colour the curve adds. Applies to the RGB curve and Regions, not to the Red, Green and Blue curves.',
+    engine: 'LightBench; brightness measured with darktable’s preserve-colors norms (Advanced)',
+  },
+}
+
+/** The Tone Curve group's guidance (owner's rule: send users to Basic first). */
+export const CURVE_GUIDE = {
+  hint: 'Shape the look: fades, matte blacks, colour by tone',
+  what: 'The curve maps each tone of the photo (left to right, as in the histogram behind it) to a new tone (up is brighter). It acts after Basic, on the tones you see.',
+  order: 'Set Basic first: Exposure and Contrast for the overall look, Highlights, Shadows, Whites and Blacks to recover or open areas (they keep texture). Use the curve last, to shape the look.',
+  pitfalls: 'Lifting shadows with the curve flattens texture: use Shadows first. A steep curve can clip to pure black or white: watch for red (white) or blue (black) on the graph, and the clipping shown on the photo while you drag.',
 }

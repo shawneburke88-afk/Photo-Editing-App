@@ -148,7 +148,7 @@ const STATS_WORDS = 1028
 
 const IDENTITY: Mat3 = [1, 0, 0, 0, 1, 0, 0, 0, 1]
 const RAW_PARAMS_SIZE = 176
-const VIEW_SIZE = 496
+const VIEW_SIZE = 512
 /** lens.wgsl's `struct Lens` (`lensUniforms`). */
 const LENS_UNIFORM_SIZE = 576
 /** demosaic-xtrans.wgsl's Const: 4 ints, the pattern, 3 matrix rows, 36 × vec4i of hexagon offsets. */
@@ -243,6 +243,10 @@ export class DevelopEngine {
   private maskCache: { key: string; tex: GPUTexture; cells: [number, number] }[] = []
   private noMask: GPUTexture | null = null
   private boundMask: GPUTexture | null = null
+  /** The Tone Curve's lookup table on the GPU (binding 6), the one bound next, and the 1×1 bound when it is off. */
+  private curveTex: { key: string; tex: GPUTexture } | null = null
+  private noCurve: GPUTexture | null = null
+  private boundCurve: GPUTexture | null = null
   private readonly texIds = new WeakMap<GPUTexture, number>()
   private nextTexId = 1
   /** The last `render` call, to draw again when the screen's gamut changes. */
@@ -1125,7 +1129,7 @@ export class DevelopEngine {
   }
 
   /** `display`: the colour space of the target (only the on-screen canvas is ever Display P3). */
-  private writeView(u: DisplayUniforms, wb: Vec3, src: Source, rect: { x: number; y: number; w: number; h: number }, lod: number, ind: Indicators = NO_INDICATORS, pass: 0 | 1 | 2 = 0, display: DisplaySpace = 'srgb') {
+  private writeView(u: DisplayUniforms, wb: Vec3, src: Source, rect: { x: number; y: number; w: number; h: number }, lod: number, ind: Indicators = NO_INDICATORS, pass: 0 | 1 | 2 | 3 | 4 = 0, display: DisplaySpace = 'srgb') {
     const statsPass = pass === 1
     const v = new ArrayBuffer(VIEW_SIZE)
     const f = new Float32Array(v)
@@ -1175,6 +1179,15 @@ export class DevelopEngine {
       f.set([toMask[0], toMask[1], toMask[2], 0, toMask[3], toMask[4], toMask[5], 0, toMask[6], toMask[7], toMask[8], 0], 112)
     } else {
       this.boundMask = null
+    }
+    const tc = u.toneCurve
+    if (tc) {
+      this.boundCurve = this.curveTexture(tc.key, tc.lut)
+      ui[124] = tc.flags
+      ui[125] = tc.norm
+      f[126] = tc.saturation
+    } else {
+      this.boundCurve = null
     }
     this.device.queue.writeBuffer(this.viewBuf, 0, v)
     // The sensor-clipping overlay reads the sensor through the same lens function as the warp (rawMap ends in the
@@ -1475,7 +1488,74 @@ export class DevelopEngine {
     return pixels
   }
 
-  private async measure(u: DisplayUniforms, wb: Vec3, maxSize: number, indicators = NO_INDICATORS): Promise<Uint32Array> {
+  /**
+   * Histograms of the Tone Curve's input, on its own axis (sRGB-encoded Rec.2020): before the curve (`after` false: the
+   * RGB curve's graph) or after the RGB curve (the Red, Green and Blue curves' graphs).
+   */
+  async renderCurveInput(u: DisplayUniforms, wb: Vec3, after: boolean, maxSize = 256): Promise<ImageStats> {
+    const words = await this.measure(u, wb, maxSize, NO_INDICATORS, after ? 4 : 3)
+    const pixels = words[1027]
+    return {
+      red: words.slice(0, 256),
+      green: words.slice(256, 512),
+      blue: words.slice(512, 768),
+      luma: words.slice(768, 1024),
+      pixels,
+      highlightClipped: 0,
+      shadowClipped: 0,
+      chroma: pixels ? words[1026] / 1000 / pixels : 0,
+    }
+  }
+
+  /**
+   * The Tone Curve's input at a point of the photo last drawn (displayed-image uv): the mean of the 3×3 pixels around
+   * it as drawn at `scale` (image pixels per drawn pixel, as the view shows them), linear Rec.2020 before the curve.
+   * For the targeted adjustment tool.
+   */
+  async sampleBeforeCurve(u: DisplayUniforms, wb: Vec3, cu: number, cv: number, scale: number): Promise<Vec3> {
+    this.checkAlive()
+    if (!this.scene) throw new Error('No photo processed')
+    const { device } = this
+    const src = await this.source(u.geometry, false, u.lens)
+    const s = Math.min(1, Math.max(1e-4, scale))
+    const w = src.w * s
+    const h = src.h * s
+    const size = 3
+    this.writeView(u, wb, src, { x: size / 2 - cu * w, y: size / 2 - cv * h, w, h }, Math.max(0, Math.log2(1 / s)), NO_INDICATORS, 3)
+    const target = device.createTexture({ size: [size, size], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
+    const enc = device.createCommandEncoder()
+    const rp = enc.beginRenderPass({ colorAttachments: [{ view: target.createView(), loadOp: 'clear', storeOp: 'store' }] })
+    rp.setPipeline(this.statsRenderPipe)
+    rp.setBindGroup(0, this.displayBindGroup(this.statsRenderPipe, src.tex))
+    rp.draw(3)
+    rp.end()
+    const bytesPerRow = 256
+    const read = device.createBuffer({ size: bytesPerRow * size, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
+    enc.copyTextureToBuffer({ texture: target }, { buffer: read, bytesPerRow }, [size, size])
+    device.queue.submit([enc.finish()])
+    try {
+      await read.mapAsync(GPUMapMode.READ)
+      const half = new Uint16Array(read.getMappedRange())
+      const sum: Vec3 = [0, 0, 0]
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const o = (y * bytesPerRow) / 2 + x * 4
+          // Encoded on the curve's axis; the mean is taken in linear light.
+          for (let c = 0; c < 3; c++) {
+            const e = Math.max(0, halfToFloat(half[o + c]))
+            sum[c] += e <= 0.04045 ? e / 12.92 : Math.pow((e + 0.055) / 1.055, 2.4)
+          }
+        }
+      }
+      return sum.map((v) => v / (size * size)) as Vec3
+    } finally {
+      if (read.mapState === 'mapped') read.unmap()
+      read.destroy()
+      target.destroy()
+    }
+  }
+
+  private async measure(u: DisplayUniforms, wb: Vec3, maxSize: number, indicators = NO_INDICATORS, statsPass: 1 | 3 | 4 = 1): Promise<Uint32Array> {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
     const { device } = this
@@ -1488,7 +1568,7 @@ export class DevelopEngine {
     const scale = Math.min(1, maxSize / Math.max(iw, ih))
     const w = Math.max(1, Math.round(iw * scale))
     const h = Math.max(1, Math.round(ih * scale))
-    this.writeView(u, wb, src, { x: 0, y: 0, w, h }, Math.max(0, Math.log2(1 / scale)), indicators, 1)
+    this.writeView(u, wb, src, { x: 0, y: 0, w, h }, Math.max(0, Math.log2(1 / scale)), indicators, statsPass)
     const target = device.createTexture({ size: [w, h], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING })
     const rp = enc.beginRenderPass({ colorAttachments: [{ view: target.createView(), loadOp: 'clear', storeOp: 'store' }] })
     rp.setPipeline(this.statsRenderPipe)
@@ -1523,8 +1603,28 @@ export class DevelopEngine {
         { binding: 3, resource: { buffer: this.rawBuf! } },
         { binding: 4, resource: { buffer: this.viewLensBuf } },
         { binding: 5, resource: (this.boundMask ?? this.emptyMask()).createView() },
+        { binding: 6, resource: (this.boundCurve ?? this.emptyCurve()).createView() },
       ],
     })
+  }
+
+  /** The Tone Curve's lookup table as a texture (uploaded again only when the curve's shape changes). */
+  private curveTexture(key: string, lut: Float32Array<ArrayBuffer>): GPUTexture {
+    if (this.curveTex?.key === key) return this.curveTex.tex
+    const n = lut.length / 4
+    const tex =
+      this.curveTex && this.curveTex.tex.width === n
+        ? this.curveTex.tex
+        : this.device.createTexture({ size: [n, 1], format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST })
+    if (this.curveTex && this.curveTex.tex !== tex) this.curveTex.tex.destroy()
+    this.device.queue.writeTexture({ texture: tex }, lut, { bytesPerRow: n * 16 }, [n, 1])
+    this.curveTex = { key, tex }
+    return tex
+  }
+
+  /** Bound in place of the Tone Curve's table when the curve is off. */
+  private emptyCurve(): GPUTexture {
+    return (this.noCurve ??= this.device.createTexture({ size: [1, 1], format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING }))
   }
 
   /** Bound in place of the tone mask when there is none (version 1, or no tone slider moved). */
@@ -1566,6 +1666,8 @@ export class DevelopEngine {
     this.lensOnly?.tex.destroy()
     for (const m of this.maskCache) m.tex.destroy()
     this.noMask?.destroy()
+    this.curveTex?.tex.destroy()
+    this.noCurve?.destroy()
     this.scene?.destroy()
     this.rawBuf?.destroy()
     this.viewBuf.destroy()
