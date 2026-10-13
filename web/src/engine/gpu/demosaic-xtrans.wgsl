@@ -1,6 +1,7 @@
 // Fujifilm X-Trans demosaic: Frank Markesteijn's algorithm, 1 pass (darktable's default for X-Trans sensors,
-// src/iop/demosaic.c reload_defaults, lines 1591-1592), plus the linear interpolation darktable uses for the
-// photo's border and as the fast method.
+// src/iop/demosaic.c reload_defaults, lines 1591-1592) or 3 passes (darktable's "Markesteijn 3-pass",
+// DT_IOP_DEMOSAIC_MARKESTEIJN_3), plus the linear interpolation darktable uses for the photo's border and as the
+// fast method.
 //
 // Translated from darktable's OpenCL kernels (data/kernels/demosaic_markesteijn.cl, Copyright (c) 2016 Ulrich
 // Pegelow; data/kernels/demosaic_vng.cl, Copyright (C) 2016-2026 darktable developers) and their host code
@@ -14,7 +15,13 @@
 //    rows, enough that every strip's output equals a whole-photo run, so memory stays bounded.
 //  - homo_threshold, homo_set, homo_max, homo_max_corr, markesteijn_accu and markesteijn_final are merged into
 //    two kernels (xtHomoSet, xtFinal) that loop over the four directions; the results are the same.
-//  - The 3-pass variant (Markesteijn 3-pass, recalculate_green and homo_quench) is not translated.
+//  - 3 passes (pipelines built with the override PASSES = 3): eight directions instead of four, held as two sets
+//    of four buffers bound to the same bindings in turn (the host code's dev_rgb += 4); the derivatives and
+//    homogeneity maps of directions 4-7 in a second buffer each (drvB, homoB, homosumB); homo_threshold +
+//    homo_set for the eight directions in xtHomoSet8; homo_max, homo_max_corr, homo_quench, markesteijn_accu and
+//    markesteijn_final in xtFinal8a/xtFinal8b (directions 0-3, then 4-7, summed in darktable's order). The borders
+//    are darktable's 3-pass ones (xtrans.c process_markesteijn_cl lines 1660, 1798, 1824, 1844, 1881, 1921:
+//    pad_tile 17, pad_rb_g 5, pad_rb_br 5, pad_g22 4, pad_yuv 13, pad_homo 15; PAD_G_RECALC 6, line 25).
 
 struct Const {
   w: i32,              // photo width (each strip has the full width)
@@ -53,6 +60,21 @@ struct Vary {
 @group(0) @binding(11) var<storage, read_write> homo: array<vec4u>;     // homogeneity per direction
 @group(0) @binding(12) var<storage, read_write> homosum: array<vec4u>;  // 5×5 sums (shares drv's buffer)
 @group(0) @binding(13) var outTex: texture_storage_2d<rgba16float, write>;
+
+@group(0) @binding(14) var<storage, read_write> drvB: array<vec4f>;     // 3 passes: derivatives of directions 4-7
+@group(0) @binding(15) var<storage, read_write> homoB: array<vec4u>;    // 3 passes: homogeneity of directions 4-7
+@group(0) @binding(16) var<storage, read_write> homosumB: array<vec4u>; // 3 passes: their 5×5 sums
+
+/** Markesteijn passes, 1 or 3 (a pipeline-overridable constant; darktable's `passes`). */
+override PASSES: i32 = 1;
+// darktable's borders, which differ between 1 and 3 passes (process_markesteijn_cl).
+fn padRbG() -> i32 { return select(6, 5, PASSES > 1); }
+fn padRbBr() -> i32 { return select(6, 5, PASSES > 1); }
+fn padG22() -> i32 { return select(8, 4, PASSES > 1); }
+fn padYuv() -> i32 { return select(8, 13, PASSES > 1); }
+fn padHomo() -> i32 { return select(10, 15, PASSES > 1); }
+fn padTile() -> i32 { return select(12, 17, PASSES > 1); }
+const PAD_G_RECALC: i32 = 6;
 
 const FLT_MAX: f32 = 0x1.fffffep+127f;
 const FLT_MIN: f32 = 0x1p-126f;
@@ -253,7 +275,7 @@ fn xtGreen(@builtin(global_invocation_id) g: vec3u) {
 fn xtSolitary(@builtin(global_invocation_id) g: vec3u) {
   let x = i32(g.x);
   let y = i32(g.y);
-  if (outside(x, y, 6)) { return; } // pad_rb_g
+  if (outside(x, y, padRbG())) { return; }
   let ay = y + V.yoff;
   if ((x - C.sgx) % 3 != 0 || (ay - C.sgy) % 3 != 0) { return; }
   var h = fcx(ay, x + 1) ^ V.hcomp;
@@ -291,12 +313,12 @@ fn xtSolitary(@builtin(global_invocation_id) g: vec3u) {
   aux[i] = color;
 }
 
-// markesteijn_red_and_blue (lines 393-463): red at blue photosites and vice versa. Border 6 (pad_rb_br).
+// markesteijn_red_and_blue (lines 393-463): red at blue photosites and vice versa. Border pad_rb_br.
 @compute @workgroup_size(16, 16)
 fn xtRedBlue(@builtin(global_invocation_id) g: vec3u) {
   let x = i32(g.x);
   let y = i32(g.y);
-  if (outside(x, y, 6)) { return; }
+  if (outside(x, y, padRbBr())) { return; }
   let ay = y + V.yoff;
   let f = 2 - fcx(ay, x);
   if (f == 1) { return; }
@@ -318,12 +340,12 @@ fn xtRedBlue(@builtin(global_invocation_id) g: vec3u) {
   rgbA[i] = px;
 }
 
-// markesteijn_interpolate_twoxtwo (lines 466-555): red and blue inside the 2×2 blocks of green. Border 8 (pad_g22).
+// markesteijn_interpolate_twoxtwo (lines 466-555): red and blue inside the 2×2 blocks of green. Border pad_g22.
 @compute @workgroup_size(16, 16)
 fn xtTwoByTwo(@builtin(global_invocation_id) g: vec3u) {
   let x = i32(g.x);
   let y = i32(g.y);
-  if (outside(x, y, 8)) { return; }
+  if (outside(x, y, padG22())) { return; }
   let ay = y + V.yoff;
   if ((ay - C.sgy) % 3 == 0 || (x - C.sgx) % 3 == 0) { return; }
   let i = y * C.w + x;
@@ -350,12 +372,12 @@ fn xtTwoByTwo(@builtin(global_invocation_id) g: vec3u) {
   rgbA[i] = px;
 }
 
-// markesteijn_convert_yuv (lines 558-580): to YPbPr (ITU-R BT.2020). Border 8 (pad_yuv).
+// markesteijn_convert_yuv (lines 558-580): to YPbPr (ITU-R BT.2020). Border pad_yuv.
 @compute @workgroup_size(16, 16)
 fn xtYuv(@builtin(global_invocation_id) g: vec3u) {
   let x = i32(g.x);
   let y = i32(g.y);
-  if (outside(x, y, 8)) { return; }
+  if (outside(x, y, padYuv())) { return; }
   let i = y * C.w + x;
   let p = rgbA[i];
   let Y = 0.2627 * p.x + 0.6780 * p.y + 0.0593 * p.z;
@@ -364,12 +386,14 @@ fn xtYuv(@builtin(global_invocation_id) g: vec3u) {
 
 const DIRS = array<vec2i, 4>(vec2i(1, 0), vec2i(0, 1), vec2i(1, 1), vec2i(-1, 1));
 
-// markesteijn_differentiate (lines 582-642): second derivative of YPbPr along direction V.d. Border 8 (pad_yuv).
+// markesteijn_differentiate (lines 582-642): second derivative of YPbPr along direction V.d (dir[d & 3]), into
+// component d & 3 of `drv` (with 3 passes, directions 4-7 go to the second buffer, bound here in turn). Border
+// pad_yuv.
 @compute @workgroup_size(16, 16)
 fn xtDiff(@builtin(global_invocation_id) g: vec3u) {
   let x = i32(g.x);
   let y = i32(g.y);
-  if (outside(x, y, 8)) { return; }
+  if (outside(x, y, padYuv())) { return; }
   let i = y * C.w + x;
   let o = DIRS[V.d & 3];
   let c = auxAt(x, y).xyz;
@@ -377,17 +401,17 @@ fn xtDiff(@builtin(global_invocation_id) g: vec3u) {
   let b = auxAt(x - o.x, y - o.y).xyz;
   let e = 2.0 * c - a - b;
   var dv = drv[i];
-  dv[V.d] = sq(e.x) + sq(e.y) + sq(e.z);
+  dv[V.d & 3] = sq(e.x) + sq(e.y) + sq(e.z);
   drv[i] = dv;
 }
 
 // markesteijn_homo_threshold + markesteijn_homo_set (lines 645-733): in the 3×3 neighbourhood, how many
-// derivatives are within 8× the smallest one at this pixel, per direction. Border 10 (pad_homo).
+// derivatives are within 8× the smallest one at this pixel, per direction. Border pad_homo.
 @compute @workgroup_size(16, 16)
 fn xtHomoSet(@builtin(global_invocation_id) g: vec3u) {
   let x = i32(g.x);
   let y = i32(g.y);
-  if (outside(x, y, 10)) { return; }
+  if (outside(x, y, padHomo())) { return; }
   let i = y * C.w + x;
   let dv = drv[i];
   let tr = 8.0 * min(min(dv.x, dv.y), min(dv.z, dv.w));
@@ -400,12 +424,13 @@ fn xtHomoSet(@builtin(global_invocation_id) g: vec3u) {
   homo[i] = acc;
 }
 
-// markesteijn_homo_sum (lines 736-797): 5×5 sum of the homogeneity maps. Border 12 (pad_tile).
+// markesteijn_homo_sum (lines 736-797): 5×5 sum of the homogeneity maps. Border pad_tile. (3 passes: run twice,
+// the second time with homoB and homosumB bound as `homo` and `homosum`.)
 @compute @workgroup_size(16, 16)
 fn xtHomoSum(@builtin(global_invocation_id) g: vec3u) {
   let x = i32(g.x);
   let y = i32(g.y);
-  if (outside(x, y, 12)) { return; }
+  if (outside(x, y, padTile())) { return; }
   var acc = vec4u(0u);
   for (var v = -2; v <= 2; v++) {
     for (var h = -2; h <= 2; h++) {
@@ -416,12 +441,12 @@ fn xtHomoSum(@builtin(global_invocation_id) g: vec3u) {
 }
 
 // markesteijn_homo_max, markesteijn_homo_max_corr, markesteijn_accu and markesteijn_final (lines 800-845 and
-// 873-914): the average of the directions whose homogeneity is within 1/8 of the best. Border 12 (pad_tile).
+// 873-914): the average of the directions whose homogeneity is within 1/8 of the best. Border pad_tile.
 @compute @workgroup_size(16, 16)
 fn xtFinal(@builtin(global_invocation_id) g: vec3u) {
   let x = i32(g.x);
   let y = i32(g.y);
-  if (outside(x, y, 12)) { return; }
+  if (outside(x, y, padTile())) { return; }
   let ay = y + V.yoff;
   if (ay < V.out0 || ay >= V.out1) { return; }
   let i = y * C.w + x;
@@ -429,6 +454,123 @@ fn xtFinal(@builtin(global_invocation_id) g: vec3u) {
   var hmax = max(max(hs.x, hs.y), max(hs.z, hs.w));
   hmax -= hmax >> 3u;
   var sum = vec4f(0.0);
+  if (hs.x >= hmax) { sum += vec4f(rgb0[i].xyz, 1.0); }
+  if (hs.y >= hmax) { sum += vec4f(rgb1[i].xyz, 1.0); }
+  if (hs.z >= hmax) { sum += vec4f(rgb2[i].xyz, 1.0); }
+  if (hs.w >= hmax) { sum += vec4f(rgb3[i].xyz, 1.0); }
+  let px = select(vec3f(0.0), sum.xyz / sum.w, sum.w > 0.0);
+  textureStore(outTex, vec2i(x, ay), toWorking(max(px, vec3f(0.0))));
+}
+
+// ---------------------------------------------------------------- Markesteijn 3-pass only
+
+fn pxOf(k: i32, x: i32, y: i32) -> vec4f {
+  if (!inStrip(x, y)) { return vec4f(0.0); }
+  let i = y * C.w + x;
+  switch k {
+    case 0: { return rgb0[i]; }
+    case 1: { return rgb1[i]; }
+    case 2: { return rgb2[i]; }
+    default: { return rgb3[i]; }
+  }
+}
+
+// markesteijn_recalculate_green (lines 349-390), passes 2 and 3: green at red/blue photosites again, from closer
+// photosites, for directions 1-3 (hexagon entries 3-5), clamped to the min/max green. It reads only green
+// photosites, whose green it doesn't write, so running it in parallel equals darktable's loop. Border
+// PAD_G_RECALC.
+@compute @workgroup_size(16, 16)
+fn xtRecalc(@builtin(global_invocation_id) g: vec3u) {
+  let x = i32(g.x);
+  let y = i32(g.y);
+  if (outside(x, y, PAD_G_RECALC)) { return; }
+  let ay = y + V.yoff;
+  let f = fcx(ay, x);
+  if (f == 1) { return; }
+  let i = y * C.w + x;
+  let mm = gminmax[i];
+  let b = select(0, 1, ((ay - C.sgy) % 3) == 0);
+  for (var d = 3; d < 6; d++) {
+    let id = (d - 2) ^ b;
+    let h = hexOf(ay, x, d);
+    let m2 = pxOf(id, x - 2 * h.x, y - 2 * h.y);
+    let p1 = pxOf(id, x + h.x, y + h.y);
+    let c0 = pxOf(id, x, y);
+    let val = m2.y + 2.0 * p1.y - m2[f] - 2.0 * p1[f] + 3.0 * c0[f];
+    setGreen(id, i, clamp(val / 3.0, mm.x, mm.y));
+  }
+}
+
+// markesteijn_homo_threshold + markesteijn_homo_set for eight directions: the threshold is 8× the smallest
+// derivative over all eight. Border pad_homo.
+@compute @workgroup_size(16, 16)
+fn xtHomoSet8(@builtin(global_invocation_id) g: vec3u) {
+  let x = i32(g.x);
+  let y = i32(g.y);
+  if (outside(x, y, padHomo())) { return; }
+  let i = y * C.w + x;
+  let da = drv[i];
+  let db = drvB[i];
+  let tr = 8.0 * min(min(min(da.x, da.y), min(da.z, da.w)), min(min(db.x, db.y), min(db.z, db.w)));
+  var acc = vec4u(0u);
+  var accB = vec4u(0u);
+  for (var v = -1; v <= 1; v++) {
+    for (var h = -1; h <= 1; h++) {
+      let j = (y + v) * C.w + x + h;
+      acc += select(vec4u(0u), vec4u(1u), drv[j] <= vec4f(tr));
+      accB += select(vec4u(0u), vec4u(1u), drvB[j] <= vec4f(tr));
+    }
+  }
+  homo[i] = acc;
+  homoB[i] = accB;
+}
+
+/**
+ * markesteijn_homo_max + homo_max_corr over the eight directions (the limit, from the sums before quenching, as
+ * darktable computes it), then markesteijn_homo_quench: of each pair d, d + 4 only the more homogeneous one
+ * counts, both when equal. Returns the quenched sums of directions 0-3, of 4-7, and the limit.
+ */
+fn quenched(i: i32) -> array<vec4u, 3> {
+  let a = homosum[i];
+  let b = homosumB[i];
+  var hmax = max(max(max(a.x, a.y), max(a.z, a.w)), max(max(b.x, b.y), max(b.z, b.w)));
+  hmax -= hmax >> 3u;
+  let qa = select(a, vec4u(0u), a < b);
+  let qb = select(b, vec4u(0u), a > b);
+  return array<vec4u, 3>(qa, qb, vec4u(hmax));
+}
+
+// markesteijn_accu for directions 0-3 (the first set of buffers, bound as rgb0…rgb3): the running sum in `aux`.
+@compute @workgroup_size(16, 16)
+fn xtFinal8a(@builtin(global_invocation_id) g: vec3u) {
+  let x = i32(g.x);
+  let y = i32(g.y);
+  if (outside(x, y, padTile())) { return; }
+  let i = y * C.w + x;
+  let q = quenched(i);
+  let hs = q[0];
+  let hmax = q[2].x;
+  var sum = vec4f(0.0);
+  if (hs.x >= hmax) { sum += vec4f(rgb0[i].xyz, 1.0); }
+  if (hs.y >= hmax) { sum += vec4f(rgb1[i].xyz, 1.0); }
+  if (hs.z >= hmax) { sum += vec4f(rgb2[i].xyz, 1.0); }
+  if (hs.w >= hmax) { sum += vec4f(rgb3[i].xyz, 1.0); }
+  aux[i] = sum;
+}
+
+// markesteijn_accu for directions 4-7 (the second set, bound as rgb0…rgb3), then markesteijn_final.
+@compute @workgroup_size(16, 16)
+fn xtFinal8b(@builtin(global_invocation_id) g: vec3u) {
+  let x = i32(g.x);
+  let y = i32(g.y);
+  if (outside(x, y, padTile())) { return; }
+  let ay = y + V.yoff;
+  if (ay < V.out0 || ay >= V.out1) { return; }
+  let i = y * C.w + x;
+  let q = quenched(i);
+  let hs = q[1];
+  let hmax = q[2].x;
+  var sum = aux[i];
   if (hs.x >= hmax) { sum += vec4f(rgb0[i].xyz, 1.0); }
   if (hs.y >= hmax) { sum += vec4f(rgb1[i].xyz, 1.0); }
   if (hs.z >= hmax) { sum += vec4f(rgb2[i].xyz, 1.0); }

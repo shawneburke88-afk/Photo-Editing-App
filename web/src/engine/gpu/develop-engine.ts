@@ -19,7 +19,8 @@ import type { LensMeta } from '../lens/meta'
 import type { DisplayUniforms } from '../develop/settings'
 import { inverseLoglogistic, type SigmoidCurve } from '../color/sigmoid'
 import type { RgbImage, SensorData } from '../raw/types'
-import { MARKESTEIJN_BORDER, MARKESTEIJN_OVERLAP, markesteijnHexagons, markesteijnStrips, packXtrans } from '../raw/xtrans'
+import { markesteijnHexagons, markesteijnStrips, markesteijnTiling, packXtrans } from '../raw/xtrans'
+import type { DemosaicMethod } from '../develop/settings'
 import displayWgsl from './develop-display.wgsl?raw'
 import mipWgsl from './mip.wgsl?raw'
 import rawWgsl from './raw-pipeline.wgsl?raw'
@@ -40,10 +41,11 @@ export interface RawStageOptions {
   highlightClip: number
   /**
    * 'rcd': the sensor's high-quality method (RCD for Bayer, Markesteijn 1-pass for X-Trans, as darktable picks a
-   * Bayer method's X-Trans counterpart in src/iop/demosaic.c, lines 1505-1506); 'bilinear': the fast one (bilinear,
-   * or linear interpolation for X-Trans). Linear DNGs aren't demosaiced.
+   * Bayer method's X-Trans counterpart in src/iop/demosaic.c, lines 1505-1506); 'markesteijn3': Markesteijn 3-pass
+   * on X-Trans, RCD on Bayer (darktable maps an X-Trans method on a Bayer photo to RCD, lines 1503-1504);
+   * 'bilinear': the fast one (bilinear, or linear interpolation for X-Trans). Linear DNGs aren't demosaiced.
    */
-  demosaic: 'rcd' | 'bilinear'
+  demosaic: DemosaicMethod
   /** White-balanced camera RGB → Rec.2020 for this white balance (the DNG colour model); else the sensor's matrix. */
   camToWorking?: Mat3
 }
@@ -127,7 +129,7 @@ const XTRANS_CONST_SIZE = 16 + 16 + 48 + 36 * 16
 const XTRANS_STRIP_BUDGET = 192 * 1024 * 1024
 
 type Res = GPUBindingResource
-type ShaderSet = 'raw' | 'rawX' | 'linear' | 'xtrans'
+type ShaderSet = 'raw' | 'rawX' | 'linear' | 'xtrans' | 'xtrans3'
 const B = (b: GPUBuffer): Res => ({ buffer: b })
 
 // Without explicit indicators (e.g. for Auto), clipping is counted on screen values only: sensor
@@ -159,6 +161,8 @@ export class DevelopEngine {
   private xtransModule: GPUShaderModule | null = null
   /** Testing: output rows per X-Trans demosaic strip (null = chosen from the photo's width and a memory budget). */
   xtransStripRows: number | null = null
+  /** Testing: rows read above and below each X-Trans strip (null = engine/raw/xtrans.ts markesteijnTiling). */
+  xtransOverlap: number | null = null
   private readonly rawPipes = new Map<string, GPUComputePipeline>()
   private readonly displayPipe: GPURenderPipeline
   private readonly offscreenPipe: GPURenderPipeline
@@ -316,10 +320,12 @@ export class DevelopEngine {
     if (!p) {
       const module = set === 'linear'
         ? (this.linearModule ??= this.device.createShaderModule({ code: rawLinearWgsl }))
-        : set === 'xtrans'
+        : set === 'xtrans' || set === 'xtrans3'
           ? (this.xtransModule ??= this.device.createShaderModule({ code: xtransWgsl }))
           : this.rawModule
-      const compute: GPUProgrammableStage = set === 'rawX' ? { module, entryPoint, constants: { XTRANS: 1 } } : { module, entryPoint }
+      const compute: GPUProgrammableStage = set === 'rawX'
+        ? { module, entryPoint, constants: { XTRANS: 1 } }
+        : set === 'xtrans3' ? { module, entryPoint, constants: { PASSES: 3 } } : { module, entryPoint }
       p = this.device.createComputePipeline({ layout: 'auto', compute })
       this.rawPipes.set(key, p)
     }
@@ -667,7 +673,7 @@ export class DevelopEngine {
       // 3. Demosaic → scene-linear Rec.2020
       if (xtrans) {
         this.encodeXtrans(enc, hl, out, opts.demosaic, temps)
-      } else if (opts.demosaic === 'rcd' && w > 32 && h > 32) {
+      } else if ((opts.demosaic === 'rcd' || opts.demosaic === 'markesteijn3') && w > 32 && h > 32) {
         const rgb0 = buf(px)
         const rgb1 = buf(px)
         const rgb2 = buf(px)
@@ -715,7 +721,8 @@ export class DevelopEngine {
 
   /**
    * X-Trans demosaic (demosaic-xtrans.wgsl): linear interpolation everywhere (darktable's border and its fast
-   * method), then, for the default method, Markesteijn 1-pass inside a 12-pixel border, strip by strip.
+   * method), then, for the high-quality methods, Markesteijn 1-pass inside a 12-pixel border or 3-pass inside a
+   * 17-pixel one, strip by strip.
    */
   private encodeXtrans(enc: GPUCommandEncoder, hl: GPUBuffer, out: Res, method: RawStageOptions['demosaic'], temps: GPUBuffer[]) {
     const { device } = this
@@ -736,65 +743,98 @@ export class DevelopEngine {
     device.queue.writeBuffer(constBuf, 0, c)
     temps.push(constBuf)
     const C = B(constBuf)
+
+    const passes = method === 'markesteijn3' ? 3 : 1
+    const set: ShaderSet = passes === 3 ? 'xtrans3' : 'xtrans'
     const run = (entry: string, bindings: Record<number, Res>, x: number, y: number) =>
-      this.dispatch(enc, this.pipe(entry, 'xtrans'), bindings, x, y)
+      this.dispatch(enc, this.pipe(entry, set), bindings, x, y)
 
     run('xtLinear', { 0: C, 2: B(hl), 13: out }, w, h)
-    if (method !== 'rcd' || w <= 2 * MARKESTEIJN_BORDER + 6 || h <= 2 * MARKESTEIJN_BORDER + 6) return
+    const tiling = markesteijnTiling(passes)
+    if (method === 'bilinear' || w <= 2 * tiling.border + 6 || h <= 2 * tiling.border + 6) return
+    const overlap = this.xtransOverlap ?? tiling.overlap
 
-    // About 120 bytes per strip pixel: four RGB directions (64), min/max green (8), YPbPr (16), derivatives (16,
-    // later the homogeneity sums) and homogeneity (16).
+    // Bytes per strip pixel: 1 pass about 120 (four RGB directions 64, min/max green 8, YPbPr 16, derivatives 16,
+    // later the homogeneity sums, and homogeneity 16); 3 passes 216 (eight directions 128, and the derivatives and
+    // homogeneity of directions 4-7 in second buffers, 32).
+    const perPixel = passes === 3 ? 216 : 120
     const lim = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize)
-    const byBudget = Math.floor(XTRANS_STRIP_BUDGET / (120 * w))
-    const byLimit = Math.floor(lim / (16 * w)) - 2 * MARKESTEIJN_OVERLAP
-    const strips = markesteijnStrips(h, Math.max(6, this.xtransStripRows ?? Math.min(byBudget, byLimit)))
+    const byBudget = Math.floor(XTRANS_STRIP_BUDGET / (perPixel * w))
+    const byLimit = Math.floor(lim / (16 * w)) - 2 * overlap
+    const strips = markesteijnStrips(h, Math.max(6, this.xtransStripRows ?? Math.min(byBudget, byLimit)), tiling.border, overlap)
     const n = w * Math.max(...strips.map((x) => x.inRows))
-    const sb = (bytesPerPixel: number) => {
-      const b = device.createBuffer({ size: Math.max(16, n * bytesPerPixel), usage: GPUBufferUsage.STORAGE })
+    const sb = (bytesPerPixel: number, usage = 0) => {
+      const b = device.createBuffer({ size: Math.max(16, n * bytesPerPixel), usage: GPUBufferUsage.STORAGE | usage })
       temps.push(b)
       return b
     }
-    const rgb = [sb(16), sb(16), sb(16), sb(16)]
+    // 3 passes: the first set of four directions is copied into the second (darktable's pass == 1 copy).
+    const copy = passes === 3 ? GPUBufferUsage.COPY_SRC : 0
+    const rgb = [sb(16, copy), sb(16, copy), sb(16, copy), sb(16, copy)]
     const gminmax = sb(8)
     const aux = sb(16)
     const drv = sb(16) // also the homogeneity sums, once the derivatives have been used
     const homo = sb(16)
+    const rgbB = passes === 3 ? [sb(16, GPUBufferUsage.COPY_DST), sb(16, GPUBufferUsage.COPY_DST), sb(16, GPUBufferUsage.COPY_DST), sb(16, GPUBufferUsage.COPY_DST)] : []
+    const drvB = passes === 3 ? sb(16) : null
+    const homoB = passes === 3 ? sb(16) : null
 
-    // Per strip and pass: the strip's rows and the pass's direction (solitary green, d = 0…5: direction (1, 0) or
-    // (0, 1) and colour complement 0 or 2, as the host loop of process_markesteijn_cl sets them, xtrans.c line 1808).
+    // Per strip and step: the strip's rows and the step's direction (solitary green, d = 0…5: direction (1, 0) or
+    // (0, 1) and colour complement 0 or 2, as the host loop of process_markesteijn_cl sets them, xtrans.c line 1808;
+    // d = 0…7 for the derivatives).
     const SLOT = 256
-    const vary = new Int32Array((strips.length * 6 * SLOT) / 4)
+    const NSLOT = 8
+    const vary = new Int32Array((strips.length * NSLOT * SLOT) / 4)
     strips.forEach((st, k) => {
-      for (let d = 0; d < 6; d++) {
+      for (let d = 0; d < NSLOT; d++) {
         const i = d % 2 === 0 ? 1 : 0
-        vary.set([st.inStart, st.inRows, st.outStart, st.outEnd, d, i, i ^ 1, d % 2 === 0 ? 0 : 2], ((k * 6 + d) * SLOT) / 4)
+        vary.set([st.inStart, st.inRows, st.outStart, st.outEnd, d, i, i ^ 1, d % 2 === 0 ? 0 : 2], ((k * NSLOT + d) * SLOT) / 4)
       }
     })
     const varyBuf = device.createBuffer({ size: vary.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     device.queue.writeBuffer(varyBuf, 0, vary)
     temps.push(varyBuf)
 
-    const RGB = { 4: B(rgb[0]), 5: B(rgb[1]), 6: B(rgb[2]), 7: B(rgb[3]) }
+    const bindSet = (b: GPUBuffer[]) => ({ 4: B(b[0]), 5: B(b[1]), 6: B(b[2]), 7: B(b[3]) })
+    const RGB = bindSet(rgb)
     // Solitary-green passes 0 and 1 write rgb 0 and 1; passes 2-3 and 4-5 (the better of each pair) rgb 2 and 3.
     const solitaryTarget = [0, 1, 2, 2, 3, 3]
     strips.forEach((st, k) => {
-      const V = (d: number): Res => ({ buffer: varyBuf, offset: (k * 6 + d) * SLOT, size: 32 })
+      const V = (d: number): Res => ({ buffer: varyBuf, offset: (k * NSLOT + d) * SLOT, size: 32 })
       const sh = st.inRows
       run('xtCopy', { 0: C, 1: V(0), 2: B(hl), ...RGB }, w, sh)
       run('xtGreenMinMax', { 0: C, 1: V(0), 4: B(rgb[0]), 8: B(gminmax) }, w, sh)
       run('xtGreen', { 0: C, 1: V(0), ...RGB, 8: B(gminmax) }, w, sh)
-      for (let d = 0; d < 6; d++) run('xtSolitary', { 0: C, 1: V(d), 3: B(rgb[solitaryTarget[d]]), 9: B(aux) }, w, sh)
-      for (let d = 0; d < 4; d++) run('xtRedBlue', { 0: C, 1: V(d), 3: B(rgb[d]) }, w, sh)
-      // 1 pass: the 2×2 green blocks for d = 0 and 2, into rgb 0 and 1 (as darktable and dcraw do).
-      run('xtTwoByTwo', { 0: C, 1: V(0), 3: B(rgb[0]) }, w, sh)
-      run('xtTwoByTwo', { 0: C, 1: V(2), 3: B(rgb[1]) }, w, sh)
-      for (let d = 0; d < 4; d++) {
-        run('xtYuv', { 0: C, 1: V(d), 3: B(rgb[d]), 9: B(aux) }, w, sh)
-        run('xtDiff', { 0: C, 1: V(d), 9: B(aux), 10: B(drv) }, w, sh)
+      // darktable's pass loop (process_markesteijn_cl lines 1770-1866); the second and third passes work on the
+      // second set of buffers, a copy of the first after pass 1.
+      for (let pass = 0; pass < passes; pass++) {
+        if (pass === 1) {
+          for (let d = 0; d < 4; d++) enc.copyBufferToBuffer(rgb[d], 0, rgbB[d], 0, rgb[d].size)
+        }
+        const cur = pass === 0 ? rgb : rgbB
+        if (pass > 0) run('xtRecalc', { 0: C, 1: V(0), ...bindSet(cur), 8: B(gminmax) }, w, sh)
+        for (let d = 0; d < 6; d++) run('xtSolitary', { 0: C, 1: V(d), 3: B(cur[solitaryTarget[d]]), 9: B(aux) }, w, sh)
+        for (let d = 0; d < 4; d++) run('xtRedBlue', { 0: C, 1: V(d), 3: B(cur[d]) }, w, sh)
+        // The 2×2 green blocks for d = 0, 2 (1 pass) or 0, 2, 4, 6 (3 passes) into rgb 0, 1 (, 2, 3), as darktable
+        // and dcraw do (ndir = 4 or 8).
+        for (let d = 0, j = 0; d < 4 * (passes === 3 ? 2 : 1); d += 2, j++) run('xtTwoByTwo', { 0: C, 1: V(d), 3: B(cur[j]) }, w, sh)
       }
-      run('xtHomoSet', { 0: C, 1: V(0), 10: B(drv), 11: B(homo) }, w, sh)
-      run('xtHomoSum', { 0: C, 1: V(0), 11: B(homo), 12: B(drv) }, w, sh)
-      run('xtFinal', { 0: C, 1: V(0), ...RGB, 12: B(drv), 13: out }, w, sh)
+      for (let d = 0; d < 4 * (passes === 3 ? 2 : 1); d++) {
+        const src = d < 4 ? rgb[d] : rgbB[d - 4]
+        run('xtYuv', { 0: C, 1: V(d), 3: B(src), 9: B(aux) }, w, sh)
+        run('xtDiff', { 0: C, 1: V(d), 9: B(aux), 10: B(d < 4 ? drv : drvB!) }, w, sh)
+      }
+      if (passes === 1) {
+        run('xtHomoSet', { 0: C, 1: V(0), 10: B(drv), 11: B(homo) }, w, sh)
+        run('xtHomoSum', { 0: C, 1: V(0), 11: B(homo), 12: B(drv) }, w, sh)
+        run('xtFinal', { 0: C, 1: V(0), ...RGB, 12: B(drv), 13: out }, w, sh)
+      } else {
+        run('xtHomoSet8', { 0: C, 1: V(0), 10: B(drv), 14: B(drvB!), 11: B(homo), 15: B(homoB!) }, w, sh)
+        run('xtHomoSum', { 0: C, 1: V(0), 11: B(homo), 12: B(drv) }, w, sh)
+        run('xtHomoSum', { 0: C, 1: V(0), 11: B(homoB!), 12: B(drvB!) }, w, sh)
+        run('xtFinal8a', { 0: C, 1: V(0), ...RGB, 12: B(drv), 16: B(drvB!), 9: B(aux) }, w, sh)
+        run('xtFinal8b', { 0: C, 1: V(0), ...bindSet(rgbB), 12: B(drv), 16: B(drvB!), 9: B(aux), 13: out }, w, sh)
+      }
     })
   }
 
