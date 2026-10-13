@@ -32,6 +32,8 @@ export interface CaptureRun {
   threshold: number
   /** TEST ONLY (the research mapping): a gain on the deconvolution's change; absent in the app. */
   gain?: number
+  /** TEST ONLY: the blur as two 1-D passes; absent in the app. */
+  separable?: boolean
 }
 
 export interface DetailRun {
@@ -87,6 +89,7 @@ export function detailRun(
       radius = { ...autoRadius, sigma: autoRadius.sigma * d.sharpen.radius }
       capture = { sigma: radius.sigma * scale, iterations: r.iterations, halo: r.halo, threshold: r.threshold, gain: r.gain }
     }
+    if (mappingForTests.separable) capture = { ...capture, separable: true }
   }
   let denoise: DenoiseRun | null = null
   let profile: ProfileChoice | null = null

@@ -337,6 +337,70 @@ fn blur9(x: i32, y: i32, which: u32) -> f32 {
   return val;
 }
 
+// ---- TEST ONLY (docs/research/DETAIL_MAPPING_BRIEF.md): the same blur as two 1-D passes. The 1-D weights are the
+// kernel's centre row, normalised; their outer product is the full square, without darktable's disc truncation.
+@group(0) @binding(15) var<storage, read_write> csH: array<f32>;
+
+/** 1 / the sum of the kernel's centre row (once per pixel and pass). */
+fn rowNorm(k: u32, bd: i32) -> f32 {
+  let base = KERNEL_ALIGN * k;
+  var s = 0.0;
+  for (var j = -bd; j <= bd; j++) { s += kernels[base + u32(abs(j))]; }
+  return 1.0 / s;
+}
+
+/** Horizontal pass of S.mult's buffer (0 = csT1, 1 = csT2) into csH, for every pixel. */
+@compute @workgroup_size(16, 16)
+fn csSepX(@builtin(global_invocation_id) id: vec3u) {
+  if (!inside(id)) { return; }
+  let x = i32(id.x);
+  let y = i32(id.y);
+  let k = kernelOf(x, y);
+  let bd = select(4, 2, k < SMALL_ULIM);
+  let w = i32(P.size.x);
+  let base = KERNEL_ALIGN * k;
+  let norm = rowNorm(k, bd);
+  var val = 0.0;
+  for (var ic = -bd; ic <= bd; ic++) {
+    let c = x + ic;
+    if (c < 0 || c >= w) { continue; }
+    let kv = kernels[base + u32(abs(ic))] * norm;
+    if (S.mult == 0) { val += kv * csT1[idx(c, y)]; } else { val += kv * csT2[idx(c, y)]; }
+  }
+  csH[idx(x, y)] = val;
+}
+
+fn sepY(x: i32, y: i32) -> f32 {
+  let k = kernelOf(x, y);
+  let bd = select(4, 2, k < SMALL_ULIM);
+  let h = i32(P.size.y);
+  let base = KERNEL_ALIGN * k;
+  let norm = rowNorm(k, bd);
+  var val = 0.0;
+  for (var ir = -bd; ir <= bd; ir++) {
+    let r = y + ir;
+    if (r < 0 || r >= h) { continue; }
+    val += kernels[base + u32(abs(ir))] * norm * csH[idx(x, r)];
+  }
+  return val;
+}
+
+@compute @workgroup_size(16, 16)
+fn csDivSep(@builtin(global_invocation_id) id: vec3u) {
+  if (!inside(id)) { return; }
+  let i = idx(i32(id.x), i32(id.y));
+  if (csBM[i] <= 0.0) { return; }
+  csT2[i] = csY[i] / max(sepY(i32(id.x), i32(id.y)), YMIN);
+}
+
+@compute @workgroup_size(16, 16)
+fn csMulSep(@builtin(global_invocation_id) id: vec3u) {
+  if (!inside(id)) { return; }
+  let i = idx(i32(id.x), i32(id.y));
+  if (csBM[i] <= 0.0) { return; }
+  csT1[i] *= sepY(i32(id.x), i32(id.y));
+}
+
 /** capture.cl `kernel_9x9_div`: tmp2 = Y / blur(tmp1) inside the mask. */
 @compute @workgroup_size(16, 16)
 fn csDiv(@builtin(global_invocation_id) id: vec3u) {

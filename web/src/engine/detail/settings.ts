@@ -212,7 +212,7 @@ export function captureParams(s: SharpenSettings, autoThreshold: number): { iter
  * TEST ONLY, not user-visible and not stored: switches the sharpening sliders to the research proposal's mapping so
  * it can be measured against the built one (docs/research/DETAIL_MAPPING_BRIEF.md). Always false in the app.
  */
-export const mappingForTests = { research: false }
+export const mappingForTests = { research: false, separable: false }
 
 /**
  * The research proposal (LightBench's own invention, not Lightroom's or darktable's): Amount → a gain on the

@@ -11,7 +11,7 @@ import detailWgsl from './detail.wgsl?raw'
 
 type Entry =
   | 'precondition' | 'decompose' | 'reduceFirst' | 'reduceSecond' | 'synthesize' | 'backtransform'
-  | 'csPrepare' | 'csVariance' | 'csMaskBlur' | 'csFinal' | 'csDiv' | 'csMul' | 'csResult'
+  | 'csPrepare' | 'csVariance' | 'csMaskBlur' | 'csFinal' | 'csDiv' | 'csMul' | 'csResult' | 'csSepX' | 'csDivSep' | 'csMulSep'
 
 const PARAMS_SIZE = 384
 const SCALE_SIZE = 32
@@ -187,9 +187,20 @@ export class DetailStage {
         const floor = Math.floor(c.iterations)
         // The estimate after ⌊n⌋ iterations (Yold for none) is kept in BX for fractional counts.
         if (floor === 0) enc.copyBufferToBuffer(Y, 0, BX, 0, n * 4)
+        // TEST ONLY: the separable blur (c.separable), for docs/research/DETAIL_MAPPING_BRIEF.md.
+        const H = c.separable ? buf() : null
+        const S0 = c.separable ? R(scaleBuf(0, 0, 0, 0, [0, 0, 0, 0])) : null
+        const S1 = c.separable ? R(scaleBuf(1, 0, 0, 0, [0, 0, 0, 0])) : null
         for (let k = 0; k < total; k++) {
-          dispatch('csDiv', { 0: R(P), 9: R(Y), 10: R(T1), 11: R(T2), 12: R(BM), 14: K })
-          dispatch('csMul', { 0: R(P), 10: R(T1), 11: R(T2), 12: R(BM), 14: K })
+          if (H && S0 && S1) {
+            dispatch('csSepX', { 0: R(P), 5: S0, 10: R(T1), 11: R(T2), 14: K, 15: R(H) })
+            dispatch('csDivSep', { 0: R(P), 9: R(Y), 11: R(T2), 12: R(BM), 14: K, 15: R(H) })
+            dispatch('csSepX', { 0: R(P), 5: S1, 10: R(T1), 11: R(T2), 14: K, 15: R(H) })
+            dispatch('csMulSep', { 0: R(P), 10: R(T1), 12: R(BM), 14: K, 15: R(H) })
+          } else {
+            dispatch('csDiv', { 0: R(P), 9: R(Y), 10: R(T1), 11: R(T2), 12: R(BM), 14: K })
+            dispatch('csMul', { 0: R(P), 10: R(T1), 11: R(T2), 12: R(BM), 14: K })
+          }
           if (k + 1 === floor) enc.copyBufferToBuffer(T1, 0, BX, 0, n * 4)
         }
       }
