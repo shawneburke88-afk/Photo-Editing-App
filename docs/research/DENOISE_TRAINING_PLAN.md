@@ -3,6 +3,15 @@
 **Prepared for:** Shawn Burke (LightBench) · **Date:** 2026-10-13 · **Status:** plan and draft scripts only. Nothing
 was trained, no dataset was downloaded, and no file in the repository was changed.
 
+> **Owner's decision (2026-10-13): RawNIND first, then decide.** Integrate RawNIND (darktable-ai's UtNet2, GPL-3.0)
+> as the opt-in AI Denoise in Phase 4. Measure its quality against LightBench's profiled denoise, and its speed and size
+> in the browser, on the owner's photos. Train our own model only if RawNIND falls short on browser speed or size, or
+> on the owner's cameras, and then start by fine-tuning on the owner's photos rather than training from scratch.
+> Reasoning: our model would train on the same RawNIND data with a smaller network, so it is unlikely to beat
+> RawNIND's quality. Its likely gains are size and speed (about 9 MB and about 1.8× fewer operations per photo,
+> calculated, not measured), fit to LightBench's pipeline, and the owner's own cameras. The licence gain is small,
+> because LightBench is GPL-3.0. This plan and `training/denoise/` stay on the shelf until then.
+
 **Builds on:** `docs/research/IMPROVEMENTS.md` §2 (row A1 and the compute basis in §2.0),
 `docs/research/PHASE4_MODELS.md` §5 (and the owner's decision accepting RawNIND under GPL-3.0),
 `docs/research/PHASE4_GROUNDWORK.md` (hosting, consent download, runtime), `docs/research/DETAIL_DENOISE_SHARPEN.md`

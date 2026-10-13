@@ -418,6 +418,7 @@ For models, add a SHA-256 check and a licence dialog before download, as LightCr
 
 - **GPL-3.0 weights** (RawNIND for AI Denoise): to be decided when Phase 4 starts.
 - **RawNIND (2026-10-13, after the Cowork report and the groundwork in [PHASE4_GROUNDWORK.md](PHASE4_GROUNDWORK.md)):** accepted under **GPL-3.0**. Its weights are offered as an optional download with credit given. Under either reading of "dual licensed GPL3 + CC-BY-4.0" GPL-3.0 use is allowed, and LightBench is itself GPL-3.0, so the author is not being asked. This is the one exception to the permissive-only rule for models. Not a legal opinion.
+- **AI denoise order (2026-10-13):** RawNIND first, as the opt-in AI Denoise; measure it against the profiled denoise on the owner's photos; train our own ([DENOISE_TRAINING_PLAN.md](DENOISE_TRAINING_PLAN.md)) only if RawNIND falls short on browser speed or size, or on the owner's cameras.
 - The other open questions below are taken up when Phase 4 starts. The depth-of-field approach is in [DEPTH_OF_FIELD.md](DEPTH_OF_FIELD.md); its "blur grows in front of and behind the focus plane" requirement is the owner's (2026-10-12/13).
 - Sources marked unverified or "from search results" could not be opened from the build machine (the environment's network policy blocks those sites).
 - **After the Cowork report (2026-10-13), no-AI Remove:** PR #36's search was reviewed against claim 1 of US 8,285,055
