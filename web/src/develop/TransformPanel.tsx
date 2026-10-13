@@ -2,6 +2,7 @@
 // Lightroom's Transform sliders. What each mode does is in engine/develop/upright.ts; DevelopView runs them.
 
 import { DEFAULT_TRANSFORM, SCALE_RANGE, UPRIGHT_MODES, type TransformSettings, type UprightMode } from '../engine/develop/upright'
+import { lightroomNote } from '../sidecar/lightroom'
 import { withKey } from '../settings/shortcuts'
 import { HELP } from './help'
 import { Slider } from './Slider'
@@ -62,6 +63,9 @@ export function TransformPanel({ transform, focal, busy, message, summary, guidi
         {busy && <p className="muted small crop-note">Looking for straight lines…</p>}
         {!busy && message && <p className={`small crop-note ${message.warn ? 'upright-warn' : 'muted'}`} role="status">{message.text}</p>}
         {!busy && summary && <p className="muted small crop-note">{summary}</p>}
+        {!busy && !guiding && lightroomNote(transform) && (
+          <p className={`small crop-note ${transform?.lightroom === 'guided' ? 'upright-warn' : 'muted'}`} data-note="lightroom">{lightroomNote(transform)}</p>
+        )}
         {focal === null && <p className="muted small crop-note" title="darktable rotate and perspective assumes 28 mm when the file gives no focal length">No focal length in the file: assuming 28 mm.</p>}
         {SLIDERS.map((s) => (
           <Slider

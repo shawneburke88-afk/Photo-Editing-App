@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.4.3",
+    "date": "2026-10-13",
+    "newFeatures": [
+      "Crops, straightening, rotation and flips made in Lightroom now appear in LightBench, read from the photo's .xmp file.",
+      "A crop or rotation you change in LightBench is written back to Lightroom's own fields in .xmp files that already hold Lightroom settings. Lightroom's other settings are left exactly as they were, and opening a photo never rewrites them.",
+      "An Upright setting from Lightroom is redone with LightBench's own Upright, which may differ slightly from Lightroom's; the Transform section says so. Guided Upright lines from Lightroom can't be imported.",
+      "If you change a crop in Lightroom, LightBench notices, and Read changes brings it in."
+    ],
+    "bugFixes": [
+      "After the graphics card resets, Paste, Sync and other background developing start again instead of failing for every remaining photo."
+    ]
+  },
+  {
     "version": "0.4.2",
     "date": "2026-10-13",
     "newFeatures": [

@@ -11,6 +11,10 @@ import { baseNameOf, dateFolder, extensionOf, JPEG_EXTENSIONS, joinPath, renamed
 import type { ScannedFile } from './scan'
 import { fullSidecarName, sidecarCandidates, stemOwners, stemSidecarName } from '../sidecar/naming'
 import { readXmp, type SidecarRead } from '../sidecar/xmp'
+import { geometryOf, lrDiffers, lrFrame, lrKey, lrState, parseLrKey, sameState } from '../sidecar/lightroom'
+import { batch, LIGHTROOM_STEP } from '../develop/batch'
+import { normalizeSettings } from '../engine/develop/settings'
+import { isRawFile } from '../engine/raw/decoder'
 
 export interface ImportItem {
   file: ScannedFile
@@ -122,7 +126,35 @@ export async function applySidecar(catalog: Catalog, id: number, text: string, b
     const history = JSON.stringify({ steps: [{ label: 'From sidecar', settings: JSON.parse(r.develop) }], index: 0 })
     await catalog.saveEdit(id, r.develop, history)
   }
+  await readLightroomGeometry(catalog, id, r)
   return r
+}
+
+/**
+ * Lightroom's crop, straighten, orientation and Transform (sidecar/lightroom.ts), when they would change the photo.
+ * They are applied by the background developer, which also solves a Lightroom Upright mode again on the photo and
+ * makes the thumbnail. A LightBench edit in the same sidecar wins (so edits saved before LightBench read these fields
+ * stay as they were), unless Lightroom changed its fields after LightBench last wrote them (the marker).
+ */
+async function readLightroomGeometry(catalog: Catalog, id: number, r: SidecarRead) {
+  const lr = r.lightroom
+  if (!lr || lr.applied || !Object.keys(lr.fields).length) return
+  const p = await catalog.getPhoto(id)
+  if (!p) return
+  const frame = lrFrame(p)
+  const state = lrState(lr.fields, frame)
+  if (r.develop) {
+    const marker = parseLrKey(lr.marker)
+    if (!marker || sameState(marker, state)) return
+  }
+  if (!lrDiffers(geometryOf(r.develop), state, frame)) return
+  const kind = isRawFile(p.fileName) ? 'raw' : 'rgb'
+  batch.run({
+    label: LIGHTROOM_STEP,
+    ids: [id],
+    clip: { settings: normalizeSettings(null, kind), keys: [], rerunAuto: false, sourceKind: kind, sourceName: p.fileName },
+    lightroom: { [id]: lrKey(state) },
+  })
 }
 
 /**

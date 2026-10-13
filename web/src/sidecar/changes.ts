@@ -17,6 +17,7 @@
 
 import type { MetadataKey, PhotoMetadata } from '../catalog/types'
 import { creatorList, EMPTY_METADATA, joinCreators, METADATA_KEYS } from '../library/metadata'
+import { geometryOf, lrKey, lrState, sameLrKey, toLightroom, type LrFrame } from './lightroom'
 import type { SidecarRead } from './xmp'
 
 /** The fields a sidecar is compared on: the standard ones, and LightBench's develop settings. */
@@ -32,10 +33,15 @@ export interface SidecarFields {
   metadata: PhotoMetadata
   /** LightBench's develop settings (JSON, key order normalised), or null when the sidecar has none. */
   develop: string | null
+  /**
+   * Lightroom's crop, orientation and Transform (sidecar/lightroom.ts `lrKey`, every field resolved). Undefined in
+   * records made before LightBench read them, and when the photo's size isn't known: then it isn't compared.
+   */
+  geometry?: string
 }
 
-/** A field that can differ: the rating, flag, label, keywords, develop settings, or one metadata field. */
-export type FieldKey = 'rating' | 'flag' | 'color' | 'keywords' | 'develop' | MetadataKey
+/** A field that can differ: the rating, flag, label, keywords, develop settings, Lightroom's geometry, or one metadata field. */
+export type FieldKey = 'rating' | 'flag' | 'color' | 'keywords' | 'develop' | 'geometry' | MetadataKey
 
 /** What the catalog remembers about a photo's sidecar file. */
 export interface SidecarState {
@@ -71,9 +77,13 @@ function normalMetadata(m: Partial<PhotoMetadata> | undefined): PhotoMetadata {
   return out
 }
 
-/** The fields as a sidecar says them (readXmp's result). Missing stars, label, keywords or metadata count as none. */
-export function fieldsFromRead(r: SidecarRead): SidecarFields {
-  return {
+/**
+ * The fields as a sidecar says them (readXmp's result). Missing stars, label, keywords or metadata count as none.
+ * With the photo's `frame`, Lightroom's geometry too (absent fields resolved as Lightroom shows them; an
+ * already-applied file's settings count as none).
+ */
+export function fieldsFromRead(r: SidecarRead, frame?: LrFrame): SidecarFields {
+  const out: SidecarFields = {
     rating: r.rating ?? 0,
     flag: r.flag ?? null,
     color: r.color ?? 0,
@@ -81,18 +91,28 @@ export function fieldsFromRead(r: SidecarRead): SidecarFields {
     metadata: normalMetadata(r.metadata),
     develop: canonical(r.develop),
   }
+  if (frame) out.geometry = lrKey(lrState(r.lightroom && !r.lightroom.applied ? r.lightroom.fields : undefined, frame))
+  return out
 }
 
-/** LightBench's own values for a photo, as the catalog has them. */
-export function fieldsFromCatalog(c: { rating: number; flag: number; color: number; keywords: string[]; metadata: PhotoMetadata; develop: string | null }): SidecarFields {
-  return { rating: c.rating, flag: c.flag, color: c.color, keywords: c.keywords, metadata: normalMetadata(c.metadata), develop: canonical(c.develop) }
+/** The geometry of LightBench's develop settings (JSON) as Lightroom's fields would state it. */
+export const geometryKey = (develop: string | null, frame: LrFrame): string => lrKey(toLightroom(geometryOf(develop), frame))
+
+/** LightBench's own values for a photo, as the catalog has them (with `frame`, its geometry as Lightroom's fields). */
+export function fieldsFromCatalog(c: { rating: number; flag: number; color: number; keywords: string[]; metadata: PhotoMetadata; develop: string | null }, frame?: LrFrame): SidecarFields {
+  const out: SidecarFields = { rating: c.rating, flag: c.flag, color: c.color, keywords: c.keywords, metadata: normalMetadata(c.metadata), develop: canonical(c.develop) }
+  if (frame) out.geometry = geometryKey(c.develop, frame)
+  return out
 }
 
 export function parseFields(json: string | null): SidecarFields | null {
   if (!json) return null
   try {
     const f = JSON.parse(json) as SidecarFields
-    return f && typeof f.rating === 'number' && Array.isArray(f.keywords) && f.metadata ? { ...f, metadata: normalMetadata(f.metadata) } : null
+    if (!(f && typeof f.rating === 'number' && Array.isArray(f.keywords) && f.metadata)) return null
+    const out: SidecarFields = { ...f, metadata: normalMetadata(f.metadata) }
+    if (typeof out.geometry !== 'string') delete out.geometry
+    return out
   } catch {
     return null
   }
@@ -115,6 +135,8 @@ export function diffFields(a: SidecarFields, b: SidecarFields): FieldKey[] {
   if (!sameKeywords(a.keywords, b.keywords)) out.push('keywords')
   for (const k of METADATA_KEYS) if (a.metadata[k] !== b.metadata[k]) out.push(k)
   if (a.develop !== b.develop) out.push('develop')
+  // Lightroom's geometry counts only when both sides know it (old records don't).
+  if (a.geometry !== undefined && b.geometry !== undefined && !sameLrKey(a.geometry, b.geometry)) out.push('geometry')
   return out
 }
 
@@ -132,6 +154,12 @@ export function resolve(theirs: SidecarFields, base: SidecarFields): SidecarFiel
     develop: theirs.develop ?? base.develop,
   }
 }
+
+/**
+ * A record made before LightBench read Lightroom's geometry has none: it is taken to be what the file says now, so
+ * a Lightroom crop that LightBench didn't read before isn't reported as a new change by another app.
+ */
+const withGeometry = (base: SidecarFields, theirs: SidecarFields): SidecarFields => (base.geometry === undefined ? { ...base, geometry: theirs.geometry } : base)
 
 /** Whether the sidecar file must be read to know if it changed. */
 export function needsRead(state: Pick<SidecarState, 'modified' | 'size'>, file: { lastModified: number; size: number }): boolean {
@@ -157,7 +185,7 @@ export function judge(state: SidecarState, file: { lastModified: number }, their
     const since = Math.max(state.writtenAt ?? 0, state.importedAt) * 1000
     if (file.lastModified <= since + NEWER_MS) return { external: false, record: resolve(theirsRead, ours) }
   }
-  const base = recorded ?? ours
+  const base = recorded ? withGeometry(recorded, theirsRead) : ours
   const theirs = resolve(theirsRead, base)
   const changed = diffFields(base, theirs)
   if (!changed.length || !diffFields(ours, theirs).length) return { external: false, record: theirs }
@@ -176,6 +204,8 @@ export interface ReadPatch {
   metadata: Partial<PhotoMetadata>
   /** Develop settings to add to the photo's history as a new step. */
   develop?: string
+  /** Lightroom's geometry (lrKey) to apply to the photo, when Lightroom changed its crop, orientation or Transform. */
+  geometry?: string
   /** The sidecar's fields, to remember as the new base. */
   record: SidecarFields
 }
@@ -186,7 +216,7 @@ export interface ReadPatch {
  * keywords LightBench added meanwhile stay.
  */
 export function mergeForRead(recorded: SidecarFields | null, ours: SidecarFields, theirsRead: SidecarFields): ReadPatch {
-  const base = recorded ?? ours
+  const base = recorded ? withGeometry(recorded, theirsRead) : ours
   const theirs = resolve(theirsRead, base)
   const patch: ReadPatch = { addKeywords: [], removeKeywords: [], metadata: {}, record: theirs }
   const changed = new Set(diffFields(base, theirs))
@@ -202,5 +232,6 @@ export function mergeForRead(recorded: SidecarFields | null, ours: SidecarFields
   }
   for (const k of METADATA_KEYS) if (changed.has(k) && theirs.metadata[k] !== ours.metadata[k]) patch.metadata[k] = theirs.metadata[k]
   if (changed.has('develop') && theirs.develop && theirs.develop !== ours.develop) patch.develop = theirs.develop
+  if (changed.has('geometry') && theirs.geometry && !sameLrKey(theirs.geometry, ours.geometry)) patch.geometry = theirs.geometry
   return patch
 }

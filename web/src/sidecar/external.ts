@@ -3,6 +3,7 @@
 
 import type { Catalog } from '../catalog/client'
 import { fieldsFromCatalog, fieldsFromRead, judge, needsRead } from './changes'
+import { lrFrame } from './lightroom'
 import { sidecarCandidates } from './naming'
 import { isValidXmp, readXmp } from './xmp'
 
@@ -24,7 +25,7 @@ export async function locateSidecar(dir: FileSystemDirectoryHandle, photoName: s
 }
 
 export const oursOf = (src: Source) =>
-  fieldsFromCatalog({ rating: src.photo.rating, flag: src.photo.flag, color: src.photo.color, keywords: src.keywords, metadata: src.metadata, develop: src.settings })
+  fieldsFromCatalog({ rating: src.photo.rating, flag: src.photo.flag, color: src.photo.color, keywords: src.keywords, metadata: src.metadata, develop: src.settings }, lrFrame(src.photo))
 
 /**
  * Looks at a photo's sidecar file. 'same': unchanged since LightBench last read or wrote it (not read); 'adopted':
@@ -40,7 +41,7 @@ export async function inspectSidecar(catalog: Catalog, src: Source, file: File):
   if (!needsRead(src.sidecar, file)) return 'same'
   const text = await file.text()
   if (!isValidXmp(text)) return 'unreadable'
-  const verdict = judge(src.sidecar, file, fieldsFromRead(readXmp(text)), oursOf(src))
+  const verdict = judge(src.sidecar, file, fieldsFromRead(readXmp(text), lrFrame(src.photo)), oursOf(src))
   if (verdict.external) {
     await catalog.setSidecarExternal([id], true)
     externalChanges.add([id])

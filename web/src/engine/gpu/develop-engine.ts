@@ -315,6 +315,11 @@ export class DevelopEngine {
     return !this.lost
   }
 
+  /** The GPU device was lost (a driver reset, or the browser reclaimed it); a new engine is needed. */
+  get isLost(): boolean {
+    return this.lost
+  }
+
   private checkAlive() {
     if (this.lost) throw new Error('The graphics device was lost (driver reset). Reload the page to continue.')
   }
