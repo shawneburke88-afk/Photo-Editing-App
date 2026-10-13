@@ -14,6 +14,7 @@ import { CURRENT_PROCESS, processParams, validProcess, type ToneMask } from './p
 import { normalizeDetail, RAW_DETAIL, rawDetailFor, type DetailSettings } from '../detail/settings'
 import { normalizeToneCurve, toneCurveGpu, type ToneCurveGpu, type ToneCurveSettings } from './tone-curve'
 import { normalizeSpots, type Spot } from './spots'
+import { colourMixerGpu, normalizeColourMixer, type ColourMixerGpu, type ColourMixerSettings } from './colour-mixer'
 
 /**
  * The demosaic method (Develop › Advanced). The stored value names the method for the photo's sensor as darktable
@@ -86,6 +87,11 @@ export interface DevelopSettings {
    * when untouched or reset, so such an edit is exactly one made before the Tone Curve existed (and renders as one).
    */
   toneCurve?: ToneCurveSettings
+  /**
+   * The Colour Mixer and Point Color (colour-mixer.ts; PHASE3.md Part 15), before the sigmoid. Absent when untouched or
+   * reset, so such an edit is exactly one made before the mixer existed (and renders as one).
+   */
+  colourMixer?: ColourMixerSettings
   /**
    * Remove, Heal and Clone spots (spots.ts), in the order they were made. Optional: edits without spots have no
    * such field at all, so they stay exactly as they were (and render byte-identically).
@@ -175,6 +181,10 @@ export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined
   const tc = normalizeToneCurve(s?.toneCurve)
   if (tc) out.toneCurve = tc
   else delete out.toneCurve
+  // The same for the Colour Mixer.
+  const cm = normalizeColourMixer(s?.colourMixer)
+  if (cm) out.colourMixer = cm
+  else delete out.colourMixer
   const spots = normalizeSpots(s?.spots)
   if (spots) out.spots = spots
   else delete out.spots
@@ -220,6 +230,13 @@ export interface DisplayUniforms {
   detailMask?: boolean
   /** The Tone Curve's lookup table and options, or null when it changes nothing (the shader skips it). */
   toneCurve: ToneCurveGpu | null
+  /** The Colour Mixer's tables and parameters, or null when it changes nothing (the shader skips it). */
+  colourMixer: ColourMixerGpu | null
+  /**
+   * The mixer's visualize view (a view only, like `detailMask`): 1–8 shows a band's colours and greys the rest, 9–16 a
+   * Point Color sample's range.
+   */
+  mixerVisualize?: number
   /** Remove, Heal and Clone spots; absent when there are none. */
   spots?: Spot[]
 
@@ -245,6 +262,7 @@ export function displayUniforms(s: DevelopSettings): DisplayUniforms {
     geometry: s.geometry ?? DEFAULT_GEOMETRY,
     ...(s.detail ? { detail: s.detail } : {}),
     toneCurve: toneCurveGpu(s.toneCurve),
+    colourMixer: colourMixerGpu(s.colourMixer),
     ...(s.spots?.length ? { spots: s.spots } : {}),
   }
 }

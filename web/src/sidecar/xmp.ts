@@ -16,7 +16,7 @@
 
 import type { MetadataKey, PhotoMetadata } from '../catalog/types'
 import { creatorList, joinCreators, METADATA_KEYS } from '../library/metadata'
-import { LR_DETAIL_FIELDS, lrValues, NS_CRS, NS_TIFF, type LrFields, type LrRead, type LrWritePlan } from './lightroom'
+import { LR_DETAIL_FIELDS, LR_HSL_FIELDS, lrValues, NS_CRS, NS_TIFF, type LrFields, type LrRead, type LrWritePlan } from './lightroom'
 import { lrToneValues, parseLrPoints, type LrToneFields, type LrToneRead, type LrToneWritePlan } from './lightroomCurve'
 
 export const NS = {
@@ -373,7 +373,7 @@ export function writeXmp(existing: string | null, data: SidecarData, now = new D
   const meta = data.metadata
   const metadataSame = !meta || METADATA_KEYS.every((k) => getMetadataField(doc, k) === wantedField(meta, k))
   const lr = data.lightroom
-  const lrSame = !lr || lr.groups.every((g) => lrValues(lr.state, g, lr.detailFields).every(([ns, local, value]) => getProp(doc, ns, local) === value))
+  const lrSame = !lr || lr.groups.every((g) => lrValues(lr.state, g, lr.detailFields, lr.hslFields).every(([ns, local, value]) => getProp(doc, ns, local) === value))
   const tone = data.lightroomTone
   const toneSame =
     !tone ||
@@ -400,7 +400,7 @@ export function writeXmp(existing: string | null, data: SidecarData, now = new D
   if (lr && !lrSame) {
     // Lightroom's fields are changed where they are (attribute or element), so the file keeps its layout; new ones join
     // the description that already holds Camera Raw settings.
-    for (const g of lr.groups) for (const [ns, local, value] of lrValues(lr.state, g, lr.detailFields)) setInPlace(doc, ns, ns === NS_TIFF ? 'tiff' : 'crs', local, value)
+    for (const g of lr.groups) for (const [ns, local, value] of lrValues(lr.state, g, lr.detailFields, lr.hslFields)) setInPlace(doc, ns, ns === NS_TIFF ? 'tiff' : 'crs', local, value)
   }
   if (lr?.marker !== undefined) {
     removeProp(doc, NS.lightbench, 'LightroomGeometry')
@@ -517,6 +517,9 @@ function readLightroom(doc: Document): LrRead | undefined {
     y: num(NS_CRS, 'PerspectiveY'),
     ...Object.fromEntries(LR_DETAIL_FIELDS.map(([k, name]) => [k, num(NS_CRS, name)])),
   }
+  // The Colour Mixer's 24 fields, kept only when the sidecar has at least one.
+  const hsl = LR_HSL_FIELDS.map((name) => num(NS_CRS, name))
+  if (hsl.some((v) => v !== undefined)) fields.hsl = hsl
   const segments = [0, 1, 2, 3].filter((i) => (getProp(doc, NS_CRS, `UprightFourSegments_${i}`) ?? '').trim() !== '').length
   const guides = num(NS_CRS, 'UprightFourSegmentsCount') ?? (segments || undefined)
   if (guides !== undefined) fields.guides = guides

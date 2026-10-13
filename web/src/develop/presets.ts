@@ -8,6 +8,7 @@ import { DEFAULT_SETTINGS, type DevelopSettings, type SourceKind } from '../engi
 import { DEFAULT_DETAIL, DETAIL_RANGES, withDetail, type DetailSettings } from '../engine/detail/settings'
 import type { Clipboard, PasteKey } from './paste'
 import { blendToneCurve, withToneCurve } from '../engine/develop/tone-curve'
+import { blendColourMixer, withColourMixer } from '../engine/develop/colour-mixer'
 
 /** What is saved for a preset (in the catalog's `presets` table, as JSON). */
 export interface PresetData {
@@ -123,6 +124,8 @@ export function blendSettings(before: DevelopSettings, after: DevelopSettings, a
   out = { ...out, whiteBalance: blendWhiteBalance(before.whiteBalance, after.whiteBalance, t, asShot) }
   // The tone curve: its change from the photo's own curve (or a straight line) scaled by the amount.
   if (before.toneCurve !== after.toneCurve) out = withToneCurve(out, blendToneCurve(before.toneCurve, after.toneCurve, t))
+  // The Colour Mixer: each band from the photo's value towards the preset's, Point Color's shifts the same way.
+  if (before.colourMixer !== after.colourMixer) out = withColourMixer(out, blendColourMixer(before.colourMixer, after.colourMixer, t))
   if (before.detail || after.detail) out = withDetail(out, blendDetail(before.detail ?? DEFAULT_DETAIL, after.detail ?? DEFAULT_DETAIL, t))
   // Keep the sliders' own precision.
   for (const k of ['contrast', 'highlights', 'shadows', 'whites', 'blacks', 'vibrance', 'saturation'] as const) out[k] = Math.round(out[k])

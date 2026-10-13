@@ -53,6 +53,10 @@ import { loadPresets, presetsChanged } from './presetStore'
 import { CurveTatLayer } from './CurveTatLayer'
 import { ToneCurvePanel, type CurveView } from './ToneCurvePanel'
 import { withToneCurve, type ToneCurveSettings } from '../engine/develop/tone-curve'
+import { ColourMixerPanel } from './ColourMixerPanel'
+import { DEFAULT_MIXER_UI, type MixerUi } from './mixerUi'
+import { MixerTatLayer, PointPickLayer } from './MixerTatLayer'
+import { CHANNEL_NAMES, BAND_NAMES, MAX_POINTS, newPoint, withColourMixer, withPoints, type ColourMixerSettings, type MixerChannel } from '../engine/develop/colour-mixer'
 
 interface Props {
   ids: number[]
@@ -105,6 +109,7 @@ interface Bypass {
   remove: boolean
   basic: boolean
   curve: boolean
+  colour: boolean
   detail: boolean
 }
 
@@ -198,7 +203,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
    */
   const detection = useRef<{ id: number; lens: string; job: Promise<Detection> } | null>(null)
   /** Groups switched off with their eye (a view only). */
-  const [bypass, setBypass] = useState<Bypass>({ crop: false, remove: false, basic: false, curve: false, detail: false })
+  const [bypass, setBypass] = useState<Bypass>({ crop: false, remove: false, basic: false, curve: false, colour: false, detail: false })
   /**
    * The Tone Curve (PHASE3.md Part 12): the graph shown, its targeted adjustment tool and the tone under the pointer,
    * the curve shown while a drag is in progress (one history step when it ends), clipping shown during a drag, and the
@@ -211,6 +216,19 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [curveDragClip, setCurveDragClip] = useState(false)
   const [clipWhileDragging, setClipWhileDragging] = useStoredNumber('lightbench.curve.dragClip', 1)
   const [curveHist, setCurveHist] = useState<ImageStats | null>(null)
+  /**
+   * The Colour Mixer (PHASE3.md Part 15): its view, its targeted adjustment tool's channel and the bands under the pointer,
+   * the mixer shown while a drag is in progress, the Visualize view (1–8 a band, 9–16 a point), Point Color's picker and
+   * the selected point.
+   */
+  const [mixerUiStored, setMixerUi] = useStoredJson<MixerUi>('lightbench.mixer.view', DEFAULT_MIXER_UI)
+  const mixerUi: MixerUi = { ...DEFAULT_MIXER_UI, ...mixerUiStored }
+  const [mixerTarget, setMixerTarget] = useState<MixerChannel | null>(null)
+  const [mixerHover, setMixerHover] = useState<{ weights: number[]; grey: boolean } | null>(null)
+  const [mixerDraft, setMixerDraft] = useState<{ m: ColourMixerSettings | undefined } | null>(null)
+  const [mixerVis, setMixerVis] = useState(0)
+  const [pointPick, setPointPick] = useState(false)
+  const [selectedPoint, setSelectedPoint] = useState<number | null>(0)
   /** The Remove brush on the photo (Q), its settings, the selected spot and whether all pins show. */
   const [removing, setRemoving] = useState(false)
   const [brushStored, setBrush] = useStoredJson<BrushSettings>('lightbench.remove.brush', DEFAULT_BRUSH)
@@ -321,6 +339,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setCurveTarget(false)
     setCurveDraft(null)
     setCurveHover(null)
+    setMixerTarget(null)
+    setMixerDraft(null)
+    setMixerHover(null)
+    setPointPick(false)
+    setSelectedPoint(0)
     setSelectedSpot(null)
     setSpotError(null)
     detection.current = null
@@ -393,16 +416,18 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     () => ({ clip: clipSettings, showClip: overlay || (curveDragClip && clipWhileDragging === 1), raw: rawClipSettings, showRaw: rawOverlay }),
     [clipSettings, overlay, rawClipSettings, rawOverlay, curveDragClip, clipWhileDragging],
   )
-  const latest = useRef({ settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview })
-  latest.current = { settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview }
+  const latest = useRef({ settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis })
+  latest.current = { settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis }
   /** The settings drawn: Before shows the defaults; a preset hovered, the crop being edited and switched-off groups apply on top. */
   const shownOf = (x: typeof latest.current, inf: SensorInfo): DevelopSettings => {
     // Before is the photo as shot: the defaults without lens corrections or sharpening.
     if (x.before) return { ...defaultsFor(inf.kind), lens: LEGACY_LENS, detail: undefined }
     let s = x.hover ?? x.settings
     if (x.curveDraft && !x.hover) s = withToneCurve(s, x.curveDraft.tc)
+    if (x.mixerDraft && !x.hover) s = withColourMixer(s, x.mixerDraft.m)
     if (x.bypass.basic) s = withoutBasic(s, defaultsFor(inf.kind, inf.iso))
     if (x.bypass.curve) s = withToneCurve(s, undefined)
+    if (x.bypass.colour) s = withColourMixer(s, undefined)
     if (x.bypass.remove) s = withoutSpots(s)
     if (x.bypass.detail && s.detail) s = { ...s, detail: undefined }
     if (x.draft) return { ...s, geometry: x.draft }
@@ -466,7 +491,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         const v: ViewState = (x.draft || x.guiding) && !x.before ? { zoom: 'fit', center: [0.5, 0.5], frame: true } : x.view
         try {
           const du = displayUniforms(shown)
-          const ms = await engine.render(x.maskPreview && !x.before ? { ...du, detailMask: true } : du, x.before ? inf.asShotWb : multipliers(shown, inf), v, x.indicators)
+          // View-only states: Sharpening's mask, the Colour Mixer's Visualize.
+          const view = x.before ? du : { ...du, ...(x.maskPreview ? { detailMask: true } : {}), ...(x.mixerVis && !x.bypass.colour ? { mixerVisualize: x.mixerVis } : {}) }
+          const ms = await engine.render(view, x.before ? inf.asShotWb : multipliers(shown, inf), v, x.indicators)
           setTiming((t) => ({ ...t, frame: ms }))
           setNoiseProfile((p) => (p === engine.lastProfile ? p : engine.lastProfile))
           setSharpenRadius((r) => (r === engine.lastRadius ? r : engine.lastRadius))
@@ -494,7 +521,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   useEffect(() => {
     if (status.kind === 'ready') requestRender()
-  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, guiding, removing, requestRender, lensDb, curveDraft, maskPreview, noiseDb])
+  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, guiding, removing, requestRender, lensDb, curveDraft, maskPreview, noiseDb, mixerDraft, mixerVis])
   // Another curve graph shown: its histogram is measured again.
   useEffect(() => {
     if (status.kind === 'ready') scheduleStats()
@@ -599,6 +626,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const toggleCurveTarget = () => {
     if (status.kind !== 'ready') return
     if (draft) endCrop(true)
+    setMixerTarget(null)
+    setPointPick(false)
     setGuiding(false)
     setRemoving(false)
     setSelectedSpot(null)
@@ -609,6 +638,83 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setCurveTarget((t) => !t)
     setReveal({ id: 'curve', n: Date.now() })
   }
+  /** A Colour Mixer change (`separate`: the end of a drag, one history step of its own). */
+  const changeMixer = useCallback(
+    (label: string, m: ColourMixerSettings | undefined, separate = false) => {
+      const h = historyRef.current
+      if (!h) return
+      change(label, withColourMixer(current(h), m), false, separate)
+    },
+    [change],
+  )
+  /** The Colour Mixer's targeted adjustment tool for a channel (null ends it); the other on-photo tools end. */
+  const startMixerTarget = (ch: MixerChannel | null) => {
+    if (status.kind !== 'ready') return
+    if (!ch) {
+      setMixerTarget(null)
+      return
+    }
+    if (draft) endCrop(true)
+    setGuiding(false)
+    setRemoving(false)
+    setSelectedSpot(null)
+    setWbPick(false)
+    setLoupe(null)
+    setPicking(false)
+    setBefore(false)
+    setCurveTarget(false)
+    setPointPick(false)
+    setMixerTarget(ch)
+    setMixerUi({ ...mixerUi, tab: 'mixer', view: mixerUi.view === 'all' || mixerUi.view === 'colour' ? mixerUi.view : ch })
+    setReveal({ id: 'colour', n: Date.now() })
+  }
+  /** Point Color's picker (click a colour on the photo). */
+  const startPointPick = () => {
+    if (status.kind !== 'ready') return
+    if (pointPick) {
+      setPointPick(false)
+      return
+    }
+    if ((settings.colourMixer?.points?.length ?? 0) >= MAX_POINTS) return
+    if (draft) endCrop(true)
+    setGuiding(false)
+    setRemoving(false)
+    setSelectedSpot(null)
+    setWbPick(false)
+    setLoupe(null)
+    setPicking(false)
+    setBefore(false)
+    setCurveTarget(false)
+    setMixerTarget(null)
+    setPointPick(true)
+    setMixerUi({ ...mixerUi, tab: 'point' })
+    setReveal({ id: 'colour', n: Date.now() })
+  }
+  /** A colour picked on the photo becomes a Point Color sample (selected), and the picker ends. */
+  const addPoint = (c: readonly number[]) => {
+    const m = latest.current.settings.colourMixer
+    const pts = [...(m?.points ?? []), newPoint(c, m?.advanced?.whiteLevel)]
+    if (pts.length > MAX_POINTS) return
+    changeMixer(`Point Color: pick colour ${pts.length}`, withPoints(m, pts), true)
+    setSelectedPoint(pts.length - 1)
+    setPointPick(false)
+  }
+  /**
+   * The Colour Mixer's input (`after` false: for its targeted adjustment tool) or the colour as it reaches Point Color
+   * (after the bands, without the points: for the picker) under a point of the photo shown.
+   */
+  const sampleMixerAt = useCallback(async (uv: [number, number], after: boolean) => {
+    const engine = engineRef.current
+    const x = latest.current
+    const inf = x.info
+    if (!engine || !inf) return null
+    let shown = shownOf(x, inf)
+    if (after) shown = withColourMixer(shown, withPoints(shown.colourMixer, undefined))
+    const l = engine.layout(x.view, engine.canvas.width, engine.canvas.height)
+    return engine.sampleMixer(displayUniforms(shown), multipliers(shown, inf), uv[0], uv[1], l.scale, after)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   /** The Tone Curve's input under a point of the photo shown (for its targeted adjustment tool). */
   const sampleCurveInput = useCallback(async (uv: [number, number]) => {
     const engine = engineRef.current
@@ -717,6 +823,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     if (status.kind !== 'ready' || !info) return
     setGuiding(false)
     setCurveTarget(false)
+    setMixerTarget(null)
+    setPointPick(false)
     setRemoving(false)
     setSelectedSpot(null)
     setWbPick(false)
@@ -891,6 +999,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setWbPick(false)
     setLoupe(null)
     setCurveTarget(false)
+    setMixerTarget(null)
+    setPointPick(false)
     setView((v) => ({ ...v, zoom: 'fit' }))
     setRemoving(false)
     setSelectedSpot(null)
@@ -958,6 +1068,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     if (draft) endCrop(true)
     setGuiding(false)
     setCurveTarget(false)
+    setMixerTarget(null)
+    setPointPick(false)
     setWbPick(false)
     setLoupe(null)
     setPicking(false)
@@ -1294,6 +1406,30 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         return false
     }
   })
+  // While the Colour Mixer's targeted adjustment tool or Point Color's picker is on, Develop listens to 'mixer'.
+  const mixerTool = !!mixerTarget || pointPick
+  useShortcuts(['mixer'], !pasting && !draft && !guiding && mixerTool, (cmd) => {
+    switch (cmd) {
+      case 'develop.mixerTargetHue': startMixerTarget(mixerTarget === 'hue' ? null : 'hue'); break
+      case 'develop.mixerTargetSat': startMixerTarget(mixerTarget === 'saturation' ? null : 'saturation'); break
+      case 'develop.mixerTargetLum': startMixerTarget(mixerTarget === 'luminance' ? null : 'luminance'); break
+      case 'develop.mixerTargetOff':
+        setMixerTarget(null)
+        setPointPick(false)
+        break
+      case 'develop.pointColorPick': startPointPick(); break
+      case 'develop.undo':
+      case 'develop.redo':
+        dirty.current = true
+        setHistory((h) => (h ? (cmd === 'develop.redo' ? redo(h) : undo(h)) : h))
+        break
+      case 'develop.before': setBefore((b) => !b); break
+      case 'develop.clipping': setOverlay((o) => !o); break
+      case 'develop.zoom': setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center })); break
+      default:
+        return false
+    }
+  })
   useShortcuts(['remove'], !pasting && !draft && !guiding && removing, (cmd) => {
     switch (cmd) {
       case 'develop.remove':
@@ -1332,11 +1468,16 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         return false
     }
   })
-  useShortcuts(['develop'], !pasting && !draft && !guiding && !curveTarget && !removing, (cmd) => {
+  useShortcuts(['develop'], !pasting && !draft && !guiding && !curveTarget && !removing && !mixerTool, (cmd) => {
     switch (cmd) {
       case 'develop.grid': onLibrary(); break
       case 'develop.curveTarget': toggleCurveTarget(); break
       case 'develop.curveReset': changeCurve('Reset tone curve', undefined, true); break
+      case 'develop.mixerTargetHue': startMixerTarget('hue'); break
+      case 'develop.mixerTargetSat': startMixerTarget('saturation'); break
+      case 'develop.mixerTargetLum': startMixerTarget('luminance'); break
+      case 'develop.pointColorPick': startPointPick(); break
+      case 'develop.mixerReset': changeMixer('Reset colour mixer and Point Color', undefined, true); break
       case 'develop.remove': startRemove(); break
       case 'remove.clear': clearSpots(); break
       case 'develop.crop': startCrop(); break
@@ -1380,6 +1521,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         setWbPick((p) => !p)
         setLoupe(null)
         setCurveTarget(false)
+        setMixerTarget(null)
+        setPointPick(false)
         break
       case 'develop.cancel':
         setPicking(false)
@@ -1616,6 +1759,23 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
               onExit={() => setCurveTarget(false)}
             />
           )}
+          {mixerTarget && !draft && !guiding && !before && status.kind === 'ready' && (
+            <MixerTatLayer
+              mixer={settings.colourMixer}
+              channel={mixerTarget}
+              enabled={!pasting}
+              uvAt={imageUv}
+              sample={(uv) => sampleMixerAt(uv, false)}
+              onHover={setMixerHover}
+              onDraft={(m) => setMixerDraft(m === null ? null : { m })}
+              onChange={changeMixer}
+              onVisualize={setMixerVis}
+              onExit={() => setMixerTarget(null)}
+            />
+          )}
+          {pointPick && !draft && !guiding && !before && status.kind === 'ready' && (
+            <PointPickLayer enabled={!pasting} uvAt={imageUv} sample={(uv) => sampleMixerAt(uv, true)} onPick={addPoint} onExit={() => setPointPick(false)} />
+          )}
           {status.kind === 'loading' && <div className="dmessage">Developing…</div>}
           {status.kind === 'error' && <div className="dmessage error">{status.message}</div>}
           {engineError && <div className="dmessage error">{engineError}</div>}
@@ -1711,8 +1871,17 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           )}
           {before && <div className="dbadge">Before</div>}
           {!before && hoverPreset && !draft && <div className="dbadge">Preview: {hoverPreset.name}</div>}
-          {!before && !draft && (bypass.crop || bypass.remove || bypass.basic || bypass.curve || (bypass.detail && detailOn(settings.detail))) && (
-            <div className="dbadge">Hidden: {[bypass.crop && 'Crop & Lens', bypass.remove && 'Remove', bypass.basic && 'Basic', bypass.curve && 'Tone Curve', bypass.detail && detailOn(settings.detail) && 'Detail'].filter(Boolean).join(', ')}</div>
+          {!before && !draft && (bypass.crop || bypass.remove || bypass.basic || bypass.curve || bypass.colour || (bypass.detail && detailOn(settings.detail))) && (
+            <div className="dbadge">Hidden: {[bypass.crop && 'Crop & Lens', bypass.remove && 'Remove', bypass.basic && 'Basic', bypass.curve && 'Tone Curve', bypass.colour && 'Colour Mixer', bypass.detail && detailOn(settings.detail) && 'Detail'].filter(Boolean).join(', ')}</div>
+          )}
+          {mixerTarget && !draft && !guiding && !before && (
+            <div className="dbadge pick curve-hint">
+              Colour mixer ({CHANNEL_NAMES[mixerTarget]}): drag up or down on a colour · ↑ ↓ nudge · Alt shows its colours · Esc ends
+            </div>
+          )}
+          {pointPick && !draft && !guiding && !before && <div className="dbadge pick curve-hint">Point Color: click a colour on the photo · Esc cancels</div>}
+          {mixerVis > 0 && !before && !bypass.colour && (
+            <div className="dbadge right">{mixerVis <= 8 ? `Showing ${BAND_NAMES[mixerVis - 1]}’s colours; the rest grey` : `Showing Point Color ${mixerVis - 8}’s range; the rest grey`}</div>
           )}
           {curveTarget && !draft && !guiding && !before && (
             <div className="dbadge pick curve-hint">
@@ -1887,6 +2056,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             setWbPick((p) => !p)
             setLoupe(null)
             setCurveTarget(false)
+            setMixerTarget(null)
+            setPointPick(false)
           }}
           auto={{
             targets,
@@ -1930,6 +2101,33 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   onDragClip={setCurveDragClip}
                   clipWhileDragging={clipWhileDragging === 1}
                   onClipWhileDragging={(on) => setClipWhileDragging(on ? 1 : 2)}
+                />
+              ),
+            },
+            {
+              id: 'colour',
+              label: 'Colour',
+              title: 'Colour Mixer',
+              icon: GROUP_ICONS.colour,
+              bypass: settings.colourMixer || bypass.colour
+                ? { off: bypass.colour, onToggle: () => setBypass((b) => ({ ...b, colour: !b.colour })), title: bypass.colour ? 'Show the colour mixer and Point Color again' : 'Show the photo without the colour mixer and Point Color (nothing is changed)' }
+                : undefined,
+              content: (
+                <ColourMixerPanel
+                  mixer={mixerDraft ? mixerDraft.m : settings.colourMixer}
+                  ui={mixerUi}
+                  onUi={setMixerUi}
+                  disabled={status.kind !== 'ready'}
+                  showHint={hintsPref === 1}
+                  tat={mixerTarget}
+                  onTat={startMixerTarget}
+                  hover={mixerTarget ? mixerHover : null}
+                  onChange={changeMixer}
+                  onVisualize={setMixerVis}
+                  picking={pointPick}
+                  onPick={startPointPick}
+                  selectedPoint={selectedPoint}
+                  onSelectPoint={setSelectedPoint}
                 />
               ),
             },
