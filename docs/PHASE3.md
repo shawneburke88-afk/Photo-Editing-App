@@ -1017,7 +1017,7 @@ All three work in the retouch worker (`engine/retouch/`), on 256 × 256 tiles of
 Headless Chromium with software WebGPU (SwiftShader, `?gpu=readback`), scripts in `scratchpad/followups-f/` (`e2e-remove.mjs`, `e2e-quality.mjs`, `e2e-realphotos.mjs`, `e2e-identity.mjs`; Node quality tests in `quality.scratch.test.ts`, not committed). Photos: Nikon D700 `philadelphia.nef`, Nikon D80 `glarus.nef`, Sony ILCE-6300 `12bit-compressed-(3_2).arw`, `test-srgb.jpg` (immich test-assets), and synthetic photos with a known clean background (brick, sky, grass; 1200 × 800).
 
 - **Old edits are byte-identical.** Full-size exports, 1024 px exports, 512 px thumbnails and histogram statistics of edited and default D700, D80, Sony and JPEG photos had the same hashes on this branch, on `lightbench/lens-xtrans` (`3111356`, which this branch includes) and on main (`39382d5`); e.g. the edited D700's full-size export `3756a56091d9dee76cd4dd75`.
-- **Remove brush end to end (`e2e-remove.mjs`)**, on the D700 with lens correction on. All 18 checks passed with the PatchMatch version. With the new search, 17 of 18 passed, twice. The failing check, "turned right", read the pin 4 s after Ctrl+] while the rotated redraw was still pending on the loaded machine, so the pin was still at the old frame's place, as the photo was. Read again, the pin was at 608.5,385.9 and the effect at 607.4,385.5. The search doesn't touch that code.
+- **Remove brush end to end (`e2e-remove.mjs`)**, on the D700 with lens correction on. All 18 checks passed with the PatchMatch version. With the new search, 17 of 18 passed, twice. The failing check, "turned right", read the pin 4 s after Ctrl+] while the rotated redraw was still pending on the loaded machine. Read again, the pin was at 608.5,385.9 and the effect at 607.4,385.5. The search doesn't touch that code. **Correction (Part 14):** these failures, and the 16 of 18 in later runs (Part 12, Part 14), were stale pins, not misplaced fills. The overlay combined the box of an earlier drawing with the map of the next one, so until the redraw started by opening the brush ended (about 25 s on loaded SwiftShader) the pins sat where no drawing put them. A 46 px move of the pin when lens correction was turned off, seen in some runs' logs, came from the same stale pin; the real move is 2.2 px. Part 14 fixed the overlay; the script now reads the pins once the photo has been redrawn and passes 18 of 18.
   - Q opens the brush; a click makes one history step and shows the progress note (3.9 s on SwiftShader before, 6.1 s with the new search under heavier load).
   - **The fill lands under its pin** (centroid of the change within 1.6 px of the pin) with lens correction on, after Rotate right, after a 1:1 crop, and with lens correction off (the fill moved 2.2 px with the content).
   - The XMP holds the spot in sensor coordinates; **two separate full-size exports are byte-identical**, and the export's fill is where Develop shows it (within 1 px of the pin, mapped to the page).
@@ -1214,7 +1214,7 @@ Headless Chromium with software WebGPU (SwiftShader), on a machine shared with o
   - **Remove works on the scene, the curve in the display shader.** Remove's retouched scene replaces the scene before the geometry pass, and it changed no display binding or uniform, so the curve's binding 6 and the 512-byte View needed no renumbering. The targeted adjustment tool now samples the retouched photo shown (`sampleBeforeCurve` passes the spots and releases its source, as the other render paths do). Turning the targeted adjustment tool on ends the Remove brush, and the reverse.
   - **Old edits identical to main `60b1170`** (`identity.mjs`; main served from its own copy). Twelve edits: nine without a curve or spots (A.NEF version 1 with crop, turn and angle; A version 2 with angle; A defaults; D80 custom white balance; the JPEG unedited, version 1 and version 2; the Sony unedited and version 2 with angle) and three **with spots** (A with Remove, Heal and Clone spots; the same with crop, angle and custom white balance; the JPEG with two spots). Full-size export SHA-256, 1024 px export, 512 px thumbnail and histogram statistics were identical for all twelve.
   - **Tone curve:** `e2e-curve.mjs` 35 of 35, `e2e-curve2.mjs` 12 of 12, `e2e-gpu.mjs` 16 of 16 (GPU = CPU max 0.28 levels on the JPEG and 0.70 on the D80; Develop at 100 % vs export max 1 level).
-  - **Remove:** `e2e-remove.mjs` 16 of 18 on the merged branch, and the same 16 of 18 on main `60b1170` with the same two failures and the same coordinates ("turned right" and "cropped 1:1": the pin and the fill's centre measured about 83 px apart after Rotate right and 44 px after a 1:1 crop). So the merge didn't cause them; they are left to Part 11.
+  - **Remove:** `e2e-remove.mjs` 16 of 18 on the merged branch, and the same 16 of 18 on main `60b1170` with the same two failures and the same coordinates ("turned right" and "cropped 1:1": the pin and the fill's centre measured about 83 px apart after Rotate right and 44 px after a 1:1 crop). So the merge didn't cause them. They turned out to be stale pins in the overlay, not misplaced fills (fixed in Part 14).
   - **A curve and spots together** (`both.mjs`, 21 of 21; a first run, without `?gpu=readback`, failed only the "outside the spots" check, then written as exact; the numbers were the same in both runs): on the JPEG and the D80 with three spots (Remove, Clone, Heal), a crop and an angle, the 16-bit export with the curve equals the CPU curve applied to the spots-only export (max 0.14 and 0.15 levels, inside the spots too). Outside the spots it equals the curve-only export exactly except 28 (JPEG) and 84 (D80) pixels within 2 px of a spot's edge, by at most 42 of 65535: changes too small to show without the curve, made visible by its steepness. The 8-bit export, thumbnail, histogram, the curve's input histogram (the retouched photo's) and the targeted adjustment sample all worked, with no GPU validation error. In Develop: Strong Contrast and a painted spot gave the steps "Tone curve: Strong Contrast" and "Remove spot 1", the sidecar held both, the canvas was drawn, and the page logged no error.
   - **Unit tests:** 638 in 65 files (main alone 588 in 62).
 
@@ -1340,7 +1340,7 @@ Ported from `src/iop/demosaicing/capture.c` and `data/kernels/capture.cl` (darkt
 
 Headless Chromium with software WebGPU (SwiftShader); scripts in `scratchpad/followups-h/` (`e2e-gpucpu.mjs`, `e2e-quality.mjs`, `e2e-radius.mjs`, `e2e-agree.mjs`, `e2e-identity.mjs`, `e2e-detail-ui.mjs`, `lbdump.mjs` + `dtcompare.sh` + `py/cmp_dt.py`). Test files: Nikon D700 `philadelphia.nef`, D80 `glarus.nef`, Sony ILCE-6300 and ILCE-7M2 ARWs, `test-srgb.jpg` (immich test-assets), and darktable-ai's denoise samples: Canon EOS-1D Mark III ISO 6400 (`1D3_6400.CR2`), Sony ILCE-6000 ISO 12800 (`DSC04028.ARW`), Fujifilm X-T2 / X100F / X-T4 RAFs.
 
-Test notes: in headless Chromium, Develop's present probe (`presentWorks` in `develop-engine.ts`) can drop the page's GPU channel. That loses every GPUDevice in the page, e.g. a running batch, and blanks 2D canvases; it explains an early "device lost" and a batch "with problems". Loading the app with `?gpu=readback` skips the probe, and the scripts written after that was found use it; a fix in the app is planned separately. The Develop canvas can also report ready before its first frame, so the UI script waits for the stage's `aria-busy` to clear before taking pixels. After a hot reload a test page can hold a stale copy of a module, so the dev server is restarted after editing code a test switch lives in. The quality and speed measurements below were made with darktable's 9 × 9 kernel and the earlier σ Radius at its automatic value. The separable blur differs by at most 1 level (step 4 above), and Radius 1.0 gives the same σ as the automatic radius did. The GPU = CPU, identity, preview-vs-export and UI checks were run again on the final code (noted where they appear).
+Test notes: in headless Chromium, Develop's present probe (`presentWorks` in `develop-engine.ts`) can drop the page's GPU channel. That loses every GPUDevice in the page, e.g. a running batch, and blanks 2D canvases; it explains an early "device lost" and a batch "with problems". Loading the app with `?gpu=readback` skips the probe, and the scripts written after that was found use it; Part 14 fixed it in the app (the probe now runs once per page, at start-up). The Develop canvas can also report ready before its first frame, so the UI script waits for the stage's `aria-busy` to clear before taking pixels. After a hot reload a test page can hold a stale copy of a module, so the dev server is restarted after editing code a test switch lives in. The quality and speed measurements below were made with darktable's 9 × 9 kernel and the earlier σ Radius at its automatic value. The separable blur differs by at most 1 level (step 4 above), and Radius 1.0 gives the same σ as the automatic radius did. The GPU = CPU, identity, preview-vs-export and UI checks were run again on the final code (noted where they appear).
 
 - **Old edits are byte-identical to main** (`46f46bd`, 0.5.1; `e2e-identity.mjs`, main and this branch served separately). Run twice, the second time after the ISO rule, with the same result. Every output was hashed (SHA-256): the full-size 8-bit export, a 1024 px 16-bit export, the 512 px thumbnail, the histogram and clipping statistics, and the Develop canvas at fit and at 100 %.
 
@@ -1443,6 +1443,155 @@ Test notes: in headless Chromium, Develop's present probe (`presentWorks` in `de
 - **High-ISO default (decided).** At ISO 6400 Amount 40 sharpened some noise (+11 % on a plain wall), and darktable's manual suggests auto-applying only below ISO 1000. The owner chose (2026-10-13) Amount 25 above ISO 1000, with no automatic noise reduction. Measured again on the same crop (`e2e-crops25.mjs`): the wall's noise (standard deviation 7.97 unsharpened) is 8.74 at Amount 25 (+9.7 %) against 8.85 at Amount 40 (+11 %), and fine detail (mean |Laplacian| 10.84) 13.32 (+23 %) against 13.90 (+28 %). So Amount 25 lowers the noise increase only a little. Most of capture sharpening's effect comes in its first iterations (5 at Amount 25, 8 at 40). Reducing noise first does more (Luminance 50, Color 25 + Amount 40: 7.02, below the original). With these numbers in front of them, the owner kept Amount 25 above ISO 1000 (2026-10-13): an informed choice of a lighter default, not a claim that it removes the noise increase.
 - **Also decided (owner, 2026-10-13), as built:** Masking 0 keeps darktable's automatic noise protection; the fitted view stays accurate (one level finer, at its cost); the Detail paste items stay unticked by default.
 - **The mapping brief** ([research/DETAIL_MAPPING_BRIEF.md](research/DETAIL_MAPPING_BRIEF.md)) measured a research proposal for the sharpening sliders (Amount as a gain, Radius as a multiplier of Auto, Detail as the iteration count) and a separable blur. The owner adopted two parts (2026-10-13): **Radius as a multiplier** and **the separable blur**. Amount and Detail keep the built mapping, since the proposal's Amount produced strong haloes and its Detail lost Lightroom's halo meaning.
+
+## Part 14: GPU robustness
+
+**What it does.** LightBench no longer writes a black file when the graphics card fails during an export, no longer loses background work when Develop opens on setups that can't show WebGPU canvases, and recovers by itself after the graphics device is lost (a driver reset, the browser taking the device back), in Develop, the background developer, the Library's 100 % view and Export. Background GPU work now waits while Develop is busy, and background engines free each photo's textures as soon as they are done with it. Nothing renders differently: old edits export, thumbnail and measure byte-identically (below). Found while verifying it: the Remove brush's pins could show where no drawing put them for a while after a rotate or crop; they now always match the photo on screen.
+
+**Why.** Two diagnoses on main `60b1170` ([EXPORT_BLANK_FILE.md](diagnosis/EXPORT_BLANK_FILE.md), [GPU_DEVICE_LOST.md](diagnosis/GPU_DEVICE_LOST.md)):
+- WebGPU only reports a validation or out-of-memory error to the console and drops the command buffer; the read-back buffer is still valid, so it maps fine and holds zeros. Export encoded those zeros and counted the file as saved. A lost device gave the browser's own text ("Failed to execute 'mapAsync'…") and then "Reload the page to continue" for every later photo, because Export used one engine for the whole run.
+- `DevelopEngine.create('auto')` tested whether a WebGPU canvas can be shown on every Develop mount (twice under StrictMode) and in the System check. Where it can't (headless SwiftShader here; software or blocklisted GPUs, some Linux/Vulkan drivers and virtual machines in the field), Chromium drops the page's whole GPU channel, so every other GPU device in the page was lost too: a Paste running when Develop opened ended with "1 with problems … A valid external Instance reference no longer exists." Part 12 met the same loss in passing.
+- Develop never made a new engine after a loss, the Library's 100 % renderer never reset its engine, and the background developer started a new engine only for the next photo, reporting the one in flight as a problem.
+- Develop, the background developer and the 100 % renderer each hold a full-size photo (about 1.1–1.6 GB at 24 MP on SwiftShader), and each kept its last photo's textures until the next one.
+
+Owner's choices (2026-10-13): all four parts of the diagnoses' fixes — no black exports; the present probe once per page; recovery everywhere; less GPU memory (a foreground gate and `unload()`).
+
+### Guarded GPU work (no black files)
+
+| Behaviour | Detail |
+|---|---|
+| `GpuWorkError` | `engine/gpu/develop-engine.ts`. `kind` is `lost`, `out-of-memory`, `validation` or `internal`; the message is for people, `detail` keeps the browser's text (also written to the console). |
+| `guarded(work)` | Pushes internal, out-of-memory and validation error scopes on the engine's device, runs `work`, pops them, and throws a `GpuWorkError` if a scope caught an error, if the device was lost meanwhile, or if `work` failed with an `AbortError` (a `mapAsync` on a lost device). A failure is given 250 ms for a loss to be reported (Chromium can reject the read-back before `device.lost` resolves). Other errors pass through unchanged, so "The photo's folder isn't connected" stays as it was. |
+| **Only on a private engine** | Error scopes belong to the whole device: anything else using the device at the same time would have its errors caught by these scopes, and its own scopes would catch this work's. So `guarded` is used only on engines nothing else uses concurrently: Export's (one per run), the background developer's and the 100 % renderer's. Never on Develop's engine, which the histogram, the loupe, Auto and saves use at the same time. |
+| Retries | Lost, out of memory and internal: once more on a fresh engine. Validation: never (the same commands would be rejected again). |
+| Output size check | `renderOutput` now checks the encoded image's buffer (4 bytes a pixel, 8 at 16 bits) against `maxStorageBufferBindingSize` and `maxBufferSize` up front, next to the existing texture-size check (both now run before the photo is warped): "The export is too large for this graphics card: 6400×4288 at 16 bits needs 209 MB in one piece, and the card allows 128 MB. Choose a smaller size or 8 bits." |
+
+Messages a person now sees (Export's failed list, the background developer's problems):
+
+| Kind | Message |
+|---|---|
+| lost | The graphics card stopped responding (it was reset, or the browser took it back). Try again. |
+| out-of-memory | The graphics card ran out of memory. Try a smaller size, or close other tabs and apps that use graphics. |
+| validation | The graphics card rejected the work for this photo. Try a smaller size; if it keeps happening, please report it. |
+| internal | The graphics card reported an internal error. Try again. |
+
+No help text described the old messages, so none changed.
+
+### Export
+
+| Situation | Before (main) | Now |
+|---|---|---|
+| A command buffer fails (an invalid intermediate stands in for out of memory) | File written, every pixel 0, counted as saved | That photo fails with the validation message, no file; the others are written |
+| 16-bit export over the device's buffer limits | Files written, all black | Fails up front with the size message, no file |
+| Device lost once during a photo | That photo fails with "Failed to execute 'mapAsync'…", every later one with "Reload the page" | The photo is retried on a fresh engine and written; later photos are fine |
+| Device lost on every attempt | — | Each photo fails with the lost message, no files |
+| Engine found lost before a photo | Every later photo failed | A new engine is made before the photo |
+
+Each photo's load, process and render run in one `guarded` call (`export/run.ts`); the photo is unloaded after its render, before encoding.
+
+### One present probe per page
+
+| Behaviour | Detail |
+|---|---|
+| When | `engine/gpu/present.ts`; `main.tsx` starts it at start-up, before any GPU work. It runs at most once per page and its answer is kept. |
+| What | One frame on a 1×1 WebGPU canvas of a device of its own (destroyed afterwards); if that device is lost, read-back. |
+| Skipped | `?gpu=readback` / `?gpu=canvas` decide without a test (as before). A fallback (software) adapter (`adapter.info.isFallbackAdapter`, or the older `adapter.isFallbackAdapter`) uses read-back without a test. No adapter: read-back. |
+| Users | `DevelopEngine.create('auto')`, `DevelopRenderer.create('auto')` (System check), and the System check's message, which now says why it is in compatibility mode (chosen in the address, software graphics, no adapter, or the test failed). |
+| No device while it runs | Every `DevelopEngine.create` (all modes) waits for the probe first. |
+
+### Recovery
+
+| Component | After a lost device (before → now) |
+|---|---|
+| Develop | Showed the error; never recreated within a mount → `onLost` bumps an `engineGen` state; a new engine is made, the photo shown is uploaded again from the decode Develop keeps and developed with its current settings (unsaved changes included) before anything uses the engine; a photo still loading is loaded again. The lost canvas is removed. A notice for 8 s: "The graphics card was reset, so Develop restarted it. Your edit is safe." Errors caused by the loss aren't shown. A read-back canvas is redrawn on `contextrestored`. The Tone Curve's table is per engine and is built again by the new engine's first drawing. |
+| Background developer | New engine for the next photo; the photo in flight was a problem → Its GPU steps are guarded and the failed step is retried once on a fresh engine: working out the settings (nothing saved yet), or, after the edit was saved, only the thumbnail. So a retry never adds a second history step, and a photo that works on the retry is not reported. If the thumbnail fails twice: "Settings applied; the thumbnail wasn't refreshed. …" |
+| Library 100 % view (`FullRenderer`) | Never reset → replaces a lost engine before a render (as the background developer does), guards the full-size read-back, retries once on a fresh engine. |
+| Export | One engine per run → as above. |
+
+### Less GPU memory
+
+| Behaviour | Detail |
+|---|---|
+| Foreground gate | `engine/gpu/gate.ts`. Develop holds it while it loads and develops a photo, re-runs the RAW stage, draws, and measures the histogram and the Tone Curve's input. The background developer (before each GPU step), the 100 % renderer and Export (before each photo) wait until Develop has been idle for 150 ms. |
+| Can't starve | A background step waits at most 2 s (Export: 1 s), then goes ahead even if Develop is still busy, so a long slider drag doesn't stop a Paste or an Export. |
+| Can't deadlock | Only background work waits, and only between steps, never while holding anything Develop waits for; Develop never waits for background work. A hold that is never released (a drawing that hangs) ends after 30 s. |
+| `unload()` | Frees the scene, its warped and lens-corrected copies, the retouched copy, the tone masks, the Detail stage's results and their warps (Part 13), the Tone Curve's table, and the uploaded RAW buffer or JPEG pixels; the engine keeps its pipelines. Called after each background-developer photo, after each 100 % render and after each exported photo's render. Never on Develop's engine. |
+
+### With Detail (Part 13)
+
+| Behaviour | Detail |
+|---|---|
+| Guarded | Export, the background developer and the 100 % view run the Detail stage inside their `guarded` call (it is part of developing and rendering the photo), so a failed Detail pass fails or retries the photo like any other GPU work. |
+| After a lost device | The Detail stage's kernel table and pipelines belong to the engine; a new engine makes them again on its first Detail run, with its per-run buffers (binding 15, the separable blur's horizontal pass, included). Develop's recovery uploads and develops the photo again, so its next drawing runs Detail again. |
+| `unload()` | Drops the Detail results and their warps with the photo; the kernel table (small) and pipelines stay. |
+| Gate | Detail work in the background (the batch's thumbnails, Auto, the 100 % view, Export) runs in the steps that already wait on the gate. The noise-profile download only fetches data; the drawing it starts in Develop goes through Develop's render loop, which holds the gate. |
+| Buffer limits | The Detail stage checks its own full-size buffers against the device's limits before it allocates them (Part 13: "The photo is too large for this GPU's buffers for noise reduction …"); that plain error passes through `guarded` and is shown as it is. Export's output-buffer check is separate and unchanged. |
+| Waiting for Develop's engine | Found in the S2 run after merging Detail: opening a photo gave up with "Graphics acceleration is not available." when the engine took more than 5 s to make. The photo's load now waits as long as an engine is being made (also a new one after a loss), up to 2 minutes. |
+
+### The Remove brush's pins (found while verifying this part)
+
+| Behaviour | Detail |
+|---|---|
+| Before | The overlay's pins combined the photo's box from the last drawing made while the brush was on (React state) with the engine's map from sensor to screen, which changes when the next drawing *starts*. Opened after Rotate right or a crop, the brush used a box from before the change with the map of the drawing being made, so the pins sat where no drawing put them until that drawing ended (about 25 s on loaded SwiftShader). That is what made `e2e-remove.mjs` fail "turned right" and "cropped 1:1": stale pins, not misplaced fills. |
+| Now | After each drawing Develop keeps its box and a snapshot of its map together (`DevelopEngine.shownSnapshot()`; `engine/develop/shown-map.ts`, pure `displayToSensorAt` / `sensorToDisplayAt`), and the overlay maps through that pair. Opening the brush shows the last finished drawing's pair at once, and every drawing that ends while the brush is on (also one that started before it was opened) replaces it. So the pins always match the photo on screen, also while the next drawing is being made. The engine's own `displayToSensor` / `sensorToDisplay` work as before, through the same functions. |
+
+### Verified
+
+**After merging main `a0f8353`** (0.5.4, Detail), against that main. Identity, export failures and the first S2 run were on the merge `d049830`; the final code `b80b9b0` only changes how Develop waits for its engine, and S2, the Detail recovery and Remove were run on it:
+- **Identity, engine level** (`identity.mjs`, now 19 cases: the 15 below plus Detail sharpening and noise reduction with a Tone Curve, sharpening with spots, Radius/Masking with Color noise reduction and an angle, and sharpening on the JPEG; the two RAW "defaults" cases carry the new RAW sharpening): **19 of 19 identical** (full-size and 1024 px export SHA-256, 512 px thumbnail, histogram). In the full run the last two cases failed on both builds alike with an OPFS `NotFoundError` reading the file; run again on their own they were identical on both.
+- **Export failures** (`probe-export.mjs`): the same results as below on this branch (validation: no file, the message for people; capped limits: the size message; one loss: retried and written; every time: the lost message, no files); main `a0f8353` still writes the black files and gives the raw messages.
+- **S2 without `?gpu=readback`**: "3 photos updated", no problems. In the first run Develop then showed "Graphics acceleration is not available." (its engine took more than 5 s to make while the batch ran); a retry passed (the device took 1.2 s), and with the fix above the final code passed (Develop drawn; Develop's device took 2.0 s). Main `a0f8353` with `?gpu=readback` also passed.
+- **Develop after `device.destroy()`**: 14/14 (`e2e-recover.mjs`, two rounds). **With Detail** (`e2e-recover-detail.mjs`, the D700 NEF at 100 %, sharpness as the mean |Laplacian| of the canvas's luma): Amount 150 raised it from 5.473 to 7.275; after the loss the new engine drew it at exactly 7.275 again, and Amount 0 gave 5.473 again (5/5). The first run measured at fit, where sharpening is finer than the screen, and failed that first check (9.204 vs 9.323 off); the redraw after the loss was identical there too.
+- **Remove** (`e2e-remove.mjs`, corrected script): **18 of 18** on this branch and on main `a0f8353`, with sharpening set to 0 on the photo and the effect measured only once the stage is no longer `aria-busy`. With the new RAW sharpening left on, both builds fail the same four "fill under the pin" checks with the same numbers (e.g. effect centroid 707.1,560.3 over 2322 px instead of 439 px): with spots the Detail stage runs at full size, without them at the view's level (Part 13), so hiding the spots changes the whole view slightly and the measurement, not the fill, moves. Without the `aria-busy` wait, the branch failed "turned right" twice with the centroid at the canvas centre (two different geometries compared); main passed it in its one complete run. The pins read at once differ as before: main put them at 524.9,396.6 after Rotate right and at 608.5,335.7 after the crop (a mix of two drawings); the branch at 556.6,594.8 and 608.5,385.9, the drawings on screen.
+- `npm ci`, `npx tsc -b`, `npx oxlint` (the two existing warnings), `npx vitest run` (75 files, 730 tests; main `a0f8353` has 69 and 688, so 42 new) and `npm run build` passed.
+
+**Before that merge** (main `993f81b`):
+
+Headless Chromium 141 with SwiftShader WebGPU (which reports a fallback adapter), Vite dev builds of main `993f81b` (0.5.3, with the Tone Curve) and this branch merged with it, served side by side. Scripts in the scratchpad's `gpurob/` folder (copies of the diagnoses' and earlier parts' scripts). Earlier runs against main `60b1170` before the merge gave the same results where they overlap.
+
+- **Identity of old edits, engine level** (`identity.mjs`, 15 cases on the D700 and D80 NEFs, a 24 MP Sony ARW and `test-srgb.jpg`, including crop/turn/angle, custom white balance, three edits with Remove/Heal/Clone spots and three with a Tone Curve, one with spots too): full-size 8-bit export SHA-256, 1024 px export SHA-256, 512 px thumbnail and histogram statistics all **identical to main, 15 of 15**. Also identical, 15 of 15, with **one engine reused for every case and `unload()` between cases**.
+- **Identity through the app's code paths** (`export-identity.mjs`, saved edits with spots and a Tone Curve, fixed clock because the ICC profile holds the export time): `runExport` as full-size JPEG, 16-bit PNG at 1024 px and 8-bit TIFF at 50 %: **9 of 9 files byte-identical** to main; a Paste through the background developer: the three saved thumbnails and settings identical.
+- **Export failures** (`probe-export.mjs`, the diagnosis's probe through the real `runExport`, two copies of the JPEG; mean pixel value of each written file):
+
+  | Case | Main 993f81b | This branch |
+  |---|---|---|
+  | Baseline | 2 written, mean 142.37 | Same |
+  | Invalid intermediate on one photo | Written, mean 0 (black) | Fails with the validation message, no file; the other written, 142.37 |
+  | Device capped at default limits, 16-bit PNG at 400 % | 2 written, 6400×4288, mean 0 | Both fail with the size message, no files |
+  | Device destroyed once after the submit | Both fail ("mapAsync…", "Reload the page") | Retried; both written, 142.37 |
+  | Device destroyed on every attempt | Both fail, same raw messages | Both fail with the lost message, no files |
+- **The diagnosis's S2 scenario without `?gpu=readback`** (`s2.mjs`: a Paste on three photos running in the Library, then Develop opened on a 24 MP ARW): "3 photos updated.", no problems, Develop drawn. SwiftShader reports a fallback adapter, so the probe was skipped (read-back, "fallback-adapter"). With the adapter made to report a hardware one (an init script), the probe ran at start-up: its own device was lost 28 ms after it was made ("probe-failed", read-back), no other device was lost, and the same run ended "3 photos updated." with no problems. On main `993f81b` the same plain run ended "2 photos updated, 1 with problems … C.ARW: A valid external Instance reference no longer exists." (as in the diagnosis).
+- **Develop after `device.destroy()`** (`e2e-recover.mjs`, the D700 NEF, 14/14): twice in a row, the notice showed, the photo was drawn again on a new canvas with the same mean, no error message, one canvas and one live device; Before/After and an exposure change still drew. With a Tone Curve (Strong Contrast) on the photo (`e2e-recover-curve.mjs`, 9/9): drawn again with the curve (mean 91.8, as before the loss; 94.0 without the curve).
+- **Remove** (`e2e-remove.mjs`, the D700 and D80 NEFs): with the earlier script, 16 of 18 on this branch and on main `993f81b`, failing "turned right" and "cropped 1:1" at the same coordinates on both: stale pins (above). With the corrected script (it reads the pins with the brush opened on the finished drawing, and logs the pins read at once while the redraw after the change is still pending): **18 of 18** after the pin fix, including the background developer's Paste. The pins read at once differ: with the fix, after Rotate right they were at 556.6,594.8, where the fill was on the unrotated photo still on screen (556.0,595.1); main's were at 524.9,396.6, where no drawing put them. The corrected script also passes 18 of 18 on main, because it waits for the redraw.
+- **Mapping unit tests** (`engine/develop/shown-map.test.ts`, 4): sensor → screen → sensor and back round trips through Rotate right, a crop and an angle, with and without a lens correction (the Sony 7M2's camera data); the lens correction is used; a snapshot is mapped through, not the latest drawing.
+- **Tone Curve** (`e2e-curve.mjs`, `e2e-curve2.mjs`, `test-srgb.jpg`): run alone, **35/35** on this branch without `?gpu=readback`, and 35/35 on main with it; main without it gave 29/35 (its Develop canvas read almost black in the failing checks, R 2.3 of 255; the cause wasn't looked into further). `e2e-curve2.mjs` (copy, paste, presets, Lightroom sidecars): 12/12 on this branch. Run with three other browsers at once, `e2e-curve.mjs` failed 2 timing-sensitive checks on this branch, different ones in each of three runs (clipping after a drag, a point drag, a point add, the Red curve, the eye), and main failed 10 in the same conditions; those runs are not counted.
+- **Memory** (`mem.mjs`, the diagnosis's method: the GPU process's RSS sampled every 500 ms; 24 MP ARWs, both builds with `?gpu=readback` so main loses no devices): Develop open on one ARW while a Paste runs on three others and Develop redraws every 4 s; then, in the Library, one 100 % render.
+
+  | GPU-process RSS (MB) | Main 993f81b | This branch |
+  |---|---|---|
+  | Idle, photos added | 124 | 128 |
+  | Develop showing the ARW | 1390 | 1394 |
+  | **Peak while the Paste ran with Develop open** | **2550** | **2062** |
+  | Lowest during the Paste | 777 | 772 |
+  | After the Paste, Develop open | 762 | 764 |
+  | Library, Develop closed | 204 | 205 |
+  | Peak during the 100 % render | 1446 | 1444 |
+  | After the 100 % render, renderer open | 1198 | 1195 |
+  | Renderer disposed | 276 | 274 |
+  | Paste duration | 710 s | 397 s |
+
+  One run each, with other browsers running at the same time (timings are not comparable). The peak with Develop open fell by 488 MB; this run can't tell how much of that is the gate (each Paste step now waits while Develop draws) and how much is `unload()`. **`unload()` alone showed no effect on SwiftShader:** in-page (`mem-unload.mjs`), after a 100 % render of the ARW the RSS stayed at 1152 MB whether or not the engine was unloaded (also with the device's queue ticked afterwards), and a second engine developing the same photo then reached 1726–1728 MB either way (peaks 2410–2424 MB). The software driver apparently doesn't give freed texture memory back to the process or to another device; the textures are destroyed, but what that saves on a real GPU wasn't measured.
+- **Unit tests** (42 new, with the 4 above): `engine/gpu/guard.test.ts` (13: a fake device's validation, out-of-memory and internal errors, an `AbortError`, a loss during or after the work, a loss reported just after the failure, other errors passing through, balanced scopes, `DevelopEngine.guarded`, the retry rule, the up-front size check), `engine/gpu/present.test.ts` (6: one probe for concurrent and later calls, failure and exceptions, fallback adapters in both forms, `?gpu=`, no adapter), `engine/gpu/gate.test.ts` (6: idle, wait and quiet period, no starvation at the default and Export's limit, back-to-back frames, hold expiry, release on failure), `export/run.test.ts` (7: validation fails without a file or retry; a loss retries once on a fresh engine; out of memory and internal retry; a second loss fails; an engine lost before a photo is replaced first; other errors keep their message; each photo is unloaded), `develop/batch.test.ts` (6: retry while working out settings; retry of only the thumbnail after the save, one history step; no retry of validation; a second loss is a problem and the next photo goes on; "Settings applied" when only the thumbnail failed twice; unload per photo).
+- From a clean `npm ci`: `npx tsc -b`, `npx oxlint` (the two existing warnings), `npx vitest run` (then 71 files, 680 tests; main `993f81b` had 65 and 638) and `npm run build` passed.
+
+**Limitations and unverified:**
+- **No real GPU was tried.** A real driver reset (`chrome://gpucrash`), a real out-of-memory error and a real present failure on hardware weren't produced; out of memory was stood in for by an invalid texture, and loss by `device.destroy()`. By the WebGPU spec out of memory takes the same invalid-object path.
+- Whether other browsers reject `mapAsync` on a loss as Chromium does, and report `isFallbackAdapter`, wasn't checked.
+- The probe can still be wrong where a loss is reported more than 50 ms after the probe's frame; `?gpu=` overrides it.
+- Develop's own engine isn't guarded (error scopes would also catch the histogram's, loupe's and Auto's work): a validation or out-of-memory error during Develop's drawing still only reaches the console, as before. Develop's own read-backs (white balance picker, loupe, Auto) aren't guarded either.
+- After a loss, Develop uploads the photo again from its kept decode; the decode stays in memory as long as the photo is shown (the engine already held the same data).
+- A retry develops a photo twice; a photo whose thumbnail fails twice keeps its new settings with the old thumbnail.
+- **The memory saving of `unload()` is unmeasured on a real GPU**, and on SwiftShader the GPU process kept its memory (above). The diagnosis's other memory ideas (reusing RCD temporaries, Bayer Stage A in strips, one shared device) weren't done.
 
 ## Part 15: Colour Mixer and Point Color
 

@@ -8,12 +8,15 @@ import { defaultsFor, displayUniforms, type DevelopSettings } from '../engine/de
 import { DEFAULT_GEOMETRY, flip, isIdentityGeometry, rotate90, sameGeometry, setAngle, setAspect, setLocked, swapAspect, type GeometrySettings } from '../engine/develop/geometry'
 import { CURRENT_PROCESS, PROCESS_VERSIONS, processStatus } from '../engine/develop/process'
 import { DevelopEngine, type ImageStats, type RawStageOptions, type ViewState } from '../engine/gpu/develop-engine'
+import { gpuGate } from '../engine/gpu/gate'
 import type { RetouchProgress } from '../engine/gpu/retouch-stage'
 import { newSeed, newSpotId, simplifyStroke, STROKE_EPSILON, type Spot, type SpotMode } from '../engine/develop/spots'
 import { RemoveOverlay } from './RemoveOverlay'
 import { RemovePanel } from './RemovePanel'
 import { DEFAULT_BRUSH, SIZE_RANGE, type BrushSettings } from './removeBrush'
 import { RawDecoder } from '../engine/raw/decoder'
+import type { DecodeResult } from '../engine/raw/types'
+import { displayToSensorAt, sensorToDisplayAt, type ShownMap } from '../engine/develop/shown-map'
 import { Thumb } from '../library/Thumb'
 import { openPhotoFile } from '../platform/roots'
 import { useStoredJson } from '../lib/useStoredJson'
@@ -122,6 +125,16 @@ function withoutSpots(s: DevelopSettings): DevelopSettings {
 
 /** Settings with a new spot list (left out when empty). */
 const withSpots = (s: DevelopSettings, spots: Spot[]): DevelopSettings => (spots.length ? { ...s, spots } : withoutSpots(s))
+
+/** A finished drawing's place on the stage (CSS pixels) and its map to the sensor; `n` counts drawings. */
+interface ShownBox {
+  x: number
+  y: number
+  w: number
+  h: number
+  map: ShownMap | null
+  n: number
+}
 
 /** The preset just applied: its Amount can be changed until the photo is changed another way. */
 interface AppliedPreset {
@@ -238,9 +251,24 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [retouch, setRetouch] = useState<RetouchProgress>({ busy: false })
   const [placing, setPlacing] = useState(false)
   const [spotError, setSpotError] = useState<string | null>(null)
-  /** Where the photo sits on the stage (CSS pixels) after the last drawing, while the Remove brush is on. */
-  const [shownBox, setShownBox] = useState<{ x: number; y: number; w: number; h: number; n: number } | null>(null)
-  const [engineReady, setEngineReady] = useState(false)
+  /**
+   * Where the photo sits on the stage (CSS pixels) after the last drawing, and how that drawing maps to the sensor,
+   * while the Remove brush is on. Box and map come from the same finished drawing, so the pins always match the photo
+   * on screen, also while the next drawing is being made (PHASE3.md, Part 14).
+   */
+  const [shownBox, setShownBox] = useState<ShownBox | null>(null)
+  /** The same for the last finished drawing, whatever the tool (shown at once when the Remove brush opens). */
+  const lastDraw = useRef<Omit<ShownBox, 'n'> | null>(null)
+  /** Counts engines made ready (a new one after a lost device), so effects that use the engine run again. */
+  const [engineReady, setEngineReady] = useState(0)
+  /** Bumped when the GPU device was lost: the engine is made again (PHASE3.md, Part 14). */
+  const [engineGen, setEngineGen] = useState(0)
+  /** A short notice after the engine was made again. */
+  const [gpuNotice, setGpuNotice] = useState<string | null>(null)
+  /** The photo decoded last, kept to upload it again to a new engine after a lost device. */
+  const decodedRef = useRef<{ id: number; decoded: DecodeResult } | null>(null)
+  /** An engine is being made (the photo's load waits for it). */
+  const engineCreating = useRef(true)
   /** Sharpening's Masking preview (Alt-drag on Masking, or Show mask): a view only. */
   const [maskPreview, setMaskPreview] = useState(false)
   /** The noise profile and sharpening radius the last render used, for the Detail group. */
@@ -283,29 +311,90 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   /** The geometry shown in the Crop group: the crop being edited, else the photo's. */
   const geometry = draft ?? settings.geometry
   const frameOf = (g: GeometrySettings) => (engineRef.current && info ? engineRef.current.geometry(g, true).frame : null)
+  /**
+   * After a failed GPU call: true when it failed because the engine's device was lost (reported a moment after the
+   * call fails, so this waits briefly). The engine is then made again and draws again, so there is no error to show.
+   */
+  const lostMeanwhile = async (engine: DevelopEngine | null) => {
+    if (!engine) return false
+    if (engine.isLost) return true
+    await new Promise((r) => setTimeout(r, 250))
+    return engine.isLost || engineRef.current !== engine
+  }
 
-  // ---- engine lifetime
+  // ---- engine lifetime (made again when its GPU device is lost: a driver reset, or the browser took it back)
   useEffect(() => {
     let alive = true
-    const forced = new URLSearchParams(location.search).get('gpu')
-    DevelopEngine.create(forced === 'readback' || forced === 'canvas' ? forced : 'auto').then(
-      (e) => {
+    let stopLost = () => {}
+    engineCreating.current = true
+    // 'auto': the display mode tested once when the page started (engine/gpu/present.ts); ?gpu= still decides.
+    DevelopEngine.create('auto').then(
+      async (e) => {
         if (!alive) return e.destroy()
+        // After a lost device, the photo shown is uploaded to the new engine and developed with its current settings
+        // (unsaved changes included) before anything uses the engine; a photo still loading is loaded again.
+        let restored: RawStageOptions | null = null
+        if (engineGen) {
+          const d = decodedRef.current
+          const inf = infoRef.current
+          const h = historyRef.current
+          if (d && d.id === id && inf && h) {
+            try {
+              loadIntoEngine(e, d.decoded)
+              const opts = stageOptions(current(h), inf)
+              await gpuGate.foreground(() => e.process(opts))
+              restored = opts
+            } catch {
+              // Loaded again from the file below.
+            }
+          }
+          if (!alive) return e.destroy()
+        }
         engineRef.current = e
+        engineCreating.current = false
         stageRef.current?.prepend(e.canvas)
+        stopLost = e.onLost(() => {
+          if (!alive) return
+          setGpuNotice('The graphics card was reset, so Develop restarted it. Your edit is safe.')
+          setEngineGen((g) => g + 1)
+        })
         setEngineError('')
-        setEngineReady(true)
+        setEngineReady((n) => n + 1)
+        if (engineGen) {
+          if (restored) {
+            builtStage.current = restored
+            setStatus({ kind: 'ready' })
+            requestRender()
+          } else {
+            setReloads((n) => n + 1)
+          }
+        }
       },
-      (e: Error) => setEngineError(`Graphics acceleration is not available: ${e.message}`),
+      (e: Error) => {
+        engineCreating.current = false
+        setEngineError(`Graphics acceleration is not available: ${e.message}`)
+      },
     )
     return () => {
       alive = false
+      stopLost()
       const e = engineRef.current
       engineRef.current = null
+      if (e?.isLost) e.canvas.remove()
       // Let a final save (flushed by the cleanup below) finish rendering its thumbnail first.
-      setTimeout(() => void (saving.current ?? Promise.resolve()).catch(() => {}).finally(() => e?.destroy()), 0)
+      setTimeout(() => void (saving.current ?? Promise.resolve()).catch(() => {}).finally(() => {
+        e?.canvas.remove()
+        e?.destroy()
+      }), 0)
     }
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engineGen])
+
+  useEffect(() => {
+    if (!gpuNotice) return
+    const t = setTimeout(() => setGpuNotice(null), 8000)
+    return () => clearTimeout(t)
+  }, [gpuNotice])
 
   // ---- saved Auto targets
   useEffect(() => {
@@ -351,6 +440,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     builtStage.current = null
     dirty.current = false
     void thumbUrl(id).then((u) => !stale() && setPlaceholder(u))
+    let used: DevelopEngine | null = null
     ;(async () => {
       const d = await catalog.getPhoto(id)
       if (stale() || !d) return
@@ -361,22 +451,31 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       decoder ??= new RawDecoder()
       const r = await decoder.decode(file, true)
       if (stale()) return
-      for (let t = 0; !engineRef.current && t < 100; t++) await new Promise((res) => setTimeout(res, 50))
+      decodedRef.current = { id, decoded: r }
+      // The engine can take a while to make (seconds, while background GPU work keeps the GPU busy, or while a new one
+      // is made after a lost device): wait as long as it is being made, up to 2 minutes.
+      for (let t = 0; !engineRef.current && (engineCreating.current || t < 100) && t < 2400 && !stale(); t++) await new Promise((res) => setTimeout(res, 50))
+      if (stale()) return
       const engine = engineRef.current
       if (!engine) throw new Error('Graphics acceleration is not available.')
+      used = engine
       const sensorInfo = loadIntoEngine(engine, r)
       const kind = sensorInfo.kind
 
       const h = loadHistory(await catalog.getEdit(id), kind, sensorInfo.iso)
       const opts = stageOptions(current(h), sensorInfo)
-      const ms = await engine.process(opts)
+      const ms = await gpuGate.foreground(() => engine.process(opts))
       if (stale()) return
       builtStage.current = opts
       setTiming({ stage: ms })
       setInfo(sensorInfo)
       setHistory(h)
       setStatus({ kind: 'ready' })
-    })().catch((e: Error) => !stale() && setStatus({ kind: 'error', message: e.message }))
+    })().catch(async (e: Error) => {
+      // A lost device: the new engine loads the photo again (engine lifetime, above).
+      if (await lostMeanwhile(used)) return
+      if (!stale()) setStatus({ kind: 'error', message: e.message })
+    })
   }, [catalog, id, reloads])
 
   // A Paste or Sync running in the background just changed the photo shown: show its new settings, unless
@@ -397,13 +496,15 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     const t = setTimeout(() => {
       const engine = engineRef.current
       if (!engine) return
-      engine.process(opts).then(
+      gpuGate.foreground(() => engine.process(opts)).then(
         (ms) => {
           builtStage.current = opts
           setTiming((x) => ({ ...x, stage: ms }))
           requestRender()
         },
-        (e: Error) => engineRef.current === engine && setStatus({ kind: 'error', message: e.message }),
+        async (e: Error) => {
+          if (engineRef.current === engine && !(await lostMeanwhile(engine))) setStatus({ kind: 'error', message: e.message })
+        },
       )
     }, 300)
     return () => clearTimeout(t)
@@ -455,10 +556,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       statsBusy.current = true
       try {
         const wb = x.before ? inf.asShotWb : multipliers(shown, inf)
-        setStats(await engine.renderStats(displayUniforms(shown), wb, 256, x.indicators))
+        setStats(await gpuGate.foreground(() => engine.renderStats(displayUniforms(shown), wb, 256, x.indicators)))
         // The Tone Curve's graph shows its input: before the curve, or after the RGB curve for the channel curves.
         const v = x.curveView
-        setCurveHist(await engine.renderCurveInput(displayUniforms(shown), wb, v.mode === 'point' && v.channel !== 'rgb', 256))
+        setCurveHist(await gpuGate.foreground(() => engine.renderCurveInput(displayUniforms(shown), wb, v.mode === 'point' && v.channel !== 'rgb', 256)))
       } catch {
         // e.g. engine closed while measuring
       } finally {
@@ -477,6 +578,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     pending.current = true
     if (rendering.current) return
     rendering.current = true
+    const endHold = gpuGate.hold()
     // Set on the element directly (no React render per frame): assistive tech, and tests, can tell a frame is coming.
     stageRef.current?.setAttribute('aria-busy', 'true')
     void (async () => {
@@ -503,18 +605,23 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             const box = { x: l.x / dpr, y: l.y / dpr, w: l.w / dpr, h: l.h / dpr }
             setFrameBox((b) => (b && Math.abs(b.x - box.x) + Math.abs(b.y - box.y) + Math.abs(b.w - box.w) + Math.abs(b.h - box.h) < 0.01 ? b : box))
           }
-          if (x.removing) {
-            // The Remove overlay maps through what was just drawn.
+          {
+            // The Remove overlay maps through what was just drawn: its place and its map, taken together.
             const dpr = window.devicePixelRatio || 1
             const l = engine.layout(v, engine.canvas.width, engine.canvas.height)
-            setShownBox((b) => ({ x: l.x / dpr, y: l.y / dpr, w: l.w / dpr, h: l.h / dpr, n: (b?.n ?? 0) + 1 }))
+            const drawn = { x: l.x / dpr, y: l.y / dpr, w: l.w / dpr, h: l.h / dpr, map: engine.shownSnapshot() }
+            lastDraw.current = drawn
+            // Whether the brush is on now, not when this drawing started (it may have been opened meanwhile).
+            if (latest.current.removing) setShownBox((b) => ({ ...drawn, n: (b?.n ?? 0) + 1 }))
           }
           scheduleStats()
         } catch (e) {
-          setStatus({ kind: 'error', message: e instanceof Error ? e.message : String(e) })
+          // A lost device: a new engine draws again (the engine lifetime effect).
+          if (!(await lostMeanwhile(engine))) setStatus({ kind: 'error', message: e instanceof Error ? e.message : String(e) })
         }
       }
       rendering.current = false
+      endHold()
       stageRef.current?.setAttribute('aria-busy', 'false')
     })()
   }, [scheduleStats])
@@ -535,6 +642,15 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       setRetouch(p)
       if (!p.busy) requestRender()
     })
+  }, [engineReady, requestRender])
+
+  // A 2D (read-back) canvas is blanked when the browser drops the page's GPU channel: draw again when it comes back.
+  useEffect(() => {
+    const canvas = engineRef.current?.canvas
+    if (!canvas) return
+    const redraw = () => requestRender()
+    canvas.addEventListener('contextrestored', redraw)
+    return () => canvas.removeEventListener('contextrestored', redraw)
   }, [engineReady, requestRender])
 
   useEffect(() => {
@@ -1075,6 +1191,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setPicking(false)
     setBefore(false)
     setBypass((b) => ({ ...b, remove: false }))
+    // The pins map through the drawing on screen now, not one from an earlier time the brush was on.
+    const drawn = lastDraw.current
+    if (drawn) setShownBox((b) => ({ ...drawn, n: (b?.n ?? 0) + 1 }))
     setRemoving(true)
     setReveal({ id: 'remove', n: Date.now() })
   }
@@ -1834,10 +1953,14 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                 key={id}
                 box={b}
                 toView={(x, y) => {
-                  const [u, v] = engine.sensorToDisplay(x, y)
+                  const [u, v] = b.map ? sensorToDisplayAt(b.map, x, y) : engine.sensorToDisplay(x, y)
                   return [b.x + u * b.w, b.y + v * b.h]
                 }}
-                fromView={(x, y) => engine.displayToSensor((x - b.x) / b.w, (y - b.y) / b.h)}
+                fromView={(x, y) => {
+                  const u = (x - b.x) / b.w
+                  const v = (y - b.y) / b.h
+                  return b.map ? displayToSensorAt(b.map, u, v) : engine.displayToSensor(u, v)
+                }}
                 spots={spots}
                 sensor={sensorSize()}
                 brush={{ radius: brush.size, feather: brush.feather / 100 }}
@@ -1897,6 +2020,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           {wbPick && <div className="dbadge pick">Click something that should be neutral grey or white · Esc to cancel</div>}
           {wbPick && loupe && <WbLoupe x={loupe.x} y={loupe.y} image={loupe.image} zoom={LOUPE_ZOOM} />}
           {picking && <div className="dbadge pick">Click a photo in the filmstrip to match its look · Esc to cancel</div>}
+          {gpuNotice && <div className="dbadge gpu-notice" role="status">{gpuNotice}</div>}
           {autoSync && others.length > 0 && <div className="dbadge sync">Auto Sync: changes also go to {others.length} other {others.length === 1 ? 'photo' : 'photos'}</div>}
         </div>
         <div className="filmstrip" role="listbox" aria-label="Filmstrip">
