@@ -507,9 +507,10 @@ export class DevelopEngine {
 
   /**
    * Frees the photo's GPU memory: the scene, its warped and lens-corrected copies, the retouched copy, the tone
-   * masks, the Detail stage's results and their warps, the Tone Curve's table and the uploaded sensor data or pixels.
-   * The engine keeps its pipelines; load a photo again before using it. Background engines call this after each
-   * photo (PHASE3.md, Part 14).
+   * masks, the Detail stage's results and their warps, the Tone Curve's table, the Colour Mixer's hue tables and the
+   * uploaded sensor data or pixels. (The mixer's pre-pass textures and buffers belong to each drawing and are freed
+   * when it is submitted, or when encoding it fails.) The engine keeps its pipelines; load a photo again before using
+   * it. Background engines call this after each photo (PHASE3.md, Parts 14 and 15).
    */
   unload() {
     this.retouch.reset()
@@ -531,6 +532,14 @@ export class DevelopEngine {
     this.curveTex?.tex.destroy()
     this.curveTex = null
     this.boundCurve = null
+    // The Colour Mixer's hue tables and the state of the last drawing prepared (Part 15); its uniform is cleared so a
+    // drawing of the next photo without a mixer starts from "off".
+    this.mixLutTex?.tex.destroy()
+    this.mixLutTex = null
+    this.boundMixLut = null
+    this.boundMixer = null
+    if (this.mixActive) this.device.queue.writeBuffer(this.mixBuf, 0, new ArrayBuffer(MIXER_UNIFORM_SIZE))
+    this.mixActive = false
     this.rawBuf?.destroy()
     this.rawBuf = null
     this.rgbInput?.texture.destroy()
@@ -2262,8 +2271,17 @@ export class DevelopEngine {
    * rgba32float, `pipe` the mixer's own pipeline). Returns the temporary resources, to destroy once the work is submitted.
    */
   private encodeDisplay(enc: GPUCommandEncoder, pipe: GPURenderPipeline, view: GPUTextureView, tex: GPUTexture, w: number, h: number, mode: 0 | 3 | 4 = 0): (GPUTexture | GPUBuffer)[] {
-    const { device } = this
     const temps: (GPUTexture | GPUBuffer)[] = []
+    try {
+      return this.encodeDisplayInto(enc, pipe, view, tex, w, h, mode, temps)
+    } catch (e) {
+      for (const t of temps) t.destroy()
+      throw e
+    }
+  }
+
+  private encodeDisplayInto(enc: GPUCommandEncoder, pipe: GPURenderPipeline, view: GPUTextureView, tex: GPUTexture, w: number, h: number, mode: 0 | 3 | 4, temps: (GPUTexture | GPUBuffer)[]): (GPUTexture | GPUBuffer)[] {
+    const { device } = this
     const tileBuf = (origin: [number, number], m: number) => {
       const b = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM, mappedAtCreation: true })
       const r = b.getMappedRange()

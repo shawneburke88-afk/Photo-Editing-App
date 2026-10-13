@@ -827,7 +827,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     let shown = shownOf(x, inf)
     if (after) shown = withColourMixer(shown, withPoints(shown.colourMixer, undefined))
     const l = engine.layout(x.view, engine.canvas.width, engine.canvas.height)
-    return engine.sampleMixer(displayUniforms(shown), multipliers(shown, inf), uv[0], uv[1], l.scale, after)
+    // Develop's GPU work: background work waits while it runs (PHASE3.md, Part 14).
+    return gpuGate.foreground(() => engine.sampleMixer(displayUniforms(shown), multipliers(shown, inf), uv[0], uv[1], l.scale, after))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
