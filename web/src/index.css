@@ -629,6 +629,7 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .auto-options .auto-sliders label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
 .auto-note { font-size: 0.78rem; color: var(--muted); margin: 4px 0 0; }
 .dbadge.sync { top: auto; bottom: 10px; color: var(--text); }
+.dbadge.gpu-notice { top: auto; bottom: 40px; left: 50%; transform: translateX(-50%); color: var(--text); max-width: calc(100% - 20px); z-index: 3; }
 
 /* Presets */
 .presets { border-bottom: 1px solid var(--line); padding-bottom: 6px; }
