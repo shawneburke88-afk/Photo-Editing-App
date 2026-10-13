@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.4.2",
+    "date": "2026-10-13",
+    "newFeatures": [
+      "Export: new Output sharpening (Sharpen for Screen, Matte paper or Glossy paper; Low, Standard or High), off by default. It sharpens only the exported file after resizing, and adapts to the print resolution or to how much the photo is downsized.",
+      "Export: new Resolution setting (pixels per inch, default 300) under Size, written into the exported file."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.4.1",
     "date": "2026-10-13",
     "newFeatures": [
