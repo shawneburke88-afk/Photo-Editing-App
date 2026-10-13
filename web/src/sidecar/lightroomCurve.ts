@@ -21,7 +21,9 @@
 //    offsets added on top (lightroom.c lines 1516-1529 add them to the first points of any non-custom curve; the owner
 //    chose not to copy that). When a file names Medium or Strong Contrast but holds no points, LightBench's presets of
 //    those names stand in (tone-curve.ts CURVE_PRESETS; Lightroom's own preset points are Adobe's and aren't used).
-//  - Saturation and the brightness measure stay as they are: Lightroom's fields for them (if any) aren't read.
+//  - Refine Saturation and the brightness measure stay as they are (a new curve gets LightBench's defaults: 100 % and
+//    Largest channel). Lightroom's own Refine Saturation field isn't read or written: the only source naming one
+//    (crs:CurveRefineSaturation) is LightCraft's own documentation, unconfirmed.
 //  - Lightroom's Red, Green and Blue curves are read whenever present. LightCraft only applies them when the master and
 //    all three are present (its observation of Lightroom Classic, docs/research/lightcraft/REVIEW.md; unverified), which
 //    isn't followed: a file with a channel curve is taken to mean it.
@@ -168,7 +170,7 @@ export function toneToLightroom(tc: ToneCurveSettings | undefined): LrToneState 
 
 /**
  * LightBench's tone curve with Lightroom's applied: Regions from the parametric fields, the four point curves from the
- * point fields. Saturation and the brightness measure stay as they were (undefined when it all ends at the defaults).
+ * point fields. Refine Saturation and the brightness measure stay as they were (undefined when it all ends at the defaults).
  */
 export function toneFromLightroom(current: ToneCurveSettings | undefined, s: LrToneState): ToneCurveSettings | undefined {
   const base = current ?? DEFAULT_TONE_CURVE

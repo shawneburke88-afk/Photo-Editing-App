@@ -149,7 +149,12 @@ describe('the Tone Curve item', () => {
     const out = applyPaste({ ...DEFAULT_SETTINGS, exposure: 1 }, c(), 'raw')
     expect(out.toneCurve).toEqual(curve)
     expect(out.exposure).toBe(1)
-    expect(describePaste(c(), 'raw')).toEqual(['Tone Curve: Regions Shadows +20, RGB curve (7 points), Saturation 70 %'])
+    expect(describePaste(c(), 'raw')).toEqual(['Tone Curve: Regions Shadows +20, RGB curve (7 points), Refine Saturation 70 %'])
+  })
+
+  it('names the brightness measure only when it isn’t the default (Largest channel)', () => {
+    expect(describePaste(c({ ...DEFAULT_SETTINGS, toneCurve: { ...curve, saturation: 100, norm: 'power' } }), 'raw')).toEqual(['Tone Curve: Regions Shadows +20, RGB curve (7 points), Balanced (power)'])
+    expect(describePaste(c({ ...DEFAULT_SETTINGS, toneCurve: { ...curve, saturation: 100, norm: 'max' } }), 'raw')).toEqual(['Tone Curve: Regions Shadows +20, RGB curve (7 points)'])
   })
 
   it('copies “none” from a photo without a curve, leaving no key behind', () => {

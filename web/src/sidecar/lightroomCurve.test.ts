@@ -91,10 +91,13 @@ describe('reading Lightroom’s tone curve', () => {
     expect(tc.red[1]).toEqual([0.502, 0.549])
     expect(tc.green).toEqual(DEFAULT_TONE_CURVE.green)
     expect(tc.regions).toEqual({ shadows: 15, darks: -10, lights: 20, highlights: -35, splits: [20, 45, 80] })
-    // Saturation and the brightness measure are LightBench's own: kept.
-    const kept = toneFromLightroom({ ...DEFAULT_TONE_CURVE, saturation: 40, norm: 'max' }, lrToneState(readXmp(LR_CURVE).lightroomTone!.fields))!
+    // Refine Saturation and the brightness measure are LightBench's own: kept, or its defaults for a new curve
+    // (Largest channel at 100 %: Adobe's method).
+    expect(tc.saturation).toBe(100)
+    expect(tc.norm).toBe('max')
+    const kept = toneFromLightroom({ ...DEFAULT_TONE_CURVE, saturation: 40, norm: 'luminance' }, lrToneState(readXmp(LR_CURVE).lightroomTone!.fields))!
     expect(kept.saturation).toBe(40)
-    expect(kept.norm).toBe('max')
+    expect(kept.norm).toBe('luminance')
   })
 
   it('round-trips: LightBench → Lightroom → LightBench', () => {

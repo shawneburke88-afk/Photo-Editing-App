@@ -184,7 +184,7 @@ export const HELP: Record<string, ControlHelp> = {
     what: 'Bends the tone curve between the middle and the right split points.',
     left: 'Darker upper mid-tones (less contrast with Darks raised).',
     right: 'Brighter upper mid-tones (more contrast with Darks lowered).',
-    pitfalls: 'Lights up and Darks down together is an S-curve: more contrast and stronger colours (see Saturation below).',
+    pitfalls: 'Lights up and Darks down together is an S-curve: more contrast and stronger colours (see Refine Saturation below).',
     engine: 'LightBench’s own region curve, after Contrast',
   },
   curveDarks: {
@@ -202,12 +202,12 @@ export const HELP: Record<string, ControlHelp> = {
     pitfalls: 'Lifting shadows with the curve flattens their texture; Basic’s Shadows keeps it. Pure black stays black: for a faded look, lift the curve’s end point (Point curve, or the Fade preset).',
     engine: 'LightBench’s own region curve, after Contrast',
   },
-  curveSaturation: {
+  curveRefineSaturation: {
     hint: 'Colour that comes with contrast',
     what: 'Where the curve gets steeper (more contrast), colours get stronger too, as in Lightroom. This sets how much. Hue is kept either way.',
     left: 'Less: at 0 % the curve changes brightness only and colours keep their strength.',
-    right: '100 %: colours get as much stronger as Adobe’s colour-keeping curve makes them (the default).',
-    pitfalls: 'This is not Basic’s Saturation: it only takes back (or keeps) the colour the curve adds. Applies to the RGB curve and Regions, not to the Red, Green and Blue curves.',
+    right: '100 %: colours get as much stronger as Adobe’s colour-keeping curve makes them (the default; with the default brightness measure, Largest channel, the result is Adobe’s film-like curve).',
+    pitfalls: 'Not Basic’s Saturation: like Lightroom’s Refine Saturation, it only takes back (or keeps) the colour the curve adds. Applies to the RGB curve and Regions, not to the Red, Green and Blue curves.',
     engine: 'LightBench; brightness measured with darktable’s preserve-colors norms (Advanced)',
   },
 }

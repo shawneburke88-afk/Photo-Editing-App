@@ -6,7 +6,7 @@ import type { DevelopSettings, SourceKind } from '../engine/develop/settings'
 import { AUTO_SLIDERS, type AutoKey } from '../engine/develop/auto'
 import { pasteCrop, setAngle, withOrientation, type GeometrySettings } from '../engine/develop/geometry'
 import { DEFAULT_TRANSFORM, normalizeTransform, ZERO_PERSPECTIVE, type TransformSettings } from '../engine/develop/upright'
-import { CURVE_NORMS, isLinear, REGION_KEYS, REGION_NAMES, withToneCurve, type ToneCurveSettings } from '../engine/develop/tone-curve'
+import { CURVE_NORMS, DEFAULT_TONE_CURVE, isLinear, REGION_KEYS, REGION_NAMES, withToneCurve, type ToneCurveSettings } from '../engine/develop/tone-curve'
 
 export type PasteKey =
   | 'whiteBalance'
@@ -66,8 +66,8 @@ export function describeCurve(tc: ToneCurveSettings | undefined): string {
   if (!isLinear(tc.rgb)) parts.push(`RGB curve (${tc.rgb.length} points)`)
   const ch = (['red', 'green', 'blue'] as const).filter((c) => !isLinear(tc[c]))
   if (ch.length) parts.push(`${ch.map((c) => c[0].toUpperCase() + c.slice(1)).join(', ')} curve${ch.length > 1 ? 's' : ''}`)
-  if (tc.saturation !== 100) parts.push(`Saturation ${tc.saturation} %`)
-  if (tc.norm !== 'power') parts.push(CURVE_NORMS.find((n) => n.id === tc.norm)?.label ?? tc.norm)
+  if (tc.saturation !== DEFAULT_TONE_CURVE.saturation) parts.push(`Refine Saturation ${tc.saturation} %`)
+  if (tc.norm !== DEFAULT_TONE_CURVE.norm) parts.push(CURVE_NORMS.find((n) => n.id === tc.norm)?.label ?? tc.norm)
   return parts.length ? parts.join(', ') : 'none (straight line)'
 }
 const slider = (key: 'exposure' | 'contrast' | 'highlights' | 'shadows' | 'whites' | 'blacks' | 'vibrance' | 'saturation', label: string, group: PasteItem['group']): PasteItem => ({
@@ -96,7 +96,7 @@ export const PASTE_ITEMS: PasteItem[] = [
   slider('vibrance', 'Vibrance', 'Presence'),
   slider('saturation', 'Saturation', 'Presence'),
   // The whole Tone Curve travels as one item (Lightroom's Copy Settings has one "Tone Curve" box): Regions, the RGB,
-  // Red, Green and Blue curves, its Saturation and brightness measure. A photo without a curve copies "none".
+  // Red, Green and Blue curves, its Refine Saturation and brightness measure. A photo without a curve copies "none".
   {
     key: 'toneCurve',
     label: 'Tone Curve',

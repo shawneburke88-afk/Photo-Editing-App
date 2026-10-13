@@ -5,6 +5,7 @@ import {
   blendToneCurve,
   brightness,
   buildLut,
+  CURVE_NORMS,
   CURVE_PRESETS,
   curveActive,
   curveFunction,
@@ -294,6 +295,27 @@ describe('colour (hue kept, Saturation)', () => {
     }
   })
 
+  it('by default (Largest channel, Refine Saturation 100 %) is Adobe’s method, through the GPU’s lookup table', () => {
+    // Owner's decision (2026-10-13): the default result is Adobe's film-like, hue-keeping curve.
+    expect(DEFAULT_TONE_CURVE.norm).toBe('max')
+    expect(DEFAULT_TONE_CURVE.saturation).toBe(100)
+    expect(CURVE_NORMS[0].id).toBe('max')
+    expect(CURVE_NORMS[0].help).toMatch(/\(default\)/)
+    expect(CURVE_NORMS.filter((n) => /\(default\)/.test(n.help))).toHaveLength(1)
+    const t = tc({ rgb: S })
+    const lut = buildLut(t)
+    const fl = (v: number) => decode(lutAt(lut, 3, encode(v)))
+    for (const c of colours) {
+      const idx = [0, 1, 2].sort((a, b) => c[a] - c[b])
+      const [lo, mid, hi] = idx.map((i) => c[i])
+      const adobe = [0, 0, 0]
+      adobe[idx[0]] = fl(lo)
+      adobe[idx[2]] = fl(hi)
+      adobe[idx[1]] = fl(lo) + ((fl(hi) - fl(lo)) * (mid - lo)) / (hi - lo)
+      applyToneCurve(c, t, lut).forEach((v, i) => expect(v).toBeCloseTo(adobe[i], 9))
+    }
+  })
+
   it('makes colours stronger where the curve steepens, less at lower Saturation', () => {
     const c = [0.4, 0.25, 0.15]
     const chroma = (o: number[]) => (Math.max(...o) - Math.min(...o)) / brightness(o, 'power')
@@ -347,6 +369,13 @@ describe('presets, storing and Amount', () => {
     expect(normalizeToneCurve(undefined)).toBeUndefined()
     expect(normalizeToneCurve(DEFAULT_TONE_CURVE)).toBeUndefined()
     expect(normalizeToneCurve({ rgb: [[0, 0], [1, 1]] })).toBeUndefined()
+    // Largest channel is the default: on its own it leaves no trace; another measure is kept; a missing or unknown one
+    // reads as the default.
+    expect(normalizeToneCurve({ norm: 'max', saturation: 100 })).toBeUndefined()
+    expect(normalizeToneCurve({ norm: 'power' })?.norm).toBe('power')
+    expect(normalizeToneCurve({ rgb: S2 })?.norm).toBe('max')
+    expect(normalizeToneCurve({ rgb: S2, norm: 'nonsense' })?.norm).toBe('max')
+    expect(withToneCurve<{ toneCurve?: ToneCurveSettings }>({}, { ...DEFAULT_TONE_CURVE, norm: 'power' }).toneCurve?.norm).toBe('power')
     const s = withToneCurve<{ exposure: number; toneCurve?: ToneCurveSettings }>({ exposure: 1, toneCurve: tc({ rgb: S2 }) }, undefined)
     expect('toneCurve' in s).toBe(false)
     expect(withToneCurve<{ exposure: number; toneCurve?: ToneCurveSettings }>({ exposure: 1 }, tc({ rgb: S2 })).toneCurve?.rgb).toEqual(S2)
@@ -377,6 +406,10 @@ describe('presets, storing and Amount', () => {
     const mid = blendToneCurve(own, p, 0.5)!
     const fo = curveFunction(own.rgb)
     expect(curveFunction(mid.rgb)(0.25)).toBeCloseTo((fo(0.25) + fp(0.25)) / 2, 2)
+    // The brightness measure: a preset's own above 0 %; the default (Largest channel) when the preset has no curve.
+    expect(blendToneCurve(undefined, p, 0.5)!.norm).toBe('max')
+    expect(blendToneCurve(undefined, { ...p, norm: 'power' }, 0.5)!.norm).toBe('power')
+    expect(blendToneCurve({ ...own, norm: 'luminance' }, undefined, 0.5)!.norm).toBe('max')
   })
 })
 

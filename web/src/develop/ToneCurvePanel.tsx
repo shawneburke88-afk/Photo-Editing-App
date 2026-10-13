@@ -703,8 +703,8 @@ export function ToneCurvePanel(p: Props) {
         )}
 
         <Slider
-          label="Saturation"
-          help={HELP.curveSaturation}
+          label="Refine Saturation"
+          help={HELP.curveRefineSaturation}
           showHint={p.showHint}
           value={cur.saturation}
           min={0}
@@ -713,10 +713,10 @@ export function ToneCurvePanel(p: Props) {
           defaultValue={100}
           format={(v) => `${Math.round(v)} %`}
           disabled={disabled}
-          onChange={(v) => commit('Tone curve: Saturation', setCurve({ saturation: v }))}
+          onChange={(v) => commit('Tone curve: Refine Saturation', setCurve({ saturation: v }))}
         />
         <div className="curve-foot">
-          <button className="button small" disabled={disabled || !p.curve} onClick={() => { setSelected(null); commit('Reset tone curve', undefined, true) }} title="Reset the whole tone curve: Regions, the RGB, Red, Green and Blue curves, Saturation and the brightness measure">
+          <button className="button small" disabled={disabled || !p.curve} onClick={() => { setSelected(null); commit('Reset tone curve', undefined, true) }} title="Reset the whole tone curve: Regions, the RGB, Red, Green and Blue curves, Refine Saturation and the brightness measure">
             Reset
           </button>
           {view.mode === 'point' && (

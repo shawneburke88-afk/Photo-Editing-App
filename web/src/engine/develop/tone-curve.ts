@@ -26,10 +26,11 @@
 // Colour (owner's decision 3): the RGB curve and Regions change brightness with the hue kept; steepening the curve
 // also makes colours stronger, like Lightroom, by as much as Adobe's hue-keeping method would (the curve applied to the
 // largest and smallest channel; RawTherapee ships it as "Film-like", rtengine/curves.h `AdobeToneCurve::RGBTone`,
-// research §1). The Saturation slider (100 % = that, 0 % = brightness only) takes it back. How brightness is measured
-// is darktable's "preserve colors" norms (src/common/rgb_norms.h, lines 22-71), each scaled so a neutral grey reads its
-// own value (darktable's sum and Euclidean norm read it 3× and √3× brighter); "basic power" is the default, and
-// "Per channel (classic RGB)" applies the curve to R, G and B separately.
+// research §1). The Refine Saturation slider (Lightroom's name for its curve's slider; 100 % = that, 0 % = brightness
+// only) takes it back. How brightness is measured is darktable's "preserve colors" norms (src/common/rgb_norms.h,
+// lines 22-71), each scaled so a neutral grey reads its own value (darktable's sum and Euclidean norm read it 3× and √3×
+// brighter). "max RGB" (Largest channel) is the default (owner's decision, 2026-10-13): with Refine Saturation at 100 %
+// the result is then exactly Adobe's method. "Per channel (classic RGB)" applies the curve to R, G and B separately.
 
 /** A point of a point curve: input and output, 0…1 on the sRGB-encoded axis. */
 export type CurvePoint = [x: number, y: number]
@@ -40,8 +41,8 @@ export const CURVE_CHANNELS: CurveChannel[] = ['rgb', 'red', 'green', 'blue']
 /** How the RGB curve measures a pixel's brightness (darktable's preserve-colors norms, normalised), or per channel. */
 export type CurveNorm = 'power' | 'luminance' | 'max' | 'average' | 'norm' | 'channels'
 export const CURVE_NORMS: { id: CurveNorm; label: string; help: string }[] = [
-  { id: 'power', label: 'Balanced (power)', help: 'darktable’s “basic power” norm: weighted towards the brightest channel. Keeps hue; a good compromise for skies and skin (default).' },
-  { id: 'max', label: 'Largest channel', help: 'darktable’s “max RGB”: never pushes a colour out of range; can darken saturated blues.' },
+  { id: 'max', label: 'Largest channel', help: 'darktable’s “max RGB” (default): with Refine Saturation at 100 % this is Adobe’s film-like, hue-keeping curve. Never pushes a colour out of range; can darken saturated blues.' },
+  { id: 'power', label: 'Balanced (power)', help: 'darktable’s “basic power” norm: weighted towards the brightest channel. Keeps hue; a compromise for skies and skin.' },
   { id: 'luminance', label: 'Luminance', help: 'darktable’s “luminance” (its rgb curve default): saturated reds and blues read dark, so a contrast curve crushes them.' },
   { id: 'average', label: 'Average', help: 'darktable’s “average RGB”.' },
   { id: 'norm', label: 'Euclidean norm', help: 'darktable’s “norm RGB”, scaled so a grey reads its own value.' },
@@ -65,7 +66,10 @@ export interface ToneCurveSettings {
   red: CurvePoint[]
   green: CurvePoint[]
   blue: CurvePoint[]
-  /** How much stronger colours get where the curve steepens: 0…100 %, default 100 (like Lightroom). */
+  /**
+   * Refine Saturation (Lightroom's name; the stored key stays `saturation`): how much stronger colours get where the
+   * curve steepens, 0…100 %, default 100 (like Lightroom).
+   */
   saturation: number
   norm: CurveNorm
 }
@@ -83,7 +87,7 @@ export const DEFAULT_TONE_CURVE: ToneCurveSettings = {
   green: LINEAR,
   blue: LINEAR,
   saturation: 100,
-  norm: 'power',
+  norm: 'max',
 }
 
 /** Most points per curve (sources disagree whether Lightroom allows 14 or 16; darktable allows 20). */
@@ -429,7 +433,7 @@ export function normalizeToneCurve(raw: unknown): ToneCurveSettings | undefined 
     green: normalizePoints(t.green) ?? LINEAR,
     blue: normalizePoints(t.blue) ?? LINEAR,
     saturation: finite(t.saturation) ? Math.round(clamp(t.saturation, 0, 100)) : 100,
-    norm: CURVE_NORMS.some((n) => n.id === t.norm) ? (t.norm as CurveNorm) : 'power',
+    norm: CURVE_NORMS.some((n) => n.id === t.norm) ? (t.norm as CurveNorm) : DEFAULT_TONE_CURVE.norm,
   }
   return isDefaultToneCurve(tc) ? undefined : tc
 }
@@ -444,7 +448,7 @@ export function withToneCurve<S extends { toneCurve?: ToneCurveSettings }>(s: S,
   return (n ? { ...rest, toneCurve: n } : rest) as S
 }
 
-/** The key of the curves' shape (not Saturation or the norm, which are uniforms): the LUT is rebuilt when it changes. */
+/** The key of the curves' shape (not Refine Saturation or the norm, which are uniforms): the LUT is rebuilt when it changes. */
 export const lutKey = (tc: ToneCurveSettings) => JSON.stringify([tc.regions, tc.rgb, tc.red, tc.green, tc.blue])
 
 // ---- presets' Amount
@@ -466,7 +470,7 @@ function blendPoints(a: readonly CurvePoint[], b: readonly CurvePoint[], t: numb
 
 /**
  * A preset's Amount on the tone curve: the curve's change from `before` (the photo's own, or linear) scaled by
- * `amount` — 0 is the photo as it was, 1 the preset's curve, 2 twice its deviation. Regions and Saturation move the
+ * `amount` — 0 is the photo as it was, 1 the preset's curve, 2 twice its deviation. Regions and Refine Saturation move the
  * same way; the brightness measure follows the preset whenever the amount is above 0.
  */
 export function blendToneCurve(before: ToneCurveSettings | undefined, after: ToneCurveSettings | undefined, amount: number): ToneCurveSettings | undefined {
