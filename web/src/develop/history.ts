@@ -23,11 +23,14 @@ export function startHistory(settings: DevelopSettings, label = 'Import'): Histo
   return { steps: [{ label, settings, at: 0 }], index: 0 }
 }
 
-/** Records a change. Steps after the current one (undone steps) are discarded, like Lightroom. */
-export function record(h: History, label: string, settings: DevelopSettings, now = Date.now()): History {
+/**
+ * Records a change. Steps after the current one (undone steps) are discarded, like Lightroom. `merge` false makes it a
+ * step of its own even right after one of the same name (the end of a drag: one step per drag).
+ */
+export function record(h: History, label: string, settings: DevelopSettings, now = Date.now(), merge = true): History {
   const kept = h.steps.slice(0, h.index + 1)
   const top = kept[kept.length - 1]
-  if (kept.length > 1 && top.label === label && now - top.at < MERGE_WINDOW_MS) {
+  if (merge && kept.length > 1 && top.label === label && now - top.at < MERGE_WINDOW_MS) {
     kept[kept.length - 1] = { label, settings, at: now }
   } else {
     kept.push({ label, settings, at: now })

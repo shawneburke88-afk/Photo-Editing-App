@@ -17,6 +17,7 @@
 import type { MetadataKey, PhotoMetadata } from '../catalog/types'
 import { creatorList, joinCreators, METADATA_KEYS } from '../library/metadata'
 import { LR_DETAIL_FIELDS, lrValues, NS_CRS, NS_TIFF, type LrFields, type LrRead, type LrWritePlan } from './lightroom'
+import { lrToneValues, parseLrPoints, type LrToneFields, type LrToneRead, type LrToneWritePlan } from './lightroomCurve'
 
 export const NS = {
   x: 'adobe:ns:meta/',
@@ -67,6 +68,8 @@ export interface SidecarData {
    * or no groups: Lightroom's fields are left exactly as they are.
    */
   lightroom?: LrWritePlan
+  /** Lightroom's tone curve fields to write (sidecar/lightroomCurve.ts `planToneWrite`); as `lightroom`. */
+  lightroomTone?: LrToneWritePlan
 }
 
 /** One virtual copy as stored in its original's sidecar. */
@@ -297,6 +300,36 @@ function setInPlace(doc: Document, ns: string, preferredPrefix: string, local: s
   setProp(home, ns, preferredPrefix, local, value)
 }
 
+/** Sets an ordered list (rdf:Seq) where it is, keeping its element, or adds it next to its namespace's other fields. */
+function setSeqInPlace(doc: Document, ns: string, preferredPrefix: string, local: string, items: string[]) {
+  const el = findElement(doc, ns, local)
+  if (el) {
+    const rdf = el.lookupPrefix(NS.rdf) ?? 'rdf'
+    let seq = el.getElementsByTagNameNS(NS.rdf, 'Seq')[0]
+    if (!seq) {
+      el.textContent = ''
+      seq = doc.createElementNS(NS.rdf, `${rdf}:Seq`)
+      el.appendChild(seq)
+    }
+    const old = Array.from(seq.getElementsByTagNameNS(NS.rdf, 'li'))
+    // Keep the existing items' elements (and the whitespace between them) where there are as many.
+    items.forEach((item, i) => {
+      if (old[i]) old[i].textContent = item
+      else {
+        const li = doc.createElementNS(NS.rdf, `${rdf}:li`)
+        li.textContent = item
+        seq.appendChild(li)
+      }
+    })
+    for (const li of old.slice(items.length)) li.parentNode?.removeChild(li)
+    return
+  }
+  removeProp(doc, ns, local)
+  const all = descriptions(doc)
+  const home = all.find((d) => Array.from(d.attributes).some((a) => a.namespaceURI === ns) || Array.from(d.children).some((c) => c.namespaceURI === ns)) ?? all[0]
+  setBag(doc, home, ns, preferredPrefix, local, items, 'Seq')
+}
+
 /** The managed properties and the values LightBench wants them to have (null = absent). */
 function managedValues(d: SidecarData): [ns: string, prefix: string, local: string, value: string | null][] {
   const stack: [string, string, string, string | null][] =
@@ -341,7 +374,13 @@ export function writeXmp(existing: string | null, data: SidecarData, now = new D
   const metadataSame = !meta || METADATA_KEYS.every((k) => getMetadataField(doc, k) === wantedField(meta, k))
   const lr = data.lightroom
   const lrSame = !lr || lr.groups.every((g) => lrValues(lr.state, g, lr.detailFields).every(([ns, local, value]) => getProp(doc, ns, local) === value))
-  if (existing !== null && keywordsSame && collectionsSame && metadataSame && lrSame && wanted.every(([ns, , local, value]) => getProp(doc, ns, local) === value)) return null
+  const tone = data.lightroomTone
+  const toneSame =
+    !tone ||
+    lrToneValues(tone).every(({ local, value }) =>
+      Array.isArray(value) ? JSON.stringify(getBag(doc, NS_CRS, local)) === JSON.stringify(value) : getProp(doc, NS_CRS, local) === value,
+    )
+  if (existing !== null && keywordsSame && collectionsSame && metadataSame && lrSame && toneSame && wanted.every(([ns, , local, value]) => getProp(doc, ns, local) === value)) return null
 
   for (const [ns, , local] of wanted) removeProp(doc, ns, local)
   removeProp(doc, NS.xmp, 'MetadataDate')
@@ -366,6 +405,17 @@ export function writeXmp(existing: string | null, data: SidecarData, now = new D
   if (lr?.marker !== undefined) {
     removeProp(doc, NS.lightbench, 'LightroomGeometry')
     setProp(desc, NS.lightbench, 'lightbench', 'LightroomGeometry', lr.marker)
+  }
+  if (tone && !toneSame) {
+    // As the crop: changed where they are, new ones next to the other Camera Raw settings.
+    for (const { local, value } of lrToneValues(tone)) {
+      if (Array.isArray(value)) setSeqInPlace(doc, NS_CRS, 'crs', local, value)
+      else setInPlace(doc, NS_CRS, 'crs', local, value)
+    }
+  }
+  if (tone?.marker !== undefined) {
+    removeProp(doc, NS.lightbench, 'LightroomToneCurve')
+    setProp(desc, NS.lightbench, 'lightbench', 'LightroomToneCurve', tone.marker)
   }
   // XMP: MetadataDate records when the metadata last changed.
   setProp(desc, NS.xmp, 'xmp', 'MetadataDate', now.toISOString().replace(/\.\d{3}Z$/, 'Z'))
@@ -407,6 +457,36 @@ export interface SidecarRead {
   metadata?: Partial<PhotoMetadata>
   /** Lightroom's crop, orientation and Transform fields (sidecar/lightroom.ts), when the file has any. */
   lightroom?: LrRead
+  /** Lightroom's tone curve fields (sidecar/lightroomCurve.ts), when the file has any. */
+  lightroomTone?: LrToneRead
+}
+
+/** Lightroom's tone curve fields, Camera Raw's process version and already-applied flag, and LightBench's marker. */
+function readLightroomTone(doc: Document): LrToneRead | undefined {
+  const num = (local: string) => {
+    const v = getProp(doc, NS_CRS, local)
+    return v !== null && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : undefined
+  }
+  const fields: LrToneFields = {
+    name: getProp(doc, NS_CRS, 'ToneCurveName2012') ?? undefined,
+    rgb: parseLrPoints(getBag(doc, NS_CRS, 'ToneCurvePV2012')) ?? undefined,
+    red: parseLrPoints(getBag(doc, NS_CRS, 'ToneCurvePV2012Red')) ?? undefined,
+    green: parseLrPoints(getBag(doc, NS_CRS, 'ToneCurvePV2012Green')) ?? undefined,
+    blue: parseLrPoints(getBag(doc, NS_CRS, 'ToneCurvePV2012Blue')) ?? undefined,
+    shadows: num('ParametricShadows'),
+    darks: num('ParametricDarks'),
+    lights: num('ParametricLights'),
+    highlights: num('ParametricHighlights'),
+    shadowSplit: num('ParametricShadowSplit'),
+    midtoneSplit: num('ParametricMidtoneSplit'),
+    highlightSplit: num('ParametricHighlightSplit'),
+  }
+  for (const k of Object.keys(fields) as (keyof LrToneFields)[]) if (fields[k] === undefined) delete fields[k]
+  const marker = getProp(doc, NS.lightbench, 'LightroomToneCurve') ?? undefined
+  const processVersion = getProp(doc, NS_CRS, 'ProcessVersion') !== null
+  if (!Object.keys(fields).length && marker === undefined && !processVersion) return undefined
+  const applied = getProp(doc, NS_CRS, 'AlreadyApplied')?.trim().toLowerCase() === 'true'
+  return { fields, processVersion, applied, ...(marker !== undefined ? { marker } : {}) }
 }
 
 /** Lightroom's geometry fields, Camera Raw's process version and already-applied flag, and LightBench's marker. */
@@ -496,6 +576,8 @@ export function readXmp(text: string): SidecarRead {
   if (Object.keys(metadata).length) out.metadata = metadata
   const lightroom = readLightroom(doc)
   if (lightroom) out.lightroom = lightroom
+  const lightroomTone = readLightroomTone(doc)
+  if (lightroomTone) out.lightroomTone = lightroomTone
   const develop = getProp(doc, NS.lightbench, 'Develop')
   if (develop) {
     try {

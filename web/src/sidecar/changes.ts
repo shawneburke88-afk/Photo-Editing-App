@@ -18,6 +18,7 @@
 import type { MetadataKey, PhotoMetadata } from '../catalog/types'
 import { creatorList, EMPTY_METADATA, joinCreators, METADATA_KEYS } from '../library/metadata'
 import { detailOf, geometryOf, lrKey, lrState, sameLrKey, toLightroom, type LrFrame } from './lightroom'
+import { lrToneKey, lrToneState, sameLrToneKey, toneCurveOf, toneToLightroom } from './lightroomCurve'
 import type { SidecarRead } from './xmp'
 
 /** The fields a sidecar is compared on: the standard ones, and LightBench's develop settings. */
@@ -38,10 +39,15 @@ export interface SidecarFields {
    * records made before LightBench read them, and when the photo's size isn't known: then it isn't compared.
    */
   geometry?: string
+  /**
+   * Lightroom's tone curve (sidecar/lightroomCurve.ts `lrToneKey`, every field resolved). Undefined in records made
+   * before LightBench read it: then it isn't compared.
+   */
+  toneCurve?: string
 }
 
-/** A field that can differ: the rating, flag, label, keywords, develop settings, Lightroom's geometry, or one metadata field. */
-export type FieldKey = 'rating' | 'flag' | 'color' | 'keywords' | 'develop' | 'geometry' | MetadataKey
+/** A field that can differ: the rating, flag, label, keywords, develop settings, Lightroom's geometry or tone curve, or one metadata field. */
+export type FieldKey = 'rating' | 'flag' | 'color' | 'keywords' | 'develop' | 'geometry' | 'toneCurve' | MetadataKey
 
 /** What the catalog remembers about a photo's sidecar file. */
 export interface SidecarState {
@@ -91,7 +97,10 @@ export function fieldsFromRead(r: SidecarRead, frame?: LrFrame): SidecarFields {
     metadata: normalMetadata(r.metadata),
     develop: canonical(r.develop),
   }
-  if (frame) out.geometry = lrKey(lrState(r.lightroom && !r.lightroom.applied ? r.lightroom.fields : undefined, frame))
+  if (frame) {
+    out.geometry = lrKey(lrState(r.lightroom && !r.lightroom.applied ? r.lightroom.fields : undefined, frame))
+    out.toneCurve = lrToneKey(lrToneState(r.lightroomTone && !r.lightroomTone.applied ? r.lightroomTone.fields : undefined))
+  }
   return out
 }
 
@@ -101,7 +110,10 @@ export const geometryKey = (develop: string | null, frame: LrFrame): string => l
 /** LightBench's own values for a photo, as the catalog has them (with `frame`, its geometry as Lightroom's fields). */
 export function fieldsFromCatalog(c: { rating: number; flag: number; color: number; keywords: string[]; metadata: PhotoMetadata; develop: string | null }, frame?: LrFrame): SidecarFields {
   const out: SidecarFields = { rating: c.rating, flag: c.flag, color: c.color, keywords: c.keywords, metadata: normalMetadata(c.metadata), develop: canonical(c.develop) }
-  if (frame) out.geometry = geometryKey(c.develop, frame)
+  if (frame) {
+    out.geometry = geometryKey(c.develop, frame)
+    out.toneCurve = lrToneKey(toneToLightroom(toneCurveOf(c.develop)))
+  }
   return out
 }
 
@@ -112,6 +124,7 @@ export function parseFields(json: string | null): SidecarFields | null {
     if (!(f && typeof f.rating === 'number' && Array.isArray(f.keywords) && f.metadata)) return null
     const out: SidecarFields = { ...f, metadata: normalMetadata(f.metadata) }
     if (typeof out.geometry !== 'string') delete out.geometry
+    if (typeof out.toneCurve !== 'string') delete out.toneCurve
     return out
   } catch {
     return null
@@ -137,6 +150,7 @@ export function diffFields(a: SidecarFields, b: SidecarFields): FieldKey[] {
   if (a.develop !== b.develop) out.push('develop')
   // Lightroom's geometry counts only when both sides know it (old records don't).
   if (a.geometry !== undefined && b.geometry !== undefined && !sameLrKey(a.geometry, b.geometry)) out.push('geometry')
+  if (a.toneCurve !== undefined && b.toneCurve !== undefined && !sameLrToneKey(a.toneCurve, b.toneCurve)) out.push('toneCurve')
   return out
 }
 
@@ -159,7 +173,13 @@ export function resolve(theirs: SidecarFields, base: SidecarFields): SidecarFiel
  * A record made before LightBench read Lightroom's geometry has none: it is taken to be what the file says now, so
  * a Lightroom crop that LightBench didn't read before isn't reported as a new change by another app.
  */
-const withGeometry = (base: SidecarFields, theirs: SidecarFields): SidecarFields => (base.geometry === undefined ? { ...base, geometry: theirs.geometry } : base)
+const withGeometry = (base: SidecarFields, theirs: SidecarFields): SidecarFields => {
+  let out = base
+  if (out.geometry === undefined) out = { ...out, geometry: theirs.geometry }
+  // The same for Lightroom's tone curve, which records made before LightBench read it don't have.
+  if (out.toneCurve === undefined && theirs.toneCurve !== undefined) out = { ...out, toneCurve: theirs.toneCurve }
+  return out
+}
 
 /** Whether the sidecar file must be read to know if it changed. */
 export function needsRead(state: Pick<SidecarState, 'modified' | 'size'>, file: { lastModified: number; size: number }): boolean {
@@ -206,6 +226,8 @@ export interface ReadPatch {
   develop?: string
   /** Lightroom's geometry (lrKey) to apply to the photo, when Lightroom changed its crop, orientation or Transform. */
   geometry?: string
+  /** Lightroom's tone curve (lrToneKey) to apply to the photo, when Lightroom changed it. */
+  toneCurve?: string
   /** The sidecar's fields, to remember as the new base. */
   record: SidecarFields
 }
@@ -233,5 +255,6 @@ export function mergeForRead(recorded: SidecarFields | null, ours: SidecarFields
   for (const k of METADATA_KEYS) if (changed.has(k) && theirs.metadata[k] !== ours.metadata[k]) patch.metadata[k] = theirs.metadata[k]
   if (changed.has('develop') && theirs.develop && theirs.develop !== ours.develop) patch.develop = theirs.develop
   if (changed.has('geometry') && theirs.geometry && !sameLrKey(theirs.geometry, ours.geometry)) patch.geometry = theirs.geometry
+  if (changed.has('toneCurve') && theirs.toneCurve && !sameLrToneKey(theirs.toneCurve, ours.toneCurve)) patch.toneCurve = theirs.toneCurve
   return patch
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { BUILT_IN_TARGETS } from '../engine/develop/auto'
 import { DEFAULT_RGB_SETTINGS, DEFAULT_SETTINGS } from '../engine/develop/settings'
 import { applyPaste } from './paste'
+import { curveFunction, DEFAULT_TONE_CURVE } from '../engine/develop/tone-curve'
 import { blendSettings, presetClip, presetFromRow, STARTER_PRESETS } from './presets'
 
 const bw = STARTER_PRESETS.find((p) => p.id === 'starter:bw')!
@@ -58,5 +59,31 @@ describe('presets', () => {
     expect(p.settings.contrast).toBe(30)
     expect(p.settings.whiteBalance.mode).toBe('as-shot')
     expect(presetFromRow({ id: 8, name: 'x', preset: '{' })).toBeNull()
+  })
+})
+
+describe('a preset with a tone curve', () => {
+  const S = [[0, 0], [0.25, 0.18], [0.75, 0.82], [1, 1]] as [number, number][]
+  const preset = { ...DEFAULT_SETTINGS, contrast: 10, toneCurve: { ...DEFAULT_TONE_CURVE, rgb: S, regions: { ...DEFAULT_TONE_CURVE.regions, highlights: -40 } } }
+
+  it('scales the curve’s deviation from a straight line with the Amount', () => {
+    const before = DEFAULT_SETTINGS
+    const after = applyPaste(before, { settings: preset, keys: ['toneCurve', 'contrast'], rerunAuto: false, sourceKind: 'raw', sourceName: 'p' }, 'raw')
+    expect(after.toneCurve?.rgb).toEqual(S)
+    const half = blendSettings(before, after, 0.5)
+    const f = curveFunction(half.toneCurve!.rgb)
+    expect(f(0.25)).toBeCloseTo(0.25 + (0.18 - 0.25) / 2, 3)
+    expect(f(0.75)).toBeCloseTo(0.75 + (0.82 - 0.75) / 2, 3)
+    expect(half.toneCurve!.regions.highlights).toBe(-20)
+    expect(half.contrast).toBe(5)
+    const zero = blendSettings(before, after, 0)
+    expect('toneCurve' in zero).toBe(false)
+    expect(curveFunction(blendSettings(before, after, 2).toneCurve!.rgb)(0.25)).toBeCloseTo(0.25 - 2 * 0.07, 3)
+  })
+
+  it('leaves a photo’s own curve alone when the preset has none and doesn’t hold the curve', () => {
+    const own = { ...DEFAULT_SETTINGS, toneCurve: { ...DEFAULT_TONE_CURVE, rgb: S } }
+    const after = applyPaste(own, { settings: { ...DEFAULT_SETTINGS, contrast: 30 }, keys: ['contrast'], rerunAuto: false, sourceKind: 'raw', sourceName: 'p' }, 'raw')
+    expect(blendSettings(own, after, 0.5).toneCurve).toBe(own.toneCurve)
   })
 })

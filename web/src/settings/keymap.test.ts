@@ -173,6 +173,30 @@ describe('shortcut sets', () => {
     expect(matchAction(resolveKeymap(LB), key('o'), DEVELOP)).toBe('develop.clipping')
   })
 
+  it('gives the Tone Curve’s targeted adjustment tool its own keys (↑ ↓ nudge, Esc ends), apart from Develop’s', () => {
+    const CURVE: Context[] = ['global', 'curve']
+    for (const set of [LB, LR]) {
+      const map = resolveKeymap(set)
+      expect(matchAction(map, key('T', { ctrlKey: true, altKey: true, shiftKey: true }), DEVELOP)).toBe('develop.curveTarget')
+      expect(matchAction(map, key('T', { ctrlKey: true, altKey: true, shiftKey: true }), CURVE)).toBe('develop.curveTarget')
+      expect(matchAction(map, key('ArrowUp'), CURVE)).toBe('curve.up')
+      expect(matchAction(map, key('ArrowDown'), CURVE)).toBe('curve.down')
+      expect(matchAction(map, key('ArrowUp', { shiftKey: true }), CURVE)).toBe('curve.upBig')
+      expect(matchAction(map, key('ArrowDown', { shiftKey: true }), CURVE)).toBe('curve.downBig')
+      expect(matchAction(map, key('Escape'), CURVE)).toBe('curve.done')
+      expect(matchAction(map, key('z', { ctrlKey: true }), CURVE)).toBe('develop.undo')
+      expect(matchAction(map, key('j'), CURVE)).toBe('develop.clipping')
+      expect(matchAction(map, key('\\'), CURVE)).toBe('develop.before')
+      // Not while the tool is on: the next photo, the grid, the white balance picker.
+      expect(matchAction(map, key('ArrowRight'), CURVE)).toBeNull()
+      expect(matchAction(map, key('g'), CURVE)).toBeNull()
+      expect(matchAction(map, key('w'), CURVE)).toBeNull()
+      // Develop's own arrows are untouched.
+      expect(matchAction(map, key('ArrowUp'), DEVELOP)).toBeNull()
+      expect(matchAction(map, key('Escape'), DEVELOP)).toBe('develop.cancel')
+    }
+  })
+
   it('raises and lowers the rating with ] and [, and rates then moves on with Shift+0–5, in both sets', () => {
     for (const set of [LB, LR]) {
       const map = resolveKeymap(set)
@@ -197,6 +221,27 @@ describe('shortcut sets', () => {
         expect(matchAction(map, key(']'), ctx)).toBeNull()
       }
       expect(matchAction(map, key('[', { ctrlKey: true }), LIBRARY)).toBeNull()
+    }
+  })
+
+  it('gives the Remove brush its own keys: Q, [ and ] for the size, Shift+[ and Shift+] for the feather, H, Delete, Esc', () => {
+    const REMOVE: Context[] = ['global', 'remove']
+    for (const set of [LB, LR]) {
+      const map = resolveKeymap(set)
+      expect(matchAction(map, key('q'), DEVELOP)).toBe('develop.remove')
+      expect(matchAction(map, key('q'), REMOVE)).toBe('develop.remove')
+      expect(matchAction(map, key(']', { code: 'BracketRight' }), REMOVE)).toBe('remove.sizeUp')
+      expect(matchAction(map, key('[', { code: 'BracketLeft' }), REMOVE)).toBe('remove.sizeDown')
+      expect(matchAction(map, key('}', { shiftKey: true, code: 'BracketRight' }), REMOVE)).toBe('remove.featherUp')
+      expect(matchAction(map, key('{', { shiftKey: true, code: 'BracketLeft' }), REMOVE)).toBe('remove.featherDown')
+      expect(matchAction(map, key('h'), REMOVE)).toBe('remove.showAll')
+      expect(matchAction(map, key('Delete'), REMOVE)).toBe('remove.delete')
+      expect(matchAction(map, key('Escape'), REMOVE)).toBe('remove.cancel')
+      expect(matchAction(map, key('z', { ctrlKey: true }), REMOVE)).toBe('develop.undo')
+      // Ctrl+[ still rotates in Develop; the brush keys don't reach Develop or the Library.
+      expect(matchAction(map, key('[', { ctrlKey: true }), DEVELOP)).toBe('develop.rotateLeft')
+      expect(matchAction(map, key(']'), DEVELOP)).toBeNull()
+      expect(matchAction(map, key(']', { code: 'BracketRight' }), LIBRARY)).toBe('photo.rateUp')
     }
   })
 

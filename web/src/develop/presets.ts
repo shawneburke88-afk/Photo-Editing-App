@@ -7,6 +7,7 @@ import { AUTO_SLIDERS, BUILT_IN_TARGETS } from '../engine/develop/auto'
 import { DEFAULT_SETTINGS, type DevelopSettings, type SourceKind } from '../engine/develop/settings'
 import { DEFAULT_DETAIL, DETAIL_RANGES, withDetail, type DetailSettings } from '../engine/detail/settings'
 import type { Clipboard, PasteKey } from './paste'
+import { blendToneCurve, withToneCurve } from '../engine/develop/tone-curve'
 
 /** What is saved for a preset (in the catalog's `presets` table, as JSON). */
 export interface PresetData {
@@ -120,6 +121,8 @@ export function blendSettings(before: DevelopSettings, after: DevelopSettings, a
     out.auto = { ...a, strength }
   }
   out = { ...out, whiteBalance: blendWhiteBalance(before.whiteBalance, after.whiteBalance, t, asShot) }
+  // The tone curve: its change from the photo's own curve (or a straight line) scaled by the amount.
+  if (before.toneCurve !== after.toneCurve) out = withToneCurve(out, blendToneCurve(before.toneCurve, after.toneCurve, t))
   if (before.detail || after.detail) out = withDetail(out, blendDetail(before.detail ?? DEFAULT_DETAIL, after.detail ?? DEFAULT_DETAIL, t))
   // Keep the sliders' own precision.
   for (const k of ['contrast', 'highlights', 'shadows', 'whites', 'blacks', 'vibrance', 'saturation'] as const) out[k] = Math.round(out[k])

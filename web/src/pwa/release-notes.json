@@ -1,5 +1,26 @@
 [
   {
+    "version": "0.5.3",
+    "date": "2026-10-13",
+    "newFeatures": [
+      "New Tone Curve group in Develop, after Basic (Curve on the jump bar). Shape the look with Regions (Highlights, Lights, Darks, Shadows and three split points) or point curves for RGB, Red, Green and Blue, with Linear, Medium Contrast, Strong Contrast and Fade presets.",
+      "Colours keep their hue as the curve changes contrast, and get stronger where it gets steeper, like Lightroom. The Refine Saturation slider takes that colour boost back (0 % changes brightness only).",
+      "A targeted adjustment tool: drag up or down on the photo to bend the curve at that tone. The graph shows the photo's histogram behind the curve and marks where it clips to pure white or black.",
+      "Tone curves made in Lightroom are read from the photo's .xmp file, and a curve you change in LightBench is written back to .xmp files that already hold Lightroom settings."
+    ],
+    "bugFixes": []
+  },
+  {
+    "version": "0.5.2",
+    "date": "2026-10-13",
+    "newFeatures": [
+      "New Remove brush (Q): paint over dust, wires or small objects and LightBench fills them from their surroundings, no AI. Each spot can be switched to Heal or Clone, and its source dragged elsewhere.",
+      "Spots stay on the same place in the photo through crop, rotation, Upright and lens correction, and every export gets exactly the same fill.",
+      "Copy/Paste and Sync can carry Remove, Heal & Clone spots to other photos at the same place on the sensor (for sensor dust); off by default."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.5.1",
     "date": "2026-10-13",
     "newFeatures": [

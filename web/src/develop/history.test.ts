@@ -43,3 +43,14 @@ describe('history', () => {
     expect(current(h).contrast).toBe(25)
   })
 })
+
+describe('one step per drag', () => {
+  it('keeps a step of its own when asked, even with the same name right after', () => {
+    const h0 = startHistory(DEFAULT_SETTINGS)
+    const a = record(h0, 'Tone curve: move point', { ...DEFAULT_SETTINGS, exposure: 1 }, 1000, false)
+    const b = record(a, 'Tone curve: move point', { ...DEFAULT_SETTINGS, exposure: 2 }, 1100, false)
+    expect(b.steps.length).toBe(3)
+    const c = record(a, 'Tone curve: move point', { ...DEFAULT_SETTINGS, exposure: 2 }, 1100)
+    expect(c.steps.length).toBe(2)
+  })
+})

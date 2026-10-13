@@ -8,6 +8,11 @@ import { defaultsFor, displayUniforms, type DevelopSettings } from '../engine/de
 import { DEFAULT_GEOMETRY, flip, isIdentityGeometry, rotate90, sameGeometry, setAngle, setAspect, setLocked, swapAspect, type GeometrySettings } from '../engine/develop/geometry'
 import { CURRENT_PROCESS, PROCESS_VERSIONS, processStatus } from '../engine/develop/process'
 import { DevelopEngine, type ImageStats, type RawStageOptions, type ViewState } from '../engine/gpu/develop-engine'
+import type { RetouchProgress } from '../engine/gpu/retouch-stage'
+import { newSeed, newSpotId, simplifyStroke, STROKE_EPSILON, type Spot, type SpotMode } from '../engine/develop/spots'
+import { RemoveOverlay } from './RemoveOverlay'
+import { RemovePanel } from './RemovePanel'
+import { DEFAULT_BRUSH, SIZE_RANGE, type BrushSettings } from './removeBrush'
 import { RawDecoder } from '../engine/raw/decoder'
 import { Thumb } from '../library/Thumb'
 import { openPhotoFile } from '../platform/roots'
@@ -45,6 +50,9 @@ import { PasteDialog } from './PasteDialog'
 import { PresetPanel } from './PresetPanel'
 import { blendSettings, presetClip, type Preset, type PresetData } from './presets'
 import { loadPresets, presetsChanged } from './presetStore'
+import { CurveTatLayer } from './CurveTatLayer'
+import { ToneCurvePanel, type CurveView } from './ToneCurvePanel'
+import { withToneCurve, type ToneCurveSettings } from '../engine/develop/tone-curve'
 
 interface Props {
   ids: number[]
@@ -94,9 +102,21 @@ const sameCropSession = (a: GeometrySettings, b: GeometrySettings) =>
 
 interface Bypass {
   crop: boolean
+  remove: boolean
   basic: boolean
+  curve: boolean
   detail: boolean
 }
+
+/** Settings without their spots (the field left out, as in edits that never had any). */
+function withoutSpots(s: DevelopSettings): DevelopSettings {
+  const { spots: _gone, ...rest } = s
+  void _gone
+  return rest
+}
+
+/** Settings with a new spot list (left out when empty). */
+const withSpots = (s: DevelopSettings, spots: Spot[]): DevelopSettings => (spots.length ? { ...s, spots } : withoutSpots(s))
 
 /** The preset just applied: its Amount can be changed until the photo is changed another way. */
 interface AppliedPreset {
@@ -178,7 +198,31 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
    */
   const detection = useRef<{ id: number; lens: string; job: Promise<Detection> } | null>(null)
   /** Groups switched off with their eye (a view only). */
-  const [bypass, setBypass] = useState<Bypass>({ crop: false, basic: false, detail: false })
+  const [bypass, setBypass] = useState<Bypass>({ crop: false, remove: false, basic: false, curve: false, detail: false })
+  /**
+   * The Tone Curve (PHASE3.md Part 12): the graph shown, its targeted adjustment tool and the tone under the pointer,
+   * the curve shown while a drag is in progress (one history step when it ends), clipping shown during a drag, and the
+   * histogram of the curve's input behind the graph.
+   */
+  const [curveView, setCurveView] = useStoredJson<CurveView>('lightbench.curve.view', { mode: 'point', channel: 'rgb' })
+  const [curveTarget, setCurveTarget] = useState(false)
+  const [curveHover, setCurveHover] = useState<number | null>(null)
+  const [curveDraft, setCurveDraft] = useState<{ tc: ToneCurveSettings | undefined } | null>(null)
+  const [curveDragClip, setCurveDragClip] = useState(false)
+  const [clipWhileDragging, setClipWhileDragging] = useStoredNumber('lightbench.curve.dragClip', 1)
+  const [curveHist, setCurveHist] = useState<ImageStats | null>(null)
+  /** The Remove brush on the photo (Q), its settings, the selected spot and whether all pins show. */
+  const [removing, setRemoving] = useState(false)
+  const [brushStored, setBrush] = useStoredJson<BrushSettings>('lightbench.remove.brush', DEFAULT_BRUSH)
+  const brush: BrushSettings = { ...DEFAULT_BRUSH, ...brushStored }
+  const [selectedSpot, setSelectedSpot] = useState<string | null>(null)
+  const [showAllSpots, setShowAllSpots] = useStoredJson<{ on: boolean }>('lightbench.remove.showAll', { on: true })
+  const [retouch, setRetouch] = useState<RetouchProgress>({ busy: false })
+  const [placing, setPlacing] = useState(false)
+  const [spotError, setSpotError] = useState<string | null>(null)
+  /** Where the photo sits on the stage (CSS pixels) after the last drawing, while the Remove brush is on. */
+  const [shownBox, setShownBox] = useState<{ x: number; y: number; w: number; h: number; n: number } | null>(null)
+  const [engineReady, setEngineReady] = useState(false)
   /** Sharpening's Masking preview (Alt-drag on Masking, or Show mask): a view only. */
   const [maskPreview, setMaskPreview] = useState(false)
   /** The noise profile and sharpening radius the last render used, for the Detail group. */
@@ -232,6 +276,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         engineRef.current = e
         stageRef.current?.prepend(e.canvas)
         setEngineError('')
+        setEngineReady(true)
       },
       (e: Error) => setEngineError(`Graphics acceleration is not available: ${e.message}`),
     )
@@ -273,6 +318,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setSelectedGuide(null)
     setUprightMsg(null)
     setStraightenMsg(null)
+    setCurveTarget(false)
+    setCurveDraft(null)
+    setCurveHover(null)
+    setSelectedSpot(null)
+    setSpotError(null)
     detection.current = null
     angleBase.current = null
     builtStage.current = null
@@ -339,17 +389,21 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   // ---- drawing (coalesced so dragging never queues up frames)
   const indicators: Indicators = useMemo(
-    () => ({ clip: clipSettings, showClip: overlay, raw: rawClipSettings, showRaw: rawOverlay }),
-    [clipSettings, overlay, rawClipSettings, rawOverlay],
+    // While a drag pushes the tone curve towards black or white, clipping shows on the photo (TONE_CURVE.md §2.5).
+    () => ({ clip: clipSettings, showClip: overlay || (curveDragClip && clipWhileDragging === 1), raw: rawClipSettings, showRaw: rawOverlay }),
+    [clipSettings, overlay, rawClipSettings, rawOverlay, curveDragClip, clipWhileDragging],
   )
-  const latest = useRef({ settings, info, view, before, indicators, hover, draft, bypass, guiding, maskPreview })
-  latest.current = { settings, info, view, before, indicators, hover, draft, bypass, guiding, maskPreview }
+  const latest = useRef({ settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview })
+  latest.current = { settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview }
   /** The settings drawn: Before shows the defaults; a preset hovered, the crop being edited and switched-off groups apply on top. */
   const shownOf = (x: typeof latest.current, inf: SensorInfo): DevelopSettings => {
     // Before is the photo as shot: the defaults without lens corrections or sharpening.
     if (x.before) return { ...defaultsFor(inf.kind), lens: LEGACY_LENS, detail: undefined }
     let s = x.hover ?? x.settings
+    if (x.curveDraft && !x.hover) s = withToneCurve(s, x.curveDraft.tc)
     if (x.bypass.basic) s = withoutBasic(s, defaultsFor(inf.kind, inf.iso))
+    if (x.bypass.curve) s = withToneCurve(s, undefined)
+    if (x.bypass.remove) s = withoutSpots(s)
     if (x.bypass.detail && s.detail) s = { ...s, detail: undefined }
     if (x.draft) return { ...s, geometry: x.draft }
     return x.bypass.crop ? { ...s, geometry: DEFAULT_GEOMETRY, lens: LEGACY_LENS } : s
@@ -375,7 +429,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       const shown = shownOf(x, inf)
       statsBusy.current = true
       try {
-        setStats(await engine.renderStats(displayUniforms(shown), x.before ? inf.asShotWb : multipliers(shown, inf), 256, x.indicators))
+        const wb = x.before ? inf.asShotWb : multipliers(shown, inf)
+        setStats(await engine.renderStats(displayUniforms(shown), wb, 256, x.indicators))
+        // The Tone Curve's graph shows its input: before the curve, or after the RGB curve for the channel curves.
+        const v = x.curveView
+        setCurveHist(await engine.renderCurveInput(displayUniforms(shown), wb, v.mode === 'point' && v.channel !== 'rgb', 256))
       } catch {
         // e.g. engine closed while measuring
       } finally {
@@ -418,6 +476,12 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             const box = { x: l.x / dpr, y: l.y / dpr, w: l.w / dpr, h: l.h / dpr }
             setFrameBox((b) => (b && Math.abs(b.x - box.x) + Math.abs(b.y - box.y) + Math.abs(b.w - box.w) + Math.abs(b.h - box.h) < 0.01 ? b : box))
           }
+          if (x.removing) {
+            // The Remove overlay maps through what was just drawn.
+            const dpr = window.devicePixelRatio || 1
+            const l = engine.layout(v, engine.canvas.width, engine.canvas.height)
+            setShownBox((b) => ({ x: l.x / dpr, y: l.y / dpr, w: l.w / dpr, h: l.h / dpr, n: (b?.n ?? 0) + 1 }))
+          }
           scheduleStats()
         } catch (e) {
           setStatus({ kind: 'error', message: e instanceof Error ? e.message : String(e) })
@@ -430,7 +494,21 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   useEffect(() => {
     if (status.kind === 'ready') requestRender()
-  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, guiding, requestRender, lensDb, maskPreview, noiseDb])
+  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, guiding, removing, requestRender, lensDb, curveDraft, maskPreview, noiseDb])
+  // Another curve graph shown: its histogram is measured again.
+  useEffect(() => {
+    if (status.kind === 'ready') scheduleStats()
+  }, [status.kind, curveView.mode, curveView.channel, scheduleStats])
+
+  // Spots being worked on: show the progress, and draw again when the retouched photo is ready.
+  useEffect(() => {
+    const engine = engineRef.current
+    if (!engine) return
+    return engine.onRetouch((p) => {
+      setRetouch(p)
+      if (!p.busy) requestRender()
+    })
+  }, [engineReady, requestRender])
 
   useEffect(() => {
     const el = stageRef.current
@@ -498,15 +576,49 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
    * Records a change. Moving one of the sliders Auto set, by hand, ends the photo's Auto record (so a later Paste
    * copies the numbers instead of re-running Auto); `keepAuto` is for changes Auto and Paste make themselves.
    */
-  const change = useCallback((label: string, next: DevelopSettings, keepAuto = false) => {
+  const change = useCallback((label: string, next: DevelopSettings, keepAuto = false, separate = false) => {
     dirty.current = true
     setHistory((h) => {
       if (!h) return h
       const prev = current(h)
       const a = next.auto
       const s = a && !keepAuto && a.sliders.some((k) => next[k] !== prev[k]) ? { ...next, auto: null } : next
-      return record(h, label, s)
+      return record(h, label, s, Date.now(), !separate)
     })
+  }, [])
+
+  /** A Tone Curve change (`separate`: the end of a drag, one history step of its own). */
+  const changeCurve = useCallback(
+    (label: string, tc: ToneCurveSettings | undefined, separate = false) => {
+      const h = historyRef.current
+      if (!h) return
+      change(label, withToneCurve(current(h), tc), false, separate)
+    },
+    [change],
+  )
+  const toggleCurveTarget = () => {
+    if (status.kind !== 'ready') return
+    if (draft) endCrop(true)
+    setGuiding(false)
+    setRemoving(false)
+    setSelectedSpot(null)
+    setWbPick(false)
+    setLoupe(null)
+    setPicking(false)
+    setBefore(false)
+    setCurveTarget((t) => !t)
+    setReveal({ id: 'curve', n: Date.now() })
+  }
+  /** The Tone Curve's input under a point of the photo shown (for its targeted adjustment tool). */
+  const sampleCurveInput = useCallback(async (uv: [number, number]) => {
+    const engine = engineRef.current
+    const x = latest.current
+    const inf = x.info
+    if (!engine || !inf) return null
+    const shown = shownOf(x, inf)
+    const l = engine.layout(x.view, engine.canvas.width, engine.canvas.height)
+    return engine.sampleBeforeCurve(displayUniforms(shown), multipliers(shown, inf), uv[0], uv[1], l.scale)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const reset = () => change('Reset', defaults)
@@ -604,6 +716,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   function startCrop(level = false) {
     if (status.kind !== 'ready' || !info) return
     setGuiding(false)
+    setCurveTarget(false)
+    setRemoving(false)
+    setSelectedSpot(null)
     setWbPick(false)
     setLoupe(null)
     setPicking(false)
@@ -775,7 +890,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setBefore(false)
     setWbPick(false)
     setLoupe(null)
+    setCurveTarget(false)
     setView((v) => ({ ...v, zoom: 'fit' }))
+    setRemoving(false)
+    setSelectedSpot(null)
     setGuiding(true)
     setSelectedGuide(null)
     setBypass((x) => ({ ...x, crop: false }))
@@ -827,6 +945,125 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       setLeveling(false)
     } else if (!sameGeometry(r.geometry, g)) change('Auto straighten', { ...latest.current.settings, geometry: r.geometry })
   }
+
+  // ---- Remove, Heal and Clone (PHASE3.md, Part 11): spots in sensor pixels, the brush on the photo
+  const spots = settings.spots ?? []
+  const spotIndex = selectedSpot ? spots.findIndex((x) => x.id === selectedSpot) : -1
+  const sensorSize = (): [number, number] => {
+    const l = engineRef.current?.sensorLayout
+    return l ? [l.width, l.height] : [1, 1]
+  }
+  function startRemove() {
+    if (status.kind !== 'ready' || !info) return
+    if (draft) endCrop(true)
+    setGuiding(false)
+    setCurveTarget(false)
+    setWbPick(false)
+    setLoupe(null)
+    setPicking(false)
+    setBefore(false)
+    setBypass((b) => ({ ...b, remove: false }))
+    setRemoving(true)
+    setReveal({ id: 'remove', n: Date.now() })
+  }
+  function endRemove() {
+    setRemoving(false)
+    setSelectedSpot(null)
+  }
+  /** A spot list change, as one history step. */
+  function changeSpots(label: string, next: Spot[]) {
+    const s0 = latest.current.settings
+    change(label, withSpots(s0, next))
+  }
+  /** A stroke painted on the photo (sensor pixels): a new spot, with its source picked automatically. */
+  async function addSpot(points: [number, number][]) {
+    const engine = engineRef.current
+    if (!engine || status.kind !== 'ready' || placing) return
+    const [sw, sh] = sensorSize()
+    const radius = brush.size
+    const simple = simplifyStroke(points, STROKE_EPSILON * radius)
+    const spot: Spot = {
+      id: newSpotId(),
+      mode: brush.mode,
+      points: simple.map(([x, y]) => [Math.round((x / sw) * 1e6) / 1e6, Math.round((y / sh) * 1e6) / 1e6]),
+      size: Math.round((radius / Math.min(sw, sh)) * 1e6) / 1e6,
+      feather: brush.feather / 100,
+      opacity: brush.opacity / 100,
+      offset: [0, 0],
+      seed: newSeed(),
+    }
+    const others = latest.current.settings.spots ?? []
+    setPlacing(true)
+    setSpotError(null)
+    try {
+      const [dx, dy] = await engine.pickSpotSource(spot, others)
+      spot.offset = [Math.round((dx / sw) * 1e6) / 1e6, Math.round((dy / sh) * 1e6) / 1e6]
+    } catch (e) {
+      setSpotError(`Couldn’t find a source: ${e instanceof Error ? e.message : e}`)
+      return
+    } finally {
+      setPlacing(false)
+    }
+    if (engineRef.current !== engine) return
+    const now = latest.current.settings.spots ?? []
+    const name = { remove: 'Remove', heal: 'Heal', clone: 'Clone' }[spot.mode]
+    changeSpots(`${name} spot ${now.length + 1}`, [...now, spot])
+    setSelectedSpot(spot.id)
+  }
+  function moveSource(id: string, [dx, dy]: [number, number]) {
+    const [sw, sh] = sensorSize()
+    const list = latest.current.settings.spots ?? []
+    const i = list.findIndex((x) => x.id === id)
+    if (i < 0) return
+    const offset: [number, number] = [Math.round((dx / sw) * 1e6) / 1e6, Math.round((dy / sh) * 1e6) / 1e6]
+    changeSpots(`Move source of spot ${i + 1}`, list.map((x) => (x.id === id ? { ...x, offset } : x)))
+  }
+  /** Changes the selected spot (a slider or the mode), or else the brush for new spots. */
+  function editSpot(what: 'mode' | 'size' | 'feather' | 'opacity', value: number | SpotMode) {
+    const list = latest.current.settings.spots ?? []
+    const i = selectedSpot ? list.findIndex((x) => x.id === selectedSpot) : -1
+    if (i < 0) {
+      if (what === 'mode') setBrush({ ...brush, mode: value as SpotMode })
+      else if (what === 'size') setBrush({ ...brush, size: Math.min(SIZE_RANGE[1], Math.max(SIZE_RANGE[0], Math.round(value as number))) })
+      else setBrush({ ...brush, [what]: Math.min(100, Math.max(what === 'opacity' ? 1 : 0, Math.round(value as number))) })
+      return
+    }
+    const [sw, sh] = sensorSize()
+    const v = value as number
+    const patch: Partial<Spot> =
+      what === 'mode' ? { mode: value as SpotMode }
+        : what === 'size' ? { size: Math.round((Math.min(SIZE_RANGE[1], Math.max(SIZE_RANGE[0], v)) / Math.min(sw, sh)) * 1e6) / 1e6 }
+          : { [what]: Math.min(1, Math.max(what === 'opacity' ? 0.01 : 0, v / 100)) }
+    const label = what === 'mode' ? `Spot ${i + 1}: ${{ remove: 'Remove', heal: 'Heal', clone: 'Clone' }[value as SpotMode]}` : `Spot ${i + 1}: ${what}`
+    changeSpots(label, list.map((x, k) => (k === i ? { ...x, ...patch } : x)))
+  }
+  function deleteSpot() {
+    const list = latest.current.settings.spots ?? []
+    const i = selectedSpot ? list.findIndex((x) => x.id === selectedSpot) : -1
+    if (i < 0) return
+    setSelectedSpot(null)
+    changeSpots(`Delete spot ${i + 1}`, list.filter((_, k) => k !== i))
+  }
+  function clearSpots() {
+    if (!spots.length) return
+    setSelectedSpot(null)
+    changeSpots('Delete all spots', [])
+  }
+  /** Moves a zoomed-in photo while the brush is on (Space-drag). */
+  function panBy(dx: number, dy: number) {
+    const engine = engineRef.current
+    if (!engine || view.zoom === 'fit') return
+    const dpr = window.devicePixelRatio || 1
+    const l = engine.layout(view, engine.canvas.width, engine.canvas.height)
+    setView((v) => ({ zoom: v.zoom, center: [Math.min(1, Math.max(0, v.center[0] - (dx * dpr) / l.w)), Math.min(1, Math.max(0, v.center[1] - (dy * dpr) / l.h))] }))
+  }
+  const spotStatus = placing
+    ? 'Finding where to take the fill from…'
+    : retouch.busy && retouch.spot !== undefined
+      ? `Filling spot ${retouch.spot + 1}… ${Math.round((retouch.fraction ?? 0) * 100)} %`
+      : retouch.busy
+        ? 'Applying spots…'
+        : spotError
 
   const selectedTarget = targets.find((t) => t.id === targetId) ?? BUILT_IN_TARGETS[0]
   const infoLine = photo ? exposureText(photo) : ''
@@ -930,7 +1167,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   function openNewPreset() {
     // Pre-tick what differs from the defaults, so a preset holds what was actually changed.
-    const changed = changedKeys(defaults, settings)
+    // Spots belong to one photo: a preset holds them only when ticked by hand.
+    const changed = changedKeys(defaults, settings).filter((k) => k !== 'spots')
     const { keys } = rememberedChoice()
     const clip = clipFor(changed.length ? changed : keys, !!settings.auto)
     if (clip && status.kind === 'ready') setPasting({ mode: 'preset', clip })
@@ -968,7 +1206,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     syncFrom.current = history ? { id, settings } : null
     if (!autoSync || !dirty.current || !prev || prev.id !== id || prev.settings === settings) return
     const p = syncPending.current
-    changedKeys(prev.settings, settings).forEach((k) => p.keys.add(k))
+    // Spots belong to one photo, so Auto Sync doesn't send them (Sync… can, when they are ticked).
+    changedKeys(prev.settings, settings).forEach((k) => k !== 'spots' && p.keys.add(k))
     if (settings.auto && JSON.stringify(prev.settings.auto) !== JSON.stringify(settings.auto)) p.auto = true
     const clip = clipFor([...p.keys], p.auto)
     if (!clip || (!p.keys.size && !p.auto)) return
@@ -1039,9 +1278,67 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         return false
     }
   })
-  useShortcuts(['develop'], !pasting && !draft && !guiding, (cmd) => {
+  // While the Tone Curve's targeted adjustment tool is on, Develop listens to 'curve' (CurveTatLayer has its keys).
+  useShortcuts(['curve'], !pasting && !draft && !guiding && curveTarget, (cmd) => {
+    switch (cmd) {
+      case 'develop.curveTarget': setCurveTarget(false); break
+      case 'develop.undo':
+      case 'develop.redo':
+        dirty.current = true
+        setHistory((h) => (h ? (cmd === 'develop.redo' ? redo(h) : undo(h)) : h))
+        break
+      case 'develop.before': setBefore((b) => !b); break
+      case 'develop.clipping': setOverlay((o) => !o); break
+      case 'develop.zoom': setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center })); break
+      default:
+        return false
+    }
+  })
+  useShortcuts(['remove'], !pasting && !draft && !guiding && removing, (cmd) => {
+    switch (cmd) {
+      case 'develop.remove':
+      case 'remove.done': endRemove(); break
+      case 'remove.cancel':
+        if (selectedSpot) setSelectedSpot(null)
+        else endRemove()
+        break
+      case 'remove.delete': deleteSpot(); break
+      case 'remove.sizeUp':
+      case 'remove.sizeDown': {
+        const cur = spotIndex >= 0 ? spots[spotIndex].size * Math.min(...sensorSize()) : brush.size
+        editSpot('size', cmd === 'remove.sizeUp' ? Math.max(cur + 1, cur * 1.15) : Math.min(cur - 1, cur / 1.15))
+        break
+      }
+      case 'remove.featherUp':
+      case 'remove.featherDown': {
+        const cur = spotIndex >= 0 ? spots[spotIndex].feather * 100 : brush.feather
+        editSpot('feather', cur + (cmd === 'remove.featherUp' ? 10 : -10))
+        break
+      }
+      case 'remove.showAll': setShowAllSpots({ on: !showAllSpots.on }); break
+      case 'remove.modeRemove': editSpot('mode', 'remove'); break
+      case 'remove.modeHeal': editSpot('mode', 'heal'); break
+      case 'remove.modeClone': editSpot('mode', 'clone'); break
+      case 'remove.clear': clearSpots(); break
+      case 'develop.before': setBefore((b) => !b); break
+      case 'develop.zoom': setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center })); break
+      case 'develop.undo':
+      case 'develop.redo':
+        dirty.current = true
+        setSelectedSpot(null)
+        setHistory((h) => (h ? (cmd === 'develop.redo' ? redo(h) : undo(h)) : h))
+        break
+      default:
+        return false
+    }
+  })
+  useShortcuts(['develop'], !pasting && !draft && !guiding && !curveTarget && !removing, (cmd) => {
     switch (cmd) {
       case 'develop.grid': onLibrary(); break
+      case 'develop.curveTarget': toggleCurveTarget(); break
+      case 'develop.curveReset': changeCurve('Reset tone curve', undefined, true); break
+      case 'develop.remove': startRemove(); break
+      case 'remove.clear': clearSpots(); break
       case 'develop.crop': startCrop(); break
       case 'develop.level': startCrop(true); break
       case 'develop.autoStraighten': void autoStraightenNow(); break
@@ -1082,6 +1379,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'develop.whiteBalance':
         setWbPick((p) => !p)
         setLoupe(null)
+        setCurveTarget(false)
         break
       case 'develop.cancel':
         setPicking(false)
@@ -1097,7 +1395,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   // ---- click to zoom, drag to pan
   const drag = useRef<{ x: number; y: number; center: [number, number]; moved: boolean } | null>(null)
-  function canvasPoint(e: React.PointerEvent) {
+  function canvasPoint(e: { clientX: number; clientY: number }) {
     const engine = engineRef.current
     if (!engine) return null
     const r = engine.canvas.getBoundingClientRect()
@@ -1106,7 +1404,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     return { l, px: (e.clientX - r.left) * dpr, py: (e.clientY - r.top) * dpr }
   }
   /** Pointer position as displayed-image uv, or null outside the photo. */
-  function imageUv(e: React.PointerEvent): [number, number] | null {
+  function imageUv(e: { clientX: number; clientY: number }): [number, number] | null {
     const p = canvasPoint(e)
     if (!p) return null
     const u = (p.px - p.l.x) / p.l.w
@@ -1152,7 +1450,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   function onPointerDown(e: React.PointerEvent) {
     // The crop tool and Guided Upright have their own overlays; clicks there don't zoom or pan.
-    if (status.kind !== 'ready' || wbPick || draft || guiding) return
+    if (status.kind !== 'ready' || wbPick || draft || guiding || (removing && !before)) return
     ;(e.target as Element).setPointerCapture(e.pointerId)
     drag.current = { x: e.clientX, y: e.clientY, center: view.center, moved: false }
   }
@@ -1270,6 +1568,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           <button className={`button small ${draft ? 'on' : ''}`} onClick={() => (draft ? endCrop(true) : startCrop())} disabled={status.kind !== 'ready'} title={withKey(draft ? 'Apply the crop' : 'Crop and straighten', 'develop.crop')}>
             {draft ? 'Done' : 'Crop'}
           </button>
+          <button className={`button small ${removing ? 'on' : ''}`} onClick={() => (removing ? endRemove() : startRemove())} disabled={status.kind !== 'ready'} title={withKey(removing ? 'Finish with the Remove brush' : 'Remove, Heal and Clone: paint over what to remove', 'develop.remove')}>
+            {removing ? 'Done' : 'Remove'}
+          </button>
           <button className={`button small ${before ? 'on' : ''}`} onClick={() => setBefore(!before)} disabled={status.kind !== 'ready' || !!draft} title={withKey('Before / after', 'develop.before')}>
             {before ? 'Showing before' : 'Before / after'}
           </button>
@@ -1293,7 +1594,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           <button className="button small" onClick={() => onExport([id])} title={withKey('Export this photo', 'export')}>Export…</button>
         </div>
         <div
-          className={`dstage ${draft ? 'cropping' : guiding ? 'guiding' : view.zoom === 'fit' ? 'fit' : 'zoomed'} ${wbPick ? 'wb-picking' : ''}`}
+          className={`dstage ${draft ? 'cropping' : guiding ? 'guiding' : removing ? 'removing' : view.zoom === 'fit' ? 'fit' : 'zoomed'} ${wbPick ? 'wb-picking' : ''}`}
           ref={stageRef}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -1301,6 +1602,20 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           onPointerLeave={() => setLoupe(null)}
         >
           {status.kind !== 'ready' && placeholder && <img className="dplaceholder" src={placeholder} alt="" />}
+          {curveTarget && !draft && !guiding && !before && status.kind === 'ready' && (
+            <CurveTatLayer
+              curve={settings.toneCurve}
+              view={curveView}
+              enabled={!pasting}
+              uvAt={imageUv}
+              sample={sampleCurveInput}
+              onHover={setCurveHover}
+              onDraft={(tc) => setCurveDraft(tc === null ? null : { tc })}
+              onChange={changeCurve}
+              onDragClip={setCurveDragClip}
+              onExit={() => setCurveTarget(false)}
+            />
+          )}
           {status.kind === 'loading' && <div className="dmessage">Developing…</div>}
           {status.kind === 'error' && <div className="dmessage error">{status.message}</div>}
           {engineError && <div className="dmessage error">{engineError}</div>}
@@ -1351,6 +1666,39 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
               />
             )
           })()}
+          {removing && !draft && !guiding && !before && !bypass.remove && shownBox && info && status.kind === 'ready' && engineRef.current && (() => {
+            const engine = engineRef.current
+            const b = shownBox
+            return (
+              <RemoveOverlay
+                key={id}
+                box={b}
+                toView={(x, y) => {
+                  const [u, v] = engine.sensorToDisplay(x, y)
+                  return [b.x + u * b.w, b.y + v * b.h]
+                }}
+                fromView={(x, y) => engine.displayToSensor((x - b.x) / b.w, (y - b.y) / b.h)}
+                spots={spots}
+                sensor={sensorSize()}
+                brush={{ radius: brush.size, feather: brush.feather / 100 }}
+                selected={selectedSpot}
+                showAll={showAllSpots.on}
+                progress={retouch.busy && retouch.spot !== undefined ? { spot: retouch.spot, fraction: retouch.fraction ?? 0 } : null}
+                onStroke={(pts) => {
+                  setSelectedSpot(null)
+                  void addSpot(pts)
+                }}
+                onSelect={setSelectedSpot}
+                onMoveSource={moveSource}
+                onPan={(dx, dy) => panBy(dx, dy)}
+              />
+            )
+          })()}
+          {removing && !draft && !guiding && (
+            <div className="dbadge crop-hint">
+              {before || bypass.remove ? 'Spots hidden' : 'Paint over what to remove · click a pin to select · drag the dashed outline to change the source'} · [ ] size · Delete removes the spot · Enter finishes
+            </div>
+          )}
           {guiding && !draft && (
             <div className="dbadge crop-hint">
               Draw 2–4 lines along edges that should be vertical or horizontal · drag the ends to adjust · Delete removes the selected line · Esc finishes
@@ -1363,8 +1711,13 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           )}
           {before && <div className="dbadge">Before</div>}
           {!before && hoverPreset && !draft && <div className="dbadge">Preview: {hoverPreset.name}</div>}
-          {!before && !draft && (bypass.crop || bypass.basic || (bypass.detail && detailOn(settings.detail))) && (
-            <div className="dbadge">Hidden: {[bypass.crop && 'Crop & Lens', bypass.basic && 'Basic', bypass.detail && detailOn(settings.detail) && 'Detail'].filter(Boolean).join(', ')}</div>
+          {!before && !draft && (bypass.crop || bypass.remove || bypass.basic || bypass.curve || (bypass.detail && detailOn(settings.detail))) && (
+            <div className="dbadge">Hidden: {[bypass.crop && 'Crop & Lens', bypass.remove && 'Remove', bypass.basic && 'Basic', bypass.curve && 'Tone Curve', bypass.detail && detailOn(settings.detail) && 'Detail'].filter(Boolean).join(', ')}</div>
+          )}
+          {curveTarget && !draft && !guiding && !before && (
+            <div className="dbadge pick curve-hint">
+              Tone curve: drag up or down on the photo to change those tones · ↑ ↓ nudge · Esc ends
+            </div>
           )}
           {maskPreview && !before && <div className="dbadge right">Sharpening mask: white is sharpened, black is not</div>}
           {(overlay || rawOverlay) && (
@@ -1482,6 +1835,35 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
               ),
             },
             {
+              id: 'remove',
+              label: 'Remove',
+              title: 'Remove',
+              icon: GROUP_ICONS.remove,
+              bypass: spots.length || bypass.remove
+                ? { off: bypass.remove, onToggle: () => setBypass((b) => ({ ...b, remove: !b.remove })), title: bypass.remove ? 'Show the spots again' : 'Show the photo without its Remove, Heal and Clone spots (nothing is changed)' }
+                : undefined,
+              content: (
+                <RemovePanel
+                  active={removing}
+                  brush={brush}
+                  selected={spotIndex >= 0 ? { spot: spots[spotIndex], number: spotIndex + 1, size: Math.round(spots[spotIndex].size * Math.min(...sensorSize())) } : null}
+                  count={spots.length}
+                  showAll={showAllSpots.on}
+                  status={spotStatus}
+                  disabled={status.kind !== 'ready'}
+                  showHint={hintsPref === 1}
+                  onToggle={() => (removing ? endRemove() : startRemove())}
+                  onMode={(m) => editSpot('mode', m)}
+                  onSize={(v) => editSpot('size', v)}
+                  onFeather={(v) => editSpot('feather', v)}
+                  onOpacity={(v) => editSpot('opacity', v)}
+                  onShowAll={(on) => setShowAllSpots({ on })}
+                  onDelete={deleteSpot}
+                  onClear={clearSpots}
+                />
+              ),
+            },
+            {
               id: 'basic',
               label: 'Basic',
               title: 'Basic',
@@ -1504,6 +1886,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             if (draft) endCrop(true)
             setWbPick((p) => !p)
             setLoupe(null)
+            setCurveTarget(false)
           }}
           auto={{
             targets,
@@ -1521,6 +1904,33 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             record: autoRecord,
           }}
         />
+              ),
+            },
+            {
+              id: 'curve',
+              label: 'Curve',
+              title: 'Tone Curve',
+              icon: GROUP_ICONS.curve,
+              bypass: settings.toneCurve || bypass.curve
+                ? { off: bypass.curve, onToggle: () => setBypass((b) => ({ ...b, curve: !b.curve })), title: bypass.curve ? 'Show the tone curve again' : 'Show the photo without the tone curve (nothing is changed)' }
+                : undefined,
+              content: (
+                <ToneCurvePanel
+                  curve={curveDraft ? curveDraft.tc : settings.toneCurve}
+                  view={curveView}
+                  onView={setCurveView}
+                  disabled={status.kind !== 'ready'}
+                  showHint={hintsPref === 1}
+                  histogram={curveHist}
+                  tat={curveTarget}
+                  onTat={toggleCurveTarget}
+                  hover={curveTarget ? curveHover : null}
+                  onChange={changeCurve}
+                  onDraft={(tc) => setCurveDraft(tc === null ? null : { tc })}
+                  onDragClip={setCurveDragClip}
+                  clipWhileDragging={clipWhileDragging === 1}
+                  onClipWhileDragging={(on) => setClipWhileDragging(on ? 1 : 2)}
+                />
               ),
             },
             {

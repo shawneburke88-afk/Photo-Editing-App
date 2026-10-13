@@ -102,7 +102,7 @@ The right panel is one scrolling stack in workflow order, with Crop & Lens first
 |---|---|---|---|---|
 | 1 | **Crop & Lens** | Crop, Straighten, Transform/Upright; Lens profile, Chromatic aberration, Vignetting correction | crop, rotate and perspective (ashift), lens correction (lensfun), CA correction | Crop, straighten, rotate 90° and flip: **built** (Phase 3, Part 1; [PHASE3.md](PHASE3.md)), shown as the **Crop** group; Transform/Upright and lens corrections: later in Phase 3 (the group becomes Crop & Lens) |
 | 2 | **Basic** (open by default) | Auto + look; White balance (preset, **Pick**, Temp, Tint); Tone (Exposure, Contrast, Highlights, Shadows, Whites, Blacks); Presence (Texture, Clarity, Dehaze, Vibrance, Saturation) | temperature, exposure, sigmoid, tone equalizer, colour balance rgb, local contrast, haze removal | Built, except Texture/Clarity/Dehaze and colour balance rgb |
-| 3 | **Tone curve** | Parametric + point, RGB | rgb curve | Phase 3 |
+| 3 | **Tone curve** | Regions (parametric) + point, RGB, Red, Green, Blue | after the sigmoid, as darktable's tone curve sits and its Lightroom importer puts Lightroom's curve; darktable's monotone spline and preserve-colors norms | **Built** (Phase 3, Part 12; [PHASE3.md](PHASE3.md#part-12-the-tone-curve)) |
 | 4 | **Colour** | Colour mixer (HSL), Colour grading, Point colour | colour equalizer, colour balance rgb | Phase 3 |
 | 5 | **Detail** | Sharpening, Noise reduction | diffuse or sharpen / sharpen, denoise (profiled) | Phase 3 |
 | 6 | **Effects** | Vignette, Grain | vignette, grain | Phase 3 |

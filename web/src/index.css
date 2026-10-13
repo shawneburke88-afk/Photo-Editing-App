@@ -389,6 +389,18 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .guided-overlay .guide.selected circle { fill: var(--accent); }
 .guided-overlay .guide.new line { stroke: #fff; stroke-dasharray: 5 4; }
 .dstage.guiding .dbadge { z-index: 2; pointer-events: none; }
+/* Remove brush (PHASE3.md Part 11): the brush, the painted stroke, outlines of the selected spot and its source, pins. */
+.dstage.removing .dbadge { z-index: 2; pointer-events: none; }
+.remove-overlay .spot-brush circle { fill: none; stroke: #fff; stroke-width: 1.5; filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.9)); }
+.remove-overlay .spot-brush circle.inner { stroke-dasharray: 3 3; stroke-width: 1; }
+.remove-overlay .spot-paint { fill: none; stroke: rgba(255, 255, 255, 0.35); stroke-linecap: round; stroke-linejoin: round; }
+.remove-overlay .spot-target .spot-outline { fill: #fff; }
+.remove-overlay .spot-source .spot-outline { fill: #5cc8f0; opacity: 0.9; }
+.remove-overlay .spot-link { stroke: rgba(255, 255, 255, 0.85); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.remove-overlay .spot-pin { fill: #fff; stroke: rgba(0, 0, 0, 0.75); stroke-width: 1.5; }
+.remove-overlay .spot-pin.source { fill: #5cc8f0; }
+.remove-overlay .spot-pin-group.selected .spot-pin { fill: var(--accent); stroke: #fff; }
+.remove-overlay .spot-progress { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; }
 
 @media (max-width: 1100px) {
   .develop { grid-template-columns: 1fr 5px var(--right-w, 280px); }
@@ -730,3 +742,59 @@ button.kbd:hover { border-color: var(--muted); }
 .command-results li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
 .command-results li.on { background: var(--panel-2); box-shadow: inset 3px 0 0 var(--accent); }
 .command-results .command-empty { cursor: default; }
+
+/* Tone Curve (develop/ToneCurvePanel.tsx) */
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.curve-guide { margin: 0 0 8px; cursor: help; }
+.curve-guide-order { color: var(--accent); }
+.curve-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.curve-views { flex-shrink: 1; min-width: 0; }
+.curve-views button { position: relative; padding: 4px 8px; font-size: 0.82rem; display: inline-flex; align-items: center; gap: 4px; }
+.curve-views button:disabled { cursor: default; opacity: 0.6; }
+.curve-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+/* The mark of an edited curve doesn't change the button's width, so nothing moves while a drag adds the first point. */
+.curve-edited { position: absolute; top: -1px; right: 1px; color: var(--accent); font-weight: 700; font-size: 0.75rem; line-height: 1; }
+.curve-views button.on .curve-edited { color: var(--accent-text); }
+.curve-tat { display: inline-flex; align-items: center; margin-left: auto; padding: 5px 7px; }
+.curve-graph { position: relative; width: 100%; aspect-ratio: 1; touch-action: none; user-select: none; }
+.curve-graph.regions { margin-bottom: 16px; }
+.curve-graph svg { display: block; width: 100%; height: 100%; overflow: visible; cursor: crosshair; border-radius: 3px; }
+.curve-graph.regions svg { cursor: ns-resize; }
+.curve-graph svg[data-disabled] { cursor: default; opacity: 0.6; }
+.curve-bg { fill: #16171a; }
+.curve-hist { opacity: 0.22; mix-blend-mode: screen; }
+.curve-grid line { stroke: #2b2e34; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.curve-split-line { stroke: #4a4e56; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.curve-mid { stroke: var(--muted); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.curve-base { stroke: #6a6e76; stroke-dasharray: 4 4; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.curve-band { fill: rgba(232, 176, 74, 0.12); stroke: none; }
+.curve-overlay { fill: none; stroke-width: 1; opacity: 0.6; vector-effect: non-scaling-stroke; }
+.curve-combined { fill: none; stroke: #bbb; stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.7; vector-effect: non-scaling-stroke; }
+.curve-ghost { fill: none; stroke: #8a8e96; stroke-width: 1.2; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; }
+.curve-line { fill: none; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.curve-clip { fill: none; stroke-width: 3.5; vector-effect: non-scaling-stroke; }
+.curve-clip.white { stroke: #e5675f; }
+.curve-clip.black { stroke: #5b84f0; }
+.curve-hover line { stroke: var(--accent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.curve-hover circle { fill: var(--accent); stroke: #000; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.curve-point { fill: #1f2125; stroke: #e6e6e6; stroke-width: 1.5; vector-effect: non-scaling-stroke; cursor: grab; }
+.curve-point.on { fill: var(--accent); stroke: #fff; }
+.curve-point.removing { opacity: 0.25; }
+.curve-point:focus-visible { outline: none; stroke: var(--accent); stroke-width: 3; }
+.curve-splits { position: absolute; left: 0; right: 0; bottom: -15px; height: 13px; }
+.curve-split { position: absolute; top: 0; width: 14px; height: 13px; margin-left: -7px; cursor: ew-resize; touch-action: none; }
+.curve-split::before { content: ''; position: absolute; left: 1px; top: 1px; border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 10px solid #bfc3ca; }
+.curve-split:hover::before, .curve-split:focus-visible::before { border-bottom-color: var(--accent); }
+.curve-split:focus-visible { outline: none; }
+/* Two lines always, so the panel never changes height (and the graph never moves) while a point is dragged. */
+.curve-readout { margin: 4px 0 6px; height: 2.9em; line-height: 1.45em; overflow: hidden; font-variant-numeric: tabular-nums; }
+.curve-point-tools { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.curve-preset, .curve-numbers label { display: flex; flex-direction: column; gap: 2px; }
+.curve-numbers { display: flex; gap: 6px; }
+.curve-numbers input { width: 64px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; font: inherit; font-size: 0.86rem; }
+.curve-foot { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.curve-adv { margin-left: auto; font-size: 0.85rem; }
+.curve-advanced { margin-top: 6px; }
+.curve-norm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dstage.curve-target, .curve-tat-layer { cursor: ns-resize; }
+.curve-tat-layer { position: absolute; inset: 0; z-index: 2; touch-action: none; }

@@ -6,6 +6,7 @@
 // follows darktable's src/iop/toneequal.c: process version 1 with the "RGB average" luminance estimator and no
 // filter, version 2 with darktable's defaults, the Euclidean norm refined by the exposure-independent guided
 // filter (src/common/eigf.h; its blurred statistics come from tone-mask.wgsl).
+// The Tone Curve (engine/develop/tone-curve.ts) comes after the sigmoid, on the tones shown (its CPU twin is there).
 // The clipping indicators are translated from darktable's src/iop/overexposed.c (display clipping:
 // any RGB / luminance / saturation / full gamut) and src/iop/rawoverexposed.c (sensor clipping).
 
@@ -43,7 +44,8 @@ struct View {
   rawWidth: u32,
   rawHeight: u32,
   cfa: u32,           // CFA colours of the 2×2 tile, 2 bits each
-  statsPass: u32,     // 1 = unclamped display RGB + clipping class in alpha (histogram); 2 = linear Rec.2020 output (export)
+  statsPass: u32,     // 1 = unclamped display RGB + clipping class in alpha (histogram); 2 = linear Rec.2020 output (export);
+                      // 3, 4 = the Tone Curve's input (its graphs' histogram, the targeted adjustment tool)
   displaySpace: u32,  // 0 = sRGB; 1 = Display P3 (the on-screen canvas on a wide-gamut screen, display-space.ts)
   rawLayout: u32,     // sensor data: 0 Bayer (2×2 `cfa`), 1 X-Trans (6×6 `xt`), 2 linear DNG (three values per pixel)
   showMask: u32,      // 1 = Sharpening's Masking preview: the bound texture's alpha (the mask) as grey (Part 13)
@@ -64,6 +66,10 @@ struct View {
   toMask0: vec4f,     // tone mask: Rec.2020 → the RGB darktable measures it in (white-balanced camera RGB for RAWs:
   toMask1: vec4f,     // its tone equalizer runs before the input colour profile), rows
   toMask2: vec4f,
+  curveFlags: u32,    // tone curve: bit 1 the RGB curve (with Regions), bit 2 the Red/Green/Blue curves; 0 = off
+  curveNorm: u32,     // how the RGB curve measures brightness (tone-curve.ts NORM_CODE)
+  curveSat: f32,      // the curve's Saturation, 0…1
+  curvePad: f32,
 }
 
 @group(0) @binding(0) var img: texture_2d<f32>;
@@ -73,6 +79,9 @@ struct View {
 // The lens correction of the shown image (lens.wgsl, appended to this file when the shader is built; mode 0 = none).
 @group(0) @binding(4) var<uniform> L: Lens;
 @group(0) @binding(5) var maskStats: texture_2d<f32>; // [E[I], var] before exposure (tone-mask.wgsl); 1×1 unused in version 1
+// The Tone Curve's lookup table (tone-curve.ts buildLut): N×1, RGBA = the Red, Green, Blue and RGB curves, sRGB-encoded
+// in and out; 1×1 unused when the curve is off.
+@group(0) @binding(6) var curveLut: texture_2d<f32>;
 
 const REC2020_Y = vec3f(0.2627002, 0.6779981, 0.0593017);
 
@@ -226,8 +235,93 @@ fn srgbOetfUnbounded(c: vec3f) -> vec3f {
   return sign(c) * srgbOetf(abs(c));
 }
 
+// ---- tone curve (engine/develop/tone-curve.ts, where its CPU twin and the sources are)
+fn encode1(v: f32) -> f32 {
+  if (v <= 0.0031308) { return v * 12.92; }
+  return 1.055 * pow(v, 1.0 / 2.4) - 0.055;
+}
+
+fn decode1(e: f32) -> f32 {
+  if (e <= 0.04045) { return e / 12.92; }
+  return pow((e + 0.055) / 1.055, 2.4);
+}
+
+/** The table's curve `ch` (0–2 R, G, B, 3 RGB) at an encoded input, linearly interpolated; slope 1 above white. */
+fn curveLookup(x: f32, ch: i32) -> f32 {
+  let n = i32(textureDimensions(curveLut).x);
+  let p = clamp(x, 0.0, 1.0) * f32(n - 1);
+  let i = i32(floor(p));
+  let j = min(i + 1, n - 1);
+  let a = textureLoad(curveLut, vec2i(i, 0), 0)[ch];
+  let b = textureLoad(curveLut, vec2i(j, 0), 0)[ch];
+  return mix(a, b, p - floor(p)) + max(x - 1.0, 0.0);
+}
+
+/** A curve on a linear value: decode ∘ curve ∘ encode. */
+fn curveLinear(v: f32, ch: i32) -> f32 {
+  return decode1(curveLookup(encode1(max(v, 0.0)), ch));
+}
+
+/** Brightness for the RGB curve: darktable's preserve-colors norms (rgb_norms.h), scaled so a grey reads its value. */
+fn curveBrightness(p: vec3f, norm: u32) -> f32 {
+  switch norm {
+    case 1u: { return dot(REC2020_Y, p); }
+    case 2u: { return max(p.x, max(p.y, p.z)); }
+    case 3u: { return (p.x + p.y + p.z) / 3.0; }
+    case 4u: { return length(p) / sqrt(3.0); }
+    default: {
+      let s2 = dot(p, p);
+      return select(0.0, dot(p * p, p) / s2, s2 > 0.0);
+    }
+  }
+}
+
+/** The RGB curve (with Regions): tone-curve.ts `applyMaster`. */
+fn applyMaster(c: vec3f) -> vec3f {
+  let p = max(c, vec3f(0.0));
+  let s = clamp(V.curveSat, 0.0, 1.0);
+  let perChannel = V.curveNorm == 5u;
+  let n = curveBrightness(p, select(V.curveNorm, 0u, perChannel));
+  if (!(n > 1e-9)) {
+    if (perChannel) { return vec3f(curveLinear(p.x, 3), curveLinear(p.y, 3), curveLinear(p.z, 3)); }
+    return p;
+  }
+  let n2 = curveLinear(n, 3);
+  let r = n2 / n;
+  if (perChannel) {
+    let full = vec3f(curveLinear(p.x, 3), curveLinear(p.y, 3), curveLinear(p.z, 3));
+    return p * r + s * (full - p * r);
+  }
+  let mx = max(p.x, max(p.y, p.z));
+  let mn = min(p.x, min(p.y, p.z));
+  var spread = 1.0;
+  if (mx - mn > 1e-6) { spread = (curveLinear(mx, 3) - curveLinear(mn, 3)) / (mx - mn) / r; }
+  var k = 1.0 + s * (max(spread, 0.0) - 1.0);
+  let upper = max(1.0, mx);
+  for (var i = 0; i < 3; i++) {
+    let d = p[i] * r - n2;
+    if (d < -1e-12) { k = min(k, n2 / -d); } else if (d > 1e-12 && n2 < upper) { k = min(k, (upper - n2) / d); }
+  }
+  k = max(k, 0.0);
+  return n2 + k * (p * r - n2);
+}
+
+fn applyToneCurve(c: vec3f) -> vec3f {
+  var o = c;
+  if ((V.curveFlags & 1u) != 0u) { o = applyMaster(o); }
+  if ((V.curveFlags & 2u) != 0u) { o = vec3f(curveLinear(o.x, 0), curveLinear(o.y, 1), curveLinear(o.z, 2)); }
+  return o;
+}
+
 /** The develop transform up to the tone mapper: display-referred linear Rec.2020 (before the output profile). */
 fn developRec2020(scene: vec3f, uv: vec2f) -> vec3f {
+  let c = developBeforeCurve(scene, uv);
+  if (V.curveFlags != 0u) { return applyToneCurve(c); }
+  return c;
+}
+
+/** The develop transform up to the sigmoid, before the Tone Curve. */
+fn developBeforeCurve(scene: vec3f, uv: vec2f) -> vec3f {
   var c = vec3f(dot(V.wbFix0.xyz, scene), dot(V.wbFix1.xyz, scene), dot(V.wbFix2.xyz, scene));
   c *= V.exposure;
 
@@ -397,6 +491,13 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     return vec4f(vec3f(m), 1.0);
   }
   let scene = textureSampleLevel(img, samp, tuv, V.lod).rgb;
+  if (V.statsPass >= 3u) {
+    // The Tone Curve's input on its own axis (sRGB-encoded Rec.2020): 3 = before the curve (the RGB curve's graph and
+    // the targeted adjustment tool), 4 = after the RGB curve (the Red, Green and Blue curves' graphs).
+    var c = max(developBeforeCurve(scene, uv), vec3f(0.0));
+    if (V.statsPass == 4u && (V.curveFlags & 1u) != 0u) { c = max(applyMaster(c), vec3f(0.0)); }
+    return vec4f(encode1(c.x), encode1(c.y), encode1(c.z), 1.0);
+  }
   if (V.statsPass == 2u) {
     // Export: the output colour profile, resizing and encoding happen afterwards (export.wgsl).
     return vec4f(developRec2020(scene, uv), 1.0);
