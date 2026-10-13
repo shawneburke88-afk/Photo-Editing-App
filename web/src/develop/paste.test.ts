@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { BUILT_IN_TARGETS } from '../engine/develop/auto'
 import { isWithinImage } from '../engine/develop/crop'
 import { DEFAULT_GEOMETRY, rotate90, setAngle, setAspect } from '../engine/develop/geometry'
-import { DEFAULT_RGB_SETTINGS, DEFAULT_SETTINGS } from '../engine/develop/settings'
+import { DEFAULT_RGB_SETTINGS, DEFAULT_SETTINGS, type DevelopSettings } from '../engine/develop/settings'
 import { DEFAULT_TRANSFORM, ZERO_PERSPECTIVE, type TransformSettings } from '../engine/develop/upright'
+import { CURVE_PRESETS, DEFAULT_TONE_CURVE } from '../engine/develop/tone-curve'
 import { applyPaste, changedKeys, DEFAULT_PASTE_KEYS, describePaste, type Clipboard } from './paste'
 
 const source = {
@@ -135,5 +136,36 @@ describe('paste: Upright and the Transform sliders', () => {
     expect(changedKeys(DEFAULT_SETTINGS, src)).toEqual(expect.arrayContaining(['upright', 'transform']))
     // nothing to copy onto a photo without a transform leaves it without one
     expect(applyPaste(DEFAULT_SETTINGS, { ...c(['transform']), settings: DEFAULT_SETTINGS }, 'raw').geometry.transform).toBeUndefined()
+  })
+})
+
+describe('the Tone Curve item', () => {
+  const curve = { ...DEFAULT_TONE_CURVE, rgb: CURVE_PRESETS[1].points, regions: { ...DEFAULT_TONE_CURVE.regions, shadows: 20 }, saturation: 70 }
+  const withCurve: DevelopSettings = { ...DEFAULT_SETTINGS, toneCurve: curve }
+  const c = (settings: DevelopSettings = withCurve): Clipboard => ({ settings, keys: ['toneCurve'], rerunAuto: false, sourceKind: 'raw', sourceName: 'A.NEF' })
+
+  it('is one item, ticked by default, and copies the whole curve', () => {
+    expect(DEFAULT_PASTE_KEYS).toContain('toneCurve')
+    const out = applyPaste({ ...DEFAULT_SETTINGS, exposure: 1 }, c(), 'raw')
+    expect(out.toneCurve).toEqual(curve)
+    expect(out.exposure).toBe(1)
+    expect(describePaste(c(), 'raw')).toEqual(['Tone Curve: Regions Shadows +20, RGB curve (7 points), Refine Saturation 70 %'])
+  })
+
+  it('names the brightness measure only when it isn’t the default (Largest channel)', () => {
+    expect(describePaste(c({ ...DEFAULT_SETTINGS, toneCurve: { ...curve, saturation: 100, norm: 'power' } }), 'raw')).toEqual(['Tone Curve: Regions Shadows +20, RGB curve (7 points), Balanced (power)'])
+    expect(describePaste(c({ ...DEFAULT_SETTINGS, toneCurve: { ...curve, saturation: 100, norm: 'max' } }), 'raw')).toEqual(['Tone Curve: Regions Shadows +20, RGB curve (7 points)'])
+  })
+
+  it('copies “none” from a photo without a curve, leaving no key behind', () => {
+    const out = applyPaste(withCurve, c(DEFAULT_SETTINGS), 'raw')
+    expect('toneCurve' in out).toBe(false)
+    expect(describePaste(c(DEFAULT_SETTINGS), 'raw')).toEqual(['Tone Curve: none (straight line)'])
+  })
+
+  it('counts as changed for Auto Sync only when the curve changed', () => {
+    expect(changedKeys(withCurve, { ...withCurve, exposure: 2 })).toEqual(['exposure'])
+    expect(changedKeys(withCurve, { ...withCurve, toneCurve: { ...curve, saturation: 40 } })).toEqual(['toneCurve'])
+    expect(changedKeys(DEFAULT_SETTINGS, withCurve)).toEqual(['toneCurve'])
   })
 })

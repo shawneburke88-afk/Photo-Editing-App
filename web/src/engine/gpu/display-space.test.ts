@@ -62,7 +62,7 @@ describe('display colour space', () => {
     srgbColourIn('display-p3', [1, 1, 1]).forEach((v) => expect(v).toBeCloseTo(1, 3))
   })
 
-  it('the shader’s View struct has the Display P3 matrix at byte 368, the X-Trans pattern and the tone mask after it (VIEW_SIZE 496)', () => {
+  it('the shader’s View struct has the Display P3 matrix at byte 368, the X-Trans pattern, the tone mask and the Tone Curve after it (VIEW_SIZE 512)', () => {
     const struct = /struct View \{([\s\S]*?)\n\}/.exec(developDisplay)![1]
     const fields = [...struct.matchAll(/^\s+(\w+): (\w+),/gm)].map((m) => [m[1], m[2]])
     let at = 0
@@ -85,6 +85,10 @@ describe('display colour space', () => {
     expect(offsets.toneMode).toBe(110 * 4)
     expect(offsets.maskFeather).toBe(111 * 4)
     expect(offsets.toMask0).toBe(112 * 4)
-    expect(Math.ceil(at / 16) * 16).toBe(496)
+    // the Tone Curve (PHASE3.md Part 12), as writeView sets it
+    expect(offsets.curveFlags).toBe(124 * 4)
+    expect(offsets.curveNorm).toBe(125 * 4)
+    expect(offsets.curveSat).toBe(126 * 4)
+    expect(Math.ceil(at / 16) * 16).toBe(512)
   })
 })

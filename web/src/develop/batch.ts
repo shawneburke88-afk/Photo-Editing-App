@@ -17,6 +17,8 @@ import { applyPaste, mergeClipboards, type Clipboard } from './paste'
 import { loadIntoEngine, multipliers, renderThumbnail, stageOptions, type SensorInfo } from './source'
 import { ownFocal, rerunUpright, wantsUprightRerun } from './uprightRun'
 import { fromLightroom, lrFrame, parseLrKey, UPRIGHT_CODE } from '../sidecar/lightroom'
+import { parseLrToneKey, toneFromLightroom } from '../sidecar/lightroomCurve'
+import { withToneCurve } from '../engine/develop/tone-curve'
 
 export interface BatchJob {
   /** History step added to each photo, e.g. "Paste settings". */
@@ -30,16 +32,23 @@ export interface BatchJob {
    * after the copy. An Upright mode read from Lightroom is solved again on the photo, like a pasted one.
    */
   lightroom?: Record<number, string>
+  /** Lightroom's tone curve to apply to each photo (sidecar/lightroomCurve.ts `lrToneKey`, by photo id), after the copy. */
+  lightroomTone?: Record<number, string>
 }
 
 /** The history step of a crop or Transform read from a Lightroom sidecar when a photo is added. */
 export const LIGHTROOM_STEP = 'Lightroom crop & Transform'
+/** … of a tone curve, and of both. */
+export const LIGHTROOM_TONE_STEP = 'Lightroom tone curve'
+export const LIGHTROOM_BOTH_STEP = 'Lightroom crop, Transform & tone curve'
+const LIGHTROOM_STEPS = [LIGHTROOM_STEP, LIGHTROOM_TONE_STEP, LIGHTROOM_BOTH_STEP]
+export const lightroomStep = (geometry: boolean, tone: boolean) => (geometry && tone ? LIGHTROOM_BOTH_STEP : tone ? LIGHTROOM_TONE_STEP : LIGHTROOM_STEP)
 
-/** An edit whose only step is the Lightroom geometry read when the photo was added (the preset for new photos still applies). */
+/** An edit whose only step is the Lightroom settings read when the photo was added (the preset for new photos still applies). */
 function onlyFromLightroom(history: string): boolean {
   try {
     const h = JSON.parse(history) as { steps?: { label?: string }[] }
-    return !!h.steps?.length && h.steps.every((s) => s.label === LIGHTROOM_STEP)
+    return !!h.steps?.length && h.steps.every((s) => LIGHTROOM_STEPS.includes(s.label ?? ''))
   } catch {
     return false
   }
@@ -106,10 +115,12 @@ class BatchDeveloper {
     if (last && waiting && last.label === job.label && !last.onlyUnedited === !job.onlyUnedited && last.ids.length === job.ids.length && last.ids.every((id, i) => id === job.ids[i])) {
       last.clip = mergeClipboards(last.clip, job.clip)
       if (job.lightroom) last.lightroom = { ...last.lightroom, ...job.lightroom }
-    } else if (last && waiting && job.lightroom && last.lightroom && last.label === job.label && job.label === LIGHTROOM_STEP) {
-      // Photos added one by one with Lightroom crops: one job for all of them.
+      if (job.lightroomTone) last.lightroomTone = { ...last.lightroomTone, ...job.lightroomTone }
+    } else if (last && waiting && (job.lightroom || job.lightroomTone) && last.label === job.label && LIGHTROOM_STEPS.includes(job.label)) {
+      // Photos added one by one with Lightroom crops or curves: one job for all of them.
       for (const id of job.ids) if (!last.ids.includes(id)) last.ids.push(id)
-      last.lightroom = { ...last.lightroom, ...job.lightroom }
+      if (job.lightroom) last.lightroom = { ...last.lightroom, ...job.lightroom }
+      if (job.lightroomTone) last.lightroomTone = { ...last.lightroomTone, ...job.lightroomTone }
     } else {
       this.queue.push({ ...job, ids: [...job.ids] })
     }
@@ -220,6 +231,8 @@ class BatchDeveloper {
         next = { ...next, geometry: { ...next.geometry, crop, angle, ...(t ? { transform: { ...t, lightroom: mode } } : {}) } }
       }
     }
+    const tone = parseLrToneKey(job.lightroomTone?.[id])
+    if (tone) next = withToneCurve(next, toneFromLightroom(next.toneCurve, tone))
     if (wantsAuto && engine && info) next = await rerunAuto(engine, { ...next, auto: job.clip.settings.auto }, info)
     await catalog.saveEdit(id, JSON.stringify(next), JSON.stringify(savedForm(record(h, job.label, next))))
     sidecars.schedule([id])

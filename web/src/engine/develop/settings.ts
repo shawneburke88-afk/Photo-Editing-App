@@ -11,6 +11,7 @@ import type { AutoRecord } from './auto'
 import { DEFAULT_LENS, LEGACY_LENS, normalizeLens, type LensSettings } from '../lens/correction'
 import { DEFAULT_GEOMETRY, normalizeGeometry, type GeometrySettings } from './geometry'
 import { CURRENT_PROCESS, processParams, validProcess, type ToneMask } from './process'
+import { normalizeToneCurve, toneCurveGpu, type ToneCurveGpu, type ToneCurveSettings } from './tone-curve'
 import { normalizeSpots, type Spot } from './spots'
 
 /**
@@ -73,6 +74,11 @@ export interface DevelopSettings {
    * they render as before; new edits get Auto.
    */
   lens: LensSettings
+  /**
+   * The Tone Curve (tone-curve.ts): Regions, the RGB curve and the Red, Green and Blue curves, after Contrast. Absent
+   * when untouched or reset, so such an edit is exactly one made before the Tone Curve existed (and renders as one).
+   */
+  toneCurve?: ToneCurveSettings
   /**
    * Remove, Heal and Clone spots (spots.ts), in the order they were made. Optional: edits without spots have no
    * such field at all, so they stay exactly as they were (and render byte-identically).
@@ -137,6 +143,10 @@ export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined
     process: validProcess(s?.process),
     geometry: normalizeGeometry(s?.geometry),
   }
+  // The tone curve is only kept when it isn't at its defaults (an edit without one has no key at all).
+  const tc = normalizeToneCurve(s?.toneCurve)
+  if (tc) out.toneCurve = tc
+  else delete out.toneCurve
   const spots = normalizeSpots(s?.spots)
   if (spots) out.spots = spots
   else delete out.spots
@@ -176,6 +186,8 @@ export interface DisplayUniforms {
   huePreservation: number
   /** Crop, straighten, rotate and flip; the engine resolves it against the photo's size. */
   geometry: GeometrySettings
+  /** The Tone Curve's lookup table and options, or null when it changes nothing (the shader skips it). */
+  toneCurve: ToneCurveGpu | null
   /** Remove, Heal and Clone spots; absent when there are none. */
   spots?: Spot[]
 }
@@ -198,6 +210,7 @@ export function displayUniforms(s: DevelopSettings): DisplayUniforms {
     }),
     huePreservation: Math.min(1, Math.max(0, s.advanced.huePreservation / 100)),
     geometry: s.geometry ?? DEFAULT_GEOMETRY,
+    toneCurve: toneCurveGpu(s.toneCurve),
     ...(s.spots?.length ? { spots: s.spots } : {}),
   }
 }
