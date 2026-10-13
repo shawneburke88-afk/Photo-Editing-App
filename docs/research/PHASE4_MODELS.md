@@ -48,6 +48,50 @@ owner's 2026-10-12 requests and re-checks the masking licences.
 - **Patents.** No patent was found for LaMa or MI-GAN (searches not conclusive). Picsart holds an inpainting patent whose relation to MI-GAN is unknown. Apple holds
   shallow-depth-of-field rendering patents (claims not read).
 
+## Independent check (Cowork, 2026-10-13)
+
+An independent research run in Claude Cowork, written without seeing this draft:
+[cowork-2026-10-13/PHASE4_MODELS.md](cowork-2026-10-13/PHASE4_MODELS.md), with its LightCraft notes in
+[LIGHTCRAFT_AI_NOTES.md](cowork-2026-10-13/LIGHTCRAFT_AI_NOTES.md). Its claims were not re-checked here, except the items
+in its [spot-check log](cowork-2026-10-13/INDEX.md): RawNIND's README, MI-GAN's `LICENSE-WEIGHTS`, SAM 2's licence and
+Tiny's size, and US 8,285,055.
+
+**Its verdicts on the owner's decisions** (from its "Decisions this changes" table):
+
+| Owner's decision | Cowork verdict |
+|---|---|
+| MI-GAN for fill and Remove | **Supports**, with caveats. Code and weights are both MIT (separate `LICENSE-WEIGHTS`); 5.98 M params; official 28.1 MB ONNX pipeline; a GPL-3.0 browser app runs it. Caveats: training data (Places365; FFHQ is BY-NC-SA) and NVIDIA-notice files in the training code, which ONNX inference doesn't need. |
+| LaMa optional | **Mixed.** Apache-2.0 code, but no separate weights licence upstream. Its ONNX is 208 MB fp32 at a fixed 512×512, about 8× MI-GAN's FLOPs. Moebius (Apache-2.0 code and weights, June 2026) is a rival for the optional slot. |
+| SAM 2.1 Tiny | **Supports**, with a training-data caveat: Apache-2.0 checkpoints, 38.9 M params, but the training mix includes SA-1B ("Research purposes only"). |
+| BiRefNet | **Mixed.** The MIT licence passes, but the full model is "0.2B params" (490 MB fp16) and needs ONNX graph surgery for WebGPU; **BiRefNet_lite** (44.4 M, 115 MB fp16) is the realistic browser pick. |
+| RawNIND undecided (GPL) | **Mixed, new fact:** upstream says "The weights are dual licensed GPL3 + CC-BY-4.0"; darktable-ai's card and LightCraft's manifest say GPL-3.0. Ask the author whether CC-BY-4.0 alone may be chosen. |
+| No-AI Remove avoids PatchMatch random search and propagation | **Supports, with a wording fact.** US 8,285,055 is listed Active, anticipated expiry 2031-04-09. Its claim 1 recites a mapping "obtained from mappings of nearby pixels" **and** one "obtained by perturbing" a mapping; "random" is only in dependent claims. Continuation US 8,811,749 (Active, to 2029-04-27) recites "propagating" and "perturbing". So avoid any perturb-plus-propagate iteration, not just randomness. Facts only. |
+
+The two Cowork files differ on which dependent claims of US 8,285,055 say "random": its PHASE4 file says 12 and 20; its
+spot-check log (re-fetched) says 4, 11, 12 and 20.
+
+**Where it adds to or differs from this draft** (as the Cowork file states them):
+- **Moebius:** it found no ONNX or browser port (this draft cites moebius-web running it on WebGPU at about 1.27 GB
+  fp32). It notes the HF tag says MIT while the README says Apache-2.0 (both permissive), and that the training data is
+  undisclosed.
+- **Shadow fill:** it recommends not building generative shadow fill and pointing users to denoise instead. This draft
+  keeps both sides as the owner asked (open question 7).
+- **BRIA RMBG-1.4:** its card reads "a Creative Commons license for non-commercial use", confirming the exclusion this
+  draft assumed.
+- **WebGPU field data** (web3dsurvey): `maxStorageBufferBindingSize` ≥ 1 GiB on 91 % and ≥ 2 GiB − 1 on 16 % of
+  devices; `maxBufferSize` ≥ 2 GiB − 1 on about 78 %; `shader-f16` on 93.95 % (Linux 73.53 %). This draft's search
+  snippet put 2 GiB − 4 on ~79 % for `maxStorageBufferBindingSize`. BiRefNet exceeds `maxStorageBuffersPerShaderStage`
+  without graph surgery.
+- **Delivery:** it agrees GitHub Release assets lack CORS (from an open GitHub community bug report; this draft tested
+  the headers with curl). It adds a forum report that Range requests to Hugging Face fail CORS preflight on the CDN
+  redirect, while plain GETs work, and suggests small models same-origin on Pages, optional ones on HF pinned by commit
+  and SHA-256.
+- **Patents:** it adds US 8,818,135 (Adobe, low-memory content-aware fill, Active to 2033-02-23), US 8,542,908 (Yeda,
+  bidirectional similarity, Active to 2030-05-09; claim 1 not read) and the facts on Apple's US 10,410,327 (see
+  [DEPTH_OF_FIELD.md](DEPTH_OF_FIELD.md)).
+- **ProRAW masks:** it gives the DNG 1.6 tag numbers but could not confirm Apple's `SemanticName` strings (this draft has
+  them from LightCraft's code).
+
 ---
 
 ## How this was researched
@@ -375,6 +419,9 @@ For models, add a SHA-256 check and a licence dialog before download, as LightCr
 - **GPL-3.0 weights** (RawNIND for AI Denoise): to be decided when Phase 4 starts.
 - The other open questions below are taken up when Phase 4 starts. The depth-of-field approach is in [DEPTH_OF_FIELD.md](DEPTH_OF_FIELD.md); its "blur grows in front of and behind the focus plane" requirement is the owner's (2026-10-12/13).
 - Sources marked unverified or "from search results" could not be opened from the build machine (the environment's network policy blocks those sites).
+- **After the Cowork report (2026-10-13), no-AI Remove:** PR #36's search was reviewed against claim 1 of US 8,285,055
+  and the wording of US 8,811,749 (a neighbour-derived mapping plus a perturbed mapping). It has no neighbour-derived
+  step. The owner kept it as it is (2026-10-13). This is not a legal opinion.
 
 
 ## Open questions for the owner

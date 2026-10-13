@@ -4,6 +4,44 @@ Research for the Phase 3 **Tone curve** group ([USABILITY.md](../USABILITY.md), 
 
 **The owner's question.** The tone curve is one of the most-used tools. Lightroom's is the baseline: a parametric curve (Highlights/Lights/Darks/Shadows with 3 split points), a point curve with Linear/Medium/Strong presets, R/G/B channel curves, a targeted adjustment tool (TAT, drag on the photo) and the histogram behind the graph. What would make LightBench's curve easier, faster or better-looking than that?
 
+## Independent check (Cowork, 2026-10-13)
+
+An independent research run in Claude Cowork, written without seeing this draft:
+[cowork-2026-10-13/TONE_CURVE.md](cowork-2026-10-13/TONE_CURVE.md). Its claims were not re-checked here, and none of
+the items in its [spot-check log](cowork-2026-10-13/INDEX.md) are tone-curve items.
+
+**Its verdicts on the owner's decisions** (from its "Decisions this changes" table):
+
+| Owner's decision | Cowork verdict |
+|---|---|
+| Curve after Contrast (the sigmoid) | **Supports**, with one caveat. darktable's tone curve, ART and LightCraft all apply their curve after the tone map; but darktable's manual says most processing should happen before the display transform. |
+| Parametric curve kept as "Regions" | **Supports.** ("Regions" is LightBench's label; Adobe calls it the Parametric Curve.) |
+| Stronger colour with contrast, one "Saturation" slider | **Supports the behaviour; Mixed on the name.** `crs:Saturation` is Basic's slider, so the name invites confusion; it suggests "Refine Saturation" or "Curve Saturation", and a hue-preserving "film-like" master curve as the default. |
+| R/G/B curves in the first version | **Supports.** |
+
+It reports that no finding contradicts a decision.
+
+**Where it adds to or differs from this draft** (as the Cowork file states them):
+- **Point limit:** it quotes Adobe's Julieanne Kost, "A maximum of 16 points" (this draft: sources disagree, 14 or 16).
+- **Refine Saturation:** dated to June 2023 (LrC 12.4 / ACR 15.4 / Lr 6.4) from secondary sources. It quotes Greg Benz that
+  the slider is offered for the point curve only, not the parametric or R/G/B curves (this draft left the parametric case
+  open). The XMP field name is unconfirmed: only LightCraft's docs name `crs:CurveRefineSaturation`.
+- **The slider's 0 end:** it proposes 100 = film-like and 0 = a luminance ratio (darktable-style `curve(L)/L`). This
+  draft's §2.2 table finds that luminance-based ratios crush saturated reds and blues.
+- **LightCraft** (not covered by this draft's tone-curve survey): its curve runs after its tone map on sRGB-encoded
+  values; its Regions use endpoint-pinned raised-cosine windows with splits at 25/50/75, offered as a permissively
+  licensed Regions formula (this draft: LightBench designs its own); its master curve is per channel (hue shifts) with
+  its own Refine Saturation formula.
+- **HDR:** it quotes Adobe's help that HDR curve values "are remapped into the 0-100% range", with an SDR quadrant (this
+  draft, from a search summary: the scale runs 0-500).
+- **Patents:** it lists Adobe's HDR point-curve visualisation filings (US 2025/0117977 A1, possibly granted as 12602841;
+  divisional US 2026/0289832 A1, awaiting examination) and MIT's expired US 7,146,059. It found **no patent** for
+  Bae/Paris/Durand two-scale tone management (search not conclusive), where this draft cites MIT's listing of
+  US 8,081,838. It does not mention Adobe's "extended range curves" patent (US 8,908,966) cited here.
+- Its recommended first version is otherwise close to this draft's (Regions + point + R/G/B, monotone spline, 16-point
+  cap, input histogram, TAT with a hover dot, numeric entry, clipping overlay, keyboard access). It puts the before/after
+  ghost under "Later".
+
 ## Summary
 
 - **One decision shapes everything else: where the curve sits in the pipeline.** Before Contrast (the sigmoid), as darktable's rgb curve does, or after it, where darktable's tone curve sits and where darktable's own Lightroom importer puts Lightroom's curve. This doc recommends that the user always draws the curve on the **same axis as the histogram** (the tones on screen), and gives three ways to build that. It is open question 1.
@@ -441,6 +479,13 @@ The owner values usability over feature count. Lightroom users should find every
 - **R/G/B curves:** in the first version.
 - Not yet decided: the grey eyedropper (a later item) and whether tone curves are read from sidecars at the Lightroom/darktable import step (question 7).
 - Sources marked [search] or [memory] could not be opened from the build machine (the environment's network policy blocks those sites); they stay marked until checked.
+- **After the Cowork report (2026-10-13):**
+  - **Slider name:** the colour slider is renamed **Refine Saturation** (Lightroom's name), which avoids the clash with
+    Basic's Saturation. This replaces "Saturation" wherever this document names the curve's slider.
+  - **Default brightness measure:** **Largest channel**, i.e. Adobe's hue-preserving "film-like" method at 100 %. Power
+    stays available.
+  - **Not read from sidecars:** `crs:CurveRefineSaturation`. Only LightCraft's docs name that field, and it is
+    unconfirmed.
 
 
 ## 4. Open questions for the owner

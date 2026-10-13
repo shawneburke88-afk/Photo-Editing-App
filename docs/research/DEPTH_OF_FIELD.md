@@ -17,6 +17,42 @@ it and behind it**, rather than "sharp subject, blurred everything else". The co
 [4. UI precedents](#4-ui-precedents) · [5. Recommendation](#5-recommended-approach-for-lightbench) ·
 [Sources and access](#sources-and-what-could-not-be-read)
 
+## Independent check (Cowork, 2026-10-13)
+
+An independent research run in Claude Cowork, written without seeing this draft:
+[cowork-2026-10-13/DEPTH_OF_FIELD.md](cowork-2026-10-13/DEPTH_OF_FIELD.md). Its claims were not re-checked here, and
+none of the items in its [spot-check log](cowork-2026-10-13/INDEX.md) are depth-of-field items.
+
+**Its verdicts** (from its "Decisions this changes" table):
+
+| Decision | Cowork verdict |
+|---|---|
+| Depth Anything V2 Small as the depth model | **Supports**, with two caveats. Apache-2.0 everywhere it checked (GitHub, the original and `-hf` HF repos, `onnx-community`); Base/Large are CC-BY-NC-4.0 and Giant is unreleased, so only Small passes. It outputs "affine-invariant inverse depth", so no metric depth is needed. Caveat 1: some training data is non-commercial or research-only (Virtual KITTI 2 NC-SA, SA-1B "Limited"). Caveat 2: don't use the DA-V2 *metric* checkpoints (conflicting licence information; trained on VKITTI 2 and Hypersim). |
+| (new) Better permissive alternatives? | **Mixed.** Nothing replaces Small yet. Worth evaluating: Depth Anything 3 SMALL/BASE/MONO-LARGE/METRIC-LARGE (Apache-2.0; DA3MONO-LARGE is 0.35 B) and MoGe-2 ViT-S (35 M, MIT, metric). Neither has published browser speeds; DA3's data is described only as "Public academic datasets only". |
+| (new) Apple Depth Pro | **Contradicts any plan to use it.** The HF weights repo ships the research-only Apple Machine Learning Research Model License, which conflicts with GitHub's licence; excluded. |
+| Phase 4 inpainting pick (MI-GAN / LaMa) | **Supports** (cross-reference): MPIB uses LaMa to fill the background hidden behind blurred foreground. |
+| BiRefNet (masking pick) | **Supports** (cross-reference): a subject matte is the practical fix for hair and fine edges, and can drive auto-focus on the subject. |
+
+**Where it adds to or differs from this draft** (as the Cowork file states them):
+- **Confirms from the DA-V2 paper** that the model predicts "affine-invariant inverse depth" (this draft: unverified,
+  arXiv blocked). Its maths reaches the same result: CoC = S·|d − d_f|, the shift cancels, the scale folds into the
+  strength slider.
+- **MoGe-2:** its HF card says "License: mit" (this draft: hold until the weights licence is confirmed).
+- **Apple US 10,410,327:** Active, anticipated expiry 2038-05-25. Claim 1 computes each blurred pixel from a weighted
+  combination of surrounding candidate pixels, one weight based on the candidate's own blur value; random sampling is
+  only in dependent claim 3. It notes that "scatter-as-gather" is closest to that element, that a layered renderer
+  weights by layer instead, and that the owner may want counsel to compare. (This draft: claims not read.)
+- **Lightroom Lens Blur:** it read Adobe's help pages directly. The controls match this draft's list; it also lists an
+  Oval shape and "Device Depth" for files such as HEIC that already carry a depth map.
+- **Apple Photos:** Apple's own pages mention only the Depth Control slider; the f/1.4–f/16 range comes from a secondary
+  source.
+- **Rendering:** the same layered, scene-linear approach. It places the blur after exposure and highlight reconstruction
+  and before the tone equalizer and sigmoid, runs depth inference on a display-rendered proxy, and does cat's-eye with a
+  sampled gather inside each layer (this draft: a final gather pass, or later).
+- **Open item:** whether transformers.js's `predicted_depth` keeps "larger = nearer" without re-normalising is
+  unconfirmed.
+- **LightCraft:** lens blur is not implemented and no depth model is named, so it offers no precedent.
+
 ---
 
 ## Summary

@@ -14,6 +14,44 @@ ipol.im were all blocked or unresolvable. Facts from those sites come from **sea
 marked "(search summary)". Paper references that were not opened are marked "(not opened)". Speed figures are
 **published measurements** only where a source is given; everything else is marked **estimate** with its working.
 
+## Independent check (Cowork, 2026-10-13)
+
+An independent research run in Claude Cowork, written without seeing this draft:
+[cowork-2026-10-13/DETAIL_DENOISE_SHARPEN.md](cowork-2026-10-13/DETAIL_DENOISE_SHARPEN.md). Its claims were not
+re-checked here, except the items in its [spot-check log](cowork-2026-10-13/INDEX.md): the RawNIND README quote, and
+darktable 5.4's capture sharpening and its credit to RawTherapee.
+
+**Its verdicts on the owner's decisions** (from its "Decisions this changes" table):
+
+| Owner's decision | Cowork verdict |
+|---|---|
+| Richardson–Lucy capture sharpening | **Supports.** darktable 5.4 ported RawTherapee's Capture Sharpening into demosaic, and its loop is RL's blur → divide → blur → multiply. The spot-check log adds a wording caution: `capture.c` never names Richardson–Lucy, so "RL" describes its structure, not darktable's own claim. |
+| …run after profiled denoise | **Mixed.** darktable and RawTherapee both sharpen *before* their main denoiser and protect flat areas with a noise mask, while darktable's manual says denoising should come before sharpening. Keep the order, but say clearly that it departs from both. |
+| On by default for new RAWs, Amount 40 | **Mixed.** Lightroom's raw default of 40 comes from Lightroom Queen, not Adobe. darktable leaves capture sharpening off and calls auto-apply "generally safe" only below ISO 1000. RL has no native "Amount". |
+| RawNIND undecided (GPL) | **Mixed, new fact.** Upstream README: "The weights are dual licensed GPL3 + CC-BY-4.0" (confirmed in the spot-check log); darktable-ai's card lists only GPL-3.0. Only the author can say whether CC-BY-4.0 alone may be chosen. |
+
+**Where it adds to or differs from this draft** (as the Cowork file states them):
+- **Slider mapping (differs).** Cowork: Amount = blend gain *g* = Amount/40 on the RL difference (Amount 40 = darktable's
+  result, *g* capped at about 2.5); Radius = a multiplier of the auto radius (0.5–3.0, default 1.0, clamped to
+  darktable's 0–1.5); Detail → iterations = 4 + round(Detail × 0.16), so 25 → 8; Masking 0 = darktable's automatic
+  contrast mask only, 1–100 adds a Lightroom-style edge mask. This draft (§4.3): Amount → iterations (Amount/5), Radius
+  = Auto with a manual 0.25–1.5 px range, Detail → an overshoot limiter, Masking → threshold between auto and 1. This
+  draft's §4.5 advises against an amount above 1 on the RL difference, which Cowork's mapping uses above Amount 40.
+- **Auto radius:** estimate it on the pre-denoise demosaiced luminance, and pin it to one darktable revision (5.4, or
+  5.6's "central 60 %") under a process version.
+- **High ISO:** on by default only below ISO 1000; what to do above it is left as an owner decision.
+- **Unprofiled cameras:** it found no fallback described in darktable's manual (unconfirmed). This draft found the
+  "generic poissonian" fallback in darktable's source. It could not count the profiles (manual: "over 300"; this
+  draft counted 437 cameras).
+- **darktable 5.6 neural restore:** it quotes that raw denoise "outputs a Bayer CFA DNG" (this draft: new TIFF files).
+- **Permissive AI denoise order:** NAFNet (SIDD, MIT; takes sRGB, so a domain caveat) first, then SCUNet, then PMRID.
+  This draft puts PMRID with darktable's noise profiles first.
+- **BM3D and NL-Bayes:** the IPOL implementations are GPL-3.0-or-later (this draft: licence not checked). No BM3D patent
+  held by Tampere or Noiseless Imaging was found (not conclusive); it lists related block-matching patents, e.g.
+  US 9,123,103 B2 (Active, anticipated expiry 2034-03-25).
+- **LightCraft:** its sharpening is an unsharp mask on a luminance detail band; its Radius and Detail sliders are not
+  referenced in the code read; it has no RL or capture-sharpening stage.
+
 ---
 
 ## 0. The answers in brief
@@ -452,6 +490,18 @@ Licence evidence was read from each repository's `LICENSE` file on GitHub unless
 - **Default:** on for new RAW photos (Amount 40, automatic radius), off for JPEGs. Saved edits are never changed.
 - **Noise reduction:** darktable's denoise (profiled) stands.
 - **GPL-3.0 model weights (RawNIND) for AI Denoise:** to be decided when Phase 4 starts.
+- **After the Cowork report (2026-10-13):**
+  - **Order:** stays denoise → capture sharpening. Cowork rates this Mixed: it departs from darktable's and RawTherapee's
+    placement, and the departure is documented (section 4.2).
+  - **Auto radius:** measured on the pre-denoise raw data with darktable 5.6's central-60 % method, which matches
+    Cowork's advice. Any later change to the auto-radius method needs a new process version.
+  - **High ISO:** the default is Amount 25 above ISO 1000.
+  - **Masking 0** keeps the noise protection.
+  - **Slider mapping (pending):** the owner asked for Cowork's mapping (Amount = blend gain Amount/40, Radius = a
+    multiplier of the auto radius, Detail → iterations 4 + round(Detail × 0.16)) to be tested against the one already
+    built, with a performance brief before the Detail PR.
+  - **Unprofiled cameras:** darktable's generic profile (as built).
+  - **RawNIND:** the owner may ask the author whether "GPL3 + CC-BY-4.0" allows using CC-BY-4.0 alone. Not yet asked.
 
 
 ## 8. Open questions for the owner

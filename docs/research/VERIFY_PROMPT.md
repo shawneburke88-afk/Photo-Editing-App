@@ -1,3 +1,5 @@
+> **Note for the owner (not part of the prompt), 2026-10-13:** an independent research run on the same four topics was done in Claude Cowork, without seeing these drafts. Its results are in [cowork-2026-10-13/](cowork-2026-10-13/) (start with [INDEX.md](cowork-2026-10-13/INDEX.md)), and each draft now has an "Independent check (Cowork, 2026-10-13)" section.
+
 You are verifying research for LightBench, an open-source (GPL-3.0) Lightroom-style photo editor that runs in the browser. The research was written on a machine that could not open most websites. Claims it couldn't check are tagged **[search]** (from search-result summaries), **[memory]** (remembered, not confirmed) or **unverified**. Your job is to check them against primary sources, using your web browsing.
 
 ## The documents (public, read them first)
