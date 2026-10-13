@@ -555,7 +555,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             const l = engine.layout(v, engine.canvas.width, engine.canvas.height)
             const drawn = { x: l.x / dpr, y: l.y / dpr, w: l.w / dpr, h: l.h / dpr, map: engine.shownSnapshot() }
             lastDraw.current = drawn
-            if (x.removing) setShownBox((b) => ({ ...drawn, n: (b?.n ?? 0) + 1 }))
+            // Whether the brush is on now, not when this drawing started (it may have been opened meanwhile).
+            if (latest.current.removing) setShownBox((b) => ({ ...drawn, n: (b?.n ?? 0) + 1 }))
           }
           scheduleStats()
         } catch (e) {
