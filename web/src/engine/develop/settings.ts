@@ -10,7 +10,7 @@ import { toneEqualizerFactors } from '../color/tone-equalizer'
 import type { AutoRecord } from './auto'
 import { DEFAULT_LENS, LEGACY_LENS, normalizeLens, type LensSettings } from '../lens/correction'
 import { DEFAULT_GEOMETRY, normalizeGeometry, type GeometrySettings } from './geometry'
-import { CURRENT_PROCESS, processParams, validProcess } from './process'
+import { CURRENT_PROCESS, processParams, validProcess, type ToneMask } from './process'
 
 export interface DevelopSettings {
   /** Layout of this settings object (the JSON schema), not the rendering: see `process`. */
@@ -144,6 +144,8 @@ export interface DisplayUniforms {
   exposureGain: number
   toneFactors: number[]
   toneEnabled: boolean
+  /** How the tone equalizer measures brightness (the process version's). */
+  toneMask: ToneMask
   vibrance: number
   saturation: number
   sigmoid: SigmoidCurve
@@ -159,6 +161,7 @@ export function displayUniforms(s: DevelopSettings): DisplayUniforms {
     exposureGain: 2 ** (s.advanced.baseExposure + s.exposure),
     toneFactors: toneEqualizerFactors(bands),
     toneEnabled: bands.some((b) => Math.abs(b) > 1e-6),
+    toneMask: processParams(s.process).toneMask,
     vibrance: s.vibrance / 100,
     saturation: s.saturation / 100,
     sigmoid: sigmoidCurve({
