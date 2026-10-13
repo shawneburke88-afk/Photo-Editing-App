@@ -890,3 +890,122 @@ Headless Chromium with software WebGPU (SwiftShader), scripts in `scratchpad/fol
 - Version 2's Highlights and Whites weights were settled by eye on three photos. They are LightBench's choice, not darktable's: darktable has no such sliders.
 - For RAWs, the camera RGB comes from LightBench's camera matrix (LibRaw's), not darktable's input profile. For the D700 the two gave the same match; other cameras weren't checked.
 - Real-GPU speed is an estimate. During a live white-balance drag, or while turning the photo in the crop tool, the mask is recomputed every frame (a full-size pass); on SwiftShader that adds 0.5–2 s per frame for 12–24 MP photos.
+
+## Part 11: The Remove brush — Remove, Heal and Clone without AI
+
+**What it does.** A **Remove** brush paints over dust, wires, signs and small objects, and LightBench fills the painted spot from its surroundings. No AI is involved. The owner's choices (2026-10-12):
+- **Paint, and LightBench fills from the surroundings**, patch by patch (PatchMatch-style).
+- **The source can be dragged** to another place.
+- **Each spot has its own mode**, switchable at any time, as in Lightroom: **Remove** (fill from the surroundings), **Heal** (copy the source's texture and blend it into the colour around the spot) and **Clone** (copy the source exactly).
+- **AI remove comes later** (Phase 4). The modes are a list in `engine/develop/spots.ts` (`SPOT_MODES`), so an AI mode is one more entry, and the stored spot already holds everything an AI fill would need (stroke, source, seed).
+
+### Using it
+
+- **Open it** with **Q** (Lightroom's key), the **Remove** button in the Develop toolbar, or the **Remove** group of the tool stack (its jump-bar button has an eye that hides all spots for a quick before/after). **Enter** or **Done** finishes; **Esc** first deselects the spot, then finishes.
+- **The panel** sets the mode (Remove / Heal / Clone), **Size** (2–600 px of the full-size photo), **Feather** (0–100 %) and **Opacity** (0–100 %), with hint texts like every other slider. With a spot selected the panel edits that spot; otherwise it sets the brush for the next spot. The brush settings are kept in this browser.
+- **Painting:** a click makes a round spot, a drag a stroke. The cursor shows the brush's radius and its feather on the photo, at the zoom shown. When the button is released, LightBench picks a source, records one history step ("Remove spot 3", "Heal spot 3", …) and shows a small progress ring on the spot while a Remove fill is computed. The photo can still be panned (Space-drag or the middle button) and zoomed while painting.
+- **Pins:** every spot has a pin. A click on a pin selects the spot; the selected spot shows its outline and, dashed, its **source** with a pin of its own. **Dragging the source** moves it (one step, "Move source of spot 3"), and the spot is redone from there. A Remove spot uses the source as its starting point: the fill prefers texture from there but takes it from anywhere around.
+- **Keys** (a keyboard context of their own, "Develop: Remove brush", so they can be remapped in Settings): **[** / **]** smaller / larger, **{** / **}** (Shift+[ / Shift+]) less / more feather, **H** shows all pins or only the selected one, **Delete** / **Backspace** deletes the selected spot. Undo, redo, Before/After and zoom work as in Develop. The spot modes and **Delete all spots…** are in the command search and can be given keys. With a spot selected, the size and feather keys change that spot (one history step per change).
+- **Undo/redo:** one history step per spot action (paint, move source, size, feather, opacity, mode, delete, delete all).
+- **Lightroom (from Adobe's help pages as quoted in search results; the pages themselves were not opened, so this is unverified):** Lightroom Classic 13.3 renamed its Heal tool to **Remove**; with "Use Generative AI" unticked it does a content-aware remove. Heal "matches the texture, lighting and shading", Clone duplicates. Size, Feather and Opacity are adjustable; **Q** opens the tool, **[** / **]** change the size, **Shift+[ / ]** the feather (Adobe's pages disagree on which direction), **H** hides the pins, and Ctrl/Cmd-drag samples a source. Not built yet: Lightroom's **Visualize Spots** view, Ctrl-drag sampling, and reading Lightroom's `crs:RetouchInfo` (darktable's `lightroom.c` imports it into its spot module; a follow-up).
+
+### How darktable does it
+
+darktable source read at commit `6271f53` (2026-10-11).
+
+| Topic | darktable | Where |
+|---|---|---|
+| Coordinate frame | Mask shapes (points and source) are stored normalised to the **pipe's input image**: a drawn point is transformed back through every module before the mask, then divided by `iwidth` / `iheight`. | `src/develop/masks/brush.c` 1737-1740; `dt_masks_set_source_pos_initial_value` in `src/develop/masks/masks.c` 2755 |
+| Moving shapes forward | When retouch renders, each shape is moved forward through the modules in front of it with `dt_dev_distort_transform_plus(…, DT_DEV_TRANSFORM_DIR_BACK_INCL, …)`. | `src/iop/retouch.c` `rt_masks_point_calc_delta` 853-899 (call at 880) |
+| Module order (v5.0) | rawprepare … demosaic 8, lens 13, ashift 15, flip 16, liquify 18, spots 19, **retouch 20**, exposure 21, crop 24.5, colorin 28. So retouch works on demosaiced, white-balanced camera RGB, after lens correction, perspective and flip, before the crop. | `src/common/iop_order.c`, `v50_order` (line 306) |
+| Algorithms | clone, heal, gaussian blur, fill (a flat colour). No content-aware fill. | `retouch.c` 66-72 |
+| Order of shapes | Shapes are applied one after the other, each on the result of the ones before. | `rt_process_forms`, `retouch.c` 3694 |
+| Clone | The source is copied into a temporary buffer first, "to avoid issues when areas self-intersects", then blended: out = in·(1 − m·opacity) + src·m·opacity. | `_retouch_clone` 3539; `rt_copy_image_masked` 3452 |
+| Heal | dest − src on the mask's border, solved as a Laplace equation inside (red/black SOR with ω = (2 − 1/(0.1575·√n + 0.8))·0.25, exit when the error < ε²ω²), added back to the source. Based on GIMP's healing tool and Georgiev's paper. | `_retouch_heal` 3657; `src/common/heal.c` `dt_heal` 354, ω 328, exit 331/340, credits 24 and 351 |
+| Brush | A line of points with one radius (`border × MIN(width, height)`) and a hardness; the mask is 1 inside the hard part and falls off linearly to 0. The drawn path is simplified with Ramer-Douglas-Peucker (ε² = 0.01 × border² at the default smoothing). A new source starts 1 % of the image away. | `brush.c` 835, 3084 (falloff), 157 and 2002 (RDP), 3440 |
+
+### What LightBench stores
+
+- **`spots`** in the develop settings (`engine/develop/settings.ts`), an optional list. Each spot (`engine/develop/spots.ts`): `id`, `mode`, `points` (the simplified stroke), `size` (radius as a fraction of the sensor's shorter side, darktable's border), `feather` (1 − darktable's hardness), `opacity`, `offset` (source = spot + offset) and `seed`.
+- **Coordinates are darktable's:** normalised to the **sensor** (x / sensor width, y / sensor height), in the sensor's orientation, before lens correction, perspective, straightening, rotation, flip and crop. A spot stays on the same content whatever is done to the geometry later. On another photo from the same camera, the same coordinates are the same place on the sensor, which is what sensor dust needs.
+- **The source is picked once and stored**, as is the seed of Remove's random search, so a spot fills the same way on every render, on every device, until the user moves it.
+- **Old edits are untouched:** a photo without spots has no `spots` key at all (an empty list is removed when saved), the XMP sidecar (`lightbench:Develop`) is byte-identical, and nothing new runs while rendering. **No new process version**: spots are a new tool, not a change to an existing one.
+- **Copy / Paste and Sync:** a new item, **"Remove, Heal & Clone spots"** (group "Remove"), **unticked by default**, described as e.g. "3 spots (2 remove, 1 heal), at the same places on the sensor". Ticked, the copied spots **replace** the target's own, at the same sensor coordinates and with the same sources. **Auto Sync never sends spots**, and **New preset** doesn't pre-tick them (they can be ticked by hand). In the Library, pasting with the item ticked goes through the background developer like any other paste.
+
+### Where it runs in the pipeline, and why that differs from darktable
+
+The spots are applied to the **scene texture**: full resolution, sensor orientation, scene-linear Rec.2020, after demosaic and the camera matrix, **before the single geometry pass** (lens → perspective → straighten/flip → crop, one resample; Part 1). The retouched scene replaces the scene for every rendering: Develop at fit and 100 %, the histogram and Auto, the white balance loupe, thumbnails and previews, and Export at any size.
+
+darktable runs retouch after lens, perspective and flip, in camera RGB. LightBench deviates on purpose:
+- **One resample.** Retouching after lens correction would need a second, separate warp before the crop. LightBench combines all geometry into one map, so the spots must sit before it or after all of it (after the crop, they could not reach outside it).
+- **The same content, whatever the geometry.** darktable stores shapes in input coordinates and moves them forward; LightBench stores them the same way and doesn't have to move them, since they are applied in that frame. A fill is computed once and is unaffected by later crops, rotations, Upright or lens changes. The e2e test below checks that the fill stays under its pin through rotation, crop and lens on/off.
+- **Linear Rec.2020 instead of camera RGB.** Both are linear and white-balanced; the camera matrix is a 3 × 3 per pixel, so Clone is the same either way. Heal and Remove compare colours, which is better done in a space where the channels mean the same on every camera.
+- **The price:** a spot is painted in display coordinates and mapped back through the inverse geometry (`displayToSensor`, including the inverse of the lens distortion by fixed-point iteration). A round spot painted on a strongly distorted corner is therefore very slightly non-round on the sensor, as in darktable.
+
+### The three modes
+
+All three work in the retouch worker (`engine/retouch/`), on 256 × 256 tiles of the scene read back from the GPU as half floats, and only on the tiles a spot touches. The spots run in order, each on the result of the ones before (darktable's order).
+
+- **Clone** (`run.ts`): the source is snapshotted first (darktable's temporary copy) and blended with the brush mask and opacity: out = in·(1 − m·opacity) + src·m·opacity, darktable's `rt_copy_image_masked`.
+- **Heal**: darktable's heal (the source, plus a harmonic correction solved from the difference on the spot's border, with darktable's SOR ω and exit threshold in `membrane.ts`), but on **log values**, i.e. the correction is a ratio rather than a difference. In scene-linear HDR data, a difference taken next to a bright highlight was carried into the dark source as a large colour offset (a magenta cast next to the D700's fountain highlights); a ratio keeps the source's texture at the right brightness. Georgiev's paper motivates healing in a lighting-invariant form; LightBench's log variant is its own choice (the paper wasn't re-read for this).
+- **Remove** (`patchmatch.ts`): patch-based image completion.
+  - **Method:** Wexler, Shechtman and Irani's expectation-maximisation completion (2007), with Barnes et al.'s PatchMatch (2009) for the nearest-neighbour search, in the multi-scale form of Newson, Almansa, Gousseau and Pérez (IPOL 2017): 7 × 7 patches; enough levels that the hole is about two patch radii deep at the coarsest; 10 EM iterations at the coarsest level and 3–6 above; per iteration, propagation and random search sweeps, then each hole pixel becomes the weighted mean of the overlapping matched patches (weights 1 / (1 + d/σ²), σ² the 75th percentile of the distances).
+  - **What a patch compares:** √R, √G, √B and two texture features, the mean absolute horizontal and vertical differences of √luminance over 5 × 5 pixels (Newson et al.'s texture features), weighted ×3. Without them, a fill of gravel or grass drifted to the smoothest patches around, which left a flat blob.
+  - **The source as a starting point:** the coarsest level starts either healed from the stored source (darktable's heal) or smoothly interpolated, and matches at the source's offset are preferred (their distance × 0.85). Both starts are solved and the one with the lower energy is kept: the mean patch distance, plus a **novelty** term (colours in the fill found nowhere around the hole, which catches a source that holds another object) and a **flatness** term (a fill smoother than its surroundings).
+  - **The result is a match field**, not pixels: for each patch in the hole, where it comes from. It is rendered on the current photo by taking each pixel from its best match (Newson's "best" reconstruction, which keeps the grain; a weighted average blurs it), then healed into its surroundings like Heal (log ratio, harmonic).
+  - **Long strokes** are cut into chunks of at most max(384, 8 × radius) pixels, each completed in a window of the chunk plus a margin of 6 radii (64–512 px). Earlier spots in the window count as hole too, so a fill never copies from a spot that is about to change.
+- **Auto source** (`pick.ts`): the ring just outside the spot is compared, on √RGB, with rings at candidate offsets within 3× the spot's size (48–1200 px), on a grid that includes the offset 0 and then refined; nearer candidates are slightly preferred (cost × (1 + 0.25 (d/R)²)). The source must lie entirely inside the photo and clear of other spots; if none does, the candidate with the least overlap is used.
+
+### Determinism, caching and speed
+
+- **The same pixels everywhere.** The worker's random numbers come from a seeded generator (mulberry32, from the spot's seed and the chunk). The search uses only +, −, ×, ÷ and √, which JavaScript computes identically on every machine; the tiles go through the same half-float rounding. Develop, thumbnails, 100 % views and exports therefore get the same fill, and two exports are byte-identical (checked below).
+- **White balance doesn't change the fill.** For RAWs the match field is computed on the photo's **canonical scene** (as-shot white balance, default RAW settings) and then rendered on the current scene, so changing the white balance, exposure or highlight settings only re-renders the same matches. For JPEGs the scene doesn't depend on white balance (it is applied later, in the display shader).
+- **Cache.** Match fields are kept for the photo, keyed by the chunk's window, stroke, size, source, seed and the spots before it; feather, opacity and mode changes, and every other slider, reuse them. The retouched scene is cached for the last spot list; a new list copies the scene, writes only the changed tiles and rebuilds the mip chain. A texture still used by a drawing in flight is kept until that drawing is submitted.
+- **Speed (SwiftShader, a shared CPU; real GPUs not measured).** In the browser, painting a 1200 px wire took about 12 s from release to fill, a dust spot 1.6–1.7 s, a 100 px square 5–6 s (Remove). Full-size exports of those synthetic photos (1200 × 800, three spots) took about 11 s with Remove (fill computed afresh), 1.4 s with Heal and 1.0 s with Clone. In Node, on the same CPU, the PatchMatch core took 0.2 s for a dust spot, 1.5–2.5 s for a 600 px wire and 7–8 s for a 1200 px wire. Picking a source took 0.3–2 s for most spots, but 23 s for the D700's three spots together (0.3 s of that for the bollard alone); the search area grows with the stroke, up to 2400 px across, and on SwiftShader reading its tiles back from the GPU is slow. Full-size exports of the 12 MP D700 with three spots took 33 s (Remove), 20 s (Heal) and 14 s (Clone), including decoding. The fill is computed once per spot; afterwards exports reuse the cache.
+
+### Licence and patents
+
+**Not a legal opinion.** These are the facts found and the risk as it appears; the owner should take advice if it matters.
+
+- **Code.** All code is LightBench's own (GPL-3.0), written from the papers and from darktable's GPL-3.0 sources (whose algorithms are followed and cited above, not copied wholesale). Resynthesizer (GPL-3.0; Paul Harrison's 2000/2008 texture synthesis, maintained by Lloyd Konneker) and LightCraft's inpainting (MIT/Apache; its code wasn't available to read) were not used.
+- **Patents (searched with web search; patent pages weren't opened, claims not read):**
+  - **US 8,285,055 B1** "Determining correspondence between image regions" (Adobe; Barnes, Goldman, Shechtman; priority 2008-09-10, granted 2012-10-09). Google Patents, as quoted in search results, lists it as **active with an adjusted expiry of 2031-04-09**. Its abstract describes initialising offsets and improving them iteratively by propagation and random search: **the core of PatchMatch as implemented here.** Related Adobe patents: US 8,571,328 (expiry 2031-10-19 per the snippet), US 8,811,749, US 8,861,869, US 8,625,927.
+  - Content-aware fill patents (Adobe): US 8,818,135 B1 "Low memory content aware fill" and US 9,305,329, US 8,861,868, US 9,317,773, US 9,396,530, US 10,719,913. Weizmann's project page says Wexler et al.'s method is part of Photoshop CS5's Content-Aware Fill; whether it is patented wasn't found.
+  - Georgiev's healing brush patent (US 6,587,592, Adobe) is listed as **expired**. Heal and Clone use no patented method found.
+  - **The real risk:** the randomized search with propagation is very likely within the scope of Adobe's active US patents until about 2031. Options if the owner wants to avoid it: replace the random search with an exhaustive or tree-based nearest-neighbour search (slower; whether that is outside the claims would need the claims read), or take advice before release. Heal and Clone are unaffected either way.
+
+### Verified
+
+Headless Chromium with software WebGPU (SwiftShader, `?gpu=readback`), scripts in `scratchpad/followups-f/` (`e2e-remove.mjs`, `e2e-quality.mjs`, `e2e-realphotos.mjs`, `e2e-identity.mjs`; Node quality tests in `quality.scratch.test.ts`, not committed). Photos: Nikon D700 `philadelphia.nef`, Nikon D80 `glarus.nef`, Sony ILCE-6300 `12bit-compressed-(3_2).arw`, `test-srgb.jpg` (immich test-assets), and synthetic photos with a known clean background (brick, sky, grass; 1200 × 800).
+
+- **Old edits are byte-identical.** Full-size exports, 1024 px exports, 512 px thumbnails and histogram statistics of edited and default D700, D80, Sony and JPEG photos had the same hashes on this branch, on `lightbench/lens-xtrans` (`3111356`, which this branch includes) and on main (`39382d5`); e.g. the edited D700's full-size export `3756a56091d9dee76cd4dd75`.
+- **Remove brush end to end (`e2e-remove.mjs`, 18/18 passed)**, on the D700 with lens correction on:
+  - Q opens the brush; a click makes one history step and shows the progress note (3.9 s on SwiftShader).
+  - **The fill lands under its pin** (centroid of the change within 1.6 px of the pin) with lens correction on, after Rotate right, after a 1:1 crop, and with lens correction off (the fill moved 2.2 px with the content).
+  - The XMP holds the spot in sensor coordinates; **two separate full-size exports are byte-identical**, and the export's fill is where Develop shows it (within 1 px of the pin, mapped to the page).
+  - **White balance:** after a warmer white balance and back to as shot, the Develop engine and fresh export engines gave identical pixels.
+  - Selecting shows the source; dragging it records "Move source of spot 1"; ] / [ change the selected spot or the brush; H shows all; Delete and Ctrl+Z.
+  - Copy shows the spots item unticked with its description; pasting it in the Library sent the spot through the background developer to the D80 at the same sensor place, with its source and mode.
+- **Quality in the app (`e2e-quality.mjs`, 12/12 checks)**: a wire, a dust spot and a square painted with the brush on synthetic brick, sky and grass; each full-size export compared with the export of the clean photo inside the spots' solid core (RMSE in 8-bit sRGB levels; "detail" is the result's Laplacian energy relative to the clean photo's, 1 = same grain). Input RMSE in brackets.
+
+  | Photo | Wire (Remove / Heal / Clone) | Dust | Square |
+  |---|---|---|---|
+  | Sky | 2.5 / 2.6 / 3.1 (70.7) | 2.4 / 2.3 / 2.3 (101) | 2.3 / 2.3 / 2.3 (47.8) |
+  | Brick | 15.5 / 6.9 / 10.0 (47.8) | 6.1 / 6.7 / 7.2 (59.1) | 12.4 / 13.1 / 12.9 (81.6) |
+  | Grass | 22.2 / 22.3 / 22.3 (29.9), detail 0.98 | 22.4 / 22.5 / 22.4 (33.9) | 23.1 / 23.0 / 22.8 (78.9) |
+
+  On random textures such as grass the RMSE can't fall below about 22: any plausible grass differs from the true grass pixel by pixel; a blurred fill scores lower (the version before the texture features scored 17.8 on the grass wire with detail 0.61, visibly smudged). Each mode's spots were switched with the panel (one history step each), and the exports were byte-identical twice.
+- **Quality in Node** (the same code, synthetic cases, RMSE in levels): dust on sky 0.84 (Remove) / 0.83 (Heal); wire on sky 0.90 / 0.88; an object on grass 9.0 / 9.2 (detail 0.94 / 0.92); an object on brick 5.3 / 5.4; a wire on brick 4.5 / 5.5 (Clone 7.1). **With a source on another object**, Remove gave 11.7 where Heal gave 38.6: Remove's novelty term discards a fill that copies the other object.
+- **Real photos** (`e2e-realphotos.mjs`, sources picked automatically, crops checked by eye, saved in `followups-f/real4/`):
+  - **Good:** a TV aerial against the sky and a finial on a roof (Sony), a street lamp against the sky (D700), a bollard and its shadow on concrete and gravel (D700: the concrete's streaks and the gravel's grain continue; Heal and Clone copied a piece of paper from the auto source), a house in a meadow (D80: Remove filled meadow; Heal left a dark smear from the trees).
+  - **Poor:** a litter bin in front of a fountain's wall, water and a shrub (D700): Remove filled the bin with a gravel-like texture across the wall's lines, Heal and Clone copied the shrub from the auto source. Structure that crosses a large hole isn't continued; a source dragged by hand with Clone, or several smaller spots, is the way round it.
+  - A shrub in a meadow (D80): all modes leave a softer patch.
+- **Unit tests:** `engine/develop/spots.test.ts` (storage and normalisation, darktable's falloff and radius, rasterisation, RDP, geometry round trips through rotation and flips, paste), `engine/retouch/retouch.test.ts` (half-float round trip, the membrane, PatchMatch determinism and stripe continuation, auto source, clone and opacity, heal, Remove determinism and white-balance scaling with a cached fill, spot order, tiles needed, planning keys), `settings/keymap.test.ts` (the Remove keys), `paste.test.ts`.
+- `npx tsc -b`, `npx oxlint` (the two existing warnings), `npx vitest run` and `npm run build` passed, after merging `lightbench/lens-xtrans`.
+
+**Limitations and unverified:**
+- **Patents**, above: the main open question.
+- Real-GPU speed wasn't measured; a big Remove spot takes several seconds on a fast CPU (the search runs in a worker, not on the GPU). The progress ring shows it, and editing continues meanwhile.
+- Large holes across strong structure (lines, edges of buildings) aren't continued as such: the method has no notion of lines. Lightroom's content-aware remove wasn't compared.
+- The auto source can land on another object (Heal and Clone copy it); dragging the source fixes it.
+- Lightroom's Visualize Spots, Ctrl-drag sampling and `crs:RetouchInfo` interop aren't built. Lightroom's exact key behaviour comes from search excerpts of Adobe's help, not the pages.
