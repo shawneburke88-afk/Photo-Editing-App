@@ -20,6 +20,7 @@ import { getRootHandle, reconnectRoot } from '../platform/roots'
 import { externalChanges } from '../sidecar/external'
 import { BackupDialog } from '../backup/BackupDialog'
 import { sidecars } from '../sidecar/sync'
+import { RATE_NEXT, stepStars } from '../settings/actions'
 import { hintLine, keyText, rangeText, useKeymapVersion, useShortcuts, withKey } from '../settings/shortcuts'
 import { FilterBar } from './FilterBar'
 import { FolderPanel, type FolderSelection } from './FolderPanel'
@@ -31,6 +32,8 @@ import { CollectionList, PHOTOS_DRAG_TYPE } from './CollectionList'
 import { AutoStackDialog } from './AutoStackDialog'
 import { Grid } from './Grid'
 import { IndexProgress } from './IndexProgress'
+import { extrasRefresh } from './refresh'
+import { RefreshProgress } from './RefreshProgress'
 import { useIndexStatus } from './useIndexStatus'
 import { indexer } from './indexer'
 import { InfoPanel } from './InfoPanel'
@@ -127,6 +130,21 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     return indexer.subscribe(() => {
       if (indexer.status.changes === changes) return
       changes = indexer.status.changes
+      refresh()
+    })
+  }, [refresh])
+
+  // Older photos get their GPS and corrected Adobe RGB thumbnails once (refresh.ts): started when the library opens,
+  // when Open folder finishes and when a folder is reconnected; folders without permission wait without a prompt.
+  const disconnectedKey = [...disconnected].sort((a, b) => a - b).join(',')
+  useEffect(() => {
+    if (status === 'ready' && !indexing.active) extrasRefresh.start()
+  }, [status, indexing.active, disconnectedKey])
+  useEffect(() => {
+    let changes = extrasRefresh.status.changes
+    return extrasRefresh.subscribe(() => {
+      if (extrasRefresh.status.changes === changes) return
+      changes = extrasRefresh.status.changes
       refresh()
     })
   }, [refresh])
@@ -313,6 +331,21 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
 
   /** Applies a rating/flag/label to the selection (or the focused photo). */
   const apply = useCallback((field: CullField, value: number) => applyTo(targets(), field, value), [applyTo, targets])
+
+  /** ] / [: one star more or less on each selected photo, from its own rating (0 and 5 stay put). */
+  const stepRating = useCallback(
+    async (delta: 1 | -1) => {
+      const byValue = new Map<number, number[]>()
+      for (const id of targets()) {
+        const row = rows.find((r) => r.id === id)
+        if (!row) continue
+        const v = stepStars(row.rating, delta)
+        if (v !== row.rating) byValue.set(v, [...(byValue.get(v) ?? []), id])
+      }
+      for (const [v, ids] of byValue) await applyTo(ids, 'rating', v)
+    },
+    [applyTo, rows, targets],
+  )
 
   // Keywords: the library's list (left panel, suggestions) and those on the photos being edited.
   useEffect(() => {
@@ -627,6 +660,13 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
       case 'photo.rate0': case 'photo.rate1': case 'photo.rate2': case 'photo.rate3': case 'photo.rate4': case 'photo.rate5':
         void apply('rating', Number(id.slice(-1)))
         break
+      case 'photo.rateUp': void stepRating(1); break
+      case 'photo.rateDown': void stepRating(-1); break
+      // Shift+0–5 (Lightroom's "set rating and go to the next photo"): moves once, also with Caps Lock on.
+      case 'photo.rateNext0': case 'photo.rateNext1': case 'photo.rateNext2': case 'photo.rateNext3': case 'photo.rateNext4': case 'photo.rateNext5':
+        void apply('rating', Number(id.slice(-1)))
+        move(1)
+        return
       case 'photo.label1': case 'photo.label2': case 'photo.label3': case 'photo.label4':
         void apply('color', Number(id.slice(-1)))
         break
@@ -701,6 +741,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           Export…
         </button>
         <IndexProgress status={indexing} />
+        <RefreshProgress />
         {folderError && <p className="error small pad">{folderError}</p>}
         <FolderPanel
           roots={roots}
@@ -842,6 +883,8 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
                 [keyText('photo.reject'), 'reject'],
                 [keyText('photo.unflag'), 'unflag'],
                 [rangeText(['photo.rate0', 'photo.rate1', 'photo.rate2', 'photo.rate3', 'photo.rate4', 'photo.rate5']), 'stars'],
+                [[keyText('photo.rateDown'), keyText('photo.rateUp')].filter(Boolean).join(' '), '± star'],
+                [rangeText(RATE_NEXT), 'stars and next'],
                 [rangeText(['photo.label1', 'photo.label2', 'photo.label3', 'photo.label4']), 'colour labels'],
                 [keyText('library.keywords'), 'keywords'],
                 [keyText('photo.quick'), 'Quick Collection'],

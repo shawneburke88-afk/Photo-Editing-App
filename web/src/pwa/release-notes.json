@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.4.1",
+    "date": "2026-10-13",
+    "newFeatures": [
+      "] and [ give a photo one star more or less, and Shift+0–5 sets the rating and moves to the next photo, as in Lightroom (Library, culling, Compare and Survey).",
+      "Photos added before 0.4.0 now get their GPS location and, if their camera preview is Adobe RGB, thumbnails with correct colours, once, in the background (with Pause); edited photos, ratings and sidecars are left as they are."
+    ],
+    "bugFixes": [
+      "On keyboards with accented letters (German Ü, Ö, Ä; French é, è, ç, à), those keys no longer act as the US key in the same place (e.g. Ctrl+Ä made a virtual copy).",
+      "Virtual copies now keep their photo's GPS location."
+    ]
+  },
+  {
     "version": "0.4.0",
     "date": "2026-10-12",
     "newFeatures": [
