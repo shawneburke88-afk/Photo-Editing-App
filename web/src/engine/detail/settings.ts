@@ -209,6 +209,27 @@ export function captureParams(s: SharpenSettings, autoThreshold: number): { iter
 }
 
 /**
+ * TEST ONLY, not user-visible and not stored: switches the sharpening sliders to the research proposal's mapping so
+ * it can be measured against the built one (docs/research/DETAIL_MAPPING_BRIEF.md). Always false in the app.
+ */
+export const mappingForTests = { research: false }
+
+/**
+ * The research proposal (LightBench's own invention, not Lightroom's or darktable's): Amount → a gain on the
+ * deconvolution's change, Amount / 40 (40 = darktable's result at full strength); Detail → iterations
+ * 4 + round(Detail × 0.16) (25 → 8); no halo limit; Masking as built. Radius (a multiplier of the automatic radius)
+ * is applied by the caller.
+ */
+export function researchCaptureParams(s: SharpenSettings, autoThreshold: number): { iterations: number; halo: number; threshold: number; gain: number } {
+  return {
+    iterations: 4 + Math.round(s.detail * 0.16),
+    halo: 1,
+    threshold: autoThreshold + (s.masking / 100) * (1 - autoThreshold),
+    gain: s.amount / 40,
+  }
+}
+
+/**
  * darktable's automatic contrast threshold (capture.c `_get_variance_threshold`, lines 49-77, and `_capture_noise`,
  * line 785: truncated to 0.01): 0.4, less for raws with more than 12 and 14 bits, and less at low ISO.
  */

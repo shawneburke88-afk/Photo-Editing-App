@@ -94,7 +94,7 @@ export class DetailStage {
       }
       const c = run.capture
       if (c) f.set([c.sigma, c.iterations - Math.floor(c.iterations), c.halo, c.threshold], 64)
-      f.set([CAPTURE_CFACLIP * wb[0], CAPTURE_CFACLIP * wb[1], CAPTURE_CFACLIP * wb[2], 0], 72)
+      f.set([CAPTURE_CFACLIP * wb[0], CAPTURE_CFACLIP * wb[1], CAPTURE_CFACLIP * wb[2], c?.gain ?? 0], 72)
       const buf = device.createBuffer({ size: PARAMS_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
       device.queue.writeBuffer(buf, 0, b)
       temps.push(buf)

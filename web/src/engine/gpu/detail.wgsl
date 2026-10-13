@@ -389,7 +389,9 @@ fn csResult(@builtin(global_invocation_id) id: vec3u) {
       }
     }
     let within = clamp(rl, lo, hi);
-    let limited = within + P.csHalo * (rl - within);
+    var limited = within + P.csHalo * (rl - within);
+    // TEST ONLY (clipWb.w = the research mapping's gain; 0 in the app, so this never runs there).
+    if (P.clipWb.w > 0.0) { limited = max(Y + P.clipWb.w * (limited - Y), 0.0); }
     let yNew = mix(Y, limited, mixer);
     out = c * (yNew / max(Y, YMIN));
   }
