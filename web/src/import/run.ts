@@ -12,7 +12,8 @@ import type { ScannedFile } from './scan'
 import { fullSidecarName, sidecarCandidates, stemOwners, stemSidecarName } from '../sidecar/naming'
 import { readXmp, type SidecarRead } from '../sidecar/xmp'
 import { geometryOf, lrDiffers, lrFrame, lrKey, lrState, parseLrKey, sameState } from '../sidecar/lightroom'
-import { batch, LIGHTROOM_STEP } from '../develop/batch'
+import { batch, lightroomStep } from '../develop/batch'
+import { lrToneDiffers, lrToneKey, lrToneState, parseLrToneKey, sameLrTone, toneCurveOf } from '../sidecar/lightroomCurve'
 import { normalizeSettings } from '../engine/develop/settings'
 import { isRawFile } from '../engine/raw/decoder'
 
@@ -126,34 +127,46 @@ export async function applySidecar(catalog: Catalog, id: number, text: string, b
     const history = JSON.stringify({ steps: [{ label: 'From sidecar', settings: JSON.parse(r.develop) }], index: 0 })
     await catalog.saveEdit(id, r.develop, history)
   }
-  await readLightroomGeometry(catalog, id, r)
+  await readLightroomSettings(catalog, id, r)
   return r
 }
 
 /**
- * Lightroom's crop, straighten, orientation and Transform (sidecar/lightroom.ts), when they would change the photo.
- * They are applied by the background developer, which also solves a Lightroom Upright mode again on the photo and
- * makes the thumbnail. A LightBench edit in the same sidecar wins (so edits saved before LightBench read these fields
- * stay as they were), unless Lightroom changed its fields after LightBench last wrote them (the marker).
+ * Lightroom's crop, straighten, orientation and Transform (sidecar/lightroom.ts) and its tone curve
+ * (sidecar/lightroomCurve.ts), when they would change the photo. They are applied by the background developer, which
+ * also solves a Lightroom Upright mode again on the photo and makes the thumbnail. A LightBench edit in the same sidecar
+ * wins (so edits saved before LightBench read these fields stay as they were), unless Lightroom changed its fields
+ * after LightBench last wrote them (the markers).
  */
-async function readLightroomGeometry(catalog: Catalog, id: number, r: SidecarRead) {
+async function readLightroomSettings(catalog: Catalog, id: number, r: SidecarRead) {
   const lr = r.lightroom
-  if (!lr || lr.applied || !Object.keys(lr.fields).length) return
+  const lt = r.lightroomTone
+  const hasGeometry = !!lr && !lr.applied && Object.keys(lr.fields).length > 0
+  const hasTone = !!lt && !lt.applied && Object.keys(lt.fields).length > 0
+  if (!hasGeometry && !hasTone) return
   const p = await catalog.getPhoto(id)
   if (!p) return
-  const frame = lrFrame(p)
-  const state = lrState(lr.fields, frame)
-  if (r.develop) {
+  let geometry: string | null = null
+  if (hasGeometry) {
+    const frame = lrFrame(p)
+    const state = lrState(lr.fields, frame)
     const marker = parseLrKey(lr.marker)
-    if (!marker || sameState(marker, state)) return
+    if ((!r.develop || (marker && !sameState(marker, state))) && lrDiffers(geometryOf(r.develop), state, frame)) geometry = lrKey(state)
   }
-  if (!lrDiffers(geometryOf(r.develop), state, frame)) return
+  let tone: string | null = null
+  if (hasTone) {
+    const state = lrToneState(lt.fields)
+    const marker = parseLrToneKey(lt.marker)
+    if ((!r.develop || (marker && !sameLrTone(marker, state))) && lrToneDiffers(toneCurveOf(r.develop), state)) tone = lrToneKey(state)
+  }
+  if (!geometry && !tone) return
   const kind = isRawFile(p.fileName) ? 'raw' : 'rgb'
   batch.run({
-    label: LIGHTROOM_STEP,
+    label: lightroomStep(!!geometry, !!tone),
     ids: [id],
     clip: { settings: normalizeSettings(null, kind), keys: [], rerunAuto: false, sourceKind: kind, sourceName: p.fileName },
-    lightroom: { [id]: lrKey(state) },
+    ...(geometry ? { lightroom: { [id]: geometry } } : {}),
+    ...(tone ? { lightroomTone: { [id]: tone } } : {}),
   })
 }
 

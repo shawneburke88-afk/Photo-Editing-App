@@ -47,6 +47,9 @@ import { PasteDialog } from './PasteDialog'
 import { PresetPanel } from './PresetPanel'
 import { blendSettings, presetClip, type Preset, type PresetData } from './presets'
 import { loadPresets, presetsChanged } from './presetStore'
+import { CurveTatLayer } from './CurveTatLayer'
+import { ToneCurvePanel, type CurveView } from './ToneCurvePanel'
+import { withToneCurve, type ToneCurveSettings } from '../engine/develop/tone-curve'
 
 interface Props {
   ids: number[]
@@ -98,6 +101,7 @@ interface Bypass {
   crop: boolean
   remove: boolean
   basic: boolean
+  curve: boolean
 }
 
 /** Settings without their spots (the field left out, as in edits that never had any). */
@@ -190,7 +194,19 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
    */
   const detection = useRef<{ id: number; lens: string; job: Promise<Detection> } | null>(null)
   /** Groups switched off with their eye (a view only). */
-  const [bypass, setBypass] = useState<Bypass>({ crop: false, remove: false, basic: false })
+  const [bypass, setBypass] = useState<Bypass>({ crop: false, remove: false, basic: false, curve: false })
+  /**
+   * The Tone Curve (PHASE3.md Part 12): the graph shown, its targeted adjustment tool and the tone under the pointer,
+   * the curve shown while a drag is in progress (one history step when it ends), clipping shown during a drag, and the
+   * histogram of the curve's input behind the graph.
+   */
+  const [curveView, setCurveView] = useStoredJson<CurveView>('lightbench.curve.view', { mode: 'point', channel: 'rgb' })
+  const [curveTarget, setCurveTarget] = useState(false)
+  const [curveHover, setCurveHover] = useState<number | null>(null)
+  const [curveDraft, setCurveDraft] = useState<{ tc: ToneCurveSettings | undefined } | null>(null)
+  const [curveDragClip, setCurveDragClip] = useState(false)
+  const [clipWhileDragging, setClipWhileDragging] = useStoredNumber('lightbench.curve.dragClip', 1)
+  const [curveHist, setCurveHist] = useState<ImageStats | null>(null)
   /** The Remove brush on the photo (Q), its settings, the selected spot and whether all pins show. */
   const [removing, setRemoving] = useState(false)
   const [brushStored, setBrush] = useStoredJson<BrushSettings>('lightbench.remove.brush', DEFAULT_BRUSH)
@@ -354,6 +370,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setSelectedGuide(null)
     setUprightMsg(null)
     setStraightenMsg(null)
+    setCurveTarget(false)
+    setCurveDraft(null)
+    setCurveHover(null)
     setSelectedSpot(null)
     setSpotError(null)
     detection.current = null
@@ -431,17 +450,20 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   // ---- drawing (coalesced so dragging never queues up frames)
   const indicators: Indicators = useMemo(
-    () => ({ clip: clipSettings, showClip: overlay, raw: rawClipSettings, showRaw: rawOverlay }),
-    [clipSettings, overlay, rawClipSettings, rawOverlay],
+    // While a drag pushes the tone curve towards black or white, clipping shows on the photo (TONE_CURVE.md §2.5).
+    () => ({ clip: clipSettings, showClip: overlay || (curveDragClip && clipWhileDragging === 1), raw: rawClipSettings, showRaw: rawOverlay }),
+    [clipSettings, overlay, rawClipSettings, rawOverlay, curveDragClip, clipWhileDragging],
   )
-  const latest = useRef({ settings, info, view, before, indicators, hover, draft, bypass, guiding, removing })
-  latest.current = { settings, info, view, before, indicators, hover, draft, bypass, guiding, removing }
+  const latest = useRef({ settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing })
+  latest.current = { settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing }
   /** The settings drawn: Before shows the defaults; a preset hovered, the crop being edited and switched-off groups apply on top. */
   const shownOf = (x: typeof latest.current, inf: SensorInfo): DevelopSettings => {
     // Before is the photo as shot: the defaults without lens corrections.
     if (x.before) return { ...defaultsFor(inf.kind), lens: LEGACY_LENS }
     let s = x.hover ?? x.settings
+    if (x.curveDraft && !x.hover) s = withToneCurve(s, x.curveDraft.tc)
     if (x.bypass.basic) s = withoutBasic(s, defaultsFor(inf.kind))
+    if (x.bypass.curve) s = withToneCurve(s, undefined)
     if (x.bypass.remove) s = withoutSpots(s)
     if (x.draft) return { ...s, geometry: x.draft }
     return x.bypass.crop ? { ...s, geometry: DEFAULT_GEOMETRY, lens: LEGACY_LENS } : s
@@ -467,7 +489,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       const shown = shownOf(x, inf)
       statsBusy.current = true
       try {
-        setStats(await gpuGate.foreground(() => engine.renderStats(displayUniforms(shown), x.before ? inf.asShotWb : multipliers(shown, inf), 256, x.indicators)))
+        const wb = x.before ? inf.asShotWb : multipliers(shown, inf)
+        setStats(await gpuGate.foreground(() => engine.renderStats(displayUniforms(shown), wb, 256, x.indicators)))
+        // The Tone Curve's graph shows its input: before the curve, or after the RGB curve for the channel curves.
+        const v = x.curveView
+        setCurveHist(await gpuGate.foreground(() => engine.renderCurveInput(displayUniforms(shown), wb, v.mode === 'point' && v.channel !== 'rgb', 256)))
       } catch {
         // e.g. engine closed while measuring
       } finally {
@@ -525,7 +551,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   useEffect(() => {
     if (status.kind === 'ready') requestRender()
-  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, guiding, removing, requestRender, lensDb])
+  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, guiding, removing, requestRender, lensDb, curveDraft])
+  // Another curve graph shown: its histogram is measured again.
+  useEffect(() => {
+    if (status.kind === 'ready') scheduleStats()
+  }, [status.kind, curveView.mode, curveView.channel, scheduleStats])
 
   // Spots being worked on: show the progress, and draw again when the retouched photo is ready.
   useEffect(() => {
@@ -612,15 +642,49 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
    * Records a change. Moving one of the sliders Auto set, by hand, ends the photo's Auto record (so a later Paste
    * copies the numbers instead of re-running Auto); `keepAuto` is for changes Auto and Paste make themselves.
    */
-  const change = useCallback((label: string, next: DevelopSettings, keepAuto = false) => {
+  const change = useCallback((label: string, next: DevelopSettings, keepAuto = false, separate = false) => {
     dirty.current = true
     setHistory((h) => {
       if (!h) return h
       const prev = current(h)
       const a = next.auto
       const s = a && !keepAuto && a.sliders.some((k) => next[k] !== prev[k]) ? { ...next, auto: null } : next
-      return record(h, label, s)
+      return record(h, label, s, Date.now(), !separate)
     })
+  }, [])
+
+  /** A Tone Curve change (`separate`: the end of a drag, one history step of its own). */
+  const changeCurve = useCallback(
+    (label: string, tc: ToneCurveSettings | undefined, separate = false) => {
+      const h = historyRef.current
+      if (!h) return
+      change(label, withToneCurve(current(h), tc), false, separate)
+    },
+    [change],
+  )
+  const toggleCurveTarget = () => {
+    if (status.kind !== 'ready') return
+    if (draft) endCrop(true)
+    setGuiding(false)
+    setRemoving(false)
+    setSelectedSpot(null)
+    setWbPick(false)
+    setLoupe(null)
+    setPicking(false)
+    setBefore(false)
+    setCurveTarget((t) => !t)
+    setReveal({ id: 'curve', n: Date.now() })
+  }
+  /** The Tone Curve's input under a point of the photo shown (for its targeted adjustment tool). */
+  const sampleCurveInput = useCallback(async (uv: [number, number]) => {
+    const engine = engineRef.current
+    const x = latest.current
+    const inf = x.info
+    if (!engine || !inf) return null
+    const shown = shownOf(x, inf)
+    const l = engine.layout(x.view, engine.canvas.width, engine.canvas.height)
+    return engine.sampleBeforeCurve(displayUniforms(shown), multipliers(shown, inf), uv[0], uv[1], l.scale)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const reset = () => change('Reset', defaults)
@@ -718,6 +782,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   function startCrop(level = false) {
     if (status.kind !== 'ready' || !info) return
     setGuiding(false)
+    setCurveTarget(false)
     setRemoving(false)
     setSelectedSpot(null)
     setWbPick(false)
@@ -891,6 +956,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setBefore(false)
     setWbPick(false)
     setLoupe(null)
+    setCurveTarget(false)
     setView((v) => ({ ...v, zoom: 'fit' }))
     setRemoving(false)
     setSelectedSpot(null)
@@ -957,6 +1023,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     if (status.kind !== 'ready' || !info) return
     if (draft) endCrop(true)
     setGuiding(false)
+    setCurveTarget(false)
     setWbPick(false)
     setLoupe(null)
     setPicking(false)
@@ -1277,6 +1344,22 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         return false
     }
   })
+  // While the Tone Curve's targeted adjustment tool is on, Develop listens to 'curve' (CurveTatLayer has its keys).
+  useShortcuts(['curve'], !pasting && !draft && !guiding && curveTarget, (cmd) => {
+    switch (cmd) {
+      case 'develop.curveTarget': setCurveTarget(false); break
+      case 'develop.undo':
+      case 'develop.redo':
+        dirty.current = true
+        setHistory((h) => (h ? (cmd === 'develop.redo' ? redo(h) : undo(h)) : h))
+        break
+      case 'develop.before': setBefore((b) => !b); break
+      case 'develop.clipping': setOverlay((o) => !o); break
+      case 'develop.zoom': setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center })); break
+      default:
+        return false
+    }
+  })
   useShortcuts(['remove'], !pasting && !draft && !guiding && removing, (cmd) => {
     switch (cmd) {
       case 'develop.remove':
@@ -1315,9 +1398,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         return false
     }
   })
-  useShortcuts(['develop'], !pasting && !draft && !guiding && !removing, (cmd) => {
+  useShortcuts(['develop'], !pasting && !draft && !guiding && !curveTarget && !removing, (cmd) => {
     switch (cmd) {
       case 'develop.grid': onLibrary(); break
+      case 'develop.curveTarget': toggleCurveTarget(); break
+      case 'develop.curveReset': changeCurve('Reset tone curve', undefined, true); break
       case 'develop.remove': startRemove(); break
       case 'remove.clear': clearSpots(); break
       case 'develop.crop': startCrop(); break
@@ -1360,6 +1445,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'develop.whiteBalance':
         setWbPick((p) => !p)
         setLoupe(null)
+        setCurveTarget(false)
         break
       case 'develop.cancel':
         setPicking(false)
@@ -1375,7 +1461,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   // ---- click to zoom, drag to pan
   const drag = useRef<{ x: number; y: number; center: [number, number]; moved: boolean } | null>(null)
-  function canvasPoint(e: React.PointerEvent) {
+  function canvasPoint(e: { clientX: number; clientY: number }) {
     const engine = engineRef.current
     if (!engine) return null
     const r = engine.canvas.getBoundingClientRect()
@@ -1384,7 +1470,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     return { l, px: (e.clientX - r.left) * dpr, py: (e.clientY - r.top) * dpr }
   }
   /** Pointer position as displayed-image uv, or null outside the photo. */
-  function imageUv(e: React.PointerEvent): [number, number] | null {
+  function imageUv(e: { clientX: number; clientY: number }): [number, number] | null {
     const p = canvasPoint(e)
     if (!p) return null
     const u = (p.px - p.l.x) / p.l.w
@@ -1582,6 +1668,20 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           onPointerLeave={() => setLoupe(null)}
         >
           {status.kind !== 'ready' && placeholder && <img className="dplaceholder" src={placeholder} alt="" />}
+          {curveTarget && !draft && !guiding && !before && status.kind === 'ready' && (
+            <CurveTatLayer
+              curve={settings.toneCurve}
+              view={curveView}
+              enabled={!pasting}
+              uvAt={imageUv}
+              sample={sampleCurveInput}
+              onHover={setCurveHover}
+              onDraft={(tc) => setCurveDraft(tc === null ? null : { tc })}
+              onChange={changeCurve}
+              onDragClip={setCurveDragClip}
+              onExit={() => setCurveTarget(false)}
+            />
+          )}
           {status.kind === 'loading' && <div className="dmessage">Developing…</div>}
           {status.kind === 'error' && <div className="dmessage error">{status.message}</div>}
           {engineError && <div className="dmessage error">{engineError}</div>}
@@ -1677,8 +1777,13 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           )}
           {before && <div className="dbadge">Before</div>}
           {!before && hoverPreset && !draft && <div className="dbadge">Preview: {hoverPreset.name}</div>}
-          {!before && !draft && (bypass.crop || bypass.remove || bypass.basic) && (
-            <div className="dbadge">Hidden: {[bypass.crop && 'Crop & Lens', bypass.remove && 'Remove', bypass.basic && 'Basic'].filter(Boolean).join(', ')}</div>
+          {!before && !draft && (bypass.crop || bypass.remove || bypass.basic || bypass.curve) && (
+            <div className="dbadge">Hidden: {[bypass.crop && 'Crop & Lens', bypass.remove && 'Remove', bypass.basic && 'Basic', bypass.curve && 'Tone Curve'].filter(Boolean).join(', ')}</div>
+          )}
+          {curveTarget && !draft && !guiding && !before && (
+            <div className="dbadge pick curve-hint">
+              Tone curve: drag up or down on the photo to change those tones · ↑ ↓ nudge · Esc ends
+            </div>
           )}
           {(overlay || rawOverlay) && (
             <div className="dbadge right">
@@ -1847,6 +1952,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             if (draft) endCrop(true)
             setWbPick((p) => !p)
             setLoupe(null)
+            setCurveTarget(false)
           }}
           auto={{
             targets,
@@ -1864,6 +1970,33 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             record: autoRecord,
           }}
         />
+              ),
+            },
+            {
+              id: 'curve',
+              label: 'Curve',
+              title: 'Tone Curve',
+              icon: GROUP_ICONS.curve,
+              bypass: settings.toneCurve || bypass.curve
+                ? { off: bypass.curve, onToggle: () => setBypass((b) => ({ ...b, curve: !b.curve })), title: bypass.curve ? 'Show the tone curve again' : 'Show the photo without the tone curve (nothing is changed)' }
+                : undefined,
+              content: (
+                <ToneCurvePanel
+                  curve={curveDraft ? curveDraft.tc : settings.toneCurve}
+                  view={curveView}
+                  onView={setCurveView}
+                  disabled={status.kind !== 'ready'}
+                  showHint={hintsPref === 1}
+                  histogram={curveHist}
+                  tat={curveTarget}
+                  onTat={toggleCurveTarget}
+                  hover={curveTarget ? curveHover : null}
+                  onChange={changeCurve}
+                  onDraft={(tc) => setCurveDraft(tc === null ? null : { tc })}
+                  onDragClip={setCurveDragClip}
+                  clipWhileDragging={clipWhileDragging === 1}
+                  onClipWhileDragging={(on) => setClipWhileDragging(on ? 1 : 2)}
+                />
               ),
             },
           ]}

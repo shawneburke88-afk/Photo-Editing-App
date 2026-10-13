@@ -45,7 +45,7 @@ export function SidecarBanner() {
         <div className="banner">
           <span>
             {changed.length === 1 ? '1 photo was' : `${changed.length} photos were`} changed by another app (its .xmp file changed
-            since LightBench last saved it). <strong>Read changes</strong> takes that app’s stars, labels, keywords and metadata, and Lightroom’s crop and Transform.{' '}
+            since LightBench last saved it). <strong>Read changes</strong> takes that app’s stars, labels, keywords and metadata, and Lightroom’s crop, Transform and tone curve.{' '}
             <strong>Ignore</strong> keeps LightBench’s, which then replace the other app’s in the files the next time LightBench saves them.
           </span>
           <button className="button small primary" disabled={answering} onClick={() => void answer(true)}>Read changes</button>
