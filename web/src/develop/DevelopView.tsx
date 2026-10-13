@@ -1560,7 +1560,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                 fromView={(x, y) => engine.displayToSensor((x - b.x) / b.w, (y - b.y) / b.h)}
                 spots={spots}
                 sensor={sensorSize()}
-                brush={{ radius: spotIndex >= 0 ? spots[spotIndex].size * Math.min(...sensorSize()) : brush.size, feather: (spotIndex >= 0 ? spots[spotIndex].feather : brush.feather / 100) }}
+                brush={{ radius: brush.size, feather: brush.feather / 100 }}
                 selected={selectedSpot}
                 showAll={showAllSpots.on}
                 progress={retouch.busy && retouch.spot !== undefined ? { spot: retouch.spot, fraction: retouch.fraction ?? 0 } : null}

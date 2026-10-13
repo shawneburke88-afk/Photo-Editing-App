@@ -17,7 +17,7 @@ export type RetouchRequest =
       canonical: HalfTile[] | null
       completions: [string, Completion][]
     }
-  | { id: number; kind: 'pick'; w: number; h: number; tiles: HalfTile[]; region: PxRect; spot: SpotPx; bounds: PxRect; others: SpotPx[]; touchesEdge: boolean }
+  | { id: number; kind: 'pick'; w: number; h: number; tiles: HalfTile[]; region: PxRect; spot: SpotPx; bounds: PxRect; others: SpotPx[] }
 
 export type RetouchReply =
   | { id: number; kind: 'progress'; spot: number; fraction: number }
@@ -32,7 +32,7 @@ self.onmessage = (e: MessageEvent<RetouchRequest>) => {
   try {
     if (m.kind === 'pick') {
       const img = new TileImage(m.w, m.h, m.tiles)
-      post({ id: m.id, kind: 'pick', offset: pickSource({ region: m.region, image: img.read(m.region), spot: m.spot, bounds: m.bounds, others: m.others, touchesEdge: m.touchesEdge }) })
+      post({ id: m.id, kind: 'pick', offset: pickSource({ region: m.region, image: img.read(m.region), spot: m.spot, bounds: m.bounds, others: m.others }) })
       return
     }
     const img = new TileImage(m.w, m.h, m.tiles)

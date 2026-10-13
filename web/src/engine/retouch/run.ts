@@ -133,6 +133,17 @@ function cloneChunk(img: TileImage, before: { read: (r: PxRect) => Float32Array 
   blend(img, r, img.read(r), src, alpha, owner, ci, p.px.opacity)
 }
 
+/**
+ * The heal's domain. darktable's dt_heal works on the difference destination − source; LightBench takes the same
+ * Laplace solve on log values (destination ÷ source, the lighting-invariant form of Georgiev's paper that darktable's
+ * comment in heal.c mentions and turns into a subtraction). The scene here is linear and unbounded: next to bright
+ * highlights (values of 5 or more), a subtraction carries their differences into dark areas as bright colour casts
+ * (seen as magenta patches beside a fountain's spray in philadelphia.nef); a ratio stays a ratio. ε keeps black finite.
+ */
+const EPS = 1 / 4096
+const lg = (v: number) => Math.log(Math.max(0, v) + EPS)
+const ex = (v: number) => Math.exp(v) - EPS
+
 /** The heal of a chunk: darktable's dt_heal over the spot's pixels not yet done, from the pixels around them. */
 function healChunk(img: TileImage, before: { read: (r: PxRect) => Float32Array }, p: SpotPlan, ci: number) {
   const r = p.chunks[ci].window
@@ -145,11 +156,11 @@ function healChunk(img: TileImage, before: { read: (r: PxRect) => Float32Array }
   const diff = new Float32Array(rw * rh * 3)
   for (let i = 0; i < unknown.length; i++) {
     if (owner[i] >= ci) unknown[i] = 1
-    else for (let c = 0; c < 3; c++) diff[i * 3 + c] = dest[i * 3 + c] - src[i * 3 + c]
+    else for (let c = 0; c < 3; c++) diff[i * 3 + c] = lg(dest[i * 3 + c]) - lg(src[i * 3 + c])
   }
   harmonicFill(rw, rh, unknown, diff, 3)
   const healed = new Float32Array(rw * rh * 3)
-  for (let i = 0; i < healed.length; i++) healed[i] = src[i] + diff[i]
+  for (let i = 0; i < healed.length; i++) healed[i] = ex(lg(src[i]) + diff[i])
   blend(img, r, dest, healed, alpha, owner, ci, p.px.opacity)
 }
 
@@ -197,10 +208,10 @@ function removeChunk(img: TileImage, p: SpotPlan, ci: number, comp: Completion, 
   const diff = new Float32Array(rw * rh * 3)
   for (let i = 0; i < unknown.length; i++) {
     if (owner[i] >= ci) unknown[i] = 1
-    else if (has[i]) for (let c = 0; c < 3; c++) diff[i * 3 + c] = cur[i * 3 + c] - fill[i * 3 + c]
+    else if (has[i]) for (let c = 0; c < 3; c++) diff[i * 3 + c] = lg(cur[i * 3 + c]) - lg(fill[i * 3 + c])
   }
   harmonicFill(rw, rh, unknown, diff, 3)
   const out = new Float32Array(rw * rh * 3)
-  for (let i = 0; i < out.length; i++) out[i] = fill[i] + diff[i]
+  for (let i = 0; i < out.length; i++) out[i] = ex(lg(fill[i]) + diff[i])
   blend(img, r, cur, out, alpha, owner, ci, p.px.opacity)
 }

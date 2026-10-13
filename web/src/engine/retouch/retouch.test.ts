@@ -136,11 +136,11 @@ describe('auto source', () => {
     const px = spotPixels(s, 300, 200)
     const region = pickRegion(px, 300, 200)
     const t = new TileImage(300, 200, tiles(img))
-    const [dx] = pickSource({ region, image: t.read(region), spot: px, bounds: clipRect(spotBounds(px), 300, 200), others: [], touchesEdge: false })
+    const [dx] = pickSource({ region, image: t.read(region), spot: px, bounds: clipRect(spotBounds(px), 300, 200), others: [] })
     expect(Math.abs(dx) % 12).toBe(0)
     // Another spot right where that source was: the pick avoids it.
     const other = spotPixels(spot('heal', [[150 + dx, 100]], 14, 300, 200, [0, 0]), 300, 200)
-    const [dx2, dy2] = pickSource({ region, image: t.read(region), spot: px, bounds: clipRect(spotBounds(px), 300, 200), others: [other], touchesEdge: false })
+    const [dx2, dy2] = pickSource({ region, image: t.read(region), spot: px, bounds: clipRect(spotBounds(px), 300, 200), others: [other] })
     expect(Math.hypot(150 + dx2 - (150 + dx), dy2)).toBeGreaterThan(10 + 14)
   })
 })
@@ -162,10 +162,10 @@ describe('spots on the scene', () => {
     expect(at(half, 100, 100)).toBeCloseTo((at(img.rgb, 100, 100) + at(img.rgb, 106, 100)) / 2, 2)
   })
 
-  it('Heal takes the source texture and the surroundings’ tone (darktable heal)', () => {
-    // The source is the same texture, brighter (+0.1, an additive change as darktable's heal models it): healed, the
+  it('Heal takes the source texture and the surroundings’ tone (darktable’s heal, on log values)', () => {
+    // The source is the same texture in twice the light: healed (a ratio made harmonic, as LightBench heals), the
     // spot matches its own surroundings again.
-    const bright = { ...img, rgb: img.rgb.map((v, i) => (Math.floor(i / 3) % W >= 200 ? v + 0.1 : v)) }
+    const bright = { ...img, rgb: img.rgb.map((v, i) => (Math.floor(i / 3) % W >= 200 ? v * 2 : v)) }
     const t = new TileImage(W, H, tiles(bright))
     runSpots(t, [spot('heal', [[100, 120]], 10, W, H, [120, 0])], { canonical: null, completions: new Map() })
     const out = all(bright, t)

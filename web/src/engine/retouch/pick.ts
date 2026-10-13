@@ -18,8 +18,6 @@ export interface PickInput {
   bounds: PxRect
   /** The other spots (their masks are kept clear). */
   others: SpotPx[]
-  /** The spot runs off the photo (then a little of its source may too). */
-  touchesEdge: boolean
 }
 
 /** The source offset in pixels (dx, dy); falls back to darktable's default direction when nothing fits. */
@@ -53,17 +51,15 @@ export function pickSource(p: PickInput): [number, number] {
   const ringS = sample(ring, 600)
   const insideS = sample(inside, 400)
 
-  // The moved spot must stay clear of every spot; at a photo edge (a stroke running off it), up to a tenth of it
-  // may fall beyond the photo, where the edge pixels repeat.
+  // The moved spot must stay inside the photo and clear of every spot. (A stroke along an edge can still move along
+  // it: the search includes pure horizontal and vertical moves.)
   const fits = (dx: number, dy: number, pts: number[]) => {
-    let out = 0
     for (const i of pts) {
       const x = (i % sw) + dx
       const y = Math.floor(i / sw) + dy
-      if (x < 0 || y < 0 || x >= sw || y >= sh) out++
-      else if (forbidden[y * sw + x]) return false
+      if (x < 0 || y < 0 || x >= sw || y >= sh || forbidden[y * sw + x]) return false
     }
-    return out <= (p.touchesEdge ? 0.1 * pts.length : 0)
+    return true
   }
   // Compared over the part of the band that stays in the photo (at least half of it).
   const cost = (dx: number, dy: number, pts: number[]) => {

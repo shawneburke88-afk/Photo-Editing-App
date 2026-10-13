@@ -290,7 +290,7 @@ export class RetouchStage {
     const tiles = [...map].map(([idx, data]) => ({ idx, data }))
     const raw = spotBounds(px)
     const reply = await this.call(
-      { id: 0, kind: 'pick', w, h, tiles, region, spot: px, bounds: clipRect(raw, w, h), others: others.map((o) => spotPixels(o, w, h)), touchesEdge: raw.x0 < 0 || raw.y0 < 0 || raw.x1 > w || raw.y1 > h },
+      { id: 0, kind: 'pick', w, h, tiles, region, spot: px, bounds: clipRect(raw, w, h), others: others.map((o) => spotPixels(o, w, h)) },
       tiles.map((t) => t.data.buffer as ArrayBuffer),
     )
     if (reply.kind !== 'pick') throw new Error('Retouch: unexpected reply')
