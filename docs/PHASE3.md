@@ -735,7 +735,7 @@ Headless Chromium with software WebGPU (SwiftShader), scripts in `scratchpad/fol
 - **Version 1 is byte-identical to main** (`39382d5`). Main and this branch were served side by side. On main, an edit was made in Develop: Exposure +0.5, Shadows +40, Highlights −30, Whites +10, Blacks −10, angle 1.35° (so the warp runs). Its XMP was opened on this branch. Explicit version-1 edits were also rendered in-page: the Sony with Shadows +80 / Highlights −80, Whites +20, Blacks −20, angle −1.2°; the JPEG with all four tone sliders; the JPEG unedited.
   - The full-size export SHA-256 was identical for all four. The D700's hash begins `209fcb926c6a7ae6`, the Sony's `c9ecc6fe1206d245`, the JPEG's `9e965d57063936ce`, and the unedited JPEG's `ab5ec2991363b1b7`.
   - So were the 1024 px export, the 512 px thumbnail, and the histogram and clipping statistics, byte for byte.
-  - The Develop canvas, fit and 100 %, was identical too (IDENTITY_CANVAS).
+  - The Develop canvas (screenshots of the old edit at fit and at 100 %) was identical too.
 - **GPU = CPU reference.** The GPU's statistics grid was read back and compared with `eigfStatsCpu` run on the full-size scene read back from the GPU. Largest relative difference of E[I]: 7·10⁻⁷ (JPEG), 1.3·10⁻⁶ (D700), 7·10⁻⁷ (24 MP Sony). Of var: 1.3·10⁻³, 3.7·10⁻³ and 9·10⁻⁵ (float32 against float64).
 - **Against darktable itself.** darktable 4.6.1 (Ubuntu's `darktable` package, installed for this test) rendered the D700 photo with workflow "none" to a linear Rec.2020 float TIFF. That TIFF was rendered again with its tone equalizer at the defaults, with all bands at 0 and with version 2's bands for Shadows +80 / Highlights −80. A check with all bands at +1 EV gave exactly +1.000 EV. The per-pixel ratio of the two renders is darktable's correction. On the same input and bands:
   - LightBench's correction differs from darktable's by a mean of **0.016 EV** (median 0.014, 90th percentile 0.027, 99th 0.077, max 0.65 at a few edge pixels).
@@ -745,20 +745,20 @@ Headless Chromium with software WebGPU (SwiftShader), scripts in `scratchpad/fol
   - First attempt: a 16-bit sRGB TIFF as input gave gains of about 2.1× in EV. darktable's tone equalizer saw that file's encoded values, so the linear float TIFF was used instead.
 - **Halo and edge contrast** (D700, full-size export, Shadows +80 / Highlights −80, compared in L* with the unedited render). Sky is L* > 70 and trees L* < 35 in the unedited render; distances to the other class come from a chamfer distance transform; two crops along tree crowns against the sky.
   - **Sky next to the trees:** version 2 has no halo. Among sky pixels with the same unedited brightness (L* 78–84), the change varies by 0.4 L* from 3 px to 250+ px away from the trees. In version 1 it varies by 1.5–3.1 L*, darkest next to the trees.
-  - **Edge contrast:** across the sky/tree edge (sky ≤ 3 px from trees minus trees ≤ 3 px from sky), contrast was 47.3 and 48.6 L* unedited. Version 1 left 12.0 and 14.3 L*; version 2 keeps 22.6 and 26.7.
+  - **Edge contrast:** across the sky/tree edge (sky ≤ 3 px from trees minus trees ≤ 3 px from sky), contrast was 47.3 and 48.6 L* unedited. Version 1 left 12.0 and 14.3 L*; version 2 keeps 22.5 and 26.7.
   - Version 1's pale grey-blue fringes along every leaf edge against the sky are gone in version 2 (crops checked by eye).
-  - **Trees:** in version 2 the lift of tree pixels (neutral L* 10–16) varies by 3.5–3.8 L* with distance from the sky, over 100–250 px (about the filter's σ of 106 px). It is a gradual change in how much the tree mass is lifted, not a fringe at the edge. Version 1 varies by 1.8–3.0 L* there.
+  - **Trees:** in version 2 the lift of tree pixels (neutral L* 10–16) varies by 3.6–3.8 L* with distance from the sky, over 100–250 px (about the filter's σ of 106 px). It is a gradual change in how much the tree mass is lifted, not a fringe at the edge. Version 1 varies by 1.8–3.0 L* there.
 - **Local contrast in lifted shadows** (RMS of L* minus its 9 × 9 and 33 × 33 mean):
-  - On the bushes in the foreground, version 2 lifts slightly more (mean L* 12.9 → 20.1; version 1 19.3). It keeps more detail: 112 % and 115 % of the unedited detail, against version 1's 100 % and 104 %. The sunlit leaves keep their sparkle; version 1 dulls them.
-  - On the fountain statue against bright spray, version 2 has a little less local contrast than version 1: 69–70 % against 72–76 %.
+  - On the bushes in the foreground, version 2 lifts slightly more (mean L* 12.9 → 20.2; version 1 19.3). It keeps more detail: 113 % and 116 % of the unedited detail, against version 1's 100 % and 104 %. The sunlit leaves keep their sparkle; version 1 dulls them.
+  - On the fountain statue against bright spray, version 2 has a little less local contrast than version 1: 70 % against 72–76 %.
 - **Preview against export.** The fit preview (`renderImage`, mip-sampled at 1024 px) was compared with the full-size export resized to the same size by Lanczos3. The two resamplers differ even unedited (sharpness), so tone is compared on 8 × 8 block means:
-  - Version 2 agrees within a mean of 0.81 (D700) and 0.56 (24 MP Sony) levels. Unedited: 0.90 and 0.63; version 1: 1.18 and 0.83.
-  - Block maxima were 18.8 and 10.1 for version 2 (unedited 26.7 and 16.4), at water spray and leaf edges.
+  - Version 2 agrees within a mean of 0.80 (D700) and 0.57 (24 MP Sony) levels. Unedited: 0.90 and 0.63; version 1: 1.18 and 0.83.
+  - Block maxima were 18.7 and 10.1 for version 2 (unedited 26.7 and 16.4), at water spray and leaf edges.
   - The mask adds no disagreement, because both read the same full-size statistics.
 - **Auto still converges.** All six sliders were run for Natural, Vivid, High-key and Low-key on the D700, D80, Sony and JPEG photos, versions 1 and 2 (32 runs, 70–77 measurements each).
   - Every run ended within its look's acceptance band of the median, or one tolerance outside it, as before.
   - The total misses (median, 0.5 % and 99.5 % points) of the two versions differ by at most 0.014.
-  - The slider values are nearly the same, e.g. the D700 Natural: Blacks −85 (version 1) / −88 (version 2), Exposure +0.75 / +0.76.
+  - The slider values are nearly the same, e.g. the D700 Natural: Blacks −85 (version 1) / −89 (version 2), Exposure +0.75 / +0.76.
   - On the Sony, Whites lands at different values in some runs because the photo can't reach the look's white point either way, which happened with version 1 too.
   - The unit tests in `auto.test.ts` use their own measurement model and are unaffected.
 - **In Develop** (`e2e-develop-v2.mjs`): the version-1 XMP showed "This photo was edited with process version 1" and the offer. The button's tooltip now ends with what each newer version changes. **Update to current process** changed the rendering, recorded "Update to process 2" and showed "Process version 2 (current)". An unedited photo is version 2. Shadows +80 / Highlights −80 at fit and 100 %, the histogram and Auto all worked.
