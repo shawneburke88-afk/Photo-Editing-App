@@ -85,6 +85,7 @@ describe('key hints', () => {
     expect(rangeText(['photo.rate0', 'photo.rate1', 'photo.rate2', 'photo.rate3', 'photo.rate4', 'photo.rate5'])).toBe('0–5')
     expect(rangeText(['photo.label1', 'photo.label2', 'photo.label3', 'photo.label4'])).toBe('6–9')
     expect(rangeText(['photo.pick', 'photo.reject'])).toBe('P/X')
+    expect(rangeText(['photo.rateNext0', 'photo.rateNext1', 'photo.rateNext2', 'photo.rateNext3', 'photo.rateNext4', 'photo.rateNext5'])).toBe('Shift+0–5')
   })
 
   it('leaves out actions without a key', () => {

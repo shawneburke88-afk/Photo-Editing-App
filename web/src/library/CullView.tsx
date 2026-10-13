@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { getCatalog } from '../catalog/client'
 import type { PhotoDetail, PhotoRow } from '../catalog/types'
+import { RATE_NEXT, stepStars } from '../settings/actions'
 import { hintLine, keyText, rangeText, useKeymapVersion, useShortcuts, withKey } from '../settings/shortcuts'
 import { makeSelect, startCompare, stepCandidate, swapCompare, type CompareState } from './compare'
 import { CullPane, type ZoomCenter } from './CullPane'
@@ -303,6 +304,16 @@ export function CullView({ rows, startId, layout: openAs = 'one', candidateId, o
       case 'photo.rate0': case 'photo.rate1': case 'photo.rate2': case 'photo.rate3': case 'photo.rate4': case 'photo.rate5':
         apply('rating', Number(id.slice(-1)), auto)
         break
+      case 'photo.rateUp': case 'photo.rateDown':
+        if (!target) return false
+        apply('rating', stepStars(target.rating, id === 'photo.rateUp' ? 1 : -1), auto)
+        break
+      // Shift+0–5: rate, then always move on once, whether Auto-advance is on or off (so never twice). Compare moves
+      // the Candidate on (as Auto-advance does); Survey, where Auto-advance is off, moves to the next tile.
+      case 'photo.rateNext0': case 'photo.rateNext1': case 'photo.rateNext2': case 'photo.rateNext3': case 'photo.rateNext4': case 'photo.rateNext5':
+        apply('rating', Number(id.slice(-1)), layout !== 'survey')
+        if (layout === 'survey') moveTile(1)
+        break
       case 'photo.label1': case 'photo.label2': case 'photo.label3': case 'photo.label4':
         apply('color', Number(id.slice(-1)), auto)
         break
@@ -370,6 +381,8 @@ export function CullView({ rows, startId, layout: openAs = 'one', candidateId, o
     [keyText('photo.reject'), 'reject'],
     [keyText('photo.unflag'), 'unflag'],
     [rangeText(['photo.rate0', 'photo.rate1', 'photo.rate2', 'photo.rate3', 'photo.rate4', 'photo.rate5']), 'stars'],
+    [[keyText('photo.rateDown'), keyText('photo.rateUp')].filter(Boolean).join(' '), '± star'],
+    [rangeText(RATE_NEXT), 'stars and next'],
     [rangeText(['photo.label1', 'photo.label2', 'photo.label3', 'photo.label4']), 'labels'],
     [keyText('photo.quick'), 'Quick Collection'],
   ]

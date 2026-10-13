@@ -58,6 +58,40 @@ describe('chords', () => {
     expect(eventChords(key('≠', { metaKey: true, altKey: true, code: 'Equal' }))).toEqual(['Ctrl+Alt+≠', 'Ctrl+Alt+='])
   })
 
+  it('reads Shift with a digit key as Shift+digit where the digit is typed without Shift', () => {
+    expect(parseChord('Shift+3')).toBe('Shift+3')
+    expect(parseChord('shift+ctrl+0')).toBe('Ctrl+Shift+0')
+    // US: Shift+3 types "#"; German: "§"; Russian: "№". The typed symbol first, then Shift+3 by position.
+    expect(eventChords(key('#', { shiftKey: true, code: 'Digit3' }))).toEqual(['#', 'Shift+3'])
+    // (A symbol outside ASCII also tries the US position, as before; Shift+3 comes first.)
+    expect(eventChords(key('§', { shiftKey: true, code: 'Digit3' }))).toEqual(['§', 'Shift+3', '3'])
+    expect(eventChords(key('№', { shiftKey: true, code: 'Digit3' }))).toEqual(['№', 'Shift+3', '3'])
+    expect(eventChords(key(')', { shiftKey: true, code: 'Digit0' }))).toEqual([')', 'Shift+0'])
+    // French: Shift is what types the digit, so it stays the plain digit.
+    expect(eventChords(key('3', { shiftKey: true, code: 'Digit3' }))).toEqual(['3'])
+    // Without Shift, or on the numeric keypad, nothing changes.
+    expect(eventChords(key('3', { code: 'Digit3' }))).toEqual(['3'])
+    expect(eventChords(key('3', { code: 'Numpad3' }))).toEqual(['3'])
+    // Recording: "Shift+3", as Lightroom names it, not "#".
+    expect(recordChord(key('#', { shiftKey: true, code: 'Digit3' }))).toBe('Shift+3')
+    expect(recordChord(key('3', { shiftKey: true, code: 'Digit3' }))).toBe('3')
+    expect(recordChord(key('?', { shiftKey: true, code: 'Slash' }))).toBe('?')
+    expect(chordText('Shift+3')).toBe('Shift+3')
+  })
+
+  it('follows the printed [ and ]', () => {
+    expect(eventChords(key('[', { code: 'BracketLeft' }))).toEqual(['['])
+    // German: [ is AltGr+8 (Windows reports Ctrl+Alt); the key at the US [ position types Ü.
+    expect(eventChords(key('[', { ctrlKey: true, altKey: true, altGraph: true, code: 'Digit8' }))).toEqual(['['])
+    expect(eventChords(key('ü', { code: 'BracketLeft' }))).toEqual(['Ü'])
+    // Accented letters are printed letters: French é (the 2 key without Shift) is not 2, German Ä is not '.
+    expect(eventChords(key('é', { code: 'Digit2' }))).toEqual(['É'])
+    expect(eventChords(key('ä', { ctrlKey: true, code: 'Quote' }))).toEqual(['Ctrl+Ä'])
+    // Russian: х at the US [ position falls back to it.
+    expect(eventChords(key('х', { code: 'BracketLeft' }))).toEqual(['Х', '['])
+    expect(eventChords(key('[', { ctrlKey: true, code: 'BracketLeft' }))).toEqual(['Ctrl+['])
+  })
+
   it('records keys but not modifiers alone', () => {
     expect(recordChord(key('Shift', { shiftKey: true }))).toBeNull()
     expect(recordChord(key('Control', { ctrlKey: true }))).toBeNull()
@@ -137,6 +171,33 @@ describe('shortcut sets', () => {
       expect(matchAction(map, key('Escape'), DEVELOP)).toBe('develop.cancel')
     }
     expect(matchAction(resolveKeymap(LB), key('o'), DEVELOP)).toBe('develop.clipping')
+  })
+
+  it('raises and lowers the rating with ] and [, and rates then moves on with Shift+0–5, in both sets', () => {
+    for (const set of [LB, LR]) {
+      const map = resolveKeymap(set)
+      for (const ctx of [LIBRARY, ONE, COMPARE, SURVEY]) {
+        expect(matchAction(map, key(']', { code: 'BracketRight' }), ctx)).toBe('photo.rateUp')
+        expect(matchAction(map, key('[', { code: 'BracketLeft' }), ctx)).toBe('photo.rateDown')
+        expect(matchAction(map, key('#', { shiftKey: true, code: 'Digit3' }), ctx)).toBe('photo.rateNext3')
+        expect(matchAction(map, key(')', { shiftKey: true, code: 'Digit0' }), ctx)).toBe('photo.rateNext0')
+        expect(matchAction(map, key('%', { shiftKey: true, code: 'Digit5' }), ctx)).toBe('photo.rateNext5')
+        // Plain digits still only rate; French Shift+3 is the plain 3.
+        expect(matchAction(map, key('3', { code: 'Digit3' }), ctx)).toBe('photo.rate3')
+        expect(matchAction(map, key('3', { shiftKey: true, code: 'Digit3' }), ctx)).toBe('photo.rate3')
+        // Labels don't get a Shift variant.
+        expect(matchAction(map, key('^', { shiftKey: true, code: 'Digit6' }), ctx)).toBeNull()
+      }
+      // Ctrl+[ and Ctrl+] still rotate in Develop; plain [ and ] do nothing in Develop, cropping or Guided Upright,
+      // which leaves them free for a brush context (Lightroom's brush size).
+      expect(matchAction(map, key('[', { ctrlKey: true }), DEVELOP)).toBe('develop.rotateLeft')
+      expect(matchAction(map, key(']', { ctrlKey: true }), CROP)).toBe('develop.rotateRight')
+      for (const ctx of [DEVELOP, CROP, ['global', 'guided'] as Context[]]) {
+        expect(matchAction(map, key('['), ctx)).toBeNull()
+        expect(matchAction(map, key(']'), ctx)).toBeNull()
+      }
+      expect(matchAction(map, key('[', { ctrlKey: true }), LIBRARY)).toBeNull()
+    }
   })
 
   it('uses Lightroom keys where LightBench differs', () => {

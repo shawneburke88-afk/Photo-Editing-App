@@ -4,6 +4,11 @@
 // the key marked P on a French or German keyboard too. Shift is part of a chord only for letters and named
 // keys: a symbol such as `?` or `'` already says whether Shift was needed on that layout (it is Shift+ß on
 // a German keyboard, Shift+/ on a US one), and digits need Shift on French keyboards.
+//
+// One exception: Shift with a digit key (Lightroom's Shift+1–5, rate and go to the next photo). Where the digit is
+// typed without Shift (US, German, UK, Russian…), Shift on that key types a symbol instead (`#` on a US keyboard,
+// `§` on a German one); that press is also read as "Shift+3" by the key's position (`code` Digit3). Where the digit
+// itself needs Shift (French AZERTY), Shift+3 is just "3", as before.
 
 /** A chord in its normal form: modifiers in the order Ctrl, Alt, Shift, then the key ("Ctrl+Shift+G", "?", "Space"). */
 export type Chord = string
@@ -35,6 +40,7 @@ const US_CODES: Record<string, string> = {
 }
 
 const isLetter = (k: string) => k.length === 1 && /\p{L}/u.test(k)
+const isDigit = (k: string) => /^[0-9]$/.test(k)
 /** One character that isn't a letter: a digit or a symbol (Shift is already in it). */
 const isSymbol = (k: string) => [...k].length === 1 && !isLetter(k) && k !== ' '
 
@@ -58,8 +64,10 @@ function split(c: string): [string[], string] {
   return [parts, key]
 }
 
-function build(ctrl: boolean, alt: boolean, shift: boolean, key: string): Chord {
-  return `${ctrl ? 'Ctrl+' : ''}${alt ? 'Alt+' : ''}${shift && !isSymbol(key) ? 'Shift+' : ''}${key}`
+/** A chord from its parts. Shift is dropped for symbols and digits, unless `shiftDigit` keeps it for a digit (Shift+3). */
+function build(ctrl: boolean, alt: boolean, shift: boolean, key: string, shiftDigit = false): Chord {
+  const keepShift = shift && (!isSymbol(key) || (shiftDigit && isDigit(key)))
+  return `${ctrl ? 'Ctrl+' : ''}${alt ? 'Alt+' : ''}${keepShift ? 'Shift+' : ''}${key}`
 }
 
 /** Normal form of a written chord ("shift+ctrl+g" → "Ctrl+Shift+G", "Ctrl++" → "Ctrl++"); null if it isn't one. */
@@ -79,14 +87,26 @@ export function parseChord(text: string): Chord | null {
     else if (p === 'shift') shift = true
     else return null
   }
-  return build(ctrl, alt, shift, key)
+  return build(ctrl, alt, shift, key, true)
+}
+
+/**
+ * "Shift+3" for Shift on the 3 key when that doesn't type the digit (US `#`, German `§`), else null. On a layout
+ * where Shift is what types the digit (French), the press is the plain digit.
+ */
+function shiftDigitChord(e: KeyLike, ctrl: boolean, alt: boolean, key: string | null): Chord | null {
+  const d = e.shiftKey && e.code ? /^Digit([0-9])$/.exec(e.code)?.[1] : undefined
+  if (!d || key === d) return null
+  return build(ctrl, alt, true, d, true)
 }
 
 /**
  * The chords a key press can mean, best first:
  * 1. as typed (`key`, with Ctrl meaning Ctrl or ⌘; AltGr, which Windows reports as Ctrl+Alt, is ignored);
  * 2. without Shift, so Shift+P still picks and Shift+→ still moves, as before, unless something uses the Shift chord;
- * 3. the key's US position (`code`), only when it typed no Latin character (a Russian or Greek layout) or Alt
+ * 3. Shift with a digit key that typed a symbol (`#` on a US keyboard): "Shift+3" (see the top of this file);
+ * 4. the key's US position (`code`), only when it typed no Latin character, accented ones included (a Russian or
+ *    Greek layout), or Alt
  *    changed it (macOS Option+P types "π").
  */
 export function eventChords(e: KeyLike): Chord[] {
@@ -100,7 +120,11 @@ export function eventChords(e: KeyLike): Chord[] {
     add(build(ctrl, alt, e.shiftKey, key))
     if (e.shiftKey) add(build(ctrl, alt, false, key))
   }
-  const latin = key !== null && (key.length > 1 || /^[\x20-\x7e]$/.test(key))
+  const digit = shiftDigitChord(e, ctrl, alt, key)
+  if (digit) add(digit)
+  // Accented Latin letters (German Ü, French é) are printed letters too, so they don't fall back to the US key in
+  // that place ([ for Ü, 2 for é): only scripts without Latin letters do.
+  const latin = key !== null && (key.length > 1 || /^[\x20-\x7e]$/.test(key) || /^\p{Script=Latin}$/u.test(key))
   if (e.code && ((key !== null && !latin) || alt) && !MODIFIERS.has(e.key)) {
     const m = /^Key([A-Z])$/.exec(e.code) ?? /^(?:Digit|Numpad)([0-9])$/.exec(e.code)
     const us = m ? m[1] : US_CODES[e.code]
@@ -115,7 +139,9 @@ export function eventChords(e: KeyLike): Chord[] {
 /** The chord to record when the user presses keys to set a shortcut; null for a modifier alone or a dead key. */
 export function recordChord(e: KeyLike): Chord | null {
   if (MODIFIERS.has(e.key)) return null
-  return eventChords(e)[0] ?? null
+  // Shift+3 on a US keyboard is recorded as "Shift+3" (as Lightroom names it), not as the "#" it types.
+  const chords = eventChords(e)
+  return chords.find((c) => /(^|\+)Shift\+[0-9]$/.test(c)) ?? chords[0] ?? null
 }
 
 const SHOW: Record<string, string> = {
