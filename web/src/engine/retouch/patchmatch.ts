@@ -62,10 +62,81 @@ export function rng(seed: number) {
   }
 }
 
+/**
+ * What a patch compares, per pixel: √R, √G, √B and two texture features, the mean absolute horizontal and vertical
+ * differences of √luminance over a 5 × 5 window (Newson et al.'s texture features, which keep the method from filling
+ * noisy textures such as gravel or grass with smooth patches: a smooth patch matches a smooth estimate best, and
+ * without these features the fill drifts to the flattest texture around). Known pixels only enter the features.
+ */
+const NC = 5
+/** Weight of the texture features against the colours. */
+const TEXTURE = 1
+
+function patchVectors(w: number, h: number, image: Float32Array, hole: Uint8Array): Float32Array {
+  const e = new Float32Array(w * h * NC)
+  const lum = new Float32Array(w * h)
+  for (let p = 0; p < w * h; p++) {
+    const r = Math.sqrt(Math.max(0, image[p * 3]))
+    const g = Math.sqrt(Math.max(0, image[p * 3 + 1]))
+    const b = Math.sqrt(Math.max(0, image[p * 3 + 2]))
+    e[p * NC] = r
+    e[p * NC + 1] = g
+    e[p * NC + 2] = b
+    lum[p] = 0.25 * r + 0.5 * g + 0.25 * b
+  }
+  // Absolute differences to the next pixel, where both are known; then their means over 5 × 5 (known ones only).
+  const gx = new Float32Array(w * h)
+  const gy = new Float32Array(w * h)
+  const ok = new Uint8Array(w * h)
+  const okY = new Uint8Array(w * h)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const p = y * w + x
+      if (hole[p]) continue
+      if (x + 1 < w && !hole[p + 1]) {
+        const d = lum[p + 1] - lum[p]
+        gx[p] = d < 0 ? -d : d
+        ok[p] = 1
+      }
+      if (y + 1 < h && !hole[p + w]) {
+        const d = lum[p + w] - lum[p]
+        gy[p] = d < 0 ? -d : d
+        okY[p] = 1
+      }
+    }
+  }
+  const box = (v: Float32Array, m: Uint8Array, c: number) => {
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const p = y * w + x
+        if (hole[p]) continue
+        let s = 0
+        let n = 0
+        for (let dy = -2; dy <= 2; dy++) {
+          const yy = y + dy
+          if (yy < 0 || yy >= h) continue
+          for (let dx = -2; dx <= 2; dx++) {
+            const xx = x + dx
+            if (xx < 0 || xx >= w) continue
+            const q = yy * w + xx
+            if (!m[q]) continue
+            s += v[q]
+            n++
+          }
+        }
+        e[p * NC + c] = n ? (TEXTURE * s) / n : 0
+      }
+    }
+  }
+  box(gx, ok, 3)
+  box(gy, okY, 4)
+  return e
+}
+
 interface Level {
   w: number
   h: number
-  /** √RGB; hole pixels hold the current estimate. */
+  /** Patch vectors (`patchVectors`); hole pixels hold the current estimate. */
   e: Float32Array
   hole: Uint8Array
   /** 1 = a valid source patch centre (the whole patch inside, known and not blocked). */
@@ -179,19 +250,17 @@ function makeLevel(w: number, h: number, e: Float32Array, hole: Uint8Array, bloc
   }
 }
 
-/** Halves a level: means of √RGB; a pixel is a hole (or blocked) if any of its four is. */
+/** Halves a level: means of the patch vectors; a pixel is a hole (or blocked) if any of its four is. */
 function downsample(w: number, h: number, e: Float32Array, hole: Uint8Array, blocked: Uint8Array) {
   const wc = Math.ceil(w / 2)
   const hc = Math.ceil(h / 2)
-  const ec = new Float32Array(wc * hc * 3)
+  const ec = new Float32Array(wc * hc * NC)
   const hc8 = new Uint8Array(wc * hc)
   const bc8 = new Uint8Array(wc * hc)
   for (let y = 0; y < hc; y++) {
     for (let x = 0; x < wc; x++) {
       let n = 0
-      let r = 0
-      let g = 0
-      let b = 0
+      const acc = new Float64Array(NC)
       let ho = 0
       let bl = 0
       for (let dy = 0; dy < 2; dy++) {
@@ -205,25 +274,19 @@ function downsample(w: number, h: number, e: Float32Array, hole: Uint8Array, blo
           bl |= blocked[i]
           if (hole[i]) continue
           n++
-          r += e[i * 3]
-          g += e[i * 3 + 1]
-          b += e[i * 3 + 2]
+          for (let c = 0; c < NC; c++) acc[c] += e[i * NC + c]
         }
       }
       const o = y * wc + x
       hc8[o] = ho
       bc8[o] = bl
-      if (n) {
-        ec[o * 3] = r / n
-        ec[o * 3 + 1] = g / n
-        ec[o * 3 + 2] = b / n
-      }
+      if (n) for (let c = 0; c < NC; c++) ec[o * NC + c] = acc[c] / n
     }
   }
   return { w: wc, h: hc, e: ec, hole: hc8, blocked: bc8 }
 }
 
-/** Mean squared difference (over the in-window pixels and 3 channels) between the target patch at t and source s, stopping early above `limit` (a sum). */
+/** Mean squared difference (over the in-window pixels and the NC values of each) between the target patch at t and source s, stopping early above `limit` (a sum). */
 function patchSum(L: Level, r: number, t: number, s: number, limit: number): number {
   const { w, h, e } = L
   const tx = t % w
@@ -236,15 +299,17 @@ function patchSum(L: Level, r: number, t: number, s: number, limit: number): num
   for (let dy = -r; dy <= r; dy++) {
     const yy = ty + dy
     if (yy < 0 || yy >= h) continue
-    let ti = (yy * w + tx + x0) * 3
-    let si = ((sy + dy) * w + sx + x0) * 3
+    let ti = (yy * w + tx + x0) * NC
+    let si = ((sy + dy) * w + sx + x0) * NC
     for (let dx = x0; dx <= x1; dx++) {
       const a = e[ti] - e[si]
       const b = e[ti + 1] - e[si + 1]
       const c = e[ti + 2] - e[si + 2]
-      sum += a * a + b * b + c * c
-      ti += 3
-      si += 3
+      const f = e[ti + 3] - e[si + 3]
+      const g = e[ti + 4] - e[si + 4]
+      sum += a * a + b * b + c * c + f * f + g * g
+      ti += NC
+      si += NC
     }
     if (sum >= limit) return sum
   }
@@ -335,7 +400,7 @@ function setWeights(L: Level) {
 /** Each hole pixel becomes the weighted mean of what the overlapping matched patches say. */
 function vote(L: Level, r: number) {
   const { w, h, e, hole, centres, src, weight } = L
-  const acc = new Float64Array(w * h * 3)
+  const acc = new Float64Array(w * h * NC)
   const ws = new Float64Array(w * h)
   for (let j = 0; j < centres.length; j++) {
     const t = centres[j]
@@ -352,27 +417,23 @@ function vote(L: Level, r: number) {
         const p = yy * w + xx
         if (!hole[p]) continue
         const q = s + dy * w + dx
-        acc[p * 3] += wt * e[q * 3]
-        acc[p * 3 + 1] += wt * e[q * 3 + 1]
-        acc[p * 3 + 2] += wt * e[q * 3 + 2]
+        for (let c = 0; c < NC; c++) acc[p * NC + c] += wt * e[q * NC + c]
         ws[p] += wt
       }
     }
   }
   for (let p = 0; p < w * h; p++) {
     if (!hole[p] || ws[p] <= 0) continue
-    e[p * 3] = acc[p * 3] / ws[p]
-    e[p * 3 + 1] = acc[p * 3 + 1] / ws[p]
-    e[p * 3 + 2] = acc[p * 3 + 2] / ws[p]
+    for (let c = 0; c < NC; c++) e[p * NC + c] = acc[p * NC + c] / ws[p]
   }
 }
 
 /** The hole's starting estimate from a preferred offset: the moved pixels, healed into their surroundings. */
 function healStart(L: Level, [ox, oy]: [number, number]) {
   const { w, h, e, hole } = L
-  const copy = new Float32Array(w * h * 3)
+  const copy = new Float32Array(w * h * NC)
   const missing = new Uint8Array(w * h)
-  const diff = new Float32Array(w * h * 3)
+  const diff = new Float32Array(w * h * NC)
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const p = y * w + x
@@ -383,9 +444,9 @@ function healStart(L: Level, [ox, oy]: [number, number]) {
         missing[p] = 1
         continue
       }
-      for (let c = 0; c < 3; c++) {
-        copy[p * 3 + c] = e[q * 3 + c]
-        if (!hole[p]) diff[p * 3 + c] = e[p * 3 + c] - e[q * 3 + c]
+      for (let c = 0; c < NC; c++) {
+        copy[p * NC + c] = e[q * NC + c]
+        if (!hole[p]) diff[p * NC + c] = e[p * NC + c] - e[q * NC + c]
       }
     }
   }
@@ -393,18 +454,18 @@ function healStart(L: Level, [ox, oy]: [number, number]) {
   let usable = 0
   for (let p = 0; p < w * h; p++) if (hole[p] && !missing[p]) usable++
   if (!usable) {
-    harmonicFill(w, h, hole, e, 3, 500)
+    harmonicFill(w, h, hole, e, NC, 500)
     return
   }
   const unknown = new Uint8Array(w * h)
   // Known pixels without a copy don't constrain the correction.
   for (let p = 0; p < w * h; p++) unknown[p] = hole[p] | missing[p]
-  harmonicFill(w, h, unknown, diff, 3, 500)
+  harmonicFill(w, h, unknown, diff, NC, 500)
   const smooth = e.slice()
-  harmonicFill(w, h, hole, smooth, 3, 500)
+  harmonicFill(w, h, hole, smooth, NC, 500)
   for (let p = 0; p < w * h; p++) {
     if (!hole[p]) continue
-    for (let c = 0; c < 3; c++) e[p * 3 + c] = missing[p] ? smooth[p * 3 + c] : copy[p * 3 + c] + diff[p * 3 + c]
+    for (let c = 0; c < NC; c++) e[p * NC + c] = missing[p] ? smooth[p * NC + c] : copy[p * NC + c] + diff[p * NC + c]
   }
 }
 
@@ -428,8 +489,7 @@ export function complete(input: CompletionInput): Completion {
   const { width: w, height: h, image, hole } = input
   const r = input.radius ?? 3
   const blocked = input.blocked ?? new Uint8Array(w * h)
-  const e0 = new Float32Array(w * h * 3)
-  for (let i = 0; i < w * h * 3; i++) e0[i] = Math.sqrt(Math.max(0, image[i]))
+  const e0 = patchVectors(w, h, image, hole)
 
   // Levels: until the hole is at most about two patch radii deep (Newson et al.: from the hole's size), keeping the
   // coarsest window at least two patches across and with somewhere to copy from.
@@ -470,7 +530,7 @@ function novelty(L: Level, r: number): number {
   if (!ring.length) return 0
   const step = Math.max(1, Math.ceil(ring.length / 512))
   const cols: number[] = []
-  for (let k = 0; k < ring.length; k += step) cols.push(e[ring[k] * 3], e[ring[k] * 3 + 1], e[ring[k] * 3 + 2])
+  for (let k = 0; k < ring.length; k += step) cols.push(e[ring[k] * NC], e[ring[k] * NC + 1], e[ring[k] * NC + 2])
   let sum = 0
   let n = 0
   // Every hole pixel, or a regular sample of them for big holes.
@@ -480,9 +540,9 @@ function novelty(L: Level, r: number): number {
   let seen = 0
   for (let p = 0; p < w * h; p++) {
     if (!hole[p] || seen++ % every) continue
-    const a = e[p * 3]
-    const b = e[p * 3 + 1]
-    const c = e[p * 3 + 2]
+    const a = e[p * NC]
+    const b = e[p * NC + 1]
+    const c = e[p * NC + 2]
     let best = Infinity
     for (let k = 0; k < cols.length; k += 3) {
       const da = a - cols[k]
@@ -516,7 +576,7 @@ function flatness(L: Level, r: number): number {
       if (!inHole && !(near[p] > 0)) continue
       let lap = 0
       for (let c = 0; c < 3; c++) {
-        const v = 4 * e[p * 3 + c] - e[(p - 1) * 3 + c] - e[(p + 1) * 3 + c] - e[(p - w) * 3 + c] - e[(p + w) * 3 + c]
+        const v = 4 * e[p * NC + c] - e[(p - 1) * NC + c] - e[(p + 1) * NC + c] - e[(p - w) * NC + c] - e[(p + w) * NC + c]
         lap += v < 0 ? -v : v
       }
       if (inHole) {
@@ -555,7 +615,7 @@ function solve(pyr: Level[], r: number, init: [number, number] | null, start: 's
       // Start: the hole healed from the preferred offset (darktable's heal: the copy plus a harmonic correction from
       // around the hole), or smoothly interpolated from around it. Matches at the preferred offset, or at random.
       if (il && start === 'source') healStart(L, il)
-      else harmonicFill(L.w, L.h, L.hole, L.e, 3, 500)
+      else harmonicFill(L.w, L.h, L.hole, L.e, NC, 500)
       for (let j = 0; j < L.centres.length; j++) {
         const t = L.centres[j]
         const s = il ? offsetValid(t, il[0], il[1]) : -1
@@ -568,10 +628,8 @@ function solve(pyr: Level[], r: number, init: [number, number] | null, start: 's
         if (!L.hole[p]) continue
         const x = p % L.w
         const y = (p - x) / L.w
-        const q = ((y >> 1) * C.w + (x >> 1)) * 3
-        L.e[p * 3] = C.e[q]
-        L.e[p * 3 + 1] = C.e[q + 1]
-        L.e[p * 3 + 2] = C.e[q + 2]
+        const q = ((y >> 1) * C.w + (x >> 1)) * NC
+        for (let c = 0; c < NC; c++) L.e[p * NC + c] = C.e[q + c]
       }
       for (let j = 0; j < L.centres.length; j++) {
         const t = L.centres[j]
