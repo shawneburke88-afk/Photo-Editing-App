@@ -5,7 +5,7 @@
 import type { RadiusChoice } from './capture'
 import { denoiseRun, type DenoiseRun } from './denoise'
 import { chooseProfile, type NoiseProfileData, type ProfileChoice } from './noiseprofiles'
-import { autoThreshold, captureParams, denoiseCurves, mappingForTests, noiseOn, researchCaptureParams, sharpenOn, type DetailSettings } from './settings'
+import { autoThreshold, captureParams, denoiseCurves, noiseOn, sharpenOn, type DetailSettings } from './settings'
 
 /** What the engine knows about the loaded photo for the Detail stage. */
 export interface DetailMeta {
@@ -30,10 +30,6 @@ export interface CaptureRun {
   halo: number
   /** darktable's contrast sensitivity. */
   threshold: number
-  /** TEST ONLY (the research mapping): a gain on the deconvolution's change; absent in the app. */
-  gain?: number
-  /** TEST ONLY: the blur as two 1-D passes; absent in the app. */
-  separable?: boolean
 }
 
 export interface DetailRun {
@@ -82,14 +78,6 @@ export function detailRun(
     // The PSF at this level's pixels (darktable runs capture sharpening only at full size; a smaller preview of a
     // sharpened photo shows little of it).
     capture = { sigma: radius.sigma * scale, iterations: p.iterations, halo: p.halo, threshold: p.threshold }
-    if (mappingForTests.research) {
-      // TEST ONLY (docs/research/DETAIL_MAPPING_BRIEF.md): the research proposal's mapping; Radius is a multiplier
-      // of the automatic radius.
-      const r = researchCaptureParams(d.sharpen, autoThreshold(meta.white ?? 255, meta.iso))
-      radius = { ...autoRadius, sigma: autoRadius.sigma * d.sharpen.radius }
-      capture = { sigma: radius.sigma * scale, iterations: r.iterations, halo: r.halo, threshold: r.threshold, gain: r.gain }
-    }
-    if (mappingForTests.separable) capture = { ...capture, separable: true }
   }
   let denoise: DenoiseRun | null = null
   let profile: ProfileChoice | null = null
