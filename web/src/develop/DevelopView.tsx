@@ -249,6 +249,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [gpuNotice, setGpuNotice] = useState<string | null>(null)
   /** The photo decoded last, kept to upload it again to a new engine after a lost device. */
   const decodedRef = useRef<{ id: number; decoded: DecodeResult } | null>(null)
+  /** An engine is being made (the photo's load waits for it). */
+  const engineCreating = useRef(true)
   /** Sharpening's Masking preview (Alt-drag on Masking, or Show mask): a view only. */
   const [maskPreview, setMaskPreview] = useState(false)
   /** The noise profile and sharpening radius the last render used, for the Detail group. */
@@ -306,6 +308,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   useEffect(() => {
     let alive = true
     let stopLost = () => {}
+    engineCreating.current = true
     // 'auto': the display mode tested once when the page started (engine/gpu/present.ts); ?gpu= still decides.
     DevelopEngine.create('auto').then(
       async (e) => {
@@ -330,6 +333,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           if (!alive) return e.destroy()
         }
         engineRef.current = e
+        engineCreating.current = false
         stageRef.current?.prepend(e.canvas)
         stopLost = e.onLost(() => {
           if (!alive) return
@@ -348,7 +352,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           }
         }
       },
-      (e: Error) => setEngineError(`Graphics acceleration is not available: ${e.message}`),
+      (e: Error) => {
+        engineCreating.current = false
+        setEngineError(`Graphics acceleration is not available: ${e.message}`)
+      },
     )
     return () => {
       alive = false
@@ -422,7 +429,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       const r = await decoder.decode(file, true)
       if (stale()) return
       decodedRef.current = { id, decoded: r }
-      for (let t = 0; !engineRef.current && t < 100; t++) await new Promise((res) => setTimeout(res, 50))
+      // The engine can take a while to make (seconds, while background GPU work keeps the GPU busy, or while a new one
+      // is made after a lost device): wait as long as it is being made, up to 2 minutes.
+      for (let t = 0; !engineRef.current && (engineCreating.current || t < 100) && t < 2400 && !stale(); t++) await new Promise((res) => setTimeout(res, 50))
+      if (stale()) return
       const engine = engineRef.current
       if (!engine) throw new Error('Graphics acceleration is not available.')
       used = engine
