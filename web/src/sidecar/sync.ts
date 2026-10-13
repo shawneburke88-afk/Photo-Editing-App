@@ -13,7 +13,7 @@ import { QUIET_MS } from '../catalog/storage'
 import { getDirAt, getRootHandle } from '../platform/roots'
 import { fieldsFromRead } from './changes'
 import { externalChanges, inspectSidecar, locateSidecar } from './external'
-import { geometryOf, lrFrame, planLightroomWrite } from './lightroom'
+import { detailOf, geometryOf, lrFrame, planLightroomWrite } from './lightroom'
 import { sidecarFor } from './naming'
 import { readXmp, writeXmp } from './xmp'
 
@@ -128,10 +128,10 @@ class SidecarSync {
       await catalog.markMetadataRead(photo.id)
       metadata = await catalog.photoMetadata(photo.id)
     }
-    // Lightroom's crop, orientation and Transform: written only where LightBench changed them (lightroom.ts).
+    // Lightroom's crop, orientation, Transform and Detail fields: written only where LightBench changed them (lightroom.ts).
     const frame = lrFrame(photo)
     const read = existing ? readXmp(existing) : null
-    const lightroom = planLightroomWrite(read?.lightroom, read?.develop ? geometryOf(read.develop) : null, geometryOf(src.settings), frame)
+    const lightroom = planLightroomWrite(read?.lightroom, read?.develop ? geometryOf(read.develop) : null, geometryOf(src.settings), frame, detailOf(read?.develop), detailOf(src.settings))
     let text: string | null
     try {
       text = writeXmp(existing, { rating: photo.rating, flag: photo.flag, color: photo.color, develop: src.settings, keywords, collections: src.collections, stack: src.stack, versions: src.versions, metadata, lightroom })

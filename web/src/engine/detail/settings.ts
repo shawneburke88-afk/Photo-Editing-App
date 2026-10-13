@@ -104,6 +104,16 @@ export function normalizeDetail(d: unknown): DetailSettings | undefined {
   }
 }
 
+/**
+ * Settings with these Detail settings; all at their defaults leaves no `detail` key, so an edit whose Detail is reset
+ * (or pasted from an edit without it) is stored as it was before.
+ */
+export function withDetail<T extends { detail?: DetailSettings }>(s: T, d: DetailSettings | undefined): T {
+  const { detail: _old, ...rest } = s
+  void _old
+  return !d || JSON.stringify(d) === JSON.stringify(DEFAULT_DETAIL) ? (rest as T) : ({ ...rest, detail: d } as T)
+}
+
 export const sharpenOn = (d: DetailSettings | undefined | null): boolean => !!d && d.sharpen.amount > 0
 export const noiseOn = (d: DetailSettings | undefined | null): boolean => !!d && (d.noise.luminance > 0 || d.noise.color > 0)
 /** True when the Detail group changes the picture at all. */

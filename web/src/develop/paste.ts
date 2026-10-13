@@ -6,6 +6,7 @@ import type { DevelopSettings, SourceKind } from '../engine/develop/settings'
 import { AUTO_SLIDERS, type AutoKey } from '../engine/develop/auto'
 import { pasteCrop, setAngle, withOrientation, type GeometrySettings } from '../engine/develop/geometry'
 import { DEFAULT_TRANSFORM, normalizeTransform, ZERO_PERSPECTIVE, type TransformSettings } from '../engine/develop/upright'
+import { DEFAULT_DETAIL, withDetail, type DetailSettings } from '../engine/detail/settings'
 
 export type PasteKey =
   | 'whiteBalance'
@@ -13,12 +14,13 @@ export type PasteKey =
   | 'vibrance' | 'saturation'
   | 'rotate' | 'straighten' | 'crop' | 'upright' | 'transform'
   | 'lensProfile' | 'lensAmounts' | 'lensCa'
+  | 'sharpening' | 'luminanceNoise' | 'colorNoise'
   | 'process' | 'baseExposure' | 'toneMapper' | 'highlightReconstruction' | 'demosaic'
 
 export interface PasteItem {
   key: PasteKey
   label: string
-  group: 'White balance' | 'Tone' | 'Presence' | 'Crop' | 'Lens' | 'Advanced (darktable modules)'
+  group: 'White balance' | 'Tone' | 'Presence' | 'Detail' | 'Crop' | 'Lens' | 'Advanced (darktable modules)'
   /**
    * Only pasted between photos of the same kind (RAW to RAW, JPEG to JPEG): a RAW's +0.7 EV base exposure or its
    * camera white balance would be wrong on a JPEG, which is already rendered.
@@ -62,6 +64,15 @@ const slider = (key: 'exposure' | 'contrast' | 'highlights' | 'shadows' | 'white
   show: (s) => (key === 'exposure' ? signed(s.exposure, 2, ' EV') : signed(s[key])),
 })
 
+/** Detail items (Part 13): parts of the Detail settings, copied as they are (absent = off). */
+const detailItem = (key: 'sharpening' | 'luminanceNoise' | 'colorNoise', label: string, copy: (to: DetailSettings, from: DetailSettings) => DetailSettings, show: (d: DetailSettings) => string): PasteItem => ({
+  key,
+  label,
+  group: 'Detail',
+  copy: (to, from) => withDetail(to, copy(to.detail ?? DEFAULT_DETAIL, from.detail ?? DEFAULT_DETAIL)),
+  show: (s) => show(s.detail ?? DEFAULT_DETAIL),
+})
+
 export const PASTE_ITEMS: PasteItem[] = [
   {
     key: 'whiteBalance',
@@ -79,6 +90,13 @@ export const PASTE_ITEMS: PasteItem[] = [
   slider('blacks', 'Blacks', 'Tone'),
   slider('vibrance', 'Vibrance', 'Presence'),
   slider('saturation', 'Saturation', 'Presence'),
+  // Lightroom's Copy Settings lists Sharpening and Noise Reduction (Luminance, Color) (from general knowledge).
+  detailItem('sharpening', 'Sharpening', (to, from) => ({ ...to, sharpen: { ...from.sharpen } }), (d) =>
+    d.sharpen.amount === 0 ? 'off' : `Amount ${d.sharpen.amount}, Radius ${d.sharpen.radius.toFixed(1)}, Detail ${d.sharpen.detail}, Masking ${d.sharpen.masking}`),
+  detailItem('luminanceNoise', 'Noise reduction: Luminance', (to, from) => ({ ...to, noise: { ...to.noise, luminance: from.noise.luminance, luminanceDetail: from.noise.luminanceDetail, luminanceContrast: from.noise.luminanceContrast } }), (d) =>
+    d.noise.luminance === 0 ? 'off' : `${d.noise.luminance}, Detail ${d.noise.luminanceDetail}, Contrast ${d.noise.luminanceContrast} (each photo’s own noise profile)`),
+  detailItem('colorNoise', 'Noise reduction: Color', (to, from) => ({ ...to, noise: { ...to.noise, color: from.noise.color, colorDetail: from.noise.colorDetail, colorSmoothness: from.noise.colorSmoothness } }), (d) =>
+    d.noise.color === 0 ? 'off' : `${d.noise.color}, Detail ${d.noise.colorDetail}, Smoothness ${d.noise.colorSmoothness} (each photo’s own noise profile)`),
   // Crop items come in this order when pasted: orientation first (the crop rectangle is relative to it), then the
   // angle, then the rectangle (kept inside the photo at the new angle).
   {

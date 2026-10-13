@@ -17,6 +17,7 @@ import { applyPaste, mergeClipboards, type Clipboard } from './paste'
 import { loadIntoEngine, multipliers, renderThumbnail, stageOptions, type SensorInfo } from './source'
 import { ownFocal, rerunUpright, wantsUprightRerun } from './uprightRun'
 import { fromLightroom, lrFrame, parseLrKey, UPRIGHT_CODE } from '../sidecar/lightroom'
+import { withDetail } from '../engine/detail/settings'
 
 export interface BatchJob {
   /** History step added to each photo, e.g. "Paste settings". */
@@ -33,13 +34,16 @@ export interface BatchJob {
 }
 
 /** The history step of a crop or Transform read from a Lightroom sidecar when a photo is added. */
-export const LIGHTROOM_STEP = 'Lightroom crop & Transform'
+/** The history step of Lightroom's settings read when a photo is added (crop, Transform, Detail). */
+export const LIGHTROOM_STEP = 'Lightroom settings'
+/** Its name before the Detail fields were read (Phase 3, Part 7). */
+const LIGHTROOM_STEP_V1 = 'Lightroom crop & Transform'
 
 /** An edit whose only step is the Lightroom geometry read when the photo was added (the preset for new photos still applies). */
 function onlyFromLightroom(history: string): boolean {
   try {
     const h = JSON.parse(history) as { steps?: { label?: string }[] }
-    return !!h.steps?.length && h.steps.every((s) => s.label === LIGHTROOM_STEP)
+    return !!h.steps?.length && h.steps.every((s) => s.label === LIGHTROOM_STEP || s.label === LIGHTROOM_STEP_V1)
   } catch {
     return false
   }
@@ -206,8 +210,9 @@ class BatchDeveloper {
       next = await rerunUpright(engine, next, info)
     }
     if (lightroom) {
-      const r = fromLightroom(next.geometry, lightroom, lrFrame(p))
+      const r = fromLightroom(next.geometry, lightroom, lrFrame(p), next.detail)
       next = { ...next, geometry: r.geometry }
+      if (r.detail) next = withDetail(next, r.detail)
       if (info) next = ownFocal(next, info)
       if (r.rerun && engine && info) {
         // LightBench's own Upright for the mode Lightroom used. Upright resets the straighten angle, but Lightroom's

@@ -16,7 +16,7 @@
 
 import type { MetadataKey, PhotoMetadata } from '../catalog/types'
 import { creatorList, joinCreators, METADATA_KEYS } from '../library/metadata'
-import { lrValues, NS_CRS, NS_TIFF, type LrFields, type LrRead, type LrWritePlan } from './lightroom'
+import { LR_DETAIL_FIELDS, lrValues, NS_CRS, NS_TIFF, type LrFields, type LrRead, type LrWritePlan } from './lightroom'
 
 export const NS = {
   x: 'adobe:ns:meta/',
@@ -340,7 +340,7 @@ export function writeXmp(existing: string | null, data: SidecarData, now = new D
   const meta = data.metadata
   const metadataSame = !meta || METADATA_KEYS.every((k) => getMetadataField(doc, k) === wantedField(meta, k))
   const lr = data.lightroom
-  const lrSame = !lr || lr.groups.every((g) => lrValues(lr.state, g).every(([ns, local, value]) => getProp(doc, ns, local) === value))
+  const lrSame = !lr || lr.groups.every((g) => lrValues(lr.state, g, lr.detailFields).every(([ns, local, value]) => getProp(doc, ns, local) === value))
   if (existing !== null && keywordsSame && collectionsSame && metadataSame && lrSame && wanted.every(([ns, , local, value]) => getProp(doc, ns, local) === value)) return null
 
   for (const [ns, , local] of wanted) removeProp(doc, ns, local)
@@ -361,7 +361,7 @@ export function writeXmp(existing: string | null, data: SidecarData, now = new D
   if (lr && !lrSame) {
     // Lightroom's fields are changed where they are (attribute or element), so the file keeps its layout; new ones join
     // the description that already holds Camera Raw settings.
-    for (const g of lr.groups) for (const [ns, local, value] of lrValues(lr.state, g)) setInPlace(doc, ns, ns === NS_TIFF ? 'tiff' : 'crs', local, value)
+    for (const g of lr.groups) for (const [ns, local, value] of lrValues(lr.state, g, lr.detailFields)) setInPlace(doc, ns, ns === NS_TIFF ? 'tiff' : 'crs', local, value)
   }
   if (lr?.marker !== undefined) {
     removeProp(doc, NS.lightbench, 'LightroomGeometry')
@@ -435,6 +435,7 @@ function readLightroom(doc: Document): LrRead | undefined {
     aspect: num(NS_CRS, 'PerspectiveAspect'),
     x: num(NS_CRS, 'PerspectiveX'),
     y: num(NS_CRS, 'PerspectiveY'),
+    ...Object.fromEntries(LR_DETAIL_FIELDS.map(([k, name]) => [k, num(NS_CRS, name)])),
   }
   const segments = [0, 1, 2, 3].filter((i) => (getProp(doc, NS_CRS, `UprightFourSegments_${i}`) ?? '').trim() !== '').length
   const guides = num(NS_CRS, 'UprightFourSegmentsCount') ?? (segments || undefined)

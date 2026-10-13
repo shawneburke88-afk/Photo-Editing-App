@@ -11,7 +11,7 @@ import { baseNameOf, dateFolder, extensionOf, JPEG_EXTENSIONS, joinPath, renamed
 import type { ScannedFile } from './scan'
 import { fullSidecarName, sidecarCandidates, stemOwners, stemSidecarName } from '../sidecar/naming'
 import { readXmp, type SidecarRead } from '../sidecar/xmp'
-import { geometryOf, lrDiffers, lrFrame, lrKey, lrState, parseLrKey, sameState } from '../sidecar/lightroom'
+import { detailOf, geometryOf, lrDiffers, lrFrame, lrKey, lrState, parseLrKey, sameState } from '../sidecar/lightroom'
 import { batch, LIGHTROOM_STEP } from '../develop/batch'
 import { normalizeSettings } from '../engine/develop/settings'
 import { isRawFile } from '../engine/raw/decoder'
@@ -147,7 +147,7 @@ async function readLightroomGeometry(catalog: Catalog, id: number, r: SidecarRea
     const marker = parseLrKey(lr.marker)
     if (!marker || sameState(marker, state)) return
   }
-  if (!lrDiffers(geometryOf(r.develop), state, frame)) return
+  if (!lrDiffers(geometryOf(r.develop), state, frame, detailOf(r.develop))) return
   const kind = isRawFile(p.fileName) ? 'raw' : 'rgb'
   batch.run({
     label: LIGHTROOM_STEP,

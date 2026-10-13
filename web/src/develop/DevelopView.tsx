@@ -20,7 +20,7 @@ import { CropPanel, type GeometryEdit } from './CropPanel'
 import { CropOverlay } from './CropOverlay'
 import { LensPanel } from './LensPanel'
 import { DetailPanel } from './DetailPanel'
-import { detailOn } from '../engine/detail/settings'
+import { detailOn, withDetail } from '../engine/detail/settings'
 import type { ProfileChoice } from '../engine/detail/noiseprofiles'
 import { loadNoiseProfiles, noiseProfilesState, subscribeNoiseProfiles } from '../engine/detail/noise-db'
 import { LEGACY_LENS, lensWarpKey, type LensStatus } from '../engine/lens/correction'
@@ -1535,7 +1535,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   db={noiseDb}
                   onLoadDb={() => void loadNoiseProfiles(true).then(() => requestRender())}
                   zoomedOut={view.zoom === 'fit' || (typeof view.zoom === 'number' && view.zoom < 1)}
-                  onChange={(label, detail) => change(label, { ...settings, detail })}
+                  onChange={(label, detail) => change(label, withDetail(settings, detail))}
                   onMaskPreview={setMaskPreview}
                 />
               ),

@@ -99,7 +99,12 @@ export function DetailPanel({ detail, kind, disabled, showHint, profile, db, onL
   return (
     <div className="dpanel detail-panel">
       <section>
-        <h3>Sharpening</h3>
+        <div className="dpanel-head">
+          <h3>Sharpening</h3>
+          <button className="button small" disabled={disabled || JSON.stringify(d.sharpen) === JSON.stringify(DEFAULT_DETAIL.sharpen)} onClick={() => onChange('Reset Sharpening', { ...d, sharpen: DEFAULT_DETAIL.sharpen })} title="Sharpening back to off, with Lightroom's default Radius, Detail and Masking">
+            Reset
+          </button>
+        </div>
         <Slider label="Amount" value={d.sharpen.amount} min={0} max={150} step={1} defaultValue={DEFAULT_DETAIL.sharpen.amount} format={int} disabled={disabled} {...guide('sharpenAmount')} onChange={(v) => setS('Sharpening: Amount', { amount: v })} />
         <Slider label="Radius" value={d.sharpen.radius} min={0.5} max={3} step={0.1} defaultValue={DEFAULT_DETAIL.sharpen.radius} format={(v) => v.toFixed(1)} disabled={sharpOff} {...guide('sharpenRadius')} onChange={(v) => setS('Sharpening: Radius', { radius: v })} />
         <Slider label="Detail" value={d.sharpen.detail} min={0} max={100} step={1} defaultValue={DEFAULT_DETAIL.sharpen.detail} format={int} disabled={sharpOff} {...guide('sharpenDetail')} onChange={(v) => setS('Sharpening: Detail', { detail: v })} />
@@ -119,7 +124,12 @@ export function DetailPanel({ detail, kind, disabled, showHint, profile, db, onL
         <p className="muted small detail-note">Sharpening method still being chosen: for now darktable’s unsharp mask on luminance, with darktable’s capture-sharpening mask for Masking.</p>
       </section>
       <section>
-        <h3>Noise reduction</h3>
+        <div className="dpanel-head">
+          <h3>Noise reduction</h3>
+          <button className="button small" disabled={disabled || JSON.stringify(d.noise) === JSON.stringify(DEFAULT_DETAIL.noise)} onClick={() => onChange('Reset Noise reduction', { ...d, noise: DEFAULT_DETAIL.noise })} title="Noise reduction back to off, with Lightroom's default Detail, Contrast and Smoothness">
+            Reset
+          </button>
+        </div>
         <Slider label="Luminance" value={d.noise.luminance} min={0} max={100} step={1} defaultValue={DEFAULT_DETAIL.noise.luminance} format={int} disabled={disabled} {...guide('noiseLuminance')} onChange={(v) => setN('Noise reduction: Luminance', { luminance: v })} />
         <Slider label="Detail" value={d.noise.luminanceDetail} min={0} max={100} step={1} defaultValue={DEFAULT_DETAIL.noise.luminanceDetail} format={int} disabled={disabled || d.noise.luminance === 0} {...guide('noiseLuminanceDetail')} onChange={(v) => setN('Noise reduction: Luminance Detail', { luminanceDetail: v })} />
         <Slider label="Contrast" value={d.noise.luminanceContrast} min={0} max={100} step={1} defaultValue={DEFAULT_DETAIL.noise.luminanceContrast} format={int} disabled={disabled || d.noise.luminance === 0} {...guide('noiseLuminanceContrast')} onChange={(v) => setN('Noise reduction: Luminance Contrast', { luminanceContrast: v })} />

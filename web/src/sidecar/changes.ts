@@ -17,7 +17,7 @@
 
 import type { MetadataKey, PhotoMetadata } from '../catalog/types'
 import { creatorList, EMPTY_METADATA, joinCreators, METADATA_KEYS } from '../library/metadata'
-import { geometryOf, lrKey, lrState, sameLrKey, toLightroom, type LrFrame } from './lightroom'
+import { detailOf, geometryOf, lrKey, lrState, sameLrKey, toLightroom, type LrFrame } from './lightroom'
 import type { SidecarRead } from './xmp'
 
 /** The fields a sidecar is compared on: the standard ones, and LightBench's develop settings. */
@@ -95,8 +95,8 @@ export function fieldsFromRead(r: SidecarRead, frame?: LrFrame): SidecarFields {
   return out
 }
 
-/** The geometry of LightBench's develop settings (JSON) as Lightroom's fields would state it. */
-export const geometryKey = (develop: string | null, frame: LrFrame): string => lrKey(toLightroom(geometryOf(develop), frame))
+/** The geometry (and Detail) of LightBench's develop settings (JSON) as Lightroom's fields would state it. */
+export const geometryKey = (develop: string | null, frame: LrFrame): string => lrKey(toLightroom(geometryOf(develop), frame, detailOf(develop)))
 
 /** LightBench's own values for a photo, as the catalog has them (with `frame`, its geometry as Lightroom's fields). */
 export function fieldsFromCatalog(c: { rating: number; flag: number; color: number; keywords: string[]; metadata: PhotoMetadata; develop: string | null }, frame?: LrFrame): SidecarFields {
