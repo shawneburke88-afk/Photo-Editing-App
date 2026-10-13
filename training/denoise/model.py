@@ -6,11 +6,11 @@ portable shape for onnxruntime-web's WebGPU EP and for a hand-written WGSL port:
 ConvTranspose, Concat, Mul, Add, Max, Sqrt only.
 
 Input  x: [N, 4, H, W]  packed RGGB photosites, black-subtracted and divided by (white - black), NOT white
-                        balanced (the same domain as darktable's noise profiles; see PLAN.md section 2.3).
+                        balanced (the same domain as darktable's noise profiles; see docs/research/DENOISE_TRAINING_PLAN.md section 2.3).
        a, b: [N, 4, 1, 1] Poisson-Gaussian noise parameters per packed channel: var(x) = a*x + b.
 Output   : [N, 4, H, W]  denoised packed photosites in the same domain (residual: x + correction).
 
-H and W must be multiples of 16 (4 poolings). Sizes for width 16/24/32 are in PLAN.md section 3.2.
+H and W must be multiples of 16 (4 poolings). Sizes for width 16/24/32 are in docs/research/DENOISE_TRAINING_PLAN.md section 3.2.
 """
 from __future__ import annotations
 

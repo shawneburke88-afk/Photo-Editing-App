@@ -184,7 +184,7 @@ def cmd_build(args):
     groups = defaultdict(lambda: {"gt": [], "noisy": []})
     for p in sorted(raw_dir.rglob("*")):
         info = parse_name(p.name) if p.is_file() else None
-        if info and info["kind"] == "Bayer":  # X-Trans goes to the linear variant (PLAN.md 2.4)
+        if info and info["kind"] == "Bayer":  # X-Trans goes to the linear variant (docs/research/DENOISE_TRAINING_PLAN.md 2.4)
             groups[info["scene"]]["gt" if info["gt"] else "noisy"].append((p, info))
     index = {"pairs": [], "clean_frames": [], "source": str(raw_dir)}
     cache = {}

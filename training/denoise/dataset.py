@@ -109,7 +109,7 @@ def fit_noise(noisy: np.ndarray, clean: np.ndarray, mask: np.ndarray, bins: int 
     """Fit var(noisy - clean) = a * clean + b per packed channel, by binning on the clean value.
 
     The clean frame has its own (base-ISO) noise, so the fit slightly overestimates; it is our own measurement
-    from CC BY / CC0 data, which keeps darktable's GPL profile file out of training (PLAN.md section 1.4).
+    from CC BY / CC0 data, which keeps darktable's GPL profile file out of training (docs/research/DENOISE_TRAINING_PLAN.md section 1.4).
     """
     a_out, b_out = [], []
     for c in range(4):
@@ -203,7 +203,7 @@ class PairCrops(Dataset):
 class SyntheticCrops(Dataset):
     """Clean frames + heteroscedastic Gaussian noise var = a*x + b (Poisson-Gaussian approximation).
 
-    `profiles` is a list of {"a": [4], "b": [4]} (our own fits from RawNIND pairs, PLAN.md 1.4). Each sample
+    `profiles` is a list of {"a": [4], "b": [4]} (our own fits from RawNIND pairs, docs/research/DENOISE_TRAINING_PLAN.md 1.4). Each sample
     picks one and scales it by a random ISO factor so the network sees a continuous range of noise levels.
     """
 
