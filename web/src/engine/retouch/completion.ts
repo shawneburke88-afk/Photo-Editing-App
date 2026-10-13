@@ -355,13 +355,10 @@ const REFINE = 1
 const MAX_CANDIDATES = 256
 
 /**
- * Iterations of the coarsest level that use the full search; the later ones refine (`REFINE`). The completion that
- * starts from the spot's source looks within ±SOURCE_WINDOW of the source on its first iteration instead of
- * everywhere, so it keeps the source's structure where that fits (brick courses across a wire: 5.5 levels RMSE
- * against 5.8 with a full search there; PHASE3.md, Part 11).
+ * Iterations of the coarsest level that use the full search, in the completion that starts smoothly; the later ones
+ * refine (`REFINE`).
  */
 const FULL_ITERS = 2
-const SOURCE_WINDOW = 4
 
 /**
  * Finds every target patch's match. `around` = Infinity: the full search (see MAX_CANDIDATES). Otherwise each patch's
@@ -373,7 +370,7 @@ const SOURCE_WINDOW = 4
 function search(L: Level, r: number, il: [number, number] | null, around: number) {
   const full = around === Infinity
   const stride = Math.max(1, Math.ceil(Math.sqrt(L.validList.length / MAX_CANDIDATES)))
-  if (full && stride > 1 && (!L.grid || L.gridStride !== stride)) {
+  if (stride > 1 && (!L.grid || L.gridStride !== stride)) {
     const g: number[] = []
     for (let k = 0; k < L.validList.length; k++) {
       const v = L.validList[k]
@@ -530,9 +527,11 @@ function healStart(L: Level, [ox, oy]: [number, number]) {
  * Fills the hole; returns the match field of the finest level (no centres when nothing can be copied from).
  *
  * With a preferred offset (the spot's source), two fills are computed and the more coherent one is kept: one that
- * starts from the source healed into the hole, one that starts from a smooth interpolation (Newson et al.). Starting
- * from the source keeps thin structures that cross a thin hole (brick courses across a wire); starting smoothly
- * avoids copying the source when the source itself is wrong (another object). The one kept has the lower score: the
+ * starts from the source healed into the hole and only refines its matches locally from there (Heal that adapts), one
+ * that starts from a smooth interpolation (Newson et al.) and searches the whole window. The first keeps thin
+ * structures that cross a thin hole (brick courses across a wire), which the second, finding each patch's closest
+ * match independently, breaks into pieces; the second avoids copying the source when the source itself is wrong
+ * (another object). The one kept has the lower score: the
  * mean distance between each target patch and its match at the end (the energy Wexler et al. minimise, without the
  * source preference), plus how new its colours are to the hole's surroundings (`novelty`) and how much flatter it is
  * than they are (`flatness`). LightBench's choice,
@@ -660,7 +659,8 @@ function solve(pyr: Level[], r: number, init: [number, number] | null, start: 's
     const il: [number, number] | null = init ? [Math.round(init[0] / scale), Math.round(init[1] / scale)] : null
     if (l === top) {
       // Start: the hole healed from the preferred offset (darktable's heal: the copy plus a harmonic correction from
-      // around the hole), or smoothly interpolated from around it. The matches come from the exhaustive search.
+      // around the hole), with every match at that offset; or smoothly interpolated from around it, with the matches
+      // left to the full search.
       if (il && start === 'source') healStart(L, il)
       else harmonicFill(L.w, L.h, L.hole, L.e, NC, 500)
       for (let j = 0; j < L.centres.length; j++) {
@@ -698,7 +698,9 @@ function solve(pyr: Level[], r: number, init: [number, number] | null, start: 's
       }
     }
     for (let it = 0; it < emIters(l); it++) {
-      const around = l < top || it >= FULL_ITERS ? REFINE : start === 'source' && il && it === 0 ? SOURCE_WINDOW : Infinity
+      // The completion from the source only ever refines (it adapts the source to the hole, as Heal would, keeping
+      // its structure); the smooth one searches the whole window on the coarsest level's first iterations.
+      const around = l < top || it >= FULL_ITERS || (start === 'source' && il) ? REFINE : Infinity
       search(L, r, il, around)
       setWeights(L)
       vote(L, r)
