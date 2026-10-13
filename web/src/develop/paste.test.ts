@@ -52,6 +52,14 @@ describe('paste', () => {
     expect(changedKeys(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, advanced: { ...DEFAULT_SETTINGS.advanced, demosaic: 'bilinear' } })).toEqual(['demosaic'])
   })
 
+  it('copies Markesteijn 3-pass and names it', () => {
+    const s = { ...DEFAULT_SETTINGS, advanced: { ...DEFAULT_SETTINGS.advanced, demosaic: 'markesteijn3' as const } }
+    expect(changedKeys(DEFAULT_SETTINGS, s)).toEqual(['demosaic'])
+    const c: Clipboard = { settings: s, keys: ['demosaic'], rerunAuto: false, sourceKind: 'raw', sourceName: 'X.RAF' }
+    expect(applyPaste(DEFAULT_SETTINGS, c, 'raw').advanced.demosaic).toBe('markesteijn3')
+    expect(describePaste(c, 'raw').some((l) => l.includes('Markesteijn 3-pass'))).toBe(true)
+  })
+
   it('leaves the crop alone unless it is ticked', () => {
     expect(DEFAULT_PASTE_KEYS).not.toContain('crop')
     expect(DEFAULT_PASTE_KEYS).not.toContain('straighten')
