@@ -13,6 +13,7 @@ import { QUIET_MS } from '../catalog/storage'
 import { getDirAt, getRootHandle } from '../platform/roots'
 import { fieldsFromRead } from './changes'
 import { externalChanges, inspectSidecar, locateSidecar } from './external'
+import { geometryOf, lrFrame, planLightroomWrite } from './lightroom'
 import { sidecarFor } from './naming'
 import { readXmp, writeXmp } from './xmp'
 
@@ -127,9 +128,13 @@ class SidecarSync {
       await catalog.markMetadataRead(photo.id)
       metadata = await catalog.photoMetadata(photo.id)
     }
+    // Lightroom's crop, orientation and Transform: written only where LightBench changed them (lightroom.ts).
+    const frame = lrFrame(photo)
+    const read = existing ? readXmp(existing) : null
+    const lightroom = planLightroomWrite(read?.lightroom, read?.develop ? geometryOf(read.develop) : null, geometryOf(src.settings), frame)
     let text: string | null
     try {
-      text = writeXmp(existing, { rating: photo.rating, flag: photo.flag, color: photo.color, develop: src.settings, keywords, collections: src.collections, stack: src.stack, versions: src.versions, metadata })
+      text = writeXmp(existing, { rating: photo.rating, flag: photo.flag, color: photo.color, develop: src.settings, keywords, collections: src.collections, stack: src.stack, versions: src.versions, metadata, lightroom })
     } catch (e) {
       throw new Error(`${where}: ${e instanceof Error ? e.message : e}`, { cause: e })
     }
@@ -145,7 +150,7 @@ class SidecarSync {
       throw new Error(`${where}: ${e instanceof Error ? e.message : e}`, { cause: e })
     }
     // Remember the file as written (date, size, fields), so a later change by another app can be told apart.
-    await catalog.recordSidecar(photo.id, written.lastModified, written.size, JSON.stringify(fieldsFromRead(readXmp(text))), Math.floor(Date.now() / 1000))
+    await catalog.recordSidecar(photo.id, written.lastModified, written.size, JSON.stringify(fieldsFromRead(readXmp(text), frame)), Math.floor(Date.now() / 1000))
     this.status = { ...this.status, written: this.status.written + 1 }
     this.emit()
   }

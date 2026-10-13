@@ -118,6 +118,13 @@ function fromMatrix(m: M2): { turns: GeometrySettings['turns']; mirror: boolean 
   return { turns: 0, mirror: false }
 }
 
+/** An orientation (quarter turns clockwise, then a mirror) as a 2×2 matrix on centred coordinates, y down. */
+export const orientationMatrix = (turns: number, mirror: boolean): Orient => orientMatrix(turns, mirror)
+/** The turns and mirror of an orientation matrix (identity for anything else). */
+export const orientationParts = (m: Orient) => fromMatrix(m)
+/** Product of two orientation matrices (`a` after `b`). */
+export const composeOrientation = (a: Orient, b: Orient): Orient => mul2(a, b)
+
 /** LibRaw's `flip` (the camera's orientation) as quarter turns clockwise: 0 none, 3 half turn, 5 left, 6 right. */
 export const EXIF_TURNS: Record<number, number> = { 0: 0, 3: 2, 5: 3, 6: 1 }
 

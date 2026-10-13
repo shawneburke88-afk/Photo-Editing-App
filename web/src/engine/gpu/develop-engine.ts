@@ -9,7 +9,7 @@
 // Stage B (every slider move): exposure → tone equalizer → presence → sigmoid → sRGB, at screen size; on wide-gamut
 //   screens the canvas is Display P3 and Stage B writes Display P3 (display-space.ts).
 
-import { apply, invert, mul, SRGB_TO_REC2020, type Mat3, type Vec3 } from '../color/matrix'
+import { apply, invert, mul, REC2020_TO_XYZ, SRGB_TO_REC2020, type Mat3, type Vec3 } from '../color/matrix'
 import { clipUniforms, DEFAULT_CLIP, DEFAULT_RAW_CLIP, RAW_COLOURS, rawModeCode, rawThresholds, type Indicators } from '../develop/indicators'
 import { applyMap, DEFAULT_GEOMETRY, IDENTITY_MAP, resolveGeometry, type GeometrySettings, type ResolvedGeometry } from '../develop/geometry'
 import { withLens } from '../develop/geometry'
@@ -90,7 +90,30 @@ export interface OutputOptions {
   bits: 8 | 16
   /** Dither amplitude in output steps (0 = off). */
   dither: number
+  /** Output sharpening of the final, resized image (export/sharpen.ts); absent or null = none. */
+  sharpen?: OutputSharpen | null
 }
+
+/** darktable's unsharp mask on L* (src/iop/sharpen.c), in output pixels, plus LightBench's halo limit. */
+export interface OutputSharpen {
+  /** Gaussian sigma. */
+  sigma: number
+  /** Window half-width, ceil(2.5 · sigma), at most 12. */
+  radius: number
+  amount: number
+  /** In L* units. */
+  threshold: number
+  /** Overshoot allowed past the 3 × 3 neighbourhood's L* range, as a fraction of that range. */
+  halo: number
+}
+
+/** Linear Rec.2020 → (X/Xn, Y, Z/Zn), so the working space's white is L* 100, a* = b* = 0. */
+const REC2020_TO_XYZN: Mat3 = (() => {
+  const m = REC2020_TO_XYZ
+  const xn = m[0] + m[1] + m[2]
+  const zn = m[6] + m[7] + m[8]
+  return [m[0] / xn, m[1] / xn, m[2] / xn, m[3], m[4], m[5], m[6] / zn, m[7] / zn, m[8] / zn]
+})()
 
 export interface OutputImage {
   width: number
@@ -182,7 +205,7 @@ export class DevelopEngine {
   /** Set for display-referred photos (JPEG): the uploaded pixels and how to bring them into the pipeline. */
   private rgbInput: { texture: GPUTexture; lut: Float32Array<ArrayBuffer>; toRec2020: Mat3; curve: SigmoidCurve; gain: number } | null = null
   private rgbPipe: GPUComputePipeline | null = null
-  private exportPipes: { resampleX: GPUComputePipeline; resampleY: GPUComputePipeline; encodeOnly: GPUComputePipeline } | null = null
+  private exportPipes: Record<'resampleX' | 'resampleY' | 'encodeOnly' | 'resampleYStore' | 'sharpenBlurX' | 'sharpenMix', GPUComputePipeline> | null = null
   private rawBuf: GPUBuffer | null = null
   private scene: GPUTexture | null = null
   /** Counts scene rebuilds, so a warped copy of an older scene is never reused. */
@@ -304,6 +327,11 @@ export class DevelopEngine {
     await new Promise((r) => setTimeout(r, 50))
     this.probing = false
     return !this.lost
+  }
+
+  /** The GPU device was lost (a driver reset, or the browser reclaimed it); a new engine is needed. */
+  get isLost(): boolean {
+    return this.lost
   }
 
   private checkAlive() {
@@ -913,7 +941,7 @@ export class DevelopEngine {
   /**
    * Renders the photo for export: develops it at full resolution (the crop, at 100 %), resamples it to
    * `width`×`height` with Lanczos3 in linear light, converts it to the output colour space and quantises it
-   * (export.wgsl).
+   * (export.wgsl). With `o.sharpen`, the resized image is sharpened before the output profile.
    */
   async renderOutput(u: DisplayUniforms, wb: Vec3, o: OutputOptions): Promise<OutputImage> {
     this.checkAlive()
@@ -958,7 +986,56 @@ export class DevelopEngine {
       pass.end()
     }
     let mid: GPUTexture | null = null
-    if (o.width === iw && o.height === ih) {
+    const temps: GPUTexture[] = []
+    let sharpBuf: GPUBuffer | null = null
+    const sh = o.sharpen
+    if (sh) {
+      // Resize (unless full size) into `img`, blur L* across, then blur down, mix and encode.
+      let img = dev
+      if (o.width !== iw || o.height !== ih) {
+        mid = device.createTexture({ size: [o.width, ih], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING })
+        img = device.createTexture({ size: [o.width, o.height], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING })
+        temps.push(img)
+        dispatch(pipes.resampleX, [
+          { binding: 0, resource: { buffer: paramBuf } },
+          { binding: 1, resource: dev.createView() },
+          { binding: 2, resource: mid.createView() },
+        ], o.width, ih)
+        dispatch(pipes.resampleYStore, [
+          { binding: 0, resource: { buffer: paramBuf } },
+          { binding: 3, resource: mid.createView() },
+          { binding: 6, resource: img.createView() },
+        ], o.width, o.height)
+      }
+      const sp = new ArrayBuffer(128)
+      const sf = new Float32Array(sp)
+      const n = REC2020_TO_XYZN
+      const ni = invert(n)
+      sf.set([n[0], n[1], n[2], 0, n[3], n[4], n[5], 0, n[6], n[7], n[8], 0], 0)
+      sf.set([ni[0], ni[1], ni[2], 0, ni[3], ni[4], ni[5], 0, ni[6], ni[7], ni[8], 0], 12)
+      sf[24] = sh.sigma
+      new Int32Array(sp)[25] = Math.min(12, Math.max(1, Math.round(sh.radius)))
+      sf[26] = sh.amount
+      sf[27] = sh.threshold
+      sf[28] = sh.halo
+      sharpBuf = device.createBuffer({ size: sp.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+      device.queue.writeBuffer(sharpBuf, 0, sp)
+      const blur = device.createTexture({ size: [o.width, o.height], format: 'r32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING })
+      temps.push(blur)
+      dispatch(pipes.sharpenBlurX, [
+        { binding: 0, resource: { buffer: paramBuf } },
+        { binding: 5, resource: { buffer: sharpBuf } },
+        { binding: 7, resource: img.createView() },
+        { binding: 8, resource: blur.createView() },
+      ], o.width, o.height)
+      dispatch(pipes.sharpenMix, [
+        { binding: 0, resource: { buffer: paramBuf } },
+        { binding: 4, resource: { buffer: outBuf } },
+        { binding: 5, resource: { buffer: sharpBuf } },
+        { binding: 7, resource: img.createView() },
+        { binding: 9, resource: blur.createView() },
+      ], o.width, o.height)
+    } else if (o.width === iw && o.height === ih) {
       dispatch(pipes.encodeOnly, [
         { binding: 0, resource: { buffer: paramBuf } },
         { binding: 1, resource: dev.createView() },
@@ -993,6 +1070,8 @@ export class DevelopEngine {
       outBuf.destroy()
       paramBuf.destroy()
       mid?.destroy()
+      for (const t of temps) t.destroy()
+      sharpBuf?.destroy()
       dev.destroy()
     }
   }
@@ -1004,6 +1083,8 @@ export class DevelopEngine {
     const uniform: GPUBindGroupLayoutEntry = { binding: 0, visibility: C, buffer: { type: 'uniform' } }
     const tex = (binding: number): GPUBindGroupLayoutEntry => ({ binding, visibility: C, texture: { sampleType: 'unfilterable-float' } })
     const out: GPUBindGroupLayoutEntry = { binding: 4, visibility: C, buffer: { type: 'storage' } }
+    const sharp: GPUBindGroupLayoutEntry = { binding: 5, visibility: C, buffer: { type: 'uniform' } }
+    const store = (binding: number, format: GPUTextureFormat): GPUBindGroupLayoutEntry => ({ binding, visibility: C, storageTexture: { access: 'write-only', format } })
     const make = (entryPoint: string, entries: GPUBindGroupLayoutEntry[]) =>
       device.createComputePipeline({
         layout: device.createPipelineLayout({ bindGroupLayouts: [device.createBindGroupLayout({ entries })] }),
@@ -1013,6 +1094,9 @@ export class DevelopEngine {
       resampleX: make('resampleX', [uniform, tex(1), { binding: 2, visibility: C, storageTexture: { access: 'write-only', format: 'rgba32float' } }]),
       resampleY: make('resampleYEncode', [uniform, tex(3), out]),
       encodeOnly: make('encodeOnly', [uniform, tex(1), out]),
+      resampleYStore: make('resampleYStore', [uniform, tex(3), store(6, 'rgba32float')]),
+      sharpenBlurX: make('sharpenBlurX', [uniform, sharp, tex(7), store(8, 'r32float')]),
+      sharpenMix: make('sharpenMixEncode', [uniform, out, sharp, tex(7), tex(9)]),
     }
   }
 

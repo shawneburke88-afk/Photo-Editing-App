@@ -5,7 +5,7 @@
 //
 // Owner's choice (2026-10-12): offer, don't surprise. There is no setting: LightBench always asks (SidecarBanner):
 // "Read changes" takes the other app's stars, label, keywords and metadata (and LightBench develop settings, if
-// another LightBench changed them); "Ignore" keeps LightBench's values, which replace the other app's in the file the
+// another LightBench changed them, and Lightroom's crop, orientation and Transform, sidecar/lightroom.ts); "Ignore" keeps LightBench's values, which replace the other app's in the file the
 // next time LightBench writes it.
 
 import { getCatalog } from '../catalog/client'
@@ -15,6 +15,7 @@ import { normalizeSettings } from '../engine/develop/settings'
 import { isRawFile } from '../engine/raw/decoder'
 import { getDirAt, getRootHandle } from '../platform/roots'
 import { fieldsFromRead, mergeForRead, parseFields } from './changes'
+import { lrFrame } from './lightroom'
 import { sidecarCandidates } from './naming'
 import { externalChanges, inspectSidecar, locateSidecar, oursOf } from './external'
 import { sidecars } from './sync'
@@ -151,7 +152,7 @@ export async function readChanges(ids: number[]): Promise<Answer> {
       answer.skipped++
       continue
     }
-    const p = mergeForRead(parseFields(src.sidecar.fields), oursOf(src), fieldsFromRead(readXmp(text)))
+    const p = mergeForRead(parseFields(src.sidecar.fields), oursOf(src), fieldsFromRead(readXmp(text), lrFrame(src.photo)))
     if (p.rating !== undefined) await catalog.setRating([id], p.rating)
     if (p.flag !== undefined) await catalog.setFlag([id], p.flag)
     if (p.color !== undefined) await catalog.setColor([id], p.color)
@@ -159,12 +160,17 @@ export async function readChanges(ids: number[]): Promise<Answer> {
     if (p.removeKeywords.length) await catalog.removeKeywords([id], p.removeKeywords)
     if (Object.keys(p.metadata).length) await catalog.setMetadata([id], p.metadata)
     await catalog.recordSidecar(id, located.file.lastModified, located.file.size, JSON.stringify(p.record))
-    if (p.develop) {
+    if (p.develop || p.geometry) {
+      // LightBench settings from another LightBench are pasted whole; Lightroom's crop, orientation and Transform are
+      // then applied on top (its Upright solved again on the photo).
       const kind = isRawFile(src.photo.fileName) ? 'raw' : 'rgb'
       batch.run({
         label: 'Read from sidecar',
         ids: [id],
-        clip: { settings: normalizeSettings(JSON.parse(p.develop), kind), keys: PASTE_ITEMS.map((i) => i.key), rerunAuto: false, sourceKind: kind, sourceName: located.name },
+        clip: p.develop
+          ? { settings: normalizeSettings(JSON.parse(p.develop), kind), keys: PASTE_ITEMS.map((i) => i.key), rerunAuto: false, sourceKind: kind, sourceName: located.name }
+          : { settings: normalizeSettings(null, kind), keys: [], rerunAuto: false, sourceKind: kind, sourceName: located.name },
+        ...(p.geometry ? { lightroom: { [id]: p.geometry } } : {}),
       })
     }
     done.push(id)
@@ -200,7 +206,7 @@ export async function ignoreChanges(ids: number[]): Promise<Answer> {
     }
     const text = located ? await located.file.text() : null
     if (located && text !== null && isValidXmp(text)) {
-      const p = mergeForRead(parseFields(src.sidecar.fields), oursOf(src), fieldsFromRead(readXmp(text)))
+      const p = mergeForRead(parseFields(src.sidecar.fields), oursOf(src), fieldsFromRead(readXmp(text), lrFrame(src.photo)))
       await catalog.recordSidecar(id, located.file.lastModified, located.file.size, JSON.stringify(p.record))
     } else {
       await catalog.setSidecarExternal([id], false)
