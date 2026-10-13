@@ -8,6 +8,9 @@
 //   interpolation into a cached texture (with its own mip chain), so slider moves never warp again.
 // Stage B (every slider move): exposure → tone equalizer → presence → sigmoid → sRGB, at screen size; on wide-gamut
 //   screens the canvas is Display P3 and Stage B writes Display P3 (display-space.ts).
+// Tone mask (process version 2, when a tone slider is moved): the tone equalizer's guided-filter statistics are
+//   computed once per photo, geometry and white balance from the full-size photo (tone-mask.wgsl) and cached, so
+//   every rendering at any size samples the same mask.
 
 import { apply, invert, mul, REC2020_TO_XYZ, SRGB_TO_REC2020, type Mat3, type Vec3 } from '../color/matrix'
 import { clipUniforms, DEFAULT_CLIP, DEFAULT_RAW_CLIP, RAW_COLOURS, rawModeCode, rawThresholds, type Indicators } from '../develop/indicators'
@@ -28,6 +31,8 @@ import rawLinearWgsl from './raw-linear.wgsl?raw'
 import xtransWgsl from './demosaic-xtrans.wgsl?raw'
 import rgbInputWgsl from './rgb-input.wgsl?raw'
 import exportWgsl from './export.wgsl?raw'
+import toneMaskWgsl from './tone-mask.wgsl?raw'
+import { maskPlan } from '../color/tone-mask'
 import { currentDisplaySpace, REC2020_TO_DISPLAY_P3, srgbColourIn, watchDisplaySpace, type DisplaySpace } from './display-space'
 import statsWgsl from './stats.wgsl?raw'
 import warpWgsl from './warp.wgsl?raw'
@@ -143,7 +148,7 @@ const STATS_WORDS = 1028
 
 const IDENTITY: Mat3 = [1, 0, 0, 0, 1, 0, 0, 0, 1]
 const RAW_PARAMS_SIZE = 176
-const VIEW_SIZE = 432
+const VIEW_SIZE = 496
 /** lens.wgsl's `struct Lens` (`lensUniforms`). */
 const LENS_UNIFORM_SIZE = 576
 /** demosaic-xtrans.wgsl's Const: 4 ints, the pattern, 3 matrix rows, 36 × vec4i of hexagon offsets. */
@@ -233,6 +238,13 @@ export class DevelopEngine {
   /** What the canvas holds: Display P3 on wide-gamut screens (display-space.ts), else sRGB. */
   private displaySpace: DisplaySpace
   private readonly unwatchDisplay: () => void
+  /** Tone mask (process version 2): its pipelines, the last two computed masks, and the one bound next. */
+  private maskPipes: Record<'moments' | 'reduce' | 'blurX' | 'blurY', GPUComputePipeline> | null = null
+  private maskCache: { key: string; tex: GPUTexture; cells: [number, number] }[] = []
+  private noMask: GPUTexture | null = null
+  private boundMask: GPUTexture | null = null
+  private readonly texIds = new WeakMap<GPUTexture, number>()
+  private nextTexId = 1
   /** The last `render` call, to draw again when the screen's gamut changes. */
   private lastRender: Parameters<DevelopEngine['render']> | null = null
 
@@ -576,6 +588,8 @@ export class DevelopEngine {
     this.warp = null
     this.lensOnly?.tex.destroy()
     this.lensOnly = null
+    for (const m of this.maskCache) m.tex.destroy()
+    this.maskCache = []
   }
 
   /** Stage A. Resolves with the GPU time in ms. */
@@ -1150,6 +1164,18 @@ export class DevelopEngine {
     ui[65] = display === 'display-p3' ? 1 : 0
     const d = REC2020_TO_DISPLAY_P3
     f.set([d[0], d[1], d[2], 0, d[3], d[4], d[5], 0, d[6], d[7], d[8], 0], 92)
+    const tm = u.toneMask
+    if (u.toneEnabled && tm.filter === 'eigf') {
+      const toMask = this.maskSpace()
+      const mask = this.toneMask(src, mul(toMask, fix), tm.blending)
+      this.boundMask = mask.tex
+      f.set(mask.cells, 108)
+      ui[110] = 1
+      f[111] = 1 / tm.feathering
+      f.set([toMask[0], toMask[1], toMask[2], 0, toMask[3], toMask[4], toMask[5], 0, toMask[6], toMask[7], toMask[8], 0], 112)
+    } else {
+      this.boundMask = null
+    }
     this.device.queue.writeBuffer(this.viewBuf, 0, v)
     // The sensor-clipping overlay reads the sensor through the same lens function as the warp (rawMap ends in the
     // lens-corrected frame). Only the overlay uses it; the picture itself is unchanged.
@@ -1158,6 +1184,89 @@ export class DevelopEngine {
       this.device.queue.writeBuffer(this.viewLensBuf, 0, lensUniforms(lw, this.camToWorking))
       this.viewLensFor = lw
     }
+  }
+
+  /**
+   * Rec.2020 → the RGB the tone mask is measured in. darktable's tone equalizer comes before its input colour profile
+   * for RAWs (src/common/iop_order.c, v5.0 order: toneequal 24, colorin 28), so it measures white-balanced camera RGB;
+   * for JPEGs it comes after (the v5.0 JPEG order) and measures the working space, Rec.2020 as here.
+   */
+  private maskSpace(): Mat3 {
+    return this.rgbInput ? IDENTITY : invert(this.camToWorking)
+  }
+
+  /**
+   * The tone equalizer's guided-filter statistics for a source (tone-mask.wgsl), from the cache when the same
+   * source, frame and colour matrix (`toMask`: scene → mask RGB, white-balance fix included) were computed last.
+   * Exposure isn't part of it (the shader scales them).
+   */
+  private toneMask(src: Source, toMask: Mat3, blending: number): { tex: GPUTexture; cells: [number, number] } {
+    let id = this.texIds.get(src.tex)
+    if (!id) this.texIds.set(src.tex, (id = this.nextTexId++))
+    const key = [id, src.w, src.h, blending, ...src.texMap, ...toMask].join(',')
+    const hit = this.maskCache.find((m) => m.key === key)
+    if (hit) {
+      this.maskCache = [hit, ...this.maskCache.filter((m) => m !== hit)]
+      return hit
+    }
+    const { device } = this
+    const plan = maskPlan(src.w, src.h, Math.max(...this.imageSize), blending)
+    if (!this.maskPipes) {
+      const module = device.createShaderModule({ code: toneMaskWgsl })
+      const make = (entryPoint: string) => device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint } })
+      this.maskPipes = { moments: make('moments'), reduce: make('reduce'), blurX: make('blurX'), blurY: make('blurY') }
+    }
+    const pipes = this.maskPipes
+    const params = new ArrayBuffer(128)
+    const pf = new Float32Array(params)
+    const t = src.texMap
+    pf.set([t[0], t[1], t[2], 0, t[3], t[4], t[5], 0, t[6], t[7], t[8], 0], 0)
+    pf.set([toMask[0], toMask[1], toMask[2], 0, toMask[3], toMask[4], toMask[5], 0, toMask[6], toMask[7], toMask[8], 0], 12)
+    new Uint32Array(params).set([src.w, src.h, plan.block], 24)
+    new Int32Array(params)[27] = plan.radius
+    pf[28] = plan.sigma
+    const paramBuf = device.createBuffer({ size: params.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    device.queue.writeBuffer(paramBuf, 0, params)
+    // COPY_SRC: tests read the statistics back.
+    const grid = ([w, h]: [number, number]) =>
+      device.createTexture({ size: [w, h], format: 'rg32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC })
+    const enc = device.createCommandEncoder()
+    const run = (pipe: GPUComputePipeline, entries: GPUBindGroupEntry[], [w, h]: [number, number]) => {
+      const pass = enc.beginComputePass()
+      pass.setPipeline(pipe)
+      pass.setBindGroup(0, device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries }))
+      pass.dispatchWorkgroups(Math.ceil(w / 16), Math.ceil(h / 16))
+      pass.end()
+    }
+    const temps: GPUTexture[] = []
+    let cur = grid(plan.sizes[0])
+    temps.push(cur)
+    run(pipes.moments, [
+      { binding: 0, resource: { buffer: paramBuf } },
+      { binding: 1, resource: src.tex.createView() },
+      { binding: 2, resource: this.sampler },
+      { binding: 3, resource: cur.createView() },
+    ], plan.sizes[0])
+    for (let l = 1; l <= plan.levels; l++) {
+      const next = grid(plan.sizes[l])
+      temps.push(next)
+      run(pipes.reduce, [{ binding: 3, resource: next.createView() }, { binding: 4, resource: cur.createView() }], plan.sizes[l])
+      cur = next
+    }
+    const size: [number, number] = [plan.gridW, plan.gridH]
+    const across = grid(size)
+    temps.push(across)
+    run(pipes.blurX, [{ binding: 0, resource: { buffer: paramBuf } }, { binding: 3, resource: across.createView() }, { binding: 4, resource: cur.createView() }], size)
+    const tex = grid(size)
+    run(pipes.blurY, [{ binding: 0, resource: { buffer: paramBuf } }, { binding: 3, resource: tex.createView() }, { binding: 4, resource: across.createView() }], size)
+    device.queue.submit([enc.finish()])
+    paramBuf.destroy()
+    for (const x of temps) x.destroy()
+    const entry = { key, tex, cells: [src.w / plan.cell, src.h / plan.cell] as [number, number] }
+    // Two are kept (e.g. Before/After with different white balances); work already submitted still completes.
+    for (const m of this.maskCache.slice(1)) m.tex.destroy()
+    this.maskCache = [entry, ...this.maskCache.slice(0, 1)]
+    return entry
   }
 
   /**
@@ -1413,8 +1522,14 @@ export class DevelopEngine {
         { binding: 2, resource: { buffer: this.viewBuf } },
         { binding: 3, resource: { buffer: this.rawBuf! } },
         { binding: 4, resource: { buffer: this.viewLensBuf } },
+        { binding: 5, resource: (this.boundMask ?? this.emptyMask()).createView() },
       ],
     })
+  }
+
+  /** Bound in place of the tone mask when there is none (version 1, or no tone slider moved). */
+  private emptyMask(): GPUTexture {
+    return (this.noMask ??= this.device.createTexture({ size: [1, 1], format: 'rg32float', usage: GPUTextureUsage.TEXTURE_BINDING }))
   }
 
   private async draw(pipe: GPURenderPipeline, target: GPUTexture, tex: GPUTexture, w: number, h: number, readback: boolean, space: DisplaySpace = 'srgb'): Promise<ImageData | null> {
@@ -1449,6 +1564,8 @@ export class DevelopEngine {
     this.rgbInput?.texture.destroy()
     this.warp?.tex.destroy()
     this.lensOnly?.tex.destroy()
+    for (const m of this.maskCache) m.tex.destroy()
+    this.noMask?.destroy()
     this.scene?.destroy()
     this.rawBuf?.destroy()
     this.viewBuf.destroy()
