@@ -6,6 +6,7 @@ import { useStoredJson } from '../lib/useStoredJson'
 import { loadHandle, saveHandle } from '../platform/handle-store'
 import { ensurePermission, getRootHandle } from '../platform/roots'
 import { DEFAULT_EXPORT, runExport, type ExportProgress, type ExportSettings } from './run'
+import { clampPpi, DEFAULT_OUTPUT_SHARPENING, describeSharpening, sharpenParams, type OutputSharpening, type SharpenAmount, type SharpenMedium } from './sharpen'
 import { outputSize, type SizeMode } from './size'
 import { expandTemplate, TEMPLATE_PRESETS, TEMPLATE_VARIABLES } from './template'
 
@@ -23,6 +24,18 @@ const JPEG_PRESETS = [
   { label: 'Archive', quality: 95, hint: 'Highest quality, larger files' },
 ]
 
+/** Lightroom's output sharpening choices; hints say what each is for (the strengths are LightBench's, export/sharpen.ts). */
+const SHARPEN_MEDIA: [SharpenMedium, string, string][] = [
+  ['screen', 'Screen', 'For viewing on screens: web, social media, slideshows. Adjusts to how much the photo is downsized.'],
+  ['matte', 'Matte paper', 'For prints on matte or uncoated paper, which softens detail most. Adjusts to the resolution.'],
+  ['glossy', 'Glossy paper', 'For prints on glossy, lustre or semi-gloss paper. Adjusts to the resolution.'],
+]
+const SHARPEN_AMOUNTS: [SharpenAmount, string, string][] = [
+  ['low', 'Low', 'Less sharpening'],
+  ['standard', 'Standard', 'Right for most photos'],
+  ['high', 'High', 'More sharpening, for soft photos or large viewing distances'],
+]
+
 const SIZE_MODES: [SizeMode, string][] = [
   ['original', 'Original size'],
   ['long', 'Long edge'],
@@ -31,9 +44,17 @@ const SIZE_MODES: [SizeMode, string][] = [
   ['percent', 'Percentage'],
 ]
 
+/** “34 × 23 cm print” for a pixel size at a resolution. */
+function printSize(w: number, h: number, ppi: number): string {
+  const cm = (px: number) => Math.round((px / clampPpi(ppi)) * 25.4) / 10
+  return `a ${cm(w)} × ${cm(h)} cm print`
+}
+
 export function ExportDialog({ ids, onClose }: Props) {
   const [s, setS] = useStoredJson('lightbench.export', DEFAULT_EXPORT)
   const set = (patch: Partial<ExportSettings>) => setS({ ...s, ...patch })
+  const sharp: OutputSharpening = { ...DEFAULT_OUTPUT_SHARPENING, ...s.sharpen }
+  const setSharp = (patch: Partial<OutputSharpening>) => set({ sharpen: { ...sharp, ...patch } })
   const [folder, setFolder] = useState<FileSystemDirectoryHandle | null>(null)
   const [first, setFirst] = useState<PhotoDetail | null>(null)
   const [error, setError] = useState('')
@@ -70,7 +91,11 @@ export function ExportDialog({ ids, onClose }: Props) {
       lens: first.lens, iso: first.iso, aperture: first.aperture, shutter: first.shutter, focalLength: first.focalLength, rating: first.rating,
       color: first.color, width: size.width, height: size.height,
     })
-    return { name: `${s.subfolder.trim() ? `${s.subfolder.trim()}/` : ''}${name}.${ext}`, size: w && h ? `${size.width} × ${size.height}` : '' }
+    return {
+      name: `${s.subfolder.trim() ? `${s.subfolder.trim()}/` : ''}${name}.${ext}`,
+      size: w && h ? `${size.width} × ${size.height}` : '',
+      dims: w && h ? { width: size.width, height: size.height, scale: Math.min(size.width / w, size.height / h) } : null,
+    }
   }, [first, s])
 
   async function start() {
@@ -287,6 +312,42 @@ export function ExportDialog({ ids, onClose }: Props) {
               </label>
             )}
             {example && example.size && <p className="muted small">First photo: {example.size} pixels</p>}
+            <label className="inline" title="Written into the file. A print's size is its pixels divided by this; paper sharpening is sized for it.">
+              Resolution
+              <input type="number" min={72} max={1200} value={s.ppi} onChange={(e) => set({ ppi: Number(e.target.value) })} onBlur={() => set({ ppi: clampPpi(s.ppi) })} style={{ width: 70 }} aria-label="Resolution in pixels per inch" />
+              pixels per inch
+            </label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Output sharpening</legend>
+            <label className="check">
+              <input type="checkbox" checked={sharp.on} onChange={(e) => setSharp({ on: e.target.checked })} />
+              <span>Sharpen for <span className="muted small">— a final touch of crispness for screens or paper. Only the exported file is sharpened; your edit doesn’t change.</span></span>
+            </label>
+            {sharp.on && (
+              <>
+                <div className="seg" role="group" aria-label="Sharpen for">
+                  {SHARPEN_MEDIA.map(([m, label, hint]) => (
+                    <button key={m} className={`chip ${sharp.medium === m ? 'on' : ''}`} title={hint} aria-pressed={sharp.medium === m} onClick={() => setSharp({ medium: m })}>{label}</button>
+                  ))}
+                </div>
+                <div className="inline">
+                  Amount
+                  <div className="seg" role="group" aria-label="Sharpening amount">
+                    {SHARPEN_AMOUNTS.map(([a, label, hint]) => (
+                      <button key={a} className={`chip ${sharp.amount === a ? 'on' : ''}`} title={hint} aria-pressed={sharp.amount === a} onClick={() => setSharp({ amount: a })}>{label}</button>
+                    ))}
+                  </div>
+                </div>
+                {example && example.dims && (
+                  <p className="muted small">
+                    First photo: {describeSharpening(sharpenParams(sharp, example.dims.scale, s.ppi), sharp.medium, s.ppi)}
+                    {sharp.medium !== 'screen' && ` (${printSize(example.dims.width, example.dims.height, s.ppi)})`}.
+                  </p>
+                )}
+              </>
+            )}
           </fieldset>
 
           <fieldset>
