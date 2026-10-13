@@ -22,7 +22,7 @@ Owner's choices (2026-10-12):
 | Branching on it | Each version has its own parameter set (`processParams(version)`): today the tone range, the tone-equalizer band weights and the contrast spread, moved out of fixed constants. `displayUniforms` and `toneBands` read them from the photo's version. A future version adds an entry; version 1's entry never changes. | LightBench |
 | Shown | At the foot of the tool stack: “Process version 1 (current)”. An older edit also shows, above the groups, “This photo was edited with process version N” and **Update to current process**, which records one history step “Update to process M”: the step before it shows the old rendering, Ctrl+Z goes back. An edit from a newer LightBench says so and is shown with the newest version this build knows, never rewritten. | Lightroom's process version and its update prompt (from general knowledge of Lightroom; not checked in Lightroom here) |
 | Copy/paste | **Process version** is an item of the paste checklist's Advanced group (unticked by default, like the rest of that group). | Lightroom's Copy Settings lists Process Version (not checked here) |
-| Testing an update | Only one rendering exists, so no real edit is older than current. On the development server, `?simulateProcess=2` adds a copy of version 1 as version 2 so the offer can be tried; production builds leave it out (`import.meta.env.DEV`). | Test scaffolding |
+| Testing an update | When this part was written only one rendering existed, so no real edit was older than current; version 2 came with [Part 10](#part-10-the-tone-equalizer-as-darktables-defaults-process-version-2). On the development server, `?simulateProcess=N` (N above the newest version) adds a copy of the newest version as version N so the offer can be tried; production builds leave it out (`import.meta.env.DEV`). | Test scaffolding |
 
 ### The tool stack
 
@@ -671,3 +671,111 @@ Headless Chromium, software WebGPU (SwiftShader); scratch scripts in `scratchpad
 - Adobe's help page and the forum report were read only through search summaries.
 - Speed was measured only on SwiftShader, where sharpening added about 1–2 s to a 2400 × 1600 export; real GPUs weren't timed. A sharpened export needs one more output-size float image (16 bytes per pixel, unless it is full size) and a 4-byte-per-pixel blur image on the GPU.
 - JPEG and TIFF files exported without the camera metadata carry no resolution from LightBench (as before); the Resolution then only sizes the paper sharpening.
+
+## Part 10: The tone equalizer as darktable's defaults (process version 2)
+
+**What it does.** Highlights, Shadows, Whites and Blacks drive darktable's tone equalizer. Until now LightBench ran it in "global" mode: each pixel was corrected by its own brightness, measured as the RGB average (PHASE1). darktable's defaults measure the **Euclidean norm** of RGB and refine that measurement with the **exposure-independent guided filter (EIGF)**. Each area is then corrected by the brightness of its surroundings, except across strong edges. The LightCraft review recorded this as a difference ([LIGHTCRAFT.md](research/LIGHTCRAFT.md)). The owner chose (2026-10-12) to adopt darktable's defaults under a new **process version 2**. Old edits keep version 1 and render byte for byte as before, new edits get version 2, and **Update to current process** moves an old edit across. Photos whose four tone sliders are at 0 render the same in both versions, because the tone equalizer is off then.
+
+### darktable's defaults
+
+darktable source read at commit `ca5a020` (2026-10-12). All values are the module's `$DEFAULT`s. darktable has no `reload_defaults` for the module, and its preset "mask blending | all purposes" (toneequal.c 507-519) holds the same values.
+
+| Setting | darktable default | Where |
+|---|---|---|
+| Luminance estimator | `DT_TONEEQ_NORM_2`, "RGB euclidean norm": √(R² + G² + B²), at least 2⁻¹⁶ | `src/iop/toneequal.c` 191; `src/common/luminance_mask.h` 150-165, `MIN_FLOAT` 36 |
+| Preserve details | `DT_TONEEQ_EIGF`, with linear blending | toneequal.c 190, `compute_luminance_mask` 996-1004 |
+| Smoothing diameter (`blending`) | 5 % of the largest image side; `commit_params` divides by 100 | toneequal.c 184, 2310 |
+| Filter radius | (blending × largest side of the module's input × pipe scale − 1) / 2, as an integer. It is passed to the EIGF as the Gaussian's σ, so the radius follows the pipe scale and a preview and an export use the same fraction of the photo. | toneequal.c `modify_roi_in` 1834-1848; eigf.h 231 |
+| Edges refinement / feathering | 1; the filter uses 1 / feathering | toneequal.c 186, 2314 |
+| Filter diffusion (`iterations`) | 1 | toneequal.c 192 |
+| Mask quantization | 0 (the guide is the image itself: `eigf_*_no_mask`) | toneequal.c 187; eigf.h 286-294 |
+| Mask contrast / exposure compensation | 0 EV each, i.e. ×1 (`exp2f` in `commit_params`); the contrast fulcrum 2⁻⁴ then has no effect | toneequal.c 188-189, 2317-2318, 135; luminance_mask.h 71-75 |
+| EIGF itself | Downscale by `scaling = clamp(σ, 1, 4)` (bilinear point samples), blur I and I² with a recursive Gaussian of σ / scaling, var = E[I²] − E[I]², upsample bilinearly, then per pixel a = (var / (E[I]·I)) / (var / (E[I]·I) + 1/feathering), b = E[I] − a·E[I], mask = max(a·I + b, 2⁻¹⁶) | `src/common/eigf.h` 127-168, 203-228, 231-303 (scaling 242-246) |
+| Correction | Unchanged from version 1: 9 band gains fitted onto 8 Gaussians (σ = √2) over log2(mask) clamped to −8…0 EV, factor clamped to 0.25…4 | toneequal.c 844-845, `pixel_correction` |
+| Colour space of the mask | For RAWs the tone equalizer runs before the input colour profile, so it measures white-balanced **camera RGB**. For JPEGs it runs after it, so it measures the working space (linear Rec.2020). | `src/common/iop_order.c` v5.0 order: toneequal 339, colorin 346; v5.0 JPEG order: colorin 569, toneequal 590 |
+
+Two properties make the GPU version cheap. Under these defaults the filter's output **scales exactly with exposure**: a depends only on ratios, and b and I scale with the gain. Only the floors 1e-6 and 2⁻¹⁶ break this, far below −8 EV. So the statistics are measured once without exposure, and the display shader multiplies them by the gain. Exposure drags and Auto's exposure search therefore don't recompute the mask. This also answers the review's question about "shift-equivariance" in log terms. The other property: the radius is a fixed fraction of the photo.
+
+### How LightBench computes it
+
+| Step | Detail |
+|---|---|
+| Where the mask lives | In the photo's own frame (the crop at 100 %, or the whole straightened photo in the crop tool's view), computed **once from the full-size photo**. Every rendering samples it: Develop at fit and at 100 %, the histogram and Auto (`renderStats`), the white balance loupe, thumbnails and culling/Compare/Survey previews (`renderImage`, `renderOutput`), and Export at any size. A 100 % view therefore sees the whole photo's mask, not just the visible part. darktable filters only the region a zoomed view needs, so its zoomed preview can differ from its export at the view's borders. |
+| Radius | darktable's, from the largest side of the uncropped photo (darktable's tone equalizer runs before its crop module): σ = ⌊(0.05 × side − 1) / 2⌋ full-size pixels, e.g. 106 px for the D700's 4284 px and 150 px for a 6024 px Sony. Cropping doesn't change the radius. Near the crop's border the mask repeats the edge, as darktable does at its region's border. |
+| Statistics (`engine/gpu/tone-mask.wgsl`) | **moments**: I = the Euclidean norm of the pixel in the mask's colour space (camera RGB for RAWs, Rec.2020 for JPEGs, with the live white-balance fix), and I and I² are averaged over 4 × 4 full-size pixels. This is darktable's quarter-size grid, but darktable takes one sample out of 16 and LightBench averages all 16. **reduce**: 2 × 2 averages until σ is 3–6 cells (cells of 16–32 px for 4–24 MP photos). **blurX / blurY**: a sampled Gaussian, with σ reduced by the blur the averaging already did, the edge repeated. The result is [E[I], var] in a small `rg32float` grid (e.g. 134 × 89 for the D700, 189 × 126 for a 24 MP Sony). |
+| Per pixel (`develop-display.wgsl`, `guidedMask`) | The stored statistics are sampled bilinearly (four `textureLoad`s, as darktable's `dt_bilinear_sample`). E[I] is scaled by the exposure gain and var by its square. Then darktable's `eigf_blending_no_mask` runs on the pixel's own norm I. The mask goes into the same correction as version 1. Version 1's arithmetic is untouched; it runs when `toneMode` is 0, and a 1 × 1 texture is bound in place of the statistics. |
+| Cache | The engine keeps the last two masks (e.g. Before/After with different white balances), keyed by source texture, frame, geometry map and colour matrix. Tone sliders and exposure reuse a mask; a new photo, crop, angle, lens setting or white balance (also during a live drag) computes a new one. |
+| Uniforms | `View` grew from 432 to 496 bytes: `maskCells`, `toneMode`, `maskFeather` and the camera-RGB matrix (`display-space.test.ts` checks the layout). |
+| Parameters | `ProcessParams.toneMask` (`engine/develop/process.ts`). Version 1 is `{ estimator: 'mean', filter: 'none' }`; version 2 holds darktable's defaults listed above, typed so that only those values are possible (the engine implements one iteration, no quantization and no boosts). |
+| The version number | `TONE_EQ_PROCESS = 2` in `process.ts` is the only place it is written. It can be renumbered if another branch adds a version first. |
+
+### Band weights (retuned for version 2)
+
+A neutral pixel's Euclidean norm is √3 × its RGB average, +0.79 EV. Saturated colours read higher still: (1, 0.1, 0.1) reads +1.34 EV. With version 1's weights every slider would act about 0.8 EV lower down the tones. Measured on the correction curves (slider +100, neutral tones), Highlights would then darken mid-tones at −3 to −2 EV (RGB average) by 0.6–1.4 EV, where version 1 darkened them by 0.1–0.8 EV. So version 2 has its own weights:
+
+| Slider | Version 1 (bands −8 … 0 EV) | Version 2 |
+|---|---|---|
+| Blacks | 1, 1, 0.5, 0.1, 0, 0, 0, 0, 0 | 1, 1, 0.9, 0.42, 0.08, 0, 0, 0, 0 |
+| Shadows | 0, 0.1, 0.3, 0.8, 1, 0.5, 0.1, 0, 0 | 0, 0.02, 0.14, 0.4, 0.84, 0.9, 0.42, 0.08, 0 |
+| Highlights | 0, 0, 0, 0, 0, 0.1, 0.5, 1, 0.4 | 0, 0, 0, 0, 0, 0.02, 0.18, 0.7, 0.8 |
+| Whites | 0, 0, 0, 0, 0, 0, 0, 0.35, 1 | 0, 0, 0, 0, 0, 0, 0, 0.1, 1 |
+
+How they were chosen:
+- **The error measure** below is the RMS difference from version 1's response over −9…+0.5 EV (RGB average), with ripples of the wrong sign counted four times.
+- **Blacks and Shadows** are version 1's weights moved up by log2 √3 = 0.79 EV, by linear interpolation between bands. Their response to a neutral pixel then follows version 1's within about 0.1 EV (error 0.06 EV each).
+- **Highlights and Whites** can't follow version 1 exactly. darktable clamps the mask to −8…0 EV, so everything brighter than −0.79 EV (RGB average) shares the top band. A plain least-squares fit to version 1's response was ill-conditioned (weights of ±100). These two were therefore searched on a grid and then settled **by eye** on the backlit D700 photo and the Sony and JPEG test photos. The final error is 0.19 EV for Highlights and 0.26 EV for Whites; version 1's weights would give 0.35 and 0.33 EV.
+- **The result at +100:** Highlights now peaks at 1.2 EV instead of 1.5, but holds 1.2 EV on the brightest tones (version 1 fell to 0.6 there). It reaches −2.5 EV with 0.5 EV (version 1: 0.3). Whites keeps its full 1.5 EV on the brightest tones and reaches a little further down: 0.6 EV at −1.5 EV, where version 1 gave 0.1. Small ripples of up to ±0.2 EV come from the 8-Gaussian fit, as in version 1.
+- **Saturated colours** still sit higher in the bands than neutral ones with the same RGB average. That is darktable's estimator; no weighting can undo it.
+- Analysis scripts: `scratchpad/followups-e/cpu/bands*.mts`.
+
+### Verified
+
+Headless Chromium with software WebGPU (SwiftShader), scripts in `scratchpad/followups-e/` (`e2e-identity.mjs`, `e2e-gpucpu.mjs`, `e2e-quality.mjs` + `analyze.mjs`, `e2e-auto-v2.mjs`, `e2e-develop-v2.mjs`, `dt/`). Test files: Nikon D700 `philadelphia.nef` (backlit: sky against trees, a fountain against the light), Nikon D80 `glarus.nef`, Sony ILCE-6300 and ILCE-7M2 ARWs (immich test-assets), and `test-srgb.jpg`.
+
+- **Version 1 is byte-identical to main** (`39382d5`). Main and this branch were served side by side. On main, an edit was made in Develop: Exposure +0.5, Shadows +40, Highlights −30, Whites +10, Blacks −10, angle 1.35° (so the warp runs). Its XMP was opened on this branch. Explicit version-1 edits were also rendered in-page: the Sony with Shadows +80 / Highlights −80, Whites +20, Blacks −20, angle −1.2°; the JPEG with all four tone sliders; the JPEG unedited.
+  - The full-size export SHA-256 was identical for all four. The D700's hash begins `209fcb926c6a7ae6`, the Sony's `c9ecc6fe1206d245`, the JPEG's `9e965d57063936ce`, and the unedited JPEG's `ab5ec2991363b1b7`.
+  - So were the 1024 px export, the 512 px thumbnail, and the histogram and clipping statistics, byte for byte.
+  - The Develop canvas, fit and 100 %, was identical too (IDENTITY_CANVAS).
+- **GPU = CPU reference.** The GPU's statistics grid was read back and compared with `eigfStatsCpu` run on the full-size scene read back from the GPU. Largest relative difference of E[I]: 7·10⁻⁷ (JPEG), 1.3·10⁻⁶ (D700), 7·10⁻⁷ (24 MP Sony). Of var: 1.3·10⁻³, 3.7·10⁻³ and 9·10⁻⁵ (float32 against float64).
+- **Against darktable itself.** darktable 4.6.1 (Ubuntu's `darktable` package, installed for this test) rendered the D700 photo with workflow "none" to a linear Rec.2020 float TIFF. That TIFF was rendered again with its tone equalizer at the defaults, with all bands at 0 and with version 2's bands for Shadows +80 / Highlights −80. A check with all bands at +1 EV gave exactly +1.000 EV. The per-pixel ratio of the two renders is darktable's correction. On the same input and bands:
+  - LightBench's correction differs from darktable's by a mean of **0.016 EV** (median 0.014, 90th percentile 0.027, 99th 0.077, max 0.65 at a few edge pixels).
+  - Without the filter (the norm of the pixel itself) the difference would be 0.098 EV mean and 0.67 EV at the 99th percentile.
+  - From the RAW itself, the mask measured in camera RGB (via LightBench's camera matrix) matches slightly better than in Rec.2020: mean 0.0156 against 0.0181 EV. That supports the module-order reading.
+  - The remaining difference is the same with a literal CPU port of darktable's algorithm. So it comes from darktable's recursive Gaussian and its grid sampling, not from LightBench's cell grid.
+  - First attempt: a 16-bit sRGB TIFF as input gave gains of about 2.1× in EV. darktable's tone equalizer saw that file's encoded values, so the linear float TIFF was used instead.
+- **Halo and edge contrast** (D700, full-size export, Shadows +80 / Highlights −80, compared in L* with the unedited render). Sky is L* > 70 and trees L* < 35 in the unedited render; distances to the other class come from a chamfer distance transform; two crops along tree crowns against the sky.
+  - **Sky next to the trees:** version 2 has no halo. Among sky pixels with the same unedited brightness (L* 78–84), the change varies by 0.4 L* from 3 px to 250+ px away from the trees. In version 1 it varies by 1.5–3.1 L*, darkest next to the trees.
+  - **Edge contrast:** across the sky/tree edge (sky ≤ 3 px from trees minus trees ≤ 3 px from sky), contrast was 47.3 and 48.6 L* unedited. Version 1 left 12.0 and 14.3 L*; version 2 keeps 22.6 and 26.7.
+  - Version 1's pale grey-blue fringes along every leaf edge against the sky are gone in version 2 (crops checked by eye).
+  - **Trees:** in version 2 the lift of tree pixels (neutral L* 10–16) varies by 3.5–3.8 L* with distance from the sky, over 100–250 px (about the filter's σ of 106 px). It is a gradual change in how much the tree mass is lifted, not a fringe at the edge. Version 1 varies by 1.8–3.0 L* there.
+- **Local contrast in lifted shadows** (RMS of L* minus its 9 × 9 and 33 × 33 mean):
+  - On the bushes in the foreground, version 2 lifts slightly more (mean L* 12.9 → 20.1; version 1 19.3). It keeps more detail: 112 % and 115 % of the unedited detail, against version 1's 100 % and 104 %. The sunlit leaves keep their sparkle; version 1 dulls them.
+  - On the fountain statue against bright spray, version 2 has a little less local contrast than version 1: 69–70 % against 72–76 %.
+- **Preview against export.** The fit preview (`renderImage`, mip-sampled at 1024 px) was compared with the full-size export resized to the same size by Lanczos3. The two resamplers differ even unedited (sharpness), so tone is compared on 8 × 8 block means:
+  - Version 2 agrees within a mean of 0.81 (D700) and 0.56 (24 MP Sony) levels. Unedited: 0.90 and 0.63; version 1: 1.18 and 0.83.
+  - Block maxima were 18.8 and 10.1 for version 2 (unedited 26.7 and 16.4), at water spray and leaf edges.
+  - The mask adds no disagreement, because both read the same full-size statistics.
+- **Auto still converges.** All six sliders were run for Natural, Vivid, High-key and Low-key on the D700, D80, Sony and JPEG photos, versions 1 and 2 (32 runs, 70–77 measurements each).
+  - Every run ended within its look's acceptance band of the median, or one tolerance outside it, as before.
+  - The total misses (median, 0.5 % and 99.5 % points) of the two versions differ by at most 0.014.
+  - The slider values are nearly the same, e.g. the D700 Natural: Blacks −85 (version 1) / −88 (version 2), Exposure +0.75 / +0.76.
+  - On the Sony, Whites lands at different values in some runs because the photo can't reach the look's white point either way, which happened with version 1 too.
+  - The unit tests in `auto.test.ts` use their own measurement model and are unaffected.
+- **In Develop** (`e2e-develop-v2.mjs`): the version-1 XMP showed "This photo was edited with process version 1" and the offer. The button's tooltip now ends with what each newer version changes. **Update to current process** changed the rendering, recorded "Update to process 2" and showed "Process version 2 (current)". An unedited photo is version 2. Shadows +80 / Highlights −80 at fit and 100 %, the histogram and Auto all worked.
+- **Speed (SwiftShader, on a CPU shared with other test runs; noisy):**
+  - Computing a mask took 108–150 ms for the 1.6 MP JPEG, 0.49–0.84 s for the 12 MP D700 and 1.44–1.87 s for the 24 MP Sony.
+  - Develop's redraw of the 24 MP Sony was 668 ms with a new mask, then 367–422 ms per slider move.
+  - With the mask cached, thumbnails and histogram renders were within the run-to-run noise. Full-size exports took 13–17 % longer (D700 7.4 → 8.7 s, 24 MP Sony 23.2 → 26.2 s), which includes noise.
+  - **Real GPUs were not measured.** Estimate: the mask's first pass reads each full-size pixel once (24 M bilinear samples for 24 MP), which a GPU doing 10–100 Gtexel/s would finish in roughly 0.3–3 ms. The other passes touch about 20 k cells. The per-pixel cost in the display shader is four texture loads and about 25 arithmetic operations. A mask is recomputed only for a new photo, crop, angle, lens setting or white balance.
+- **Unit tests:**
+  - `engine/color/tone-mask.test.ts` (8): the estimators; darktable's radius (149 px at 6000, 39 at 1600; 2.5 % at any size); the plan; the statistics against an exact Gaussian (E[I] within 2 %, var within 5 % inside the frame; within 0.1 EV of mask in the corners); the mask against the literal darktable port (mean < 0.01 EV, 98 % within 0.05 EV); edges kept and flat areas smoothed; exact scaling with exposure; `eigf_blending_no_mask`.
+  - `process.test.ts`: version 1's parameters unchanged; version 2's defaults and band weights; equal rendering with the tone sliders at 0; the bands' placement.
+  - `settings.test.ts` and `display-space.test.ts` were updated.
+  - `npx tsc -b`, `npx oxlint` (the two existing warnings), `npx vitest run` and `npm run build` passed.
+
+**Limitations and unverified:**
+- The mask's statistics come from the full-size photo for every rendering. darktable computes them from the pipe's own resolution, so a darktable preview has a little less fine-detail variance than its export. LightBench's previews use the export's statistics, and only the pixel's own I comes from the preview's resolution.
+- The Gaussian is sampled on a grid of 16–32 px cells with an edge repeated per cell. darktable uses a recursive Gaussian on a quarter-size grid with point samples. The comparison above measures the result: 0.016 EV mean against darktable 4.6.1 on one photo. Other photos and darktable's current version weren't compared.
+- Version 2's Highlights and Whites weights were settled by eye on three photos. They are LightBench's choice, not darktable's: darktable has no such sliders.
+- For RAWs, the camera RGB comes from LightBench's camera matrix (LibRaw's), not darktable's input profile. For the D700 the two gave the same match; other cameras weren't checked.
+- Real-GPU speed is an estimate. During a live white-balance drag, or while turning the photo in the crop tool, the mask is recomputed every frame (a full-size pass); on SwiftShader that adds 0.5–1.9 s per frame for 12–24 MP photos.

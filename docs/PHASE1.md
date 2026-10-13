@@ -16,7 +16,7 @@ Import window, catalog and Library module. See pull request #2 and [PLAN.md](PLA
 | Demosaic: **RCD** (default) or bilinear | WGSL | Translated from darktable `data/kernels/demosaic_rcd.cl`. The 9 px border uses bilinear instead of PPG. |
 | Camera → linear Rec.2020 (working space) | WGSL | LibRaw camera matrix × sRGB→Rec.2020 |
 | Exposure, default **+0.7 EV** | WGSL | darktable scene-referred default |
-| Highlights / Shadows / Whites / Blacks → **tone equalizer** bands | TS + WGSL | Translated from darktable `src/iop/toneequal.c`. Global mode for now: no guided filter, "RGB average" luminance. |
+| Highlights / Shadows / Whites / Blacks → **tone equalizer** bands | TS + WGSL | Translated from darktable `src/iop/toneequal.c`. Global mode for now: no guided filter, "RGB average" luminance. (Process version 2 uses darktable's defaults, the Euclidean norm with its guided filter: [PHASE3.md Part 10](PHASE3.md#part-10-the-tone-equalizer-as-darktables-defaults-process-version-2).) |
 | Vibrance / Saturation | WGSL | LightBench simple chroma scaling. darktable's colour balance rgb is planned for Phase 3. |
 | **Sigmoid** display transform (per-channel, hue preservation) | TS + WGSL | Translated from darktable `src/iop/sigmoid.c` and `data/kernels/sigmoid.cl` |
 | Output: Rec.2020 → sRGB | WGSL | Standard matrices |

@@ -46,7 +46,7 @@ Each catalogue ends with "Revisit completed LightBench features" (keep / improve
 | Card import counts a same-name, same-size file as already copied; copies aren't verified | `web/src/import/run.ts` |
 | Linear DNGs (phone RAWs) and X-Trans are refused by LightBench, not by LibRaw | `web/src/engine/raw/decoder.worker.ts` |
 | Only a round-trip test exists for Tint; its direction isn't tested | `web/src/engine/develop/settings.test.ts` |
-| The tone equalizer uses "RGB average" with no detail-preserving filter; darktable's defaults are the Euclidean norm with EIGF | `develop-display.wgsl`; darktable `src/iop/toneequal.c` |
+| The tone equalizer uses "RGB average" with no detail-preserving filter; darktable's defaults are the Euclidean norm with EIGF. **Done:** process version 2 uses darktable's defaults (the Euclidean norm with EIGF); edits from before keep version 1 ([PHASE3.md Part 10](../PHASE3.md#part-10-the-tone-equalizer-as-darktables-defaults-process-version-2)) | `develop-display.wgsl`, `tone-mask.wgsl`; darktable `src/iop/toneequal.c` |
 
 ## Owner's decisions (2026-10-12)
 
