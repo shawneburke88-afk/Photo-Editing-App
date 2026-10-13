@@ -6,6 +6,7 @@ import type { DevelopSettings, SourceKind } from '../engine/develop/settings'
 import { AUTO_SLIDERS, type AutoKey } from '../engine/develop/auto'
 import { pasteCrop, setAngle, withOrientation, type GeometrySettings } from '../engine/develop/geometry'
 import { DEFAULT_TRANSFORM, normalizeTransform, ZERO_PERSPECTIVE, type TransformSettings } from '../engine/develop/upright'
+import { describeSpots } from '../engine/develop/spots'
 
 export type PasteKey =
   | 'whiteBalance'
@@ -13,12 +14,13 @@ export type PasteKey =
   | 'vibrance' | 'saturation'
   | 'rotate' | 'straighten' | 'crop' | 'upright' | 'transform'
   | 'lensProfile' | 'lensAmounts' | 'lensCa'
+  | 'spots'
   | 'process' | 'baseExposure' | 'toneMapper' | 'highlightReconstruction' | 'demosaic'
 
 export interface PasteItem {
   key: PasteKey
   label: string
-  group: 'White balance' | 'Tone' | 'Presence' | 'Crop' | 'Lens' | 'Advanced (darktable modules)'
+  group: 'White balance' | 'Tone' | 'Presence' | 'Crop' | 'Lens' | 'Remove' | 'Advanced (darktable modules)'
   /**
    * Only pasted between photos of the same kind (RAW to RAW, JPEG to JPEG): a RAW's +0.7 EV base exposure or its
    * camera white balance would be wrong on a JPEG, which is already rendered.
@@ -194,6 +196,21 @@ export const PASTE_ITEMS: PasteItem[] = [
     copy: (to, from) => ({ ...to, lens: { ...to.lens, ca: from.lens.ca } }),
     show: (s) => (s.lens.ca ? 'removed' : 'left'),
   },
+  // Remove, Heal and Clone spots (Part 11): they belong to one photo, so the item is unticked by default. Ticked, the
+  // spots replace the photo's own, at the same places on the sensor (sensor dust is at the same place on every photo
+  // of a camera) with the same sources; each photo's fill is then computed from its own pixels.
+  {
+    key: 'spots',
+    label: 'Remove, Heal & Clone spots',
+    group: 'Remove',
+    copy: (to, from) => {
+      const { spots: _own, ...rest } = to
+      void _own
+      return from.spots?.length ? { ...rest, spots: from.spots.map((sp) => ({ ...sp, points: sp.points.map((p) => [...p] as [number, number]), offset: [...sp.offset] as [number, number] })) } : rest
+    },
+    show: (s) => describeSpots(s.spots),
+    changed: (a, b) => JSON.stringify(a.spots ?? []) !== JSON.stringify(b.spots ?? []),
+  },
   {
     key: 'process',
     label: 'Process version',
@@ -244,9 +261,10 @@ export const PASTE_GROUPS = [...new Set(PASTE_ITEMS.map((i) => i.group))]
  * Default choice: everything except the crop items and the advanced darktable modules. Lightroom leaves its expert
  * items to the user; not copying the crop unless ticked is Lightroom's default as the owner described it
  * (2026-10-12; not checked against Lightroom here), and LightBench's choice either way. The Lens items are unticked
- * too (LightBench's choice), so copying tone from an edit made before lens corrections doesn't turn them off.
+ * too (LightBench's choice), so copying tone from an edit made before lens corrections doesn't turn them off. So are
+ * the spots (Part 11): they belong to one photo.
  */
-export const DEFAULT_PASTE_KEYS: PasteKey[] = PASTE_ITEMS.filter((i) => i.group !== 'Advanced (darktable modules)' && i.group !== 'Crop' && i.group !== 'Lens').map((i) => i.key)
+export const DEFAULT_PASTE_KEYS: PasteKey[] = PASTE_ITEMS.filter((i) => i.group !== 'Advanced (darktable modules)' && i.group !== 'Crop' && i.group !== 'Lens' && i.group !== 'Remove').map((i) => i.key)
 
 /** What a copy carries. */
 export interface Clipboard {

@@ -6,6 +6,8 @@
 // Geometry (when crop, straighten, rotate or flip change): one combined map from output pixels to the scene
 //   (engine/develop/geometry.ts). Whole-pixel maps are sampled directly; others are warped once with bicubic
 //   interpolation into a cached texture (with its own mip chain), so slider moves never warp again.
+// Retouch (Remove, Heal and Clone spots, PHASE3.md Part 11; only when the edit has spots): a retouched copy of the
+//   scene made by retouch-stage.ts, used instead of the scene by everything after it.
 // Stage B (every slider move): exposure → tone equalizer → presence → sigmoid → sRGB, at screen size; on wide-gamut
 //   screens the canvas is Display P3 and Stage B writes Display P3 (display-space.ts).
 // Tone mask (process version 2, when a tone slider is moved): the tone equalizer's guided-filter statistics are
@@ -37,6 +39,8 @@ import { currentDisplaySpace, REC2020_TO_DISPLAY_P3, srgbColourIn, watchDisplayS
 import statsWgsl from './stats.wgsl?raw'
 import warpWgsl from './warp.wgsl?raw'
 import lensWgsl from './lens.wgsl?raw'
+import type { Spot } from '../develop/spots'
+import { RetouchStage, type RetouchProgress } from './retouch-stage'
 
 export interface RawStageOptions {
   /** White balance multipliers [R, G, B], green = 1. */
@@ -80,6 +84,8 @@ interface Source {
   frame: boolean
   /** Lens correction between `rawMap` and the sensor, if any. */
   lens?: LensWarp
+  /** Must be called once the drawing that uses `tex` is submitted (a retouched scene is kept until then). */
+  release: () => void
 }
 
 export type PresentMode = 'canvas' | 'readback'
@@ -247,6 +253,14 @@ export class DevelopEngine {
   private nextTexId = 1
   /** The last `render` call, to draw again when the screen's gamut changes. */
   private lastRender: Parameters<DevelopEngine['render']> | null = null
+  /** Remove, Heal and Clone spots (retouch-stage.ts). */
+  private readonly retouch: RetouchStage
+  /** The RAW stage the scene was built with, and the photo's canonical one (as shot, defaults), for Remove fills. */
+  private builtStage: RawStageOptions | null = null
+  /** Drawings in progress, and cached textures waiting for them to end before they are destroyed. */
+  private drawing = 0
+  private retired: GPUTexture[] = []
+  private canonicalStage: RawStageOptions | null = null
 
   private constructor(device: GPUDevice, mode: PresentMode) {
     this.device = device
@@ -299,6 +313,11 @@ export class DevelopEngine {
     this.viewBuf = device.createBuffer({ size: VIEW_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.viewLensBuf = device.createBuffer({ size: LENS_UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.statsModule = device.createShaderModule({ code: statsWgsl })
+    this.retouch = new RetouchStage({
+      device,
+      encodeMips: (enc, tex) => this.encodeMips(enc, tex),
+      canonicalScene: () => this.canonicalScene(),
+    })
   }
 
   private static async device(): Promise<GPUDevice> {
@@ -401,6 +420,9 @@ export class DevelopEngine {
     this.camToWorking = mul(SRGB_TO_REC2020, sensor.camToRgb as Mat3)
     this.rgbInput?.texture.destroy()
     this.rgbInput = null
+    this.retouch.reset()
+    this.builtStage = null
+    this.canonicalStage = null
   }
 
   /**
@@ -493,53 +515,94 @@ export class DevelopEngine {
     return r
   }
 
-  /** What to sample for a geometry: the scene itself (whole-pixel maps, and the crop tool's view) or its warped copy. */
-  private async source(g: GeometrySettings, whole = false, lens?: LensSettings): Promise<Source> {
+  /**
+   * What to sample for a geometry: the scene itself (whole-pixel maps, and the crop tool's view) or its warped copy.
+   * With spots, the retouched scene takes the scene's place; `wait` waits for it (otherwise what is ready is used and
+   * the rest follows: `onRetouch`).
+   */
+  private async source(g: GeometrySettings, whole = false, lens?: LensSettings, spots?: Spot[], wait = true): Promise<Source> {
     const lw = (await this.lensCorrection(lens)).warp
     const r = withLens(this.geometry(g, whole), lw, lensWarpKey(lw))
-    if (whole && lw) {
-      // The crop tool draws the lens-corrected scene directly through the 3×3 map, so turning the photo doesn't warp again.
-      const tex = await this.lensCorrected(lw)
-      return { tex, texMap: r.uvToSensor, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: true, lens: lw }
+    const lease = this.lease()
+    const got = spots?.length ? await this.retouch.texture(() => this.scene!, spots, wait).catch((e: Error) => { lease(); throw e }) : { tex: this.scene!, key: '', release: () => {} }
+    const base = { ...got, release: () => { got.release(); lease() } }
+    try {
+      if (whole && lw) {
+        // The crop tool draws the lens-corrected scene directly through the 3×3 map, so turning the photo doesn't warp again.
+        const tex = await this.lensCorrected(lw, base.tex, base.key)
+        return { tex, texMap: r.uvToSensor, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: true, lens: lw, release: base.release }
+      }
+      if (whole || r.exact) return { tex: base.tex, texMap: r.uvToSensor, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: whole, release: base.release }
+      const tex = await this.warped(r, base.tex, base.key)
+      return { tex, texMap: IDENTITY_MAP, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: false, lens: r.lens, release: base.release }
+    } catch (e) {
+      base.release()
+      throw e
     }
-    if (whole || r.exact) return { tex: this.scene!, texMap: r.uvToSensor, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: whole }
-    const tex = await this.warped(r)
-    return { tex, texMap: IDENTITY_MAP, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: false, lens: r.lens }
   }
 
-  /** The whole scene corrected for the lens only (same size as the scene), cached apart from the full warp. */
-  private lensCorrected(lw: LensWarp): Promise<GPUTexture> {
+  /** The whole scene (or `base`, its retouched copy) corrected for the lens only (same size), cached apart from the full warp. */
+  private lensCorrected(lw: LensWarp, base: GPUTexture = this.scene!, baseKey = ''): Promise<GPUTexture> {
     const s = this.sensor!
     const r = withLens(resolveGeometry(DEFAULT_GEOMETRY, s.width, s.height, 0, true), lw, lensWarpKey(lw))
+    const key = baseKey ? `${r.key}|rt:${baseKey}` : r.key
     const job = this.warpChain.then(() => {
-      if (this.lensOnly && this.lensOnly.key === r.key && this.lensOnly.gen === this.sceneGen) return this.lensOnly.tex
+      if (this.lensOnly && this.lensOnly.key === key && this.lensOnly.gen === this.sceneGen) return this.lensOnly.tex
       this.checkAlive()
-      const tex = this.buildWarp(r)
-      this.lensOnly?.tex.destroy()
-      this.lensOnly = { key: r.key, gen: this.sceneGen, tex }
+      const tex = this.buildWarp(r, base)
+      if (this.lensOnly) this.retireTex(this.lensOnly.tex)
+      this.lensOnly = { key, gen: this.sceneGen, tex }
       return tex
     })
     this.warpChain = job.catch(() => {})
     return job
   }
 
-  /** The scene warped through a geometry map, from the cache when the same map was warped last. */
-  private warped(r: ResolvedGeometry): Promise<GPUTexture> {
+  /** The scene (or `base`) warped through a geometry map, from the cache when the same map was warped last. */
+  private warped(r: ResolvedGeometry, base: GPUTexture = this.scene!, baseKey = ''): Promise<GPUTexture> {
+    const key = baseKey ? `${r.key}|rt:${baseKey}` : r.key
     const job = this.warpChain.then(() => {
-      if (this.warp && this.warp.key === r.key && this.warp.gen === this.sceneGen) return this.warp.tex
+      if (this.warp && this.warp.key === key && this.warp.gen === this.sceneGen) return this.warp.tex
       this.checkAlive()
-      const tex = this.buildWarp(r)
-      // Work already submitted with the old texture still completes (WebGPU destroys it afterwards).
-      this.warp?.tex.destroy()
-      this.warp = { key: r.key, gen: this.sceneGen, tex }
+      const tex = this.buildWarp(r, base)
+      // Kept until no drawing that may still use it is pending (a drawing can hold it between choosing and submitting).
+      if (this.warp) this.retireTex(this.warp.tex)
+      this.warp = { key, gen: this.sceneGen, tex }
       return tex
     })
     this.warpChain = job.catch(() => {})
     return job
+  }
+
+  /**
+   * A drawing in progress (from choosing its source to submitting its work): cached textures replaced meanwhile are
+   * destroyed only after it ends. Returns the function that ends it (also called by itself after 20 s, so a drawing
+   * that failed never keeps old textures).
+   */
+  private lease(): () => void {
+    this.drawing++
+    let done = false
+    const end = () => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      this.drawing--
+      if (!this.drawing) {
+        for (const t of this.retired) t.destroy()
+        this.retired = []
+      }
+    }
+    const timer = setTimeout(end, 20000)
+    return end
+  }
+
+  private retireTex(t: GPUTexture) {
+    if (this.drawing) this.retired.push(t)
+    else t.destroy()
   }
 
   /** One bicubic resample of the scene through the combined geometry map (warp.wgsl), then its mip chain. */
-  private buildWarp(r: ResolvedGeometry): GPUTexture {
+  private buildWarp(r: ResolvedGeometry, base: GPUTexture = this.scene!): GPUTexture {
     const { device } = this
     const [w, h] = r.size
     this.warpPipe ??= device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: warpWgsl + lensWgsl }), entryPoint: 'warp' } })
@@ -565,7 +628,7 @@ export class DevelopEngine {
       layout: this.warpPipe.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: { buffer: paramBuf } },
-        { binding: 1, resource: this.scene!.createView({ baseMipLevel: 0, mipLevelCount: 1 }) },
+        { binding: 1, resource: base.createView({ baseMipLevel: 0, mipLevelCount: 1 }) },
         { binding: 2, resource: tex.createView({ baseMipLevel: 0, mipLevelCount: 1 }) },
         { binding: 3, resource: { buffer: lensBuf } },
       ],
@@ -581,12 +644,15 @@ export class DevelopEngine {
 
   /** A new scene: the warped copy belongs to the old one. */
   private newScene(scene: GPUTexture) {
-    this.scene?.destroy()
+    if (this.scene) {
+      this.retouch.forget(this.scene)
+      this.retireTex(this.scene)
+    }
     this.scene = scene
     this.sceneGen++
-    this.warp?.tex.destroy()
+    if (this.warp) this.retireTex(this.warp.tex)
     this.warp = null
-    this.lensOnly?.tex.destroy()
+    if (this.lensOnly) this.retireTex(this.lensOnly.tex)
     this.lensOnly = null
     for (const m of this.maskCache) m.tex.destroy()
     this.maskCache = []
@@ -596,10 +662,21 @@ export class DevelopEngine {
   async process(opts: RawStageOptions): Promise<number> {
     this.checkAlive()
     if (this.rgbInput) return this.processRgb()
+    const t0 = performance.now()
+    const scene = await this.buildScene(opts)
+    // A photo with spots gets its retouched scene before the new scene is shown, so the spots never flash away.
+    await this.retouch.adopt(scene)
+    this.newScene(scene)
+    this.builtWb = [...opts.wb] as Vec3
+    this.builtStage = opts
+    return performance.now() - t0
+  }
+
+  /** The RAW stage into a new scene texture, with its mip chain. */
+  private async buildScene(opts: RawStageOptions): Promise<GPUTexture> {
     const s = this.sensor
     if (!s || !this.rawBuf) throw new Error('No photo loaded')
     const { device } = this
-    const t0 = performance.now()
     const layout = s.layout ?? 'bayer'
     const xtrans = layout === 'xtrans'
     // The DNG colour model's matrix follows the white balance (develop/source.ts stageOptions).
@@ -745,9 +822,30 @@ export class DevelopEngine {
     await device.queue.onSubmittedWorkDone()
     for (const b of temps) b.destroy()
     paramBuf.destroy()
-    this.newScene(scene)
-    this.builtWb = [...opts.wb] as Vec3
-    return performance.now() - t0
+    return scene
+  }
+
+  /** Sets the photo's canonical RAW stage (as-shot white balance and the default settings; develop/source.ts). */
+  setCanonicalStage(opts: RawStageOptions | null) {
+    this.canonicalStage = opts
+  }
+
+  /**
+   * The canonical scene for Remove fills, when the scene shown was built otherwise (e.g. after a white balance
+   * change); null when the scene shown is the canonical one (or no canonical stage is known, or for JPEGs).
+   */
+  private async canonicalScene(): Promise<GPUTexture | null> {
+    const c = this.canonicalStage
+    const b = this.builtStage
+    if (this.rgbInput || !c || !b) return null
+    const same = c.highlightMode === b.highlightMode && c.highlightClip === b.highlightClip && c.demosaic === b.demosaic && c.wb.every((v, i) => v === b.wb[i])
+    if (same) return null
+    const cam = this.camToWorking
+    try {
+      return await this.buildScene(c)
+    } finally {
+      this.camToWorking = cam
+    }
   }
 
   private dispatch(enc: GPUCommandEncoder, p: GPUComputePipeline, bindings: Record<number, Res>, x: number, y: number, wgX = 16, wgY = 16) {
@@ -946,6 +1044,7 @@ export class DevelopEngine {
     await device.queue.onSubmittedWorkDone()
     paramBuf.destroy()
     lutBuf.destroy()
+    await this.retouch.adopt(scene)
     this.newScene(scene)
     // White balance on a JPEG is applied entirely by the develop pass (relative to the file's colours).
     this.builtWb = [1, 1, 1]
@@ -961,7 +1060,7 @@ export class DevelopEngine {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
     const { device } = this
-    const src = await this.source(u.geometry, false, u.lens)
+    const src = await this.source(u.geometry, false, u.lens, u.spots)
     const { w: iw, h: ih } = src
     const max = device.limits.maxTextureDimension2D
     if (o.width > max || o.height > max) throw new Error(`The export size is larger than this GPU allows (${max} px)`)
@@ -1070,6 +1169,7 @@ export class DevelopEngine {
     }
     enc.copyBufferToBuffer(outBuf, 0, read, 0, words * 4)
     device.queue.submit([enc.finish()])
+    src.release()
     try {
       await read.mapAsync(GPUMapMode.READ)
       const data = read.getMappedRange().slice(0)
@@ -1301,7 +1401,8 @@ export class DevelopEngine {
       this.canvas.height = ch
     }
     this.lastRender = [u, wb, view, indicators]
-    const src = await this.source(u.geometry, !!view.frame, u.lens)
+    // The canvas never waits for spots being worked on: it shows what is ready and is drawn again (`onRetouch`).
+    const src = await this.source(u.geometry, !!view.frame, u.lens, u.spots, false)
     const l = this.layout(view, cw, ch, [src.w, src.h])
     this.shown = { w: src.w, h: src.h, rawMap: src.rawMap, lens: src.lens }
     this.writeView(u, wb, src, l, l.lod, indicators, 0, this.displaySpace)
@@ -1309,6 +1410,7 @@ export class DevelopEngine {
       ? this.gpuCtx.getCurrentTexture()
       : this.device.createTexture({ size: [cw, ch], format: this.format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
     const pixels = await this.draw(this.displayPipe, target, src.tex, cw, ch, !this.gpuCtx, this.displaySpace)
+    src.release()
     if (pixels) {
       this.ctx2d!.putImageData(pixels, 0, 0)
       target.destroy()
@@ -1320,7 +1422,7 @@ export class DevelopEngine {
   async renderImage(u: DisplayUniforms, wb: Vec3, maxSize: number): Promise<ImageData> {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
-    const src = await this.source(u.geometry, false, u.lens)
+    const src = await this.source(u.geometry, false, u.lens, u.spots)
     const { w: iw, h: ih } = src
     const scale = Math.min(1, maxSize / Math.max(iw, ih))
     const w = Math.max(1, Math.round(iw * scale))
@@ -1328,6 +1430,7 @@ export class DevelopEngine {
     this.writeView(u, wb, src, { x: 0, y: 0, w, h }, Math.max(0, Math.log2(1 / scale)))
     const target = this.device.createTexture({ size: [w, h], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
     const pixels = (await this.draw(this.offscreenPipe, target, src.tex, w, h, true))!
+    src.release()
     target.destroy()
     return pixels
   }
@@ -1359,6 +1462,59 @@ export class DevelopEngine {
     if (!lens || !s) return uv
     const [x, y] = lensSourcePoint(lens, uv[0] * s.width - 0.5, uv[1] * s.height - 0.5)
     return [(x + 0.5) / s.width, (y + 0.5) / s.height]
+  }
+
+  /** Displayed-image uv (the image last drawn) → sensor pixel position (continuous; pixel i covers [i, i + 1)). */
+  displayToSensor(u: number, v: number): [number, number] {
+    const [su, sv] = this.sourceUv(u, v)
+    const s = this.sensor
+    return s ? [su * s.width, sv * s.height] : [su, sv]
+  }
+
+  /** Sensor pixel position → displayed-image uv of the image last drawn: the inverse of `displayToSensor`. */
+  sensorToDisplay(x: number, y: number): [number, number] {
+    const s = this.sensor
+    if (!s) return [x, y]
+    let cx = x - 0.5
+    let cy = y - 0.5
+    const lens = this.shown?.lens
+    if (lens) {
+      // The lens function's inverse by fixed-point steps (the correction is close to the identity).
+      const px = cx
+      const py = cy
+      for (let i = 0; i < 30; i++) {
+        const [lx, ly] = lensSourcePoint(lens, cx, cy)
+        cx += px - lx
+        cy += py - ly
+        if (Math.abs(px - lx) + Math.abs(py - ly) < 1e-4) break
+      }
+    }
+    const inv = invert(this.shown ? this.shown.rawMap : this.geometry(DEFAULT_GEOMETRY).uvToSensor)
+    return applyMap(inv, (cx + 0.5) / s.width, (cy + 0.5) / s.height)
+  }
+
+  /** Remove, Heal and Clone: progress, and each new retouched scene (Develop draws again then). */
+  onRetouch(fn: (p: RetouchProgress) => void): () => void {
+    return this.retouch.subscribe(fn)
+  }
+
+  get retouchProgress(): RetouchProgress {
+    return this.retouch.progress
+  }
+
+  /**
+   * Auto source for a new spot: the offset in sensor pixels to the place whose surroundings match the spot's best,
+   * looked for on the photo as it is with the other spots applied.
+   */
+  async pickSpotSource(spot: Spot, others: Spot[]): Promise<[number, number]> {
+    this.checkAlive()
+    if (!this.scene) throw new Error('No photo processed')
+    const base = others.length ? await this.retouch.texture(() => this.scene!, others, true) : { tex: this.scene, release: () => {} }
+    try {
+      return await this.retouch.pick(base.tex, spot, others)
+    } finally {
+      base.release()
+    }
   }
 
   /**
@@ -1464,13 +1620,14 @@ export class DevelopEngine {
   async renderLoupe(u: DisplayUniforms, wb: Vec3, cu: number, cv: number, size: number): Promise<ImageData> {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
-    const src = await this.source(u.geometry, false, u.lens)
+    const src = await this.source(u.geometry, false, u.lens, u.spots)
     const { w: iw, h: ih } = src
     const cx = Math.floor(cu * iw) + 0.5
     const cy = Math.floor(cv * ih) + 0.5
     this.writeView(u, wb, src, { x: size / 2 - cx, y: size / 2 - cy, w: iw, h: ih }, 0)
     const target = this.device.createTexture({ size: [size, size], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
     const pixels = (await this.draw(this.offscreenPipe, target, src.tex, size, size, true))!
+    src.release()
     target.destroy()
     return pixels
   }
@@ -1482,7 +1639,7 @@ export class DevelopEngine {
     const statsPipe = (this.statsPipe ??= device.createComputePipeline({ layout: 'auto', compute: { module: this.statsModule, entryPoint: 'histogram' } }))
     const bins = device.createBuffer({ size: STATS_WORDS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST })
     const read = device.createBuffer({ size: STATS_WORDS * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
-    const src = await this.source(u.geometry, false, u.lens)
+    const src = await this.source(u.geometry, false, u.lens, u.spots)
     const enc = device.createCommandEncoder()
     const { w: iw, h: ih } = src
     const scale = Math.min(1, maxSize / Math.max(iw, ih))
@@ -1502,6 +1659,7 @@ export class DevelopEngine {
     pass.end()
     enc.copyBufferToBuffer(bins, 0, read, 0, STATS_WORDS * 4)
     device.queue.submit([enc.finish()])
+    src.release()
     try {
       await read.mapAsync(GPUMapMode.READ)
       return new Uint32Array(read.getMappedRange().slice(0))
@@ -1564,8 +1722,10 @@ export class DevelopEngine {
     this.rgbInput?.texture.destroy()
     this.warp?.tex.destroy()
     this.lensOnly?.tex.destroy()
+    for (const t of this.retired) t.destroy()
     for (const m of this.maskCache) m.tex.destroy()
     this.noMask?.destroy()
+    this.retouch.destroy()
     this.scene?.destroy()
     this.rawBuf?.destroy()
     this.viewBuf.destroy()

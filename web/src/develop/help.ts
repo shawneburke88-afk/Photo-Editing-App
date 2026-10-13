@@ -171,4 +171,27 @@ export const HELP: Record<string, ControlHelp> = {
     right: 'Moves the photo up.',
     engine: 'LightBench',
   },
+  removeSize: {
+    hint: 'Brush radius, in photo pixels',
+    what: 'How wide the brush paints: its radius in pixels of the full-size photo. With a spot selected, changes that spot. [ and ] make it smaller or larger.',
+    left: 'Smaller brush.',
+    right: 'Larger brush.',
+    pitfalls: 'Paint a little beyond what you remove, so its edge and its shadow are covered too; a brush much larger than the object gives the fill less to work with.',
+    engine: 'darktable’s brush shape (retouch module): its radius',
+  },
+  removeFeather: {
+    hint: 'Softness of the edge',
+    what: 'How much of the brush’s radius fades out. 0 % is a hard edge; 100 % fades all the way from the middle. With a spot selected, changes that spot. Shift+[ and Shift+] change it.',
+    left: 'Harder edge.',
+    right: 'Softer edge: the fill blends more gradually.',
+    pitfalls: 'A very soft edge leaves a faint trace of what was removed near the edge; paint wider instead.',
+    engine: 'darktable’s brush hardness (feather = 1 − hardness)',
+  },
+  removeOpacity: {
+    hint: 'How strongly the spot covers',
+    what: 'How much of the fill replaces the photo. With a spot selected, changes that spot.',
+    left: 'Fainter: some of the original shows through (useful to soften, not remove).',
+    right: 'Covers fully (100 %).',
+    engine: 'darktable retouch: the shape’s opacity',
+  },
 }

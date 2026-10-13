@@ -11,6 +11,7 @@ import type { AutoRecord } from './auto'
 import { DEFAULT_LENS, LEGACY_LENS, normalizeLens, type LensSettings } from '../lens/correction'
 import { DEFAULT_GEOMETRY, normalizeGeometry, type GeometrySettings } from './geometry'
 import { CURRENT_PROCESS, processParams, validProcess, type ToneMask } from './process'
+import { normalizeSpots, type Spot } from './spots'
 
 /**
  * The demosaic method (Develop › Advanced). The stored value names the method for the photo's sensor as darktable
@@ -72,6 +73,11 @@ export interface DevelopSettings {
    * they render as before; new edits get Auto.
    */
   lens: LensSettings
+  /**
+   * Remove, Heal and Clone spots (spots.ts), in the order they were made. Optional: edits without spots have no
+   * such field at all, so they stay exactly as they were (and render byte-identically).
+   */
+  spots?: Spot[]
 }
 
 export const DEFAULT_SETTINGS: DevelopSettings = {
@@ -121,7 +127,7 @@ export const defaultsFor = (kind: SourceKind) => (kind === 'rgb' ? DEFAULT_RGB_S
  */
 export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined, kind: SourceKind = 'raw'): DevelopSettings {
   const d = defaultsFor(kind)
-  return {
+  const out: DevelopSettings = {
     ...d,
     ...s,
     whiteBalance: { ...d.whiteBalance, ...s?.whiteBalance },
@@ -131,6 +137,10 @@ export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined
     process: validProcess(s?.process),
     geometry: normalizeGeometry(s?.geometry),
   }
+  const spots = normalizeSpots(s?.spots)
+  if (spots) out.spots = spots
+  else delete out.spots
+  return out
 }
 
 /** Lightroom-style tint slider (−150 green … +150 magenta) ⇄ darktable tint (1 = neutral, >1 greener). */
@@ -166,6 +176,8 @@ export interface DisplayUniforms {
   huePreservation: number
   /** Crop, straighten, rotate and flip; the engine resolves it against the photo's size. */
   geometry: GeometrySettings
+  /** Remove, Heal and Clone spots; absent when there are none. */
+  spots?: Spot[]
 }
 
 export function displayUniforms(s: DevelopSettings): DisplayUniforms {
@@ -186,5 +198,6 @@ export function displayUniforms(s: DevelopSettings): DisplayUniforms {
     }),
     huePreservation: Math.min(1, Math.max(0, s.advanced.huePreservation / 100)),
     geometry: s.geometry ?? DEFAULT_GEOMETRY,
+    ...(s.spots?.length ? { spots: s.spots } : {}),
   }
 }
