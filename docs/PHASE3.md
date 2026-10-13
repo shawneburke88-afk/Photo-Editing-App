@@ -73,7 +73,7 @@ Owner's choices (2026-10-12):
 | Order | Pasted in that order: the orientation first (the crop is relative to it, and turning moves the crop with the photo), then the angle (the target's crop shrinks to fit), then the rectangle. | LightBench |
 | Other shapes | A crop with a locked aspect keeps that aspect on a photo of other proportions (the largest rectangle of the ratio inside the pasted one, about its centre); a free crop is copied proportionally. The crop is then kept inside the target photo at its angle. | LightBench's choice |
 | Presets and Amount | Presets can hold the crop items. The Amount slider treats geometry like the other switches: it follows the preset whenever the amount is above 0. | As Part 8 |
-| Sidecars | The geometry is part of the settings in `lightbench:Develop`. Lightroom's `crs:Crop*` fields are not written yet (follow-up). | Owner's decision |
+| Sidecars | The geometry is part of the settings in `lightbench:Develop`. Lightroom's `crs:Crop*` and `tiff:Orientation` are read and written too (Part 7). | Owner's decision |
 
 ### Shortcuts added
 
@@ -112,7 +112,7 @@ The registry has a new context, **Develop: cropping** (`crop`), active instead o
 - While straightening outside the crop tool (the Angle slider), every slider step warps the photo again at full resolution: expected to be quick on a real GPU (not measured on the owner's GPU yet) and visibly slower on the software GPU used for testing (not measured). Inside the crop tool the photo is drawn directly and nothing is warped until the crop is applied.
 - The warped copy is a second full-resolution texture (8 bytes per pixel: about 190 MB for a 24 MP crop, plus a third more for its mips) while a straightened photo is open.
 - At the very corners of a maximal straightened crop, the bicubic taps reach up to two pixels past the photo's edge and repeat the edge pixels (darktable's interpolation does the same).
-- Lightroom's `crs:Crop*` sidecar fields aren't written or read, so Lightroom and darktable don't see LightBench's crop. Auto straighten comes with Upright.
+- Lightroom's `crs:Crop*` sidecar fields are read and written since Part 7 (into sidecars that already hold Camera Raw settings). darktable doesn't see LightBench's crop unless it imports Lightroom's fields. Auto straighten comes with Upright.
 - The Lightroom behaviours quoted (R, X, O in the crop tool, Ctrl-drag to straighten, the copy default, process version updates) are from general knowledge and the owner's description, not checked in Lightroom or against Adobe's pages here.
 - Only one rendering exists, so the update offer was tested with the development server's simulated version 2.
 
@@ -309,7 +309,7 @@ A new registry context, **Develop: Guided Upright** (`guided`), is active instea
 - The test photos have few strong verticals: philadelphia.nef is mostly trees and a fountain, so Upright's vertical correction was checked on synthetic photos and Guided lines, not on a real building. Behaviour on the owner's own architecture photos is not verified.
 - Lightroom's Upright, Transform and Guided behaviours and keys quoted here are from general knowledge and the owner's description, not checked in Lightroom.
 - Constrain Crop is always on; Lightroom's option to see the empty areas is not offered.
-- Lightroom's `crs:Perspective*` and `crs:Upright*` sidecar fields are not read or written; LightBench's transform lives in `lightbench:Develop`.
+- Lightroom's Upright mode and Transform sliders (`crs:PerspectiveUpright`, `crs:Perspective*`) are read and written since Part 7 (a Lightroom Upright is solved again by LightBench's own); Lightroom's solved Upright (`crs:Upright*` matrices, centre, focal mode, guide lines) is not read or written. LightBench's own transform lives in `lightbench:Develop`.
 - Each Transform slider step warps the photo again at full resolution (as the Angle slider does, Part 1); quick on a real GPU is expected, not measured on the owner's GPU.
 - Line detection runs on the CPU in a worker: about 0.3 s for a 900 × 600 synthetic image in Node (unit test probe); in the browser it was not timed separately.
 - LSD is AGPL-3.0-or-later (see THIRD_PARTY_NOTICES.md): its source-offer terms apply to the web app; the app links to its source code from Settings and System Check (the owner's decision).

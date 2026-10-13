@@ -185,6 +185,8 @@ class BatchDeveloper {
     let engine: DevelopEngine | null = null
     let info: SensorInfo | null = null
     if (file && 'gpu' in navigator) {
+      // A device lost on an earlier photo (e.g. a driver reset) would fail every later one: start a new engine.
+      if (this.engine && (await this.engine.catch(() => null))?.isLost !== false) this.engine = null
       this.engine ??= DevelopEngine.create('readback')
       engine = await this.engine
       this.decoder ??= new RawDecoder()
