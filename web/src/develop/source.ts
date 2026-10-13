@@ -70,7 +70,7 @@ export function loadIntoEngine(engine: DevelopEngine, r: DecodeResult): SensorIn
   engine.setLensMeta(r.lens ?? null)
   const xyzToCam = r.sensor.xyzToCam as Mat3
   const model: WbModel = { xyzToCam, dng: r.sensor.dng }
-  return {
+  const info: SensorInfo = {
     kind: 'raw',
     layout: r.sensor.layout ?? 'bayer',
     dng: r.sensor.dng,
@@ -80,6 +80,10 @@ export function loadIntoEngine(engine: DevelopEngine, r: DecodeResult): SensorIn
     lens: r.lens ?? null,
     focal35: focalOf(r),
   }
+  // Remove fills are computed on the photo as shot with the default RAW stage, so a later white balance or
+  // highlight change never changes which texture fills a spot (PHASE3.md, Part 11).
+  engine.setCanonicalStage(stageOptions(defaultsFor('raw'), info))
+  return info
 }
 
 export function multipliers(s: DevelopSettings, info: SensorInfo): Vec3 {

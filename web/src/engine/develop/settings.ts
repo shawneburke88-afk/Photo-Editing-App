@@ -12,6 +12,7 @@ import { DEFAULT_LENS, LEGACY_LENS, normalizeLens, type LensSettings } from '../
 import { DEFAULT_GEOMETRY, normalizeGeometry, type GeometrySettings } from './geometry'
 import { CURRENT_PROCESS, processParams, validProcess, type ToneMask } from './process'
 import { normalizeToneCurve, toneCurveGpu, type ToneCurveGpu, type ToneCurveSettings } from './tone-curve'
+import { normalizeSpots, type Spot } from './spots'
 
 /**
  * The demosaic method (Develop › Advanced). The stored value names the method for the photo's sensor as darktable
@@ -78,6 +79,11 @@ export interface DevelopSettings {
    * when untouched or reset, so such an edit is exactly one made before the Tone Curve existed (and renders as one).
    */
   toneCurve?: ToneCurveSettings
+  /**
+   * Remove, Heal and Clone spots (spots.ts), in the order they were made. Optional: edits without spots have no
+   * such field at all, so they stay exactly as they were (and render byte-identically).
+   */
+  spots?: Spot[]
 }
 
 export const DEFAULT_SETTINGS: DevelopSettings = {
@@ -141,6 +147,9 @@ export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined
   const tc = normalizeToneCurve(s?.toneCurve)
   if (tc) out.toneCurve = tc
   else delete out.toneCurve
+  const spots = normalizeSpots(s?.spots)
+  if (spots) out.spots = spots
+  else delete out.spots
   return out
 }
 
@@ -179,6 +188,8 @@ export interface DisplayUniforms {
   geometry: GeometrySettings
   /** The Tone Curve's lookup table and options, or null when it changes nothing (the shader skips it). */
   toneCurve: ToneCurveGpu | null
+  /** Remove, Heal and Clone spots; absent when there are none. */
+  spots?: Spot[]
 }
 
 export function displayUniforms(s: DevelopSettings): DisplayUniforms {
@@ -200,5 +211,6 @@ export function displayUniforms(s: DevelopSettings): DisplayUniforms {
     huePreservation: Math.min(1, Math.max(0, s.advanced.huePreservation / 100)),
     geometry: s.geometry ?? DEFAULT_GEOMETRY,
     toneCurve: toneCurveGpu(s.toneCurve),
+    ...(s.spots?.length ? { spots: s.spots } : {}),
   }
 }

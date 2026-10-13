@@ -13,10 +13,18 @@ export const CROP_OVERLAYS: { id: CropOverlayKind; label: string }[] = [
 ]
 
 /** Icons for the groups, 16 px, drawn with the text colour. */
-export const GROUP_ICONS: Record<'crop' | 'basic' | 'curve', ReactNode> = {
+export const GROUP_ICONS: Record<'crop' | 'remove' | 'basic' | 'curve', ReactNode> = {
   crop: (
     <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
       <path fill="none" stroke="currentColor" strokeWidth="1.6" d="M4 1v10.5h10.5M1 4.5h10.5V15" />
+    </svg>
+  ),
+  // A spot (solid) and its source (dashed), joined.
+  remove: (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="10.5" cy="5.5" r="3.6" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="5" cy="11" r="3.2" fill="none" stroke="currentColor" strokeWidth="1.3" strokeDasharray="2 1.6" />
+      <path stroke="currentColor" strokeWidth="1.3" d="M7.3 8.7 8 8" />
     </svg>
   ),
   basic: (

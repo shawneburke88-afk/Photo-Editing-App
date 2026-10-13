@@ -224,6 +224,27 @@ describe('shortcut sets', () => {
     }
   })
 
+  it('gives the Remove brush its own keys: Q, [ and ] for the size, Shift+[ and Shift+] for the feather, H, Delete, Esc', () => {
+    const REMOVE: Context[] = ['global', 'remove']
+    for (const set of [LB, LR]) {
+      const map = resolveKeymap(set)
+      expect(matchAction(map, key('q'), DEVELOP)).toBe('develop.remove')
+      expect(matchAction(map, key('q'), REMOVE)).toBe('develop.remove')
+      expect(matchAction(map, key(']', { code: 'BracketRight' }), REMOVE)).toBe('remove.sizeUp')
+      expect(matchAction(map, key('[', { code: 'BracketLeft' }), REMOVE)).toBe('remove.sizeDown')
+      expect(matchAction(map, key('}', { shiftKey: true, code: 'BracketRight' }), REMOVE)).toBe('remove.featherUp')
+      expect(matchAction(map, key('{', { shiftKey: true, code: 'BracketLeft' }), REMOVE)).toBe('remove.featherDown')
+      expect(matchAction(map, key('h'), REMOVE)).toBe('remove.showAll')
+      expect(matchAction(map, key('Delete'), REMOVE)).toBe('remove.delete')
+      expect(matchAction(map, key('Escape'), REMOVE)).toBe('remove.cancel')
+      expect(matchAction(map, key('z', { ctrlKey: true }), REMOVE)).toBe('develop.undo')
+      // Ctrl+[ still rotates in Develop; the brush keys don't reach Develop or the Library.
+      expect(matchAction(map, key('[', { ctrlKey: true }), DEVELOP)).toBe('develop.rotateLeft')
+      expect(matchAction(map, key(']'), DEVELOP)).toBeNull()
+      expect(matchAction(map, key(']', { code: 'BracketRight' }), LIBRARY)).toBe('photo.rateUp')
+    }
+  })
+
   it('uses Lightroom keys where LightBench differs', () => {
     const map = resolveKeymap(LR)
     expect(matchAction(map, key('o'), DEVELOP)).toBeNull()
