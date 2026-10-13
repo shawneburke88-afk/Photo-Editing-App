@@ -257,6 +257,9 @@ export class DevelopEngine {
   private readonly retouch: RetouchStage
   /** The RAW stage the scene was built with, and the photo's canonical one (as shot, defaults), for Remove fills. */
   private builtStage: RawStageOptions | null = null
+  /** Drawings in progress, and cached textures waiting for them to end before they are destroyed. */
+  private drawing = 0
+  private retired: GPUTexture[] = []
   private canonicalStage: RawStageOptions | null = null
 
   private constructor(device: GPUDevice, mode: PresentMode) {
@@ -520,7 +523,9 @@ export class DevelopEngine {
   private async source(g: GeometrySettings, whole = false, lens?: LensSettings, spots?: Spot[], wait = true): Promise<Source> {
     const lw = (await this.lensCorrection(lens)).warp
     const r = withLens(this.geometry(g, whole), lw, lensWarpKey(lw))
-    const base = spots?.length ? await this.retouch.texture(() => this.scene!, spots, wait) : { tex: this.scene!, key: '', release: () => {} }
+    const lease = this.lease()
+    const got = spots?.length ? await this.retouch.texture(() => this.scene!, spots, wait).catch((e: Error) => { lease(); throw e }) : { tex: this.scene!, key: '', release: () => {} }
+    const base = { ...got, release: () => { got.release(); lease() } }
     try {
       if (whole && lw) {
         // The crop tool draws the lens-corrected scene directly through the 3×3 map, so turning the photo doesn't warp again.
@@ -545,7 +550,7 @@ export class DevelopEngine {
       if (this.lensOnly && this.lensOnly.key === key && this.lensOnly.gen === this.sceneGen) return this.lensOnly.tex
       this.checkAlive()
       const tex = this.buildWarp(r, base)
-      this.lensOnly?.tex.destroy()
+      if (this.lensOnly) this.retireTex(this.lensOnly.tex)
       this.lensOnly = { key, gen: this.sceneGen, tex }
       return tex
     })
@@ -560,13 +565,40 @@ export class DevelopEngine {
       if (this.warp && this.warp.key === key && this.warp.gen === this.sceneGen) return this.warp.tex
       this.checkAlive()
       const tex = this.buildWarp(r, base)
-      // Work already submitted with the old texture still completes (WebGPU destroys it afterwards).
-      this.warp?.tex.destroy()
+      // Kept until no drawing that may still use it is pending (a drawing can hold it between choosing and submitting).
+      if (this.warp) this.retireTex(this.warp.tex)
       this.warp = { key, gen: this.sceneGen, tex }
       return tex
     })
     this.warpChain = job.catch(() => {})
     return job
+  }
+
+  /**
+   * A drawing in progress (from choosing its source to submitting its work): cached textures replaced meanwhile are
+   * destroyed only after it ends. Returns the function that ends it (also called by itself after 20 s, so a drawing
+   * that failed never keeps old textures).
+   */
+  private lease(): () => void {
+    this.drawing++
+    let done = false
+    const end = () => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      this.drawing--
+      if (!this.drawing) {
+        for (const t of this.retired) t.destroy()
+        this.retired = []
+      }
+    }
+    const timer = setTimeout(end, 20000)
+    return end
+  }
+
+  private retireTex(t: GPUTexture) {
+    if (this.drawing) this.retired.push(t)
+    else t.destroy()
   }
 
   /** One bicubic resample of the scene through the combined geometry map (warp.wgsl), then its mip chain. */
@@ -612,13 +644,15 @@ export class DevelopEngine {
 
   /** A new scene: the warped copy belongs to the old one. */
   private newScene(scene: GPUTexture) {
-    if (this.scene) this.retouch.forget(this.scene)
-    this.scene?.destroy()
+    if (this.scene) {
+      this.retouch.forget(this.scene)
+      this.retireTex(this.scene)
+    }
     this.scene = scene
     this.sceneGen++
-    this.warp?.tex.destroy()
+    if (this.warp) this.retireTex(this.warp.tex)
     this.warp = null
-    this.lensOnly?.tex.destroy()
+    if (this.lensOnly) this.retireTex(this.lensOnly.tex)
     this.lensOnly = null
     for (const m of this.maskCache) m.tex.destroy()
     this.maskCache = []
@@ -1688,6 +1722,7 @@ export class DevelopEngine {
     this.rgbInput?.texture.destroy()
     this.warp?.tex.destroy()
     this.lensOnly?.tex.destroy()
+    for (const t of this.retired) t.destroy()
     for (const m of this.maskCache) m.tex.destroy()
     this.noMask?.destroy()
     this.retouch.destroy()

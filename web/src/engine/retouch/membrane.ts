@@ -71,7 +71,8 @@ function sor(w: number, h: number, unknown: Uint8Array, v: Float32Array, ch: num
   }
   const omega = 2 - 1 / (0.1575 * Math.sqrt(n) + 0.8)
   const eps = 0.1 / 255
-  const exit = eps * eps * omega * omega
+  // darktable writes the factor as w = ω / 4 (its update is w · (4v − Σ neighbours)); its exit is ε² w².
+  const exit = (eps * eps * omega * omega) / 16
   const acc = new Float64Array(ch)
   for (let iter = 0; iter < maxIter; iter++) {
     let err = 0
