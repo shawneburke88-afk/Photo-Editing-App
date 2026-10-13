@@ -3,7 +3,9 @@
 // Order follows darktable's scene-referred pipeline: exposure → tone equalizer → (presence) →
 // sigmoid → output colour profile. The sigmoid functions are translated from darktable's
 // data/kernels/sigmoid.cl (darktable developers, GPL-3.0-or-later); the tone-equalizer correction
-// follows darktable's src/iop/toneequal.c (global mode, "RGB average" luminance estimator).
+// follows darktable's src/iop/toneequal.c: process version 1 with the "RGB average" luminance estimator and no
+// filter, version 2 with darktable's defaults, the Euclidean norm refined by the exposure-independent guided
+// filter (src/common/eigf.h; its blurred statistics come from tone-mask.wgsl).
 // The clipping indicators are translated from darktable's src/iop/overexposed.c (display clipping:
 // any RGB / luminance / saturation / full gamut) and src/iop/rawoverexposed.c (sensor clipping).
 
@@ -56,12 +58,16 @@ struct View {
   toDisplay1: vec4f,
   toDisplay2: vec4f,
   xt: vec4u,          // X-Trans 6×6 pattern, 2 bits per photosite (engine/raw/xtrans.ts packXtrans)
+  maskCells: vec2f,   // tone mask (version 2): cells of `maskStats` per unit of the shown image's uv
+  toneMode: u32,      // tone equalizer mask: 0 RGB average of the pixel (version 1), 1 guided (EIGF, version 2)
+  maskFeather: f32,   // EIGF regularisation, 1 / feathering
 }
 
 @group(0) @binding(0) var img: texture_2d<f32>;
 @group(0) @binding(1) var samp: sampler;
 @group(0) @binding(2) var<uniform> V: View;
 @group(0) @binding(3) var<storage, read> raw: array<u32>; // packed uint16 sensor data (for sensor clipping)
+@group(0) @binding(4) var maskStats: texture_2d<f32>; // [E[I], var] before exposure (tone-mask.wgsl); 1×1 unused in version 1
 
 const REC2020_Y = vec3f(0.2627002, 0.6779981, 0.0593017);
 
@@ -90,6 +96,37 @@ fn toneCorrection(lum: f32) -> f32 {
     r += exp(-d * d / 4.0) * f; // 2σ² with σ = √2
   }
   return clamp(r, 0.25, 4.0);
+}
+
+/** The guided-filter statistics at a point of the shown image, bilinearly (darktable dt_bilinear_sample2). */
+fn maskAt(uv: vec2f) -> vec2f {
+  let size = vec2i(textureDimensions(maskStats));
+  let f = uv * V.maskCells - 0.5;
+  let p0 = vec2i(floor(f));
+  let t = f - floor(f);
+  let hi = size - 1;
+  let a = textureLoad(maskStats, clamp(p0, vec2i(0), hi), 0).xy;
+  let b = textureLoad(maskStats, clamp(p0 + vec2i(1, 0), vec2i(0), hi), 0).xy;
+  let c = textureLoad(maskStats, clamp(p0 + vec2i(0, 1), vec2i(0), hi), 0).xy;
+  let d = textureLoad(maskStats, clamp(p0 + vec2i(1, 1), vec2i(0), hi), 0).xy;
+  return mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
+}
+
+/**
+ * Version 2's mask (darktable luminance_mask.h pixel_rgb_norm_2, eigf.h eigf_blending_no_mask with linear
+ * blending): the pixel's Euclidean norm pulled towards its surroundings' average, except across strong edges.
+ * The statistics were measured before exposure; I and E[I] scale with the gain, the variance with its square.
+ */
+fn guidedMask(c: vec3f, uv: vec2f) -> f32 {
+  let i = max(length(c), 1.52587890625e-05);
+  let m = maskAt(uv);
+  let avg = m.x * V.exposure;
+  let variance = m.y * V.exposure * V.exposure;
+  let norm = max(avg * i, 1e-6);
+  let v = variance / norm;
+  let a = v / (v + V.maskFeather);
+  let b = avg - a * avg;
+  return max(i * a + b, 1.52587890625e-05);
 }
 
 // ---- sigmoid (darktable sigmoid.cl)
@@ -173,12 +210,16 @@ fn srgbOetfUnbounded(c: vec3f) -> vec3f {
 }
 
 /** The develop transform up to the tone mapper: display-referred linear Rec.2020 (before the output profile). */
-fn developRec2020(scene: vec3f) -> vec3f {
+fn developRec2020(scene: vec3f, uv: vec2f) -> vec3f {
   var c = vec3f(dot(V.wbFix0.xyz, scene), dot(V.wbFix1.xyz, scene), dot(V.wbFix2.xyz, scene));
   c *= V.exposure;
 
   if (V.toneEnabled == 1u) {
-    c *= toneCorrection(max((c.x + c.y + c.z) / 3.0, 0.0));
+    if (V.toneMode == 1u) {
+      c *= toneCorrection(guidedMask(c, uv));
+    } else {
+      c *= toneCorrection(max((c.x + c.y + c.z) / 3.0, 0.0));
+    }
   }
 
   // Presence (simple chroma scaling; darktable's colour balance rgb comes later).
@@ -337,9 +378,9 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let scene = textureSampleLevel(img, samp, tuv, V.lod).rgb;
   if (V.statsPass == 2u) {
     // Export: the output colour profile, resizing and encoding happen afterwards (export.wgsl).
-    return vec4f(developRec2020(scene), 1.0);
+    return vec4f(developRec2020(scene, uv), 1.0);
   }
-  let rec = developRec2020(scene);
+  let rec = developRec2020(scene, uv);
   // Histogram and clipping are judged in sRGB, whatever the screen.
   let lin = rec2020ToSrgb(rec);
   let t = srgbOetfUnbounded(lin);
