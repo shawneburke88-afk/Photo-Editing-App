@@ -129,9 +129,9 @@ export const PROCESS_VERSIONS: ProcessVersion[] = [
   },
 ]
 
-// Test scaffolding, development server only: `?simulateProcess=2` adds a copy of the newest version under that
-// number, so the "Update to current process" offer can be tried before a second rendering exists. Production
-// builds drop this (import.meta.env.DEV is false there).
+// Test scaffolding, development server only: `?simulateProcess=N` (N above the newest version) adds a copy of the
+// newest version under that number, so the "Update to current process" offer can be tried without a new rendering.
+// Production builds drop this (import.meta.env.DEV is false there).
 if (import.meta.env.DEV && typeof location !== 'undefined') {
   const n = Number(new URLSearchParams(location.search).get('simulateProcess'))
   const last = PROCESS_VERSIONS[PROCESS_VERSIONS.length - 1]
