@@ -11,7 +11,7 @@ import type { AutoRecord } from './auto'
 import { DEFAULT_LENS, LEGACY_LENS, normalizeLens, type LensSettings } from '../lens/correction'
 import { DEFAULT_GEOMETRY, normalizeGeometry, type GeometrySettings } from './geometry'
 import { CURRENT_PROCESS, processParams, validProcess, type ToneMask } from './process'
-import { normalizeDetail, type DetailSettings } from '../detail/settings'
+import { normalizeDetail, RAW_DETAIL, type DetailSettings } from '../detail/settings'
 
 /**
  * The demosaic method (Develop › Advanced). The stored value names the method for the photo's sensor as darktable
@@ -75,7 +75,7 @@ export interface DevelopSettings {
   lens: LensSettings
   /**
    * The Detail group: Sharpening and Noise Reduction (engine/detail/settings.ts). Absent = all off: every edit saved
-   * before it existed, and new edits (off by default), so they render as before.
+   * before it existed reads so and renders as before. New RAW edits get sharpening on (`RAW_DETAIL`), JPEGs none.
    */
   detail?: DetailSettings
 }
@@ -104,6 +104,8 @@ export const DEFAULT_SETTINGS: DevelopSettings = {
     demosaic: 'rcd',
   },
   lens: DEFAULT_LENS,
+  // New RAW photos are sharpened (capture sharpening, Amount 40, automatic radius; owner's decision 2026-10-13).
+  detail: RAW_DETAIL,
 }
 
 /** What kind of source a photo is: camera RAW, or an already-rendered (display-referred) RGB image. */
@@ -114,10 +116,12 @@ export type SourceKind = 'raw' | 'rgb'
  * exposure. Hue preservation is 0 so that the pipeline's inverse tone mapping at load is exact and an
  * unedited JPEG looks exactly as shot (see engine/gpu/rgb-input.wgsl).
  */
-export const DEFAULT_RGB_SETTINGS: DevelopSettings = {
-  ...DEFAULT_SETTINGS,
-  advanced: { ...DEFAULT_SETTINGS.advanced, baseExposure: 0, huePreservation: 0 },
-}
+export const DEFAULT_RGB_SETTINGS: DevelopSettings = (() => {
+  // JPEGs start unsharpened (Lightroom's JPEG default too, from general knowledge): no `detail`.
+  const { detail: _raw, ...rest } = DEFAULT_SETTINGS
+  void _raw
+  return { ...rest, advanced: { ...DEFAULT_SETTINGS.advanced, baseExposure: 0, huePreservation: 0 } }
+})()
 
 export const defaultsFor = (kind: SourceKind) => (kind === 'rgb' ? DEFAULT_RGB_SETTINGS : DEFAULT_SETTINGS)
 
@@ -127,8 +131,11 @@ export const defaultsFor = (kind: SourceKind) => (kind === 'rgb' ? DEFAULT_RGB_S
  */
 export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined, kind: SourceKind = 'raw'): DevelopSettings {
   const d = defaultsFor(kind)
+  // Detail comes only from the stored edit: an edit without it is off (old edits render as before).
+  const { detail: _dd, ...base } = d
+  void _dd
   const out: DevelopSettings = {
-    ...d,
+    ...base,
     ...s,
     whiteBalance: { ...d.whiteBalance, ...s?.whiteBalance },
     advanced: { ...d.advanced, ...s?.advanced },

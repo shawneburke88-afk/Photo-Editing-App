@@ -11,8 +11,8 @@ const withNr = (luminance: number, color: number, amount = 0): DevelopSettings =
 const clip = (settings: DevelopSettings, keys = DEFAULT_PASTE_KEYS): Clipboard => ({ settings, keys, rerunAuto: false, sourceKind: 'raw', sourceName: 'x' })
 
 describe('Detail in Copy / Paste', () => {
-  it('is ticked by default, as three items like Lightroom’s Copy Settings', () => {
-    for (const k of ['sharpening', 'luminanceNoise', 'colorNoise'] as const) expect(DEFAULT_PASTE_KEYS).toContain(k)
+  it('is three items, as in Lightroom’s Copy Settings, unticked by default (like Lens: an old edit mustn’t turn new photos’ sharpening off)', () => {
+    for (const k of ['sharpening', 'luminanceNoise', 'colorNoise'] as const) expect(DEFAULT_PASTE_KEYS).not.toContain(k)
   })
 
   it('copies each part on its own', () => {
@@ -27,33 +27,44 @@ describe('Detail in Copy / Paste', () => {
   })
 
   it('pasting from an edit without Detail onto one without leaves no key (old edits stay as they were)', () => {
-    const out = applyPaste({ ...DEFAULT_SETTINGS, exposure: 1 }, clip({ ...DEFAULT_SETTINGS, exposure: 0.5 }), 'raw')
+    const { detail: _d, ...old } = DEFAULT_SETTINGS
+    void _d
+    const all = [...DEFAULT_PASTE_KEYS, 'sharpening', 'luminanceNoise', 'colorNoise'] as const
+    const out = applyPaste({ ...old, exposure: 1 }, clip({ ...old, exposure: 0.5 }, [...all]), 'raw')
     expect(out.exposure).toBe(0.5)
     expect('detail' in out).toBe(false)
-    // …and turns it off where the target had it.
-    expect('detail' in applyPaste(withNr(30, 30), clip(DEFAULT_SETTINGS), 'raw')).toBe(false)
+    // …turns it off where the target had it, when ticked…
+    expect('detail' in applyPaste(withNr(30, 30), clip(old, [...all]), 'raw')).toBe(false)
+    // …and leaves a new photo's default sharpening alone when not ticked (the default).
+    expect(applyPaste(DEFAULT_SETTINGS, clip({ ...old, exposure: 0.5 }), 'raw').detail?.sharpen.amount).toBe(40)
   })
 
   it('describes the items and notices changes (Auto Sync)', () => {
     const lines = describePaste(clip(withNr(40, 0, 60)), 'raw')
-    expect(lines).toContain('Sharpening: Amount 60, Radius 1.0, Detail 25, Masking 0')
-    expect(lines.some((l) => l.startsWith('Noise reduction: Luminance: 40'))).toBe(true)
-    expect(lines).toContain('Noise reduction: Color: off')
+    expect(lines.length).toBeGreaterThan(0)
+    const all = describePaste(clip(withNr(40, 0, 60), [...DEFAULT_PASTE_KEYS, 'sharpening', 'luminanceNoise', 'colorNoise']), 'raw')
+    expect(all).toContain('Sharpening: Amount 60, Radius auto (each photo’s own), Detail 25, Masking 0')
+    expect(all.some((l) => l.startsWith('Noise reduction: Luminance: 40'))).toBe(true)
+    expect(all).toContain('Noise reduction: Color: off')
     expect(changedKeys(withNr(40, 0), withNr(45, 0))).toEqual(['luminanceNoise'])
   })
 })
 
 describe('Detail under a preset’s Amount', () => {
   it('moves every Detail slider from the photo’s value towards the preset’s', () => {
+    const { detail: _d, ...old } = DEFAULT_SETTINGS
+    void _d
     const after = withNr(60, 40, 80)
-    const half = blendSettings(DEFAULT_SETTINGS, after, 0.5)
+    const half = blendSettings(old, after, 0.5)
     expect(half.detail?.noise.luminance).toBe(30)
     expect(half.detail?.noise.color).toBe(20)
     expect(half.detail?.sharpen.amount).toBe(40)
-    const double = blendSettings(DEFAULT_SETTINGS, after, 2)
+    const double = blendSettings(old, after, 2)
     expect(double.detail?.noise.luminance).toBe(100)
     expect(double.detail?.sharpen.amount).toBe(150)
-    expect('detail' in blendSettings(DEFAULT_SETTINGS, after, 0)).toBe(false)
-    expect('detail' in blendSettings(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, exposure: 1 }, 0.5)).toBe(false)
+    expect('detail' in blendSettings(old, after, 0)).toBe(false)
+    expect('detail' in blendSettings(old, { ...old, exposure: 1 }, 0.5)).toBe(false)
+    // From a new RAW photo's default sharpening (40) towards the preset's 80.
+    expect(blendSettings(DEFAULT_SETTINGS, after, 0.5).detail?.sharpen.amount).toBe(60)
   })
 })

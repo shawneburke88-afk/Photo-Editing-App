@@ -10,21 +10,26 @@
 // maths isn't public. Luminance 50 / Color 50 are darktable's default curves (0.5 on every band); Detail tilts
 // the finest bands, Contrast (luminance) and Smoothness (colour) the coarse ones (`denoiseCurves`).
 //
-// Sharpening: the method is not settled yet (owner, 2026-10-13: a research pass compares darktable's sharpen,
-// diffuse or sharpen and RawTherapee-style capture sharpening). The settings, the Lightroom fields and the masking
-// preview are built so the method can be swapped (`SharpenMethod`); the interim method is darktable's unsharp mask
-// (src/iop/sharpen.c) on luminance with darktable's capture-sharpening contrast mask for Masking
-// (src/iop/demosaicing/capture.c `_modify_blend`). The mapping is LightBench's own.
+// Sharpening (owner's decision, 2026-10-13, after docs/research/DETAIL_DENOISE_SHARPEN.md): capture sharpening,
+// Richardson–Lucy deconvolution of luminance with a Gaussian PSF, ported from darktable's capture sharpening
+// (src/iop/demosaicing/capture.c, darktable's port of RawTherapee 5.8's Capture Sharpening by Ingo Weyrich). It runs
+// after the denoise (darktable runs it inside demosaic, before denoise; its manual says to denoise before
+// sharpening). Lightroom's four sliders map onto it as the research proposes (`captureParams`); **the mapping is
+// LightBench's own**.
 //
-// Storage: an optional `detail` field in the develop settings. An edit without it (every edit saved before this
-// part, and new photos: off by default, owner's open question) has everything off and renders exactly as before;
-// no process version is needed (process.ts: new tools that are off by default don't need one).
+// Storage and defaults: an optional `detail` field in the develop settings. An edit without it — every edit saved
+// before this part — has everything off and renders exactly as before; no process version is needed (the settings
+// say whether the photo is sharpened, as for lens corrections, PHASE3.md Part 2). New RAW photos, unedited RAWs and
+// Reset get sharpening on (Amount 40, automatic radius: `RAW_DETAIL`, owner's decision 2026-10-13); JPEGs and noise
+// reduction start off.
 
 export interface SharpenSettings {
-  /** Lightroom's Amount, 0…150. 0 = off. */
+  /** Lightroom's Amount, 0…150. 0 = off. Richardson–Lucy iterations = Amount / 5. */
   amount: number
-  /** Lightroom's Radius, 0.5…3.0 px. */
+  /** The blur radius (Gaussian sigma), 0.25…1.5 px, used when `radiusAuto` is off. */
   radius: number
+  /** Measure the radius from the photo (darktable's automatic radius), else use `radius`. */
+  radiusAuto: boolean
   /** Lightroom's Detail, 0…100. */
   detail: number
   /** Lightroom's Masking, 0…100: 0 sharpens everything, 100 only strong edges. */
@@ -52,20 +57,27 @@ export interface DetailSettings {
 }
 
 /**
- * Off, with Lightroom's defaults for the dependent sliders (Radius 1.0, Detail 25, Masking 0; Luminance Detail 50,
- * Contrast 0; Color Detail 50, Smoothness 50 — Lightroom Classic's, from general knowledge, not checked in
- * Lightroom here). Lightroom itself starts RAWs at Sharpening 40 and Color 25; LightBench starts everything off
- * (the owner decides, PHASE3.md Part 13).
+ * Everything off, with Lightroom's defaults for the dependent sliders (Detail 25, Masking 0; Luminance Detail 50,
+ * Contrast 0; Color Detail 50, Smoothness 50 — Lightroom Classic's, from general knowledge, not checked in Lightroom
+ * here) and the automatic radius (0.5 px, darktable's default `cs_radius`, when set by hand). What an edit without
+ * `detail` means, and JPEGs' default.
  */
 export const DEFAULT_DETAIL: DetailSettings = {
-  sharpen: { amount: 0, radius: 1, detail: 25, masking: 0 },
+  sharpen: { amount: 0, radius: 0.5, radiusAuto: true, detail: 25, masking: 0 },
   noise: { luminance: 0, luminanceDetail: 50, luminanceContrast: 0, color: 0, colorDetail: 50, colorSmoothness: 50 },
 }
+
+/**
+ * New RAW photos (owner's decision, 2026-10-13): sharpening Amount 40 (Lightroom's RAW default; 8 iterations,
+ * darktable's default), automatic radius, Detail 25 and Masking 0 (Lightroom's defaults; with LightBench's mapping
+ * Masking 0 still keeps darktable's automatic noise threshold). Noise reduction off.
+ */
+export const RAW_DETAIL: DetailSettings = { ...DEFAULT_DETAIL, sharpen: { ...DEFAULT_DETAIL.sharpen, amount: 40 } }
 
 /** Slider ranges (Lightroom's). */
 export const DETAIL_RANGES = {
   amount: [0, 150],
-  radius: [0.5, 3],
+  radius: [0.25, 1.5],
   detail: [0, 100],
   masking: [0, 100],
   luminance: [0, 100],
@@ -90,6 +102,7 @@ export function normalizeDetail(d: unknown): DetailSettings | undefined {
     sharpen: {
       amount: num(s.amount, D.sharpen.amount, R.amount),
       radius: num(s.radius, D.sharpen.radius, R.radius),
+      radiusAuto: typeof s.radiusAuto === 'boolean' ? s.radiusAuto : D.sharpen.radiusAuto,
       detail: num(s.detail, D.sharpen.detail, R.detail),
       masking: num(s.masking, D.sharpen.masking, R.masking),
     },
@@ -161,31 +174,39 @@ export function denoiseCurves(n: NoiseSettings): { y0: number[]; uv: number[] } 
   return { y0, uv }
 }
 
-// ---- Sharpening (the method is pending; see the head of this file)
+// ---- Sharpening: Lightroom's sliders → darktable's capture sharpening (LightBench's mapping)
 
-/** Which sharpening algorithm renders the Sharpening sliders. Only the interim one exists for now. */
-export type SharpenMethod = 'usm-interim'
-export const SHARPEN_METHOD: SharpenMethod = 'usm-interim'
-
-/** Engine parameters of the interim method (darktable's sharpen.c on luminance, with capture.c's contrast mask). */
-export interface SharpenParams {
-  method: SharpenMethod
-  /** Gaussian sigma in full-size pixels (darktable sharpen.c's "radius"). */
-  sigma: number
-  /** darktable sharpen.c's amount (detail multiplier). */
-  amount: number
-  /** darktable sharpen.c's threshold, as a fraction of the pixel's luminance (LightBench: scene-linear data). */
-  threshold: number
-  /** darktable capture.c's contrast sensitivity (`cs_thrs`, 0…1); 0 = no mask. */
-  mask: number
+/**
+ * The capture-sharpening parameters of the four sliders (docs/research/DETAIL_DENOISE_SHARPEN.md section 4.3):
+ *  - Amount → Richardson–Lucy iterations = Amount / 5 (40 → 8, darktable's default; 150 → 30), fractional counts
+ *    interpolated between ⌊n⌋ and ⌈n⌉ iterations so the slider is smooth;
+ *  - Radius → the Gaussian PSF's sigma: measured from the photo when automatic (darktable `_calc_auto_radius`), else
+ *    the slider (0.25–1.5 px; darktable's range is 0–1.5);
+ *  - Detail → halo suppression: the result's overshoot beyond the original pixel's 3 × 3 neighbourhood range is kept
+ *    in proportion Detail / 100 (100 = the deconvolution unchanged, 0 = no overshoot at all);
+ *  - Masking → darktable's contrast sensitivity: auto + Masking / 100 · (1 − auto), where auto is darktable's
+ *    estimate from the ISO and the raw bit depth (`_get_variance_threshold`), so Masking 0 still keeps flat, noisy
+ *    areas protected (unlike Lightroom, where 0 sharpens everything).
+ */
+export function captureParams(s: SharpenSettings, autoThreshold: number): { iterations: number; halo: number; threshold: number } {
+  return {
+    iterations: s.amount / 5,
+    halo: s.detail / 100,
+    threshold: autoThreshold + (s.masking / 100) * (1 - autoThreshold),
+  }
 }
 
 /**
- * Lightroom's Sharpening → the interim method (LightBench's mapping, provisional until the method is chosen):
- * Amount / 100 is darktable's amount (Lightroom's 40 → 0.4; darktable's default 0.5), Radius is the Gaussian sigma
- * in pixels, Detail 0…100 lowers darktable's threshold from 2 % to 0 of the local luminance (higher Detail sharpens
- * finer, lower-contrast detail), and Masking / 100 is capture.c's contrast sensitivity.
+ * darktable's automatic contrast threshold (capture.c `_get_variance_threshold`, lines 49-77, and `_capture_noise`,
+ * line 785: truncated to 0.01): 0.4, less for raws with more than 12 and 14 bits, and less at low ISO.
  */
-export function sharpenParams(s: SharpenSettings): SharpenParams {
-  return { method: SHARPEN_METHOD, sigma: s.radius, amount: s.amount / 100, threshold: 0.02 * (1 - s.detail / 100), mask: s.masking / 100 }
+export function autoThreshold(whitePoint: number, iso: number): number {
+  // In float, as darktable computes it (the truncation to 0.01 depends on it).
+  const f = Math.fround
+  let t = f(0.4)
+  if (whitePoint > 4096) t = f(t - f(0.07))
+  if (whitePoint > 14000) t = f(t - f(0.01))
+  const isoFactor = f(f(600 - Math.min(1000, Math.max(100, Math.trunc(iso)))) / 100)
+  t = f(t - f(f(0.012) * isoFactor))
+  return 0.01 * Math.trunc(f(100 * t))
 }

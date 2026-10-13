@@ -132,7 +132,7 @@ export function blendSettings(before: DevelopSettings, after: DevelopSettings, a
  * none) towards the preset's, like the other sliders, at the slider's own precision (LightBench's choice).
  */
 function blendDetail(before: DetailSettings, after: DetailSettings, t: number): DetailSettings {
-  const b = (k: keyof DetailSettings['sharpen'], x: number, y: number, digits = 0) => {
+  const b = (k: 'amount' | 'radius' | 'detail' | 'masking', x: number, y: number, digits = 0) => {
     const [lo, hi] = DETAIL_RANGES[k]
     return Math.round(clamp(lerp(x, y, t), [lo, hi]) * 10 ** digits) / 10 ** digits
   }
@@ -143,7 +143,9 @@ function blendDetail(before: DetailSettings, after: DetailSettings, t: number): 
   return {
     sharpen: {
       amount: b('amount', before.sharpen.amount, after.sharpen.amount),
-      radius: b('radius', before.sharpen.radius, after.sharpen.radius, 1),
+      radius: b('radius', before.sharpen.radius, after.sharpen.radius, 2),
+      // A switch, like the others: it follows the preset.
+      radiusAuto: after.sharpen.radiusAuto,
       detail: b('detail', before.sharpen.detail, after.sharpen.detail),
       masking: b('masking', before.sharpen.masking, after.sharpen.masking),
     },

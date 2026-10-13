@@ -22,6 +22,7 @@ import { LensPanel } from './LensPanel'
 import { DetailPanel } from './DetailPanel'
 import { detailOn, withDetail } from '../engine/detail/settings'
 import type { ProfileChoice } from '../engine/detail/noiseprofiles'
+import type { RadiusChoice } from '../engine/detail/capture'
 import { loadNoiseProfiles, noiseProfilesState, subscribeNoiseProfiles } from '../engine/detail/noise-db'
 import { LEGACY_LENS, lensWarpKey, type LensStatus } from '../engine/lens/correction'
 import { lensfunState, loadLensfun, subscribeLensfun } from '../engine/lens/lens-db'
@@ -180,8 +181,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [bypass, setBypass] = useState<Bypass>({ crop: false, basic: false, detail: false })
   /** Sharpening's Masking preview (Alt-drag on Masking, or Show mask): a view only. */
   const [maskPreview, setMaskPreview] = useState(false)
-  /** The noise profile the last render used, for the Noise Reduction section. */
+  /** The noise profile and sharpening radius the last render used, for the Detail group. */
   const [noiseProfile, setNoiseProfile] = useState<ProfileChoice | null>(null)
+  const [sharpenRadius, setSharpenRadius] = useState<RadiusChoice | null>(null)
   const [reveal, setReveal] = useState<{ id: GroupId; n: number } | null>(null)
   // Sublabels next to each slider: 1 = shown, 2 = hidden (tooltips are always available on hover).
   const [hintsPref, setHintsPref] = useStoredNumber('lightbench.develop.hints', 1)
@@ -344,8 +346,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   latest.current = { settings, info, view, before, indicators, hover, draft, bypass, guiding, maskPreview }
   /** The settings drawn: Before shows the defaults; a preset hovered, the crop being edited and switched-off groups apply on top. */
   const shownOf = (x: typeof latest.current, inf: SensorInfo): DevelopSettings => {
-    // Before is the photo as shot: the defaults without lens corrections.
-    if (x.before) return { ...defaultsFor(inf.kind), lens: LEGACY_LENS }
+    // Before is the photo as shot: the defaults without lens corrections or sharpening.
+    if (x.before) return { ...defaultsFor(inf.kind), lens: LEGACY_LENS, detail: undefined }
     let s = x.hover ?? x.settings
     if (x.bypass.basic) s = withoutBasic(s, defaultsFor(inf.kind))
     if (x.bypass.detail && s.detail) s = { ...s, detail: undefined }
@@ -407,6 +409,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           const ms = await engine.render(x.maskPreview && !x.before ? { ...du, detailMask: true } : du, x.before ? inf.asShotWb : multipliers(shown, inf), v, x.indicators)
           setTiming((t) => ({ ...t, frame: ms }))
           setNoiseProfile((p) => (p === engine.lastProfile ? p : engine.lastProfile))
+          setSharpenRadius((r) => (r === engine.lastRadius ? r : engine.lastRadius))
           if (v.frame) {
             const dpr = window.devicePixelRatio || 1
             const l = engine.layout(v, engine.canvas.width, engine.canvas.height)
@@ -1532,6 +1535,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   disabled={status.kind !== 'ready'}
                   showHint={hintsPref === 1}
                   profile={noiseProfile}
+                  radius={sharpenRadius}
                   db={noiseDb}
                   onLoadDb={() => void loadNoiseProfiles(true).then(() => requestRender())}
                   zoomedOut={view.zoom === 'fit' || (typeof view.zoom === 'number' && view.zoom < 1)}

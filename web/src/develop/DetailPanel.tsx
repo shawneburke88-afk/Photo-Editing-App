@@ -1,10 +1,11 @@
-// The Detail group (Phase 3, Part 13): Lightroom's Detail panel — Sharpening (Amount, Radius, Detail, Masking) and
-// Noise Reduction (Luminance with Detail and Contrast, Color with Detail and Smoothness) — on darktable's processing
-// (engine/detail/settings.ts). Holding Alt (Option on a Mac) while dragging Masking shows the mask, as in
+// The Detail group (Phase 3, Part 13): Lightroom's Detail panel — Sharpening (Amount, Radius, Detail, Masking) on
+// darktable's capture sharpening, and Noise Reduction (Luminance with Detail and Contrast, Color with Detail and
+// Smoothness) on darktable's denoise (profiled) (engine/detail/settings.ts). Holding Alt (Option on a Mac) while dragging Masking shows the mask, as in
 // Lightroom; "Show mask" does the same without a key (some Linux desktops take Alt-drag for moving windows).
 
 import { useEffect, useRef, useState } from 'react'
-import { DEFAULT_DETAIL, type DetailSettings, type NoiseSettings, type SharpenSettings } from '../engine/detail/settings'
+import { DEFAULT_DETAIL, RAW_DETAIL, type DetailSettings, type NoiseSettings, type SharpenSettings } from '../engine/detail/settings'
+import type { RadiusChoice } from '../engine/detail/capture'
 import type { NoiseProfileData, ProfileChoice } from '../engine/detail/noiseprofiles'
 import type { SourceKind } from '../engine/develop/settings'
 import { HELP } from './help'
@@ -17,6 +18,8 @@ interface Props {
   showHint: boolean
   /** The profile the last render used (null before noise reduction ran). */
   profile: ProfileChoice | null
+  /** The radius the last capture sharpening used (null before it ran). */
+  radius: RadiusChoice | null
   /** darktable's noise profiles: loaded, being downloaded, failed, or not asked for yet. */
   db: NoiseProfileData | 'loading' | 'failed' | null
   onLoadDb: () => void
@@ -46,8 +49,24 @@ function profileLine(p: ProfileChoice | null, kind: SourceKind, db: Props['db'])
   }
 }
 
-export function DetailPanel({ detail, kind, disabled, showHint, profile, db, onLoadDb, zoomedOut, onChange, onMaskPreview }: Props) {
+function radiusLine(r: RadiusChoice | null): string {
+  if (!r) return 'Measured from the photo when it is first sharpened.'
+  switch (r.from) {
+    case 'measured':
+      return `Auto: ${r.sigma.toFixed(2)} px, measured from the photo’s raw data (darktable’s method).`
+    case 'diffraction':
+      return `Auto: ${r.sigma.toFixed(2)} px, estimated from the aperture (f/${r.fNumber}) and the pixel size: it couldn’t be measured from the photo.`
+    case 'default':
+      return `Auto: ${r.sigma.toFixed(2)} px (darktable’s default): it couldn’t be measured from the photo.`
+    default:
+      return ''
+  }
+}
+
+export function DetailPanel({ detail, kind, disabled, showHint, profile, radius, db, onLoadDb, zoomedOut, onChange, onMaskPreview }: Props) {
   const d = detail ?? DEFAULT_DETAIL
+  // The photo's defaults (RAW photos are sharpened by default; JPEGs aren't).
+  const base = kind === 'raw' ? RAW_DETAIL : DEFAULT_DETAIL
   const setS = (label: string, patch: Partial<SharpenSettings>) => onChange(label, { ...d, sharpen: { ...d.sharpen, ...patch } })
   const setN = (label: string, patch: Partial<NoiseSettings>) => onChange(label, { ...d, noise: { ...d.noise, ...patch } })
   const guide = (key: string) => ({ help: HELP[key], showHint })
@@ -101,13 +120,29 @@ export function DetailPanel({ detail, kind, disabled, showHint, profile, db, onL
       <section>
         <div className="dpanel-head">
           <h3>Sharpening</h3>
-          <button className="button small" disabled={disabled || JSON.stringify(d.sharpen) === JSON.stringify(DEFAULT_DETAIL.sharpen)} onClick={() => onChange('Reset Sharpening', { ...d, sharpen: DEFAULT_DETAIL.sharpen })} title="Sharpening back to off, with Lightroom's default Radius, Detail and Masking">
+          <button className="button small" disabled={disabled || JSON.stringify(d.sharpen) === JSON.stringify(base.sharpen)} onClick={() => onChange('Reset Sharpening', { ...d, sharpen: base.sharpen })} title={kind === 'raw' ? 'Sharpening back to the default for RAW photos: Amount 40, automatic radius, Detail 25, Masking 0' : 'Sharpening back to off (JPEGs are already sharpened by the camera)'}>
             Reset
           </button>
         </div>
-        <Slider label="Amount" value={d.sharpen.amount} min={0} max={150} step={1} defaultValue={DEFAULT_DETAIL.sharpen.amount} format={int} disabled={disabled} {...guide('sharpenAmount')} onChange={(v) => setS('Sharpening: Amount', { amount: v })} />
-        <Slider label="Radius" value={d.sharpen.radius} min={0.5} max={3} step={0.1} defaultValue={DEFAULT_DETAIL.sharpen.radius} format={(v) => v.toFixed(1)} disabled={sharpOff} {...guide('sharpenRadius')} onChange={(v) => setS('Sharpening: Radius', { radius: v })} />
-        <Slider label="Detail" value={d.sharpen.detail} min={0} max={100} step={1} defaultValue={DEFAULT_DETAIL.sharpen.detail} format={int} disabled={sharpOff} {...guide('sharpenDetail')} onChange={(v) => setS('Sharpening: Detail', { detail: v })} />
+        <Slider label="Amount" value={d.sharpen.amount} min={0} max={150} step={1} defaultValue={base.sharpen.amount} format={int} disabled={disabled} {...guide('sharpenAmount')} onChange={(v) => setS('Sharpening: Amount', { amount: v })} />
+        <Slider
+          label="Radius"
+          value={d.sharpen.radiusAuto && radius ? radius.sigma : d.sharpen.radius}
+          min={0.25}
+          max={1.5}
+          step={0.01}
+          defaultValue={d.sharpen.radiusAuto && radius ? radius.sigma : DEFAULT_DETAIL.sharpen.radius}
+          format={(v) => (d.sharpen.radiusAuto ? `Auto ${v.toFixed(2)}` : v.toFixed(2))}
+          disabled={sharpOff}
+          {...guide('sharpenRadius')}
+          // Moving the slider sets the radius by hand; the Auto radius box goes back to the measured one.
+          onChange={(v) => (d.sharpen.radiusAuto && radius && Math.abs(v - radius.sigma) < 1e-9 ? undefined : setS('Sharpening: Radius', { radius: v, radiusAuto: false }))}
+        />
+        <label className="detail-check" title="Measure the blur radius from the photo itself (darktable's automatic radius)">
+          <input type="checkbox" checked={d.sharpen.radiusAuto} disabled={sharpOff} onChange={(e) => setS(e.target.checked ? 'Sharpening: Radius Auto' : 'Sharpening: Radius', { radiusAuto: e.target.checked, radius: radius && e.target.checked === false ? Math.round(radius.sigma * 100) / 100 : d.sharpen.radius })} /> Auto radius
+          {d.sharpen.radiusAuto && d.sharpen.amount > 0 && <span className="muted"> · {radiusLine(radius).replace(/^Auto: /, '')}</span>}
+        </label>
+        <Slider label="Detail" value={d.sharpen.detail} min={0} max={100} step={1} defaultValue={base.sharpen.detail} format={int} disabled={sharpOff} {...guide('sharpenDetail')} onChange={(v) => setS('Sharpening: Detail', { detail: v })} />
         <div
           className="detail-masking"
           onPointerDownCapture={(e) => {
@@ -115,13 +150,13 @@ export function DetailPanel({ detail, kind, disabled, showHint, profile, db, onL
             if (e.altKey) setAlt(true)
           }}
         >
-          <Slider label="Masking" value={d.sharpen.masking} min={0} max={100} step={1} defaultValue={DEFAULT_DETAIL.sharpen.masking} format={int} disabled={sharpOff} {...guide('sharpenMasking')} onChange={(v) => setS('Sharpening: Masking', { masking: v })} />
+          <Slider label="Masking" value={d.sharpen.masking} min={0} max={100} step={1} defaultValue={base.sharpen.masking} format={int} disabled={sharpOff} {...guide('sharpenMasking')} onChange={(v) => setS('Sharpening: Masking', { masking: v })} />
         </div>
         <label className="detail-check" title="Shows where sharpening applies (white) and where Masking holds it back (black). Holding Alt (Option on a Mac) while dragging Masking does the same.">
           <input type="checkbox" checked={showMask} disabled={sharpOff} onChange={(e) => setShowMask(e.target.checked)} /> Show mask <span className="muted">(or Alt-drag Masking)</span>
         </label>
         {d.sharpen.amount > 0 && zoomedOut && <p className="muted small detail-note">Zoom to 100 % to judge sharpening: at this size most of it is finer than the screen’s pixels.</p>}
-        <p className="muted small detail-note">Sharpening method still being chosen: for now darktable’s unsharp mask on luminance, with darktable’s capture-sharpening mask for Masking.</p>
+        {kind === 'raw' && d.sharpen.amount === 0 && <p className="muted small detail-note">New RAW photos are sharpened (Amount 40). Photos edited before sharpening existed start with it off, so they look as they did.</p>}
       </section>
       <section>
         <div className="dpanel-head">

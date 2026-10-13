@@ -42,6 +42,7 @@ import { detailRun, type DetailMeta, type DetailRun } from '../detail/run'
 import { noiseOn } from '../detail/settings'
 import { loadNoiseProfiles, noiseProfilesState } from '../detail/noise-db'
 import type { ProfileChoice } from '../detail/noiseprofiles'
+import { diffractionRadius, measureRadius, type RadiusChoice } from '../detail/capture'
 
 export interface RawStageOptions {
   /** White balance multipliers [R, G, B], green = 1. */
@@ -267,6 +268,10 @@ export class DevelopEngine {
   private detailChain: Promise<unknown> = Promise.resolve()
   /** The noise profile the last Detail run used (for the Noise Reduction section). */
   lastProfile: ProfileChoice | null = null
+  /** The radius the last capture sharpening used (for the Sharpening section). */
+  lastRadius: RadiusChoice | null = null
+  /** The photo's automatic capture-sharpening radius, per white balance (measured once). */
+  private autoRadiusFor: { key: string; radius: RadiusChoice } | null = null
 
   private constructor(device: GPUDevice, mode: PresentMode) {
     this.device = device
@@ -516,6 +521,27 @@ export class DevelopEngine {
   /** The loaded photo's camera and ISO, for its noise profile (develop/source.ts `loadIntoEngine`). */
   setDetailMeta(meta: DetailMeta) {
     this.detailMeta = this.rgbInput ? { ...meta, kind: 'rgb' } : meta
+    this.autoRadiusFor = null
+  }
+
+  /**
+   * The photo's automatic capture-sharpening radius: measured from the raw data as darktable does
+   * (capture.ts `measureRadius`), else (JPEGs, linear DNGs, photos under 1000 px, or no usable data) LightBench's
+   * diffraction estimate from the f-number and pixel pitch, else darktable's default 0.5 px.
+   */
+  autoRadius(): RadiusChoice {
+    const s = this.sensor
+    const wb: [number, number, number] = [this.builtWb[0], this.builtWb[1], this.builtWb[2]]
+    const key = wb.join(',')
+    if (this.autoRadiusFor?.key === key) return this.autoRadiusFor.radius
+    const m = this.detailMeta
+    const measured = s && !this.rgbInput ? measureRadius(s, wb) : null
+    let radius: RadiusChoice
+    if (measured !== null) radius = { sigma: measured, from: 'measured' }
+    else if (m.fNumber && m.cropFactor && s) radius = { sigma: diffractionRadius(m.fNumber, m.cropFactor, Math.max(s.width, s.height)), from: 'diffraction', fNumber: m.fNumber }
+    else radius = { sigma: 0.5, from: 'default' }
+    this.autoRadiusFor = { key, radius }
+    return radius
   }
 
   /**
@@ -530,8 +556,11 @@ export class DevelopEngine {
     const db = noiseProfilesState()
     const wb: [number, number, number] = this.rgbInput ? [1, 1, 1] : [this.builtWb[0], this.builtWb[1], this.builtWb[2]]
     const max = this.scene ? this.scene.mipLevelCount - 1 : 0
-    const run = detailRun(d, this.detailMeta, wb, [this.sensor.width, this.sensor.height], Math.min(level, max), db && typeof db === 'object' ? db : null, !!u.detailMask)
+    const sharpen = d.sharpen.amount > 0 || !!u.detailMask
+    const auto = sharpen && d.sharpen.radiusAuto ? this.autoRadius() : { sigma: d.sharpen.radius, from: 'manual' as const }
+    const run = detailRun(d, this.detailMeta, wb, [this.sensor.width, this.sensor.height], Math.min(level, max), db && typeof db === 'object' ? db : null, auto, !!u.detailMask)
     if (run?.profile) this.lastProfile = run.profile
+    if (run?.radius) this.lastRadius = run.radius
     return run
   }
 
@@ -1732,6 +1761,7 @@ export class DevelopEngine {
     this.lensOnly?.tex.destroy()
     for (const m of this.maskCache) m.tex.destroy()
     this.dropDetail()
+    this.detailStage?.destroy()
     this.noMask?.destroy()
     this.scene?.destroy()
     this.rawBuf?.destroy()

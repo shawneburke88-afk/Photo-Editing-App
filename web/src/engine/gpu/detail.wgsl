@@ -1,8 +1,9 @@
-// The Detail stage (PHASE3.md Part 13): sharpening and darktable's denoise (profiled) on the scene, before the
-// geometry stage, as darktable's pipe orders them (src/common/iop_order.c, v5.0 order: demosaic 8 (its capture
-// sharpening runs inside it), denoiseprofile 9, lens 13, …, colorin 28). The scene holds working-space RGB
-// (camera RGB × the camera matrix, a linear map), so each kernel that reads it rebuilds white-balanced camera RGB
-// (`toCam`), which is what darktable's modules see there, and the last one goes back (`toWork`).
+// The Detail stage (PHASE3.md Part 13): darktable's denoise (profiled) then capture sharpening on the scene, before
+// the geometry stage, as darktable's pipe places them (src/common/iop_order.c, v5.0 order: demosaic 8 (where darktable
+// runs its capture sharpening), denoiseprofile 9, lens 13, …, colorin 28). LightBench sharpens after the denoise
+// (darktable's manual: denoise before sharpening). The scene holds working-space RGB (camera RGB × the camera matrix,
+// a linear map), so each kernel that reads it rebuilds white-balanced camera RGB (`toCam`), which is what darktable's
+// modules see there, and the last one goes back (`toWork`).
 //
 // Denoise: darktable's OpenCL kernels (data/kernels/denoiseprofile.cl, GPL-3.0-or-later, darktable developers):
 // `denoiseprofile_precondition_Y0U0V0` → per scale `denoiseprofile_decompose`, the sum of squares
@@ -10,14 +11,15 @@
 // `denoiseprofile_synthesize` → `denoiseprofile_backtransform_Y0U0V0`. Intermediate images are half floats packed
 // two per u32 (8 bytes per pixel), so a 24 MP photo needs three 192 MB buffers.
 //
-// Sharpening (interim method, see engine/detail/settings.ts): darktable's capture-sharpening contrast mask
-// (src/iop/demosaicing/capture.c `_prepare_blend`, `_modify_blend`, the blend step of `_capture_sharpen`) and
-// darktable's unsharp mask (src/iop/sharpen.c `process`) on luminance, applied as capture.c applies its result: the
-// pixel's camera RGB scaled by new / old luminance.
+// Capture sharpening: darktable's OpenCL kernels (data/kernels/capture.cl: `prepare_blend`, `modify_blend`,
+// `final_blend`, `kernel_9x9_div`, `kernel_9x9_mul`, `capture_result`) and host code (src/iop/demosaicing/capture.c
+// `_capture_sharpen_cl`, lines 944-1075), darktable's port of RawTherapee 5.8's Capture Sharpening (Ingo Weyrich):
+// Richardson–Lucy deconvolution of luminance with a per-pixel Gaussian from a table, inside a contrast mask, applied to
+// RGB as a luminance ratio. LightBench's additions: fractional iterations and the halo limit (`csResult`).
 
 struct Params {
   size: vec2u,        // this run's image size (the scene at 1/2^level)
-  flags: u32,         // 1 = input is the scene (convert to camera RGB), 2 = write the sharpening mask to alpha
+  flags: u32,         // 1 = the input is working RGB (convert to camera RGB); 2 = mask only (Masking preview)
   scales: u32,
   toCam0: vec4f, toCam1: vec4f, toCam2: vec4f,     // working → camera RGB, rows
   toWork0: vec4f, toWork1: vec4f, toWork2: vec4f,  // camera → working RGB, rows
@@ -27,13 +29,12 @@ struct Params {
   wb: vec4f,
   toYuv0: vec4f, toYuv1: vec4f, toYuv2: vec4f,
   toRgb0: vec4f, toRgb1: vec4f, toRgb2: vec4f,
-  // sharpening
-  shSigma2: f32,      // Gaussian sigma²
-  shRad: i32,         // window half-width
-  shAmount: f32,
-  shThreshold: f32,   // fraction of the pixel's luminance
+  // capture sharpening
+  csSigma: f32,       // the PSF's sigma at this level (px)
+  csFrac: f32,        // fractional part of the iterations: the result mixes ⌊n⌋ and ⌈n⌉ iterations
+  csHalo: f32,        // Detail / 100: share of the overshoot past the 3 × 3 neighbourhood kept
   csThreshold: f32,   // capture.c's contrast sensitivity (cs_thrs)
-  pad0: f32, pad1: f32, pad2: f32,
+  pad0: f32, pad1: f32, pad2: f32, pad3: f32,
   clipWb: vec4f,      // capture.c: CAPTURE_CFACLIP × white balance per channel
 }
 
@@ -46,7 +47,7 @@ struct Scale {
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
-@group(0) @binding(1) var src: texture_2d<f32>;                 // the scene at this level, or the sharpened image
+@group(0) @binding(1) var src: texture_2d<f32>;                 // the scene at this level, or the denoised image
 @group(0) @binding(2) var<storage, read_write> bufA: array<vec2u>;
 @group(0) @binding(3) var<storage, read_write> bufB: array<vec2u>;
 @group(0) @binding(4) var<storage, read_write> acc: array<vec2u>;
@@ -54,10 +55,15 @@ struct Scale {
 @group(0) @binding(6) var<storage, read_write> partials: array<vec4f>;
 @group(0) @binding(7) var<storage, read_write> thr: array<vec4f>;
 @group(0) @binding(8) var dst: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(9) var lum: texture_2d<f32>;                 // r32float images of the sharpening steps
-@group(0) @binding(10) var lumOut: texture_storage_2d<r32float, write>;
-@group(0) @binding(11) var aux: texture_2d<f32>;
-@group(0) @binding(12) var mask: texture_2d<f32>;
+// Capture sharpening's images, one float per pixel (capture.c's names): luminance (Yold), the estimate (tmp1), the
+// ratio (tmp2, first the unblurred mask), the blurred mask (blendmask), a spare (the blur's first pass, then the
+// estimate after ⌊n⌋ iterations); and the kernel table.
+@group(0) @binding(9) var<storage, read_write> csY: array<f32>;
+@group(0) @binding(10) var<storage, read_write> csT1: array<f32>;
+@group(0) @binding(11) var<storage, read_write> csT2: array<f32>;
+@group(0) @binding(12) var<storage, read_write> csBM: array<f32>;
+@group(0) @binding(13) var<storage, read_write> csBX: array<f32>;
+@group(0) @binding(14) var<storage, read> kernels: array<f32>;
 
 fn idx(x: i32, y: i32) -> u32 { return u32(y) * P.size.x + u32(x); }
 fn ld(b: vec2u) -> vec3f { return vec3f(unpack2x16float(b.x), unpack2x16float(b.y).x); }
@@ -191,21 +197,26 @@ fn backtransform(@builtin(global_invocation_id) id: vec3u) {
   let denominator = 4.0 / (sqrt(P.dnA) * (2.0 - p));
   let z1 = (px + sqrt(max(vec3f(0.0), delta))) / denominator;
   let rgb = max(pow(z1, 1.0 / (1.0 - p / 2.0)) - P.dnB, vec3f(0.0));
-  var alpha = 1.0;
-  if ((P.flags & 2u) != 0u) { alpha = textureLoad(src, vec2i(id.xy), 0).a; }
-  textureStore(dst, vec2i(id.xy), vec4f(toWork(rgb), alpha));
+  textureStore(dst, vec2i(id.xy), vec4f(toWork(rgb), 1.0));
 }
 
-// ---- sharpening (interim method) and its mask
+// ---- capture sharpening
 
-const FLUM = vec3f(0.212671, 0.715160, 0.072169); // capture.c: photometric/digital ITU BT.709
+const FLUM = vec3f(0.212671, 0.715160, 0.072169); // capture.c `_prepare_blend`: photometric/digital ITU BT.709
 const YMIN = 0.001;                               // CAPTURE_YMIN
+const KERNEL_ALIGN = 32u;                         // CAPTURE_KERNEL_ALIGN
+const SMALL_ULIM = 66u;                           // capture.cl CAPTURE_SMALL_ULIM: kernels below are 5 × 5
 
 fn luma(c: vec3f) -> f32 { return max(0.0, dot(FLUM, c)); }
 
-/** capture.c `_prepare_blend` as a gather: 0 near a clipped or very dark pixel (its 21-pixel diamond) or the border. */
+/**
+ * capture.cl `prepare_blend` (as a gather) and the luminance: 0 near a clipped photosite or a very dark pixel (the
+ * 21-pixel diamond around it) and on the 2-pixel border, else 1; Yold; the estimate starts as Yold.
+ * Clipping is tested on the demosaiced camera RGB (darktable tests the photosite's CFA value against
+ * CAPTURE_CFACLIP × its white-balance coefficient).
+ */
 @compute @workgroup_size(16, 16)
-fn maskPrepare(@builtin(global_invocation_id) id: vec3u) {
+fn csPrepare(@builtin(global_invocation_id) id: vec3u) {
   if (!inside(id)) { return; }
   let x = i32(id.x);
   let y = i32(id.y);
@@ -220,19 +231,23 @@ fn maskPrepare(@builtin(global_invocation_id) id: vec3u) {
         if (abs(dx) == 2 && abs(dy) == 2) { continue; }
         let kx = x + dx;
         let ky = y + dy;
-        // Only pixels at least 2 from the border mark their neighbours (as darktable's loop).
+        // Only pixels at least 2 from the border mark their neighbours (as darktable's kernel).
         if (kx < 2 || ky < 2 || kx >= w - 2 || ky >= h - 2) { continue; }
         let c = camAt(kx, ky);
         if (any(c > P.clipWb.xyz) || luma(c) < YMIN) { m = 0.0; }
       }
     }
   }
-  textureStore(lumOut, vec2i(id.xy), vec4f(m, 0.0, 0.0, 0.0));
+  let i = idx(x, y);
+  let Y = luma(camAt(x, y));
+  csY[i] = Y;
+  csT1[i] = Y;
+  csT2[i] = m;
 }
 
-/** capture.c `_modify_blend`: the clip mask × a sigmoid of the local modified coefficient of variation of Y. */
+/** capture.cl `modify_blend`: the clip mask × a sigmoid of the local modified coefficient of variation of Y. */
 @compute @workgroup_size(16, 16)
-fn maskVariance(@builtin(global_invocation_id) id: vec3u) {
+fn csVariance(@builtin(global_invocation_id) id: vec3u) {
   if (!inside(id)) { return; }
   let w = i32(P.size.x);
   let h = i32(P.size.y);
@@ -242,92 +257,141 @@ fn maskVariance(@builtin(global_invocation_id) id: vec3u) {
   var sumSq = 0.0;
   for (var y = row - 1; y < row + 2; y++) {
     for (var x = col - 2; x < col + 3; x++) {
-      let v = luma(camAt(x, y));
+      let v = csY[idx(x, y)];
       sum += v;
       sumSq += v * v;
     }
   }
   for (var x = col - 1; x < col + 2; x++) {
-    let a = luma(camAt(x, row - 2));
-    let b = luma(camAt(x, row + 2));
+    let a = csY[idx(x, row - 2)];
+    let b = csY[idx(x, row + 2)];
     sum += a + b;
     sumSq += a * a + b * b;
   }
   let sumOfSquares = max(0.0, sumSq - sum * sum / 21.0);
   let stdDev = sqrt(sumOfSquares / 21.0);
-  let mean = max(1.17549435e-38, sum / 21.0);
-  let t = log(1.0 + stdDev / sqrt(mean));
+  let t = log(1.0 + stdDev / sqrt(max(1.17549435e-38, sum / 21.0)));
   let threshold = 0.6 * P.csThreshold * P.csThreshold;
   let tscale = 200.0;
   let offset = -2.5 + tscale * threshold / 2.0;
   let weight = 1.0 / (1.0 + exp(offset - tscale * t));
-  let clipMask = textureLoad(lum, vec2i(id.xy), 0).r;
-  textureStore(lumOut, vec2i(id.xy), vec4f(clamp(clipMask * 1.01011 * (weight - 0.01), 0.0, 1.0), 0.0, 0.0, 0.0));
+  let i = idx(i32(id.x), i32(id.y));
+  csT2[i] = clamp(csT2[i] * 1.01011 * (weight - 0.01), 0.0, 1.0);
 }
 
-/** A Gaussian of the r32float image `lum` along x (S.mult = 1) or y (S.mult = 0); sigma² and window from S. */
+/** The mask blurred with sigma 2 (darktable: dt_gaussian_fast_blur), csT2 → csBX (x), csBX → csBM (y): S.mult = 1 / 0. */
 @compute @workgroup_size(16, 16)
-fn gaussLine(@builtin(global_invocation_id) id: vec3u) {
+fn csMaskBlur(@builtin(global_invocation_id) id: vec3u) {
   if (!inside(id)) { return; }
-  let dir = select(vec2i(0, 1), vec2i(1, 0), S.mult == 1);
-  let rad = i32(S.index);
+  let horizontal = S.mult == 1;
   let last = vec2i(P.size) - 1;
   var sum = 0.0;
   var wsum = 0.0;
-  for (var k = -rad; k <= rad; k++) {
-    let w = exp(-f32(k * k) / (2.0 * S.sb2));
-    let p = clamp(vec2i(id.xy) + k * dir, vec2i(0), last);
-    sum += w * textureLoad(lum, p, 0).r;
-    wsum += w;
+  for (var k = -6; k <= 6; k++) {
+    let wt = exp(-f32(k * k) / 8.0);
+    var p = vec2i(id.xy);
+    if (horizontal) { p.x = clamp(p.x + k, 0, last.x); } else { p.y = clamp(p.y + k, 0, last.y); }
+    if (horizontal) { sum += wt * csT2[idx(p.x, p.y)]; } else { sum += wt * csBX[idx(p.x, p.y)]; }
+    wsum += wt;
   }
-  textureStore(lumOut, vec2i(id.xy), vec4f(sum / wsum, 0.0, 0.0, 0.0));
+  let i = idx(i32(id.x), i32(id.y));
+  if (horizontal) { csBX[i] = sum / wsum; } else { csBM[i] = sum / wsum; }
 }
 
-/** capture.c: where blurring lowered the mask a lot, keep more of the unblurred value. `lum` blurred, `aux` unblurred. */
+/** capture.cl `final_blend`: where blurring lowered the mask a lot, keep more of the unblurred value. */
 @compute @workgroup_size(16, 16)
-fn maskFinal(@builtin(global_invocation_id) id: vec3u) {
+fn csFinal(@builtin(global_invocation_id) id: vec3u) {
   if (!inside(id)) { return; }
-  let blurred = textureLoad(lum, vec2i(id.xy), 0).r;
-  let raw = textureLoad(aux, vec2i(id.xy), 0).r;
-  let diff = raw - blurred;
+  let i = idx(i32(id.x), i32(id.y));
+  let diff = csT2[i] - csBM[i];
   let w = 1.0 / (1.0 + exp(5.0 - 10.0 * diff));
-  textureStore(lumOut, vec2i(id.xy), vec4f(clamp(w * raw + (1.0 - w) * blurred, 0.0, 1.0), 0.0, 0.0, 0.0));
+  csBM[i] = clamp(w * csT2[i] + (1.0 - w) * csBM[i], 0.0, 1.0);
 }
 
-/** The luminance the unsharp mask blurs. */
+/** The pixel's kernel: sigma tapered to 0 over the outer 8 pixels (capture.c `_cs_precalc_gauss_idx`, no corner boost). */
+fn kernelOf(x: i32, y: i32) -> u32 {
+  let w = i32(P.size.x);
+  let h = i32(P.size.y);
+  let s = P.csSigma * 0.125 * f32(min(8, min(h - y - 1, min(w - x - 1, min(x, y)))));
+  return u32(clamp(i32(s / 0.01), 0, 255));
+}
+
+/** One 9 × 9 (or 5 × 5) Gaussian of `which` (0 = the estimate csT1, 1 = the ratio csT2) at a pixel (capture.cl). */
+fn blur9(x: i32, y: i32, which: u32) -> f32 {
+  let k = kernelOf(x, y);
+  let base = KERNEL_ALIGN * k;
+  let bd = select(4, 2, k < SMALL_ULIM);
+  let w = i32(P.size.x);
+  let h = i32(P.size.y);
+  var val = 0.0;
+  for (var ir = -bd; ir <= bd; ir++) {
+    let r = y + ir;
+    if (r < 0 || r >= h) { continue; }
+    for (var ic = -bd; ic <= bd; ic++) {
+      let c = x + ic;
+      if (c < 0 || c >= w) { continue; }
+      let kv = kernels[base + u32(5 * abs(ir) + abs(ic))];
+      if (which == 0u) { val += kv * csT1[idx(c, r)]; } else { val += kv * csT2[idx(c, r)]; }
+    }
+  }
+  return val;
+}
+
+/** capture.cl `kernel_9x9_div`: tmp2 = Y / blur(tmp1) inside the mask. */
 @compute @workgroup_size(16, 16)
-fn lumaOf(@builtin(global_invocation_id) id: vec3u) {
+fn csDiv(@builtin(global_invocation_id) id: vec3u) {
   if (!inside(id)) { return; }
-  textureStore(lumOut, vec2i(id.xy), vec4f(luma(camAt(i32(id.x), i32(id.y))), 0.0, 0.0, 0.0));
+  let i = idx(i32(id.x), i32(id.y));
+  if (csBM[i] <= 0.0) { return; }
+  csT2[i] = csY[i] / max(blur9(i32(id.x), i32(id.y), 0u), YMIN);
+}
+
+/** capture.cl `kernel_9x9_mul`: tmp1 *= blur(tmp2) inside the mask. */
+@compute @workgroup_size(16, 16)
+fn csMul(@builtin(global_invocation_id) id: vec3u) {
+  if (!inside(id)) { return; }
+  let i = idx(i32(id.x), i32(id.y));
+  if (csBM[i] <= 0.0) { return; }
+  csT1[i] *= blur9(i32(id.x), i32(id.y), 1u);
 }
 
 /**
- * darktable sharpen.c's unsharp mask on luminance (soft threshold, amount), blended by the mask, applied as a
- * luminance ratio to camera RGB (capture.c's last step). `lum` is the blurred luminance, `mask` the mask. Writes
- * camera RGB (flags & 4: working RGB, when no denoise follows) with the mask in alpha.
+ * capture.cl `capture_result`, with LightBench's two additions: the deconvolved luminance mixes ⌊n⌋ (csBX) and ⌈n⌉
+ * (csT1) iterations for fractional counts, and the halo limit (Detail): its overshoot beyond the lightest and darkest
+ * original luminance of the 3 × 3 neighbourhood is scaled by csHalo (1 = darktable's result unchanged). Writes
+ * working RGB, with the mask in alpha; with flags & 2 (Masking preview) the input unchanged.
  */
 @compute @workgroup_size(16, 16)
-fn sharpenApply(@builtin(global_invocation_id) id: vec3u) {
+fn csResult(@builtin(global_invocation_id) id: vec3u) {
   if (!inside(id)) { return; }
-  let c = camAt(i32(id.x), i32(id.y));
-  let y = luma(c);
-  let blurred = textureLoad(lum, vec2i(id.xy), 0).r;
-  let m = textureLoad(mask, vec2i(id.xy), 0).r;
-  let diff = y - blurred;
-  let t = P.shThreshold * y;
-  let detail = select(0.0, sign(diff) * max(abs(diff) - t, 0.0), abs(diff) > t);
-  let yNew = mix(y, y + detail * P.shAmount, m);
-  let factor = yNew / max(y, YMIN);
+  let x = i32(id.x);
+  let y = i32(id.y);
+  let i = idx(x, y);
+  let mixer = clamp(csBM[i], 0.0, 1.0);
+  let c = camAt(x, y);
+  if ((P.flags & 2u) != 0u) {
+    textureStore(dst, vec2i(id.xy), vec4f(toWork(c), mixer));
+    return;
+  }
   var out = c;
-  if (m > 0.0 && y >= YMIN) { out = c * max(factor, 0.0); }
-  if ((P.flags & 4u) != 0u) { out = toWork(out); }
-  textureStore(dst, vec2i(id.xy), vec4f(out, m));
-}
-
-/** Masking preview: the input unchanged, the mask in alpha. */
-@compute @workgroup_size(16, 16)
-fn maskOnly(@builtin(global_invocation_id) id: vec3u) {
-  if (!inside(id)) { return; }
-  let c = textureLoad(src, vec2i(id.xy), 0).rgb;
-  textureStore(dst, vec2i(id.xy), vec4f(c, textureLoad(mask, vec2i(id.xy), 0).r));
+  if (csBM[i] > 0.0) {
+    let Y = csY[i];
+    let rl = mix(csBX[i], csT1[i], P.csFrac);
+    var lo = Y;
+    var hi = Y;
+    let last = vec2i(P.size) - 1;
+    for (var dy = -1; dy <= 1; dy++) {
+      for (var dx = -1; dx <= 1; dx++) {
+        let q = clamp(vec2i(x + dx, y + dy), vec2i(0), last);
+        let v = csY[idx(q.x, q.y)];
+        lo = min(lo, v);
+        hi = max(hi, v);
+      }
+    }
+    let within = clamp(rl, lo, hi);
+    let limited = within + P.csHalo * (rl - within);
+    let yNew = mix(Y, limited, mixer);
+    out = c * (yNew / max(Y, YMIN));
+  }
+  textureStore(dst, vec2i(id.xy), vec4f(toWork(out), mixer));
 }

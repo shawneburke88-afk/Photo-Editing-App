@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_SETTINGS, displayUniforms, normalizeSettings } from '../develop/settings'
+import { DEFAULT_RGB_SETTINGS, DEFAULT_SETTINGS, displayUniforms, normalizeSettings } from '../develop/settings'
 import { bandThreshold, denoiseCpu, denoiseRun, f16, fastMexp2, inferBias, inferShadows, maxScale, VARF, y0u0v0Matrices } from './denoise'
 import { GENERIC_PROFILE, type NoiseProfile } from './noiseprofiles'
 import { detailRun } from './run'
-import { DEFAULT_DETAIL, denoiseCurves, detailOn, normalizeDetail, sharpenParams, type DetailSettings } from './settings'
+import { autoThreshold, captureParams, DEFAULT_DETAIL, denoiseCurves, detailOn, normalizeDetail, RAW_DETAIL, type DetailSettings } from './settings'
+import { captureKernels, diffractionRadius, kernelIndex, KERNEL_ALIGN } from './capture'
 
 const D700_3200: NoiseProfile = { iso: 3200, a: [0.00004404345, 0.000020206908, 0.00002897195], b: [2.3825315e-7, 1.4574454e-7, 2.7817939e-7] }
 const withNoise = (n: Partial<DetailSettings['noise']>, s: Partial<DetailSettings['sharpen']> = {}): DetailSettings => ({ sharpen: { ...DEFAULT_DETAIL.sharpen, ...s }, noise: { ...DEFAULT_DETAIL.noise, ...n } })
@@ -15,12 +16,16 @@ describe('Detail settings', () => {
     expect('detail' in s).toBe(false)
     expect('detail' in displayUniforms(s)).toBe(false)
     expect(detailOn(s.detail)).toBe(false)
-    expect('detail' in DEFAULT_SETTINGS).toBe(false)
+    // New RAW photos are sharpened (owner, 2026-10-13); JPEGs aren't, and nothing has noise reduction.
+    expect(DEFAULT_SETTINGS.detail).toEqual(RAW_DETAIL)
+    expect(RAW_DETAIL.sharpen).toMatchObject({ amount: 40, radiusAuto: true, detail: 25, masking: 0 })
+    expect('detail' in DEFAULT_RGB_SETTINGS).toBe(false)
+    expect(detailOn({ ...RAW_DETAIL, sharpen: { ...RAW_DETAIL.sharpen, amount: 0 } })).toBe(false)
   })
 
   it('fills in and clamps stored values', () => {
     const d = normalizeDetail({ sharpen: { amount: 400, radius: 0.1 }, noise: { luminance: 30, colorDetail: 'x' } })!
-    expect(d.sharpen).toEqual({ amount: 150, radius: 0.5, detail: 25, masking: 0 })
+    expect(d.sharpen).toEqual({ amount: 150, radius: 0.25, radiusAuto: true, detail: 25, masking: 0 })
     expect(d.noise.luminance).toBe(30)
     expect(d.noise.colorDetail).toBe(50)
     expect(normalizeDetail(null)).toBeUndefined()
@@ -60,8 +65,11 @@ describe('Lightroom Noise Reduction → darktable force curves (LightBench mappi
   })
 
   it('maps the Sharpening sliders onto the interim method', () => {
-    expect(sharpenParams({ amount: 40, radius: 1, detail: 25, masking: 0 })).toMatchObject({ amount: 0.4, sigma: 1, mask: 0 })
-    expect(sharpenParams({ amount: 150, radius: 3, detail: 100, masking: 100 })).toMatchObject({ amount: 1.5, sigma: 3, threshold: 0, mask: 1 })
+    // Amount / 5 iterations (40 → darktable's 8), Detail / 100 of the overshoot, Masking above the automatic threshold.
+    expect(captureParams({ ...RAW_DETAIL.sharpen }, 0.3)).toEqual({ iterations: 8, halo: 0.25, threshold: 0.3 })
+    expect(captureParams({ ...RAW_DETAIL.sharpen, amount: 150, detail: 100, masking: 100 }, 0.3)).toEqual({ iterations: 30, halo: 1, threshold: 1 })
+    expect(captureParams({ ...RAW_DETAIL.sharpen, amount: 42, masking: 50 }, 0.2).iterations).toBeCloseTo(8.4, 12)
+    expect(captureParams({ ...RAW_DETAIL.sharpen, masking: 50 }, 0.2).threshold).toBeCloseTo(0.6, 12)
   })
 })
 
@@ -186,27 +194,73 @@ describe('denoise CPU reference', () => {
   })
 })
 
+describe('capture sharpening (darktable capture.c)', () => {
+  it('estimates the contrast threshold from bit depth and ISO as darktable', () => {
+    // 14-bit raw at ISO 100: 0.4 − 0.07 − 0.01 − 0.012 · 5 ≈ 0.26 (in float just under: 0.25 after truncation);
+    // 12-bit (white 4095) at ISO 1600: 0.4 + 0.048 = 0.448 → 0.44; 14-bit at ISO 1600: 0.368 → 0.36.
+    expect([0.25, 0.26].some((v) => Math.abs(autoThreshold(16383, 100) - v) < 1e-9)).toBe(true)
+    expect(autoThreshold(4095, 1600)).toBeCloseTo(0.44, 9)
+    expect(autoThreshold(15000, 1600)).toBeCloseTo(0.36, 9)
+    expect(autoThreshold(255, 600)).toBeCloseTo(0.4, 9)
+  })
+
+  it('builds darktable\'s 9 × 9 kernel table, normalised, 5 × 5 below sigma 0.66', () => {
+    const t = captureKernels()
+    const sum = (i: number) => {
+      let s = 0
+      for (let k = -4; k <= 4; k++) for (let j = -4; j <= 4; j++) s += t[i * KERNEL_ALIGN + 5 * Math.abs(k) + Math.abs(j)]
+      return s
+    }
+    for (const i of [0, 30, 65, 66, 100, 150, 255]) expect(sum(i)).toBeCloseTo(1, 5)
+    expect(t[0 * KERNEL_ALIGN]).toBeCloseTo(1, 6) // sigma 1e-7: a delta
+    expect(t[50 * KERNEL_ALIGN + 3]).toBe(0) // sigma 0.5: nothing beyond radius 2.5
+    expect(t[100 * KERNEL_ALIGN + 3]).toBeGreaterThan(0)
+  })
+
+  it('tapers the sigma to 0 over the outer 8 pixels', () => {
+    expect(kernelIndex(0.6, 100, 100, 400, 300)).toBe(60)
+    expect(kernelIndex(0.6, 4, 100, 400, 300)).toBe(Math.trunc(Math.fround(0.6 * 0.125 * 4 / 0.01)))
+    expect(kernelIndex(0.6, 0, 0, 400, 300)).toBe(0)
+  })
+
+  it('falls back to diffraction (plus the pixel aperture) from the f-number and pixel pitch', () => {
+    // 24 MP full frame (6000 px, 6 µm) at f/8: 0.42 · 0.55 · 8 / 6 = 0.308 px, with 0.289 in quadrature: 0.42 px.
+    expect(diffractionRadius(8, 1, 6000)).toBeCloseTo(Math.hypot((0.42 * 0.55 * 8) / 6, 1 / Math.sqrt(12)), 10)
+    expect(diffractionRadius(22, 1.5, 6000)).toBeGreaterThan(diffractionRadius(8, 1.5, 6000))
+    expect(diffractionRadius(0, 1, 6000)).toBe(0.5)
+    expect(diffractionRadius(64, 2, 6000)).toBe(1.5)
+  })
+})
+
+const AUTO = { sigma: 0.6, from: 'measured' as const }
+
 describe('the Detail run', () => {
   const meta = { maker: 'Nikon', model: 'D700', iso: 3200, kind: 'raw' as const }
   it('is null when nothing is on, and for old edits', () => {
-    expect(detailRun(undefined, meta, [1, 1, 1], [100, 100], 0, null)).toBeNull()
-    expect(detailRun(DEFAULT_DETAIL, meta, [1, 1, 1], [100, 100], 0, null)).toBeNull()
+    expect(detailRun(undefined, meta, [1, 1, 1], [100, 100], 0, null, AUTO)).toBeNull()
+    expect(detailRun(DEFAULT_DETAIL, meta, [1, 1, 1], [100, 100], 0, null, AUTO)).toBeNull()
   })
   it('uses the generic profile when the profiles aren\'t available, and keys runs by their parameters', () => {
-    const r = detailRun(withNoise({ luminance: 30 }), meta, [2, 1, 1.5], [400, 300], 1, null)!
+    const r = detailRun(withNoise({ luminance: 30 }), meta, [2, 1, 1.5], [400, 300], 1, null, AUTO)!
     expect(r.profile).toMatchObject({ kind: 'generic', reason: 'no-data' })
     expect(r.denoise!.a).toBeCloseTo(GENERIC_PROFILE.a[1] * (0.05 / 0.05 ** inferShadows(1e-4)), 12)
-    const r2 = detailRun(withNoise({ luminance: 31 }), meta, [2, 1, 1.5], [400, 300], 1, null)!
+    const r2 = detailRun(withNoise({ luminance: 31 }), meta, [2, 1, 1.5], [400, 300], 1, null, AUTO)!
     expect(r2.key).not.toBe(r.key)
   })
-  it('scales the sharpening radius with the level (darktable sharpen.c)', () => {
-    const r = detailRun(withNoise({}, { amount: 50, radius: 2 }), meta, [1, 1, 1], [400, 300], 1, null)!
-    expect(r.sharpen).toMatchObject({ sigma2: 1, rad: 3, amount: 0.5 })
+  it('scales the sharpening radius with the level, auto or set by hand', () => {
+    const r = detailRun(withNoise({}, { amount: 50 }), { ...meta, white: 16383, iso: 100 }, [1, 1, 1], [400, 300], 1, null, AUTO)!
+    expect(r.capture).toMatchObject({ sigma: 0.3, iterations: 10, halo: 0.25 })
+    expect(r.capture!.threshold).toBeCloseTo(autoThreshold(16383, 100), 9)
+    expect(r.radius).toEqual(AUTO)
+    const m = detailRun(withNoise({}, { amount: 50, radius: 1.2, radiusAuto: false }), meta, [1, 1, 1], [400, 300], 0, null, AUTO)!
+    expect(m.capture!.sigma).toBe(1.2)
+    expect(m.radius).toEqual({ sigma: 1.2, from: 'manual' })
     expect(r.denoise).toBeNull()
   })
   it('makes a mask-only run for the Masking preview', () => {
-    const r = detailRun(withNoise({}, { masking: 40 }), meta, [1, 1, 1], [400, 300], 0, null, true)!
+    const r = detailRun(withNoise({}, { masking: 40 }), meta, [1, 1, 1], [400, 300], 0, null, AUTO, true)!
     expect(r.maskOnly).toBe(true)
-    expect(r.sharpen?.cs).toBeCloseTo(0.4, 12)
+    // ISO 3200, 8-bit "white": darktable's automatic 0.4 − 0.012 · (−4) = 0.448 → 0.44; Masking 40 adds 40 % of the rest.
+    expect(r.capture?.threshold).toBeCloseTo(0.44 + 0.4 * 0.56, 6)
   })
 })

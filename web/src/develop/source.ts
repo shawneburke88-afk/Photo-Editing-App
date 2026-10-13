@@ -53,13 +53,20 @@ export function multipliersOf(temperature: number, tint: number, info: WbModel, 
   return temperatureToMultipliers(temperature, tint, xyzToCamera(info.dng, xyzToXy(xyz)), limit)
 }
 
+/** The f-number and crop factor (35 mm-equivalent / real focal length) of a photo, when its EXIF has them. */
+function opticsOf(r: DecodeResult): { fNumber?: number; cropFactor?: number } {
+  const f = r.info.focalLength
+  const f35 = r.info.focal35 ?? 0
+  return { fNumber: r.info.aperture > 0 ? r.info.aperture : undefined, cropFactor: f > 0 && f35 > 0 ? f35 / f : undefined }
+}
+
 /** Uploads a decoded photo (RAW sensor data or JPEG pixels) to the engine. Call `engine.process` next. */
 export function loadIntoEngine(engine: DevelopEngine, r: DecodeResult): SensorInfo {
   if (r.rgb) {
     // JPEG: the engine inverts the JPEG defaults' tone mapping so the unedited photo looks as shot.
     const du = displayUniforms(defaultsFor('rgb'))
     engine.loadRgb(r.rgb, du.sigmoid, du.exposureGain)
-    engine.setDetailMeta({ maker: r.info.make, model: r.info.model, iso: r.info.iso, kind: 'rgb' })
+    engine.setDetailMeta({ maker: r.info.make, model: r.info.model, iso: r.info.iso, kind: 'rgb', white: 255, ...opticsOf(r) })
     // White balance works on the file's linear colours: "camera" RGB is the profile's RGB.
     const xyzToCam = invert(mul(REC2020_TO_XYZ, r.rgb.toRec2020 as Mat3))
     const wb: Vec3 = [1, 1, 1]
@@ -68,7 +75,7 @@ export function loadIntoEngine(engine: DevelopEngine, r: DecodeResult): SensorIn
   if (!r.sensor) throw new Error(r.sensorUnsupported ?? 'This RAW file can’t be developed yet.')
   engine.loadSensor(r.sensor, r.info.flip)
   // The camera and ISO pick the noise profile for noise reduction (engine/detail/noiseprofiles.ts).
-  engine.setDetailMeta({ maker: r.info.make, model: r.info.model, iso: r.info.iso, kind: 'raw' })
+  engine.setDetailMeta({ maker: r.info.make, model: r.info.model, iso: r.info.iso, kind: 'raw', white: r.sensor.white, ...opticsOf(r) })
   // Lens corrections then apply to everything this engine renders (engine/lens/correction.ts).
   engine.setLensMeta(r.lens ?? null)
   const xyzToCam = r.sensor.xyzToCam as Mat3

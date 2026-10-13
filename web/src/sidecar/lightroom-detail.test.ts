@@ -44,7 +44,10 @@ describe('Lightroom Detail fields', () => {
     const s = lrState(r.lightroom!.fields, FRAME)
     expect(s.detail).toEqual([40, 1, 25, 0, 30, 50, 0, 25, 50, 50])
     const d = detailFromLr(s.detail!)
-    expect(d.sharpen).toEqual({ amount: 40, radius: 1, detail: 25, masking: 0 })
+    // Lightroom's default radius 1.0 reads as LightBench's automatic radius; other values as sigma = radius / 2.
+    expect(d.sharpen).toEqual({ amount: 40, radius: 0.5, radiusAuto: true, detail: 25, masking: 0 })
+    expect(detailFromLr([40, 2.4, 25, 0, 0, 50, 0, 0, 50, 50]).sharpen).toMatchObject({ radius: 1.2, radiusAuto: false })
+    expect(detailToLr({ ...d, sharpen: { ...d.sharpen, radius: 0.7, radiusAuto: false } })[1]).toBeCloseTo(1.4, 12)
     expect(d.noise).toEqual({ luminance: 30, luminanceDetail: 50, luminanceContrast: 0, color: 25, colorDetail: 50, colorSmoothness: 50 })
     expect(detailToLr(d)).toEqual(s.detail)
   })

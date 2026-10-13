@@ -13,7 +13,7 @@ import { fullSidecarName, sidecarCandidates, stemOwners, stemSidecarName } from 
 import { readXmp, type SidecarRead } from '../sidecar/xmp'
 import { detailOf, geometryOf, lrDiffers, lrFrame, lrKey, lrState, parseLrKey, sameState } from '../sidecar/lightroom'
 import { batch, LIGHTROOM_STEP } from '../develop/batch'
-import { normalizeSettings } from '../engine/develop/settings'
+import { defaultsFor, normalizeSettings } from '../engine/develop/settings'
 import { isRawFile } from '../engine/raw/decoder'
 
 export interface ImportItem {
@@ -147,8 +147,9 @@ async function readLightroomGeometry(catalog: Catalog, id: number, r: SidecarRea
     const marker = parseLrKey(lr.marker)
     if (!marker || sameState(marker, state)) return
   }
-  if (!lrDiffers(geometryOf(r.develop), state, frame, detailOf(r.develop))) return
   const kind = isRawFile(p.fileName) ? 'raw' : 'rgb'
+  // A photo without a LightBench edit has the defaults for its kind (RAWs are sharpened by default).
+  if (!lrDiffers(geometryOf(r.develop), state, frame, r.develop ? detailOf(r.develop) : defaultsFor(kind).detail)) return
   batch.run({
     label: LIGHTROOM_STEP,
     ids: [id],
