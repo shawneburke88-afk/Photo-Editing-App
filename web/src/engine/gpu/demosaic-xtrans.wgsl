@@ -20,7 +20,7 @@
 //    homogeneity maps of directions 4-7 in a second buffer each (drvB, homoB, homosumB); homo_threshold +
 //    homo_set for the eight directions in xtHomoSet8; homo_max, homo_max_corr, homo_quench, markesteijn_accu and
 //    markesteijn_final in xtFinal8a/xtFinal8b (directions 0-3, then 4-7, summed in darktable's order). The borders
-//    are darktable's 3-pass ones (xtrans.c process_markesteijn_cl lines 1660, 1798, 1824, 1844, 1881, 1921:
+//    are darktable's 3-pass ones (xtrans.c at ca5a020, process_markesteijn_cl lines 1660, 1798, 1824, 1844, 1881, 1921:
 //    pad_tile 17, pad_rb_g 5, pad_rb_br 5, pad_g22 4, pad_yuv 13, pad_homo 15; PAD_G_RECALC 6, line 25).
 
 struct Const {
