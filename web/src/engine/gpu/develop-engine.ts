@@ -761,7 +761,7 @@ export class DevelopEngine {
     const perPixel = passes === 3 ? 216 : 120
     const lim = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize)
     const byBudget = Math.floor(XTRANS_STRIP_BUDGET / (perPixel * w))
-    const byLimit = Math.floor(lim / (16 * w)) - 2 * overlap
+    const byLimit = Math.floor(lim / (16 * w)) - 2 * overlap - (passes === 3 ? 6 : 0)
     const strips = markesteijnStrips(h, Math.max(6, this.xtransStripRows ?? Math.min(byBudget, byLimit)), tiling.border, overlap)
     const n = w * Math.max(...strips.map((x) => x.inRows))
     const sb = (bytesPerPixel: number, usage = 0) => {

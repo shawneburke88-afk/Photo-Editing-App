@@ -120,7 +120,8 @@ export function markesteijnStrips(height: number, rows: number, border = MARKEST
   const strips: Strip[] = []
   for (let outStart = B; outStart < height - B; outStart += step) {
     const outEnd = Math.min(outStart + step, height - B)
-    const inStart = Math.max(0, outStart - O)
+    // A multiple of 6 at least O rows above (with 1 pass, border 12 and overlap 18, exactly O rows).
+    const inStart = Math.max(0, Math.floor((outStart - O) / 6) * 6)
     const inEnd = Math.min(height, outEnd + O)
     strips.push({ inStart, inRows: inEnd - inStart, outStart, outEnd })
   }
