@@ -1012,6 +1012,17 @@ Headless Chromium with software WebGPU (SwiftShader); scripts in `scratchpad/fol
   - Luminance 25 leaves 64 % of the luminance noise, 50 leaves 46 %; above 50 it changes little on this chart (the Y0 channel isn't the luminance measured, and the colour noise left in it stays). Color 25 takes the colour noise (R/G spread at 0.08) from 0.033 to 0.0011. Edges are not softened: the edge-aware wavelets make the low-contrast edge steeper (10–90 % rise 2.14 → 1.29 px at L50), the strong edge slightly (2.14 → 1.96 px).
   - **Capture sharpening at Amount 40, σ 0.8:** the 10–90 % edge rise goes from 2.14 to 1.47 px, MTF50 from 0.23 to 0.33 cycles/px, with 1.1 % / 0.5 % overshoot and **no increase of noise in the flat patches** (×1.00: the contrast mask). Detail 0: 1.48 px with 0.2 % / 0.2 % overshoot; Detail 100: 1.44 px with 5.1 % / 1.8 %. Masking 50 leaves the low-contrast edge (0.10 → 0.20) unsharpened and still sharpens the strong one (1.55 px). Denoise (L50 C25) followed by Amount 40: 1.41 px, 3.0 % / 0.8 % overshoot, flat-patch noise 4 % of the original. Amount 100: 1.36 px; Amount 150 with Detail 100: 1.28 px, 5.9 % overshoot. With the automatic radius (0.5 px on this chart, which has no raw data to measure) 1.88 px.
   - **Against darktable's unsharp mask** (the interim method, Lightroom-like Amount 40): 10–90 % rise 1.82 px, MTF50 0.265, overshoot 0.7 / 1.3 %, but flat-patch noise ×1.26. Capture sharpening gives a steeper edge with less noise; the cost is the iterations (below).
+- **100 % crops of real photos** (`e2e-crops.mjs`, 480 × 360 crops of full-size sRGB exports, `scratchpad/followups-h/crops/`). The fine-detail measure is the mean |Laplacian| of the crop; the flat-area measure is the standard deviation of a patch of plain wall (1D Mark III) or sky (D700):
+
+  | Setting | D700 (low ISO, daylight): detail / sky noise | 1D Mark III ISO 6400: detail / wall noise |
+  |---|---|---|
+  | off | 5.90 / 0.61 | 10.84 / 7.97 |
+  | sharpening default (40, auto) | 8.02 / 0.61 | 13.90 / 8.85 |
+  | Amount 100, Detail 100 | 9.40 / 0.63 | 18.77 / 10.67 |
+  | Luminance 50, Color 25 | 5.65 / 0.51 | 9.05 / 6.54 |
+  | Luminance 50, Color 25 + sharpening 40 | 7.77 / 0.52 | 11.12 / 7.02 |
+
+  By eye: leaves and the fountain's droplets are crisper with sharpening, with no halo against the sky; the figurine's edges are crisper and colour speckle is gone with noise reduction. **At ISO 6400 the default sharpening alone raises the noise of a plain wall by 11 %** (darktable's automatic threshold stops lowering at ISO 1000, and its manual calls auto-applying capture sharpening safe below ISO 1000). With noise reduction first, the wall is quieter than the original.
 - **Automatic radius** on the test RAWs (`e2e-radius.mjs`): D700 0.60, D80 0.65, ILCE-6300 0.62, ILCE-7M2 at f/22 0.91 (diffraction estimate 0.90), 1D Mark III 0.60, ILCE-6000 0.56, X100F 0.69, X-T2 0.67 px. All inside darktable's manual's "typical radius … between 0.5 and 0.8" except the f/22 photo, where diffraction explains it.
 - **Preview against export** (`e2e-agree.mjs`; the 1024 px preview against the full-size export resized by Lanczos3; tone on 8 × 8 block means). The two resamplers differ even without Detail (the preview is softer), so the question is whether Detail adds disagreement:
 
@@ -1063,3 +1074,4 @@ Headless Chromium with software WebGPU (SwiftShader); scripts in `scratchpad/fol
 - In the fitted view sharpening is barely visible (it is finer than the screen's pixels); at 100 % it is. The section says so.
 - While a slow GPU computes the Detail stage the picture doesn't change and there is no progress indicator (the stage is marked `aria-busy` for assistive technology).
 - Speed on real GPUs is an estimate.
+- **Open: high-ISO default.** New RAWs are sharpened at Amount 40 whatever their ISO. At ISO 6400 that sharpens some noise (+11 % on a plain wall); darktable's manual suggests auto-applying only below ISO 1000. Options: keep it (Lightroom-like), or lower the default above ISO 1000, or pair it with Color noise reduction as Lightroom does.
