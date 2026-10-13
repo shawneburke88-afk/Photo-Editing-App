@@ -145,7 +145,7 @@ class ExtrasRefresh {
     this.pool = pool
     try {
       for (let i = 0; i < todo.length; i += WORKERS) {
-        // Open folder and Import come first: wait while one is reading.
+        // Open folder comes first: wait while it is reading.
         while (indexer.status.active && !this.pausedNow) await sleep(1000)
         if (this.pausedNow) break
         await Promise.all(
