@@ -384,6 +384,18 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .guided-overlay .guide.selected circle { fill: var(--accent); }
 .guided-overlay .guide.new line { stroke: #fff; stroke-dasharray: 5 4; }
 .dstage.guiding .dbadge { z-index: 2; pointer-events: none; }
+/* Remove brush (PHASE3.md Part 11): the brush, the painted stroke, outlines of the selected spot and its source, pins. */
+.dstage.removing .dbadge { z-index: 2; pointer-events: none; }
+.remove-overlay .spot-brush circle { fill: none; stroke: #fff; stroke-width: 1.5; filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.9)); }
+.remove-overlay .spot-brush circle.inner { stroke-dasharray: 3 3; stroke-width: 1; }
+.remove-overlay .spot-paint { fill: none; stroke: rgba(255, 255, 255, 0.35); stroke-linecap: round; stroke-linejoin: round; }
+.remove-overlay .spot-target .spot-outline { fill: #fff; }
+.remove-overlay .spot-source .spot-outline { fill: #5cc8f0; opacity: 0.9; }
+.remove-overlay .spot-link { stroke: rgba(255, 255, 255, 0.85); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.remove-overlay .spot-pin { fill: #fff; stroke: rgba(0, 0, 0, 0.75); stroke-width: 1.5; }
+.remove-overlay .spot-pin.source { fill: #5cc8f0; }
+.remove-overlay .spot-pin-group.selected .spot-pin { fill: var(--accent); stroke: #fff; }
+.remove-overlay .spot-progress { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; }
 
 @media (max-width: 1100px) {
   .develop { grid-template-columns: 1fr 5px var(--right-w, 280px); }

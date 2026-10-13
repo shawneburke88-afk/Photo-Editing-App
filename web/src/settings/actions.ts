@@ -9,7 +9,7 @@
 import type { Chord } from './chords'
 
 /** Where an action works. A view uses `global` plus one or more of the others (see `VIEWS`). */
-export type Context = 'global' | 'library' | 'cull' | 'cull-one' | 'compare' | 'survey' | 'develop' | 'crop' | 'guided'
+export type Context = 'global' | 'library' | 'cull' | 'cull-one' | 'compare' | 'survey' | 'develop' | 'crop' | 'guided' | 'remove'
 
 export const CONTEXT_NAMES: Record<Context, string> = {
   global: 'Everywhere',
@@ -21,6 +21,7 @@ export const CONTEXT_NAMES: Record<Context, string> = {
   develop: 'Develop',
   crop: 'Develop: cropping',
   guided: 'Develop: Guided Upright',
+  remove: 'Develop: Remove brush',
 }
 
 /** The contexts that are active together. Two actions can't share a key if one view has both. */
@@ -34,6 +35,8 @@ export const VIEWS: Context[][] = [
   ['global', 'crop'],
   // While drawing Guided Upright lines, Develop listens to 'guided' instead (Delete removes a line, Esc finishes).
   ['global', 'guided'],
+  // While the Remove brush is on the photo, Develop listens to 'remove' instead ([ and ] change the brush size).
+  ['global', 'remove'],
 ]
 
 export type PresetId = 'lightbench' | 'lightroom'
@@ -76,8 +79,8 @@ export const ACTIONS: ActionDef[] = [
   { id: 'photo.rate5', label: '5 stars', contexts: PHOTO, keys: ['5'] },
   // Lightroom Classic: ] / [ raise or lower the rating by one star, Shift+1–5 rate and go to the next photo (Adobe's
   // shortcut page, seen through search excerpts; docs/PHASE3.md Part 6). Lightroom gives [ and ] to the brush size
-  // while a brush tool is active: a brush context will be one more Develop context (like 'crop' and 'guided'), where
-  // these photo actions don't run, so it can take [ and ] without a clash.
+  // while a brush tool is active: the Remove brush's own context ('remove', Part 11), where these photo actions don't
+  // run, takes [ and ] without a clash.
   { id: 'photo.rateUp', label: 'One star more', contexts: PHOTO, keys: [']'] },
   { id: 'photo.rateDown', label: 'One star less', contexts: PHOTO, keys: ['['] },
   { id: 'photo.rateNext0', label: 'No stars, then the next photo', contexts: PHOTO, keys: ['Shift+0'] },
@@ -152,12 +155,12 @@ export const ACTIONS: ActionDef[] = [
   { id: 'survey.close', label: 'Back to the grid', contexts: ['survey'], keys: ['Escape', 'G', 'N', 'E', 'F'] },
 
   // Develop
-  { id: 'develop.undo', label: 'Undo', contexts: [...DEVELOP_ANY, 'guided'], keys: ['Ctrl+Z'] },
-  { id: 'develop.redo', label: 'Redo', contexts: [...DEVELOP_ANY, 'guided'], keys: ['Ctrl+Y', 'Ctrl+Shift+Z'] },
-  { id: 'develop.before', label: 'Before / after', contexts: ['develop'], keys: ['\\'] },
+  { id: 'develop.undo', label: 'Undo', contexts: [...DEVELOP_ANY, 'guided', 'remove'], keys: ['Ctrl+Z'] },
+  { id: 'develop.redo', label: 'Redo', contexts: [...DEVELOP_ANY, 'guided', 'remove'], keys: ['Ctrl+Y', 'Ctrl+Shift+Z'] },
+  { id: 'develop.before', label: 'Before / after', contexts: ['develop', 'remove'], keys: ['\\'] },
   { id: 'develop.clipping', label: 'Show clipping', contexts: ['develop'], keys: ['J', 'O'], lightroom: ['J'] },
   { id: 'develop.sensorClipping', label: 'Show sensor clipping', contexts: ['develop'], keys: ['Shift+O'] },
-  { id: 'develop.zoom', label: 'Zoom to 100 % and back', contexts: ['develop'], keys: ['Z'] },
+  { id: 'develop.zoom', label: 'Zoom to 100 % and back', contexts: ['develop', 'remove'], keys: ['Z'] },
   { id: 'develop.next', label: 'Next photo', contexts: ['develop'], keys: ['ArrowRight'] },
   { id: 'develop.prev', label: 'Previous photo', contexts: ['develop'], keys: ['ArrowLeft'] },
   { id: 'develop.whiteBalance', label: 'White balance picker', contexts: ['develop'], keys: ['W'] },
@@ -179,6 +182,23 @@ export const ACTIONS: ActionDef[] = [
   // Develop, while drawing Guided Upright lines
   { id: 'guided.done', label: 'Finish Guided Upright', contexts: ['guided'], keys: ['Enter', 'Escape'] },
   { id: 'guided.delete', label: 'Remove the selected guide', contexts: ['guided'], keys: ['Delete', 'Backspace'] },
+
+  // Remove, Heal and Clone (Lightroom Classic: Q opens Spot Removal, [ / ] change the brush size and Shift+[ / Shift+]
+  // its feather, H shows or hides the pins: Adobe's shortcut table, seen through search excerpts, docs/PHASE3.md
+  // Part 11). Shift+[ and Shift+] arrive as { and } (keys follow the printed character).
+  { id: 'develop.remove', label: 'Remove, Heal and Clone: the brush on the photo (again: done)', contexts: ['develop', 'remove'], keys: ['Q'] },
+  { id: 'remove.done', label: 'Finish with the Remove brush', contexts: ['remove'], keys: ['Enter'] },
+  { id: 'remove.cancel', label: 'Remove brush: deselect the spot, or finish', contexts: ['remove'], keys: ['Escape'] },
+  { id: 'remove.delete', label: 'Delete the selected spot', contexts: ['remove'], keys: ['Delete', 'Backspace'] },
+  { id: 'remove.sizeUp', label: 'Larger brush', contexts: ['remove'], keys: [']'] },
+  { id: 'remove.sizeDown', label: 'Smaller brush', contexts: ['remove'], keys: ['['] },
+  { id: 'remove.featherUp', label: 'Softer brush edge (more feather)', contexts: ['remove'], keys: ['}'] },
+  { id: 'remove.featherDown', label: 'Harder brush edge (less feather)', contexts: ['remove'], keys: ['{'] },
+  { id: 'remove.showAll', label: 'Show all spots or only the selected one', contexts: ['remove'], keys: ['H'] },
+  { id: 'remove.modeRemove', label: 'Spot mode: Remove (fill from the surroundings)', contexts: ['remove'], keys: [] },
+  { id: 'remove.modeHeal', label: 'Spot mode: Heal', contexts: ['remove'], keys: [] },
+  { id: 'remove.modeClone', label: 'Spot mode: Clone', contexts: ['remove'], keys: [] },
+  { id: 'remove.clear', label: 'Delete all spots…', contexts: ['develop', 'remove'], keys: [] },
 
   // Develop, while cropping
   { id: 'crop.apply', label: 'Apply the crop', contexts: ['crop'], keys: ['Enter'] },
