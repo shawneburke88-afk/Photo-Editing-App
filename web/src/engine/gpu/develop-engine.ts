@@ -564,9 +564,14 @@ export class DevelopEngine {
     return run
   }
 
-  /** The Detail level for a view drawn at mip `lod`: the largest whose image still has at least the view's pixels. */
+  /**
+   * The Detail level for a view drawn at mip `lod`: one finer than the largest whose image still has the view's
+   * pixels (2× the view's size). The geometry warp's bicubic read softens an image at its own size; warped at 2× and
+   * then reduced, the preview matches the one without Detail (measured: mean |Δ| 0.2 instead of 0.9 levels, PHASE3.md
+   * Part 13), at 4× the cost of the view's own level.
+   */
   private detailLevel(lod: number): number {
-    return Math.max(0, Math.min(6, Math.floor(lod + 1e-6)))
+    return Math.max(0, Math.min(6, Math.floor(lod + 1e-6) - 1))
   }
 
   /** The scene after the Detail stage at the run's level, from the cache when the same run was made last. */

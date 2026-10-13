@@ -212,7 +212,7 @@ describe('capture sharpening (darktable capture.c)', () => {
       return s
     }
     for (const i of [0, 30, 65, 66, 100, 150, 255]) expect(sum(i)).toBeCloseTo(1, 5)
-    expect(t[0 * KERNEL_ALIGN]).toBeCloseTo(1, 6) // sigma 1e-7: a delta
+    expect(t[0]).toBeCloseTo(1, 6) // kernel 0 (sigma 1e-7): a delta
     expect(t[50 * KERNEL_ALIGN + 3]).toBe(0) // sigma 0.5: nothing beyond radius 2.5
     expect(t[100 * KERNEL_ALIGN + 3]).toBeGreaterThan(0)
   })
