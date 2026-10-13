@@ -730,11 +730,13 @@ button.kbd:hover { border-color: var(--muted); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .curve-guide { margin: 0 0 8px; cursor: help; }
 .curve-guide-order { color: var(--accent); }
-.curve-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
-.curve-views button { padding: 4px 7px; font-size: 0.82rem; display: inline-flex; align-items: center; gap: 4px; }
+.curve-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.curve-views { flex-shrink: 1; min-width: 0; }
+.curve-views button { position: relative; padding: 4px 8px; font-size: 0.82rem; display: inline-flex; align-items: center; gap: 4px; }
 .curve-views button:disabled { cursor: default; opacity: 0.6; }
 .curve-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
-.curve-edited { color: var(--accent); font-weight: 700; margin-left: 1px; }
+/* The mark of an edited curve doesn't change the button's width, so nothing moves while a drag adds the first point. */
+.curve-edited { position: absolute; top: -1px; right: 1px; color: var(--accent); font-weight: 700; font-size: 0.75rem; line-height: 1; }
 .curve-views button.on .curve-edited { color: var(--accent-text); }
 .curve-tat { display: inline-flex; align-items: center; margin-left: auto; padding: 5px 7px; }
 .curve-graph { position: relative; width: 100%; aspect-ratio: 1; touch-action: none; user-select: none; }
@@ -767,7 +769,8 @@ button.kbd:hover { border-color: var(--muted); }
 .curve-split::before { content: ''; position: absolute; left: 1px; top: 1px; border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 10px solid #bfc3ca; }
 .curve-split:hover::before, .curve-split:focus-visible::before { border-bottom-color: var(--accent); }
 .curve-split:focus-visible { outline: none; }
-.curve-readout { margin: 4px 0 6px; min-height: 1.4em; font-variant-numeric: tabular-nums; }
+/* Two lines always, so the panel never changes height (and the graph never moves) while a point is dragged. */
+.curve-readout { margin: 4px 0 6px; height: 2.9em; line-height: 1.45em; overflow: hidden; font-variant-numeric: tabular-nums; }
 .curve-point-tools { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
 .curve-preset, .curve-numbers label { display: flex; flex-direction: column; gap: 2px; }
 .curve-numbers { display: flex; gap: 6px; }
