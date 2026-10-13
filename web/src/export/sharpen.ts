@@ -80,7 +80,7 @@ export const MAX_SIGMA = MAX_RADIUS / 2.5
  * Halo limit: the sharpened L may overshoot the lightest/darkest L of the pixel's 3 × 3 neighbourhood by at most
  * this fraction of their difference (LightBench's addition; darktable's sharpen has no limit).
  */
-export const HALO_LIMIT = 0.25
+export const HALO_LIMIT = 0.1
 
 /**
  * Screen sigma in output pixels: the photo's own softness (SCREEN_CAPTURE_SIGMA at 100 %) shrinks with the

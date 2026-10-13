@@ -146,7 +146,9 @@ struct Sharpen {
   amount: f32,
   threshold: f32,         // L units
   halo: f32,              // overshoot allowed past the 3 × 3 neighbourhood's L range, as a fraction of it
-  pad: vec3f,
+  pad0: f32,
+  pad1: f32,
+  pad2: f32,
 }
 
 @group(0) @binding(5) var<uniform> S: Sharpen;
