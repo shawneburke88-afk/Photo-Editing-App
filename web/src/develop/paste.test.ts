@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { BUILT_IN_TARGETS } from '../engine/develop/auto'
 import { isWithinImage } from '../engine/develop/crop'
 import { DEFAULT_GEOMETRY, rotate90, setAngle, setAspect } from '../engine/develop/geometry'
-import { DEFAULT_RGB_SETTINGS, DEFAULT_SETTINGS } from '../engine/develop/settings'
+import { DEFAULT_RGB_SETTINGS, DEFAULT_SETTINGS, type DevelopSettings } from '../engine/develop/settings'
 import { DEFAULT_TRANSFORM, ZERO_PERSPECTIVE, type TransformSettings } from '../engine/develop/upright'
 import { CURVE_PRESETS, DEFAULT_TONE_CURVE } from '../engine/develop/tone-curve'
 import { applyPaste, changedKeys, DEFAULT_PASTE_KEYS, describePaste, type Clipboard } from './paste'
@@ -141,8 +141,8 @@ describe('paste: Upright and the Transform sliders', () => {
 
 describe('the Tone Curve item', () => {
   const curve = { ...DEFAULT_TONE_CURVE, rgb: CURVE_PRESETS[1].points, regions: { ...DEFAULT_TONE_CURVE.regions, shadows: 20 }, saturation: 70 }
-  const withCurve = { ...DEFAULT_SETTINGS, toneCurve: curve }
-  const c = (settings = withCurve): Clipboard => ({ settings, keys: ['toneCurve'], rerunAuto: false, sourceKind: 'raw', sourceName: 'A.NEF' })
+  const withCurve: DevelopSettings = { ...DEFAULT_SETTINGS, toneCurve: curve }
+  const c = (settings: DevelopSettings = withCurve): Clipboard => ({ settings, keys: ['toneCurve'], rerunAuto: false, sourceKind: 'raw', sourceName: 'A.NEF' })
 
   it('is one item, ticked by default, and copies the whole curve', () => {
     expect(DEFAULT_PASTE_KEYS).toContain('toneCurve')

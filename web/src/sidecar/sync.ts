@@ -14,6 +14,7 @@ import { getDirAt, getRootHandle } from '../platform/roots'
 import { fieldsFromRead } from './changes'
 import { externalChanges, inspectSidecar, locateSidecar } from './external'
 import { geometryOf, lrFrame, planLightroomWrite } from './lightroom'
+import { planToneWrite, toneCurveOf } from './lightroomCurve'
 import { sidecarFor } from './naming'
 import { readXmp, writeXmp } from './xmp'
 
@@ -132,9 +133,11 @@ class SidecarSync {
     const frame = lrFrame(photo)
     const read = existing ? readXmp(existing) : null
     const lightroom = planLightroomWrite(read?.lightroom, read?.develop ? geometryOf(read.develop) : null, geometryOf(src.settings), frame)
+    // Lightroom's tone curve, by the same rules (lightroomCurve.ts).
+    const lightroomTone = planToneWrite(read?.lightroomTone, toneCurveOf(read?.develop), toneCurveOf(src.settings))
     let text: string | null
     try {
-      text = writeXmp(existing, { rating: photo.rating, flag: photo.flag, color: photo.color, develop: src.settings, keywords, collections: src.collections, stack: src.stack, versions: src.versions, metadata, lightroom })
+      text = writeXmp(existing, { rating: photo.rating, flag: photo.flag, color: photo.color, develop: src.settings, keywords, collections: src.collections, stack: src.stack, versions: src.versions, metadata, lightroom, lightroomTone })
     } catch (e) {
       throw new Error(`${where}: ${e instanceof Error ? e.message : e}`, { cause: e })
     }
