@@ -20,7 +20,7 @@ import type { DisplayUniforms } from '../develop/settings'
 import { inverseLoglogistic, type SigmoidCurve } from '../color/sigmoid'
 import type { RgbImage, SensorData } from '../raw/types'
 import { markesteijnHexagons, markesteijnStrips, markesteijnTiling, packXtrans } from '../raw/xtrans'
-import type { DemosaicMethod } from '../develop/settings'
+import { demosaicAlgorithm, type DemosaicMethod } from '../develop/settings'
 import displayWgsl from './develop-display.wgsl?raw'
 import mipWgsl from './mip.wgsl?raw'
 import rawWgsl from './raw-pipeline.wgsl?raw'
@@ -673,7 +673,7 @@ export class DevelopEngine {
       // 3. Demosaic → scene-linear Rec.2020
       if (xtrans) {
         this.encodeXtrans(enc, hl, out, opts.demosaic, temps)
-      } else if ((opts.demosaic === 'rcd' || opts.demosaic === 'markesteijn3') && w > 32 && h > 32) {
+      } else if (demosaicAlgorithm('bayer', opts.demosaic) === 'rcd' && w > 32 && h > 32) {
         const rgb0 = buf(px)
         const rgb1 = buf(px)
         const rgb2 = buf(px)
@@ -744,14 +744,15 @@ export class DevelopEngine {
     temps.push(constBuf)
     const C = B(constBuf)
 
-    const passes = method === 'markesteijn3' ? 3 : 1
+    const algorithm = demosaicAlgorithm('xtrans', method)
+    const passes = algorithm === 'markesteijn3' ? 3 : 1
     const set: ShaderSet = passes === 3 ? 'xtrans3' : 'xtrans'
     const run = (entry: string, bindings: Record<number, Res>, x: number, y: number) =>
       this.dispatch(enc, this.pipe(entry, set), bindings, x, y)
 
     run('xtLinear', { 0: C, 2: B(hl), 13: out }, w, h)
     const tiling = markesteijnTiling(passes)
-    if (method === 'bilinear' || w <= 2 * tiling.border + 6 || h <= 2 * tiling.border + 6) return
+    if (algorithm === 'linear' || w <= 2 * tiling.border + 6 || h <= 2 * tiling.border + 6) return
     const overlap = this.xtransOverlap ?? tiling.overlap
 
     // Bytes per strip pixel: 1 pass about 120 (four RGB directions 64, min/max green 8, YPbPr 16, derivatives 16,

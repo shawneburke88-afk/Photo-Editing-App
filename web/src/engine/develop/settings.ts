@@ -20,6 +20,12 @@ import { CURRENT_PROCESS, processParams, validProcess } from './process'
  */
 export type DemosaicMethod = 'rcd' | 'bilinear' | 'markesteijn3'
 
+/** The algorithm a stored method runs on a sensor layout (darktable src/iop/demosaic.c lines 1503-1506). */
+export function demosaicAlgorithm(layout: 'bayer' | 'xtrans', method: DemosaicMethod): 'rcd' | 'bilinear' | 'markesteijn1' | 'markesteijn3' | 'linear' {
+  if (layout === 'xtrans') return method === 'bilinear' ? 'linear' : method === 'markesteijn3' ? 'markesteijn3' : 'markesteijn1'
+  return method === 'bilinear' ? 'bilinear' : 'rcd'
+}
+
 export interface DevelopSettings {
   /** Layout of this settings object (the JSON schema), not the rendering: see `process`. */
   version: 1
