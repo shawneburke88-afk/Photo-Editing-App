@@ -191,7 +191,7 @@ export class FullRenderer {
       try {
         return await engine.guarded(async () => {
           const info = loadIntoEngine(engine, decoded)
-          const settings = savedSettings(saved, info.kind)
+          const settings = savedSettings(saved, info.kind, info.iso)
           await engine.process(stageOptions(settings, info))
           const [width, height] = engine.outputSize(settings.geometry)
           return engine.renderOutput(displayUniforms(settings), multipliers(settings, info), {

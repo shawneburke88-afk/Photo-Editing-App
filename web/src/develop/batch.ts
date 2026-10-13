@@ -25,6 +25,7 @@ import { applyPaste, mergeClipboards, type Clipboard } from './paste'
 import { loadIntoEngine, multipliers, renderThumbnail, stageOptions, type SensorInfo } from './source'
 import { ownFocal, rerunUpright, wantsUprightRerun } from './uprightRun'
 import { fromLightroom, lrFrame, parseLrKey, UPRIGHT_CODE } from '../sidecar/lightroom'
+import { withDetail } from '../engine/detail/settings'
 import { parseLrToneKey, toneFromLightroom } from '../sidecar/lightroomCurve'
 import { withToneCurve } from '../engine/develop/tone-curve'
 
@@ -44,12 +45,15 @@ export interface BatchJob {
   lightroomTone?: Record<number, string>
 }
 
-/** The history step of a crop or Transform read from a Lightroom sidecar when a photo is added. */
-export const LIGHTROOM_STEP = 'Lightroom crop & Transform'
+// The history steps of the Lightroom settings read from a sidecar when a photo is added.
+/** Lightroom's crop, Transform and Detail settings (Phase 3, Parts 7 and 13). */
+export const LIGHTROOM_STEP = 'Lightroom settings'
 /** … of a tone curve, and of both. */
 export const LIGHTROOM_TONE_STEP = 'Lightroom tone curve'
-export const LIGHTROOM_BOTH_STEP = 'Lightroom crop, Transform & tone curve'
-const LIGHTROOM_STEPS = [LIGHTROOM_STEP, LIGHTROOM_TONE_STEP, LIGHTROOM_BOTH_STEP]
+export const LIGHTROOM_BOTH_STEP = 'Lightroom settings & tone curve'
+/** The names before the Detail fields were read (Part 7 and Part 12), still recognised in saved histories. */
+const LIGHTROOM_STEPS_V1 = ['Lightroom crop & Transform', 'Lightroom crop, Transform & tone curve']
+const LIGHTROOM_STEPS = [LIGHTROOM_STEP, LIGHTROOM_TONE_STEP, LIGHTROOM_BOTH_STEP, ...LIGHTROOM_STEPS_V1]
 export const lightroomStep = (geometry: boolean, tone: boolean) => (geometry && tone ? LIGHTROOM_BOTH_STEP : tone ? LIGHTROOM_TONE_STEP : LIGHTROOM_STEP)
 
 /** An edit whose only step is the Lightroom settings read when the photo was added (the preset for new photos still applies). */
@@ -258,7 +262,7 @@ class BatchDeveloper {
     const develop = async (engine: DevelopEngine | null, info: SensorInfo | null): Promise<{ h: History; next: DevelopSettings }> => {
       const kind: SourceKind = info?.kind ?? (isRawFile(p.fileName) ? 'raw' : 'rgb')
       // Read the edit now rather than when the job was queued, so a change made meanwhile (e.g. in Develop) isn't lost.
-      const h = loadHistory(await catalog.getEdit(id), kind)
+      const h = loadHistory(await catalog.getEdit(id), kind, info?.iso)
       let next = applyPaste(current(h), job.clip, kind, engine && info ? engine.imageSize : undefined)
       if (info) next = ownFocal(next, info)
       if (job.clip.keys.includes('upright') && wantsUprightRerun(job.clip.settings) && engine && info) {
@@ -267,8 +271,9 @@ class BatchDeveloper {
         next = await rerunUpright(engine, next, info)
       }
       if (lightroom) {
-        const r = fromLightroom(next.geometry, lightroom, lrFrame(p))
+        const r = fromLightroom(next.geometry, lightroom, lrFrame(p), next.detail)
         next = { ...next, geometry: r.geometry }
+        if (r.detail) next = withDetail(next, r.detail)
         if (info) next = ownFocal(next, info)
         if (r.rerun && engine && info) {
           // LightBench's own Upright for the mode Lightroom used. Upright resets the straighten angle, but Lightroom's

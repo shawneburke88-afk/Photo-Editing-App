@@ -177,7 +177,7 @@ export async function runExport(
           try {
             return await e.guarded(async () => {
               const info = loadIntoEngine(e, decoded)
-              const settings = savedSettings(saved, info.kind)
+              const settings = savedSettings(saved, info.kind, info.iso)
               await e.process(stageOptions(settings, info))
               // The crop at 100 % (the whole photo when it isn't cropped).
               const [iw, ih] = e.outputSize(settings.geometry)

@@ -11,6 +11,7 @@ import type { AutoRecord } from './auto'
 import { DEFAULT_LENS, LEGACY_LENS, normalizeLens, type LensSettings } from '../lens/correction'
 import { DEFAULT_GEOMETRY, normalizeGeometry, type GeometrySettings } from './geometry'
 import { CURRENT_PROCESS, processParams, validProcess, type ToneMask } from './process'
+import { normalizeDetail, RAW_DETAIL, rawDetailFor, type DetailSettings } from '../detail/settings'
 import { normalizeToneCurve, toneCurveGpu, type ToneCurveGpu, type ToneCurveSettings } from './tone-curve'
 import { normalizeSpots, type Spot } from './spots'
 
@@ -75,6 +76,12 @@ export interface DevelopSettings {
    */
   lens: LensSettings
   /**
+   * The Detail group: Sharpening and Noise Reduction (engine/detail/settings.ts). Absent = all off: every edit saved
+   * before it existed reads so and renders as before. New RAW edits get sharpening on (`rawDetailFor`: Amount 40, 25
+   * above ISO 1000), JPEGs none.
+   */
+  detail?: DetailSettings
+  /**
    * The Tone Curve (tone-curve.ts): Regions, the RGB curve and the Red, Green and Blue curves, after Contrast. Absent
    * when untouched or reset, so such an edit is exactly one made before the Tone Curve existed (and renders as one).
    */
@@ -84,6 +91,7 @@ export interface DevelopSettings {
    * such field at all, so they stay exactly as they were (and render byte-identically).
    */
   spots?: Spot[]
+
 }
 
 export const DEFAULT_SETTINGS: DevelopSettings = {
@@ -110,6 +118,9 @@ export const DEFAULT_SETTINGS: DevelopSettings = {
     demosaic: 'rcd',
   },
   lens: DEFAULT_LENS,
+  // New RAW photos are sharpened (capture sharpening, Amount 40, automatic radius; owner's decision 2026-10-13).
+  // `defaultsFor` lowers it to 25 above ISO 1000.
+  detail: RAW_DETAIL,
 }
 
 /** What kind of source a photo is: camera RAW, or an already-rendered (display-referred) RGB image. */
@@ -120,12 +131,22 @@ export type SourceKind = 'raw' | 'rgb'
  * exposure. Hue preservation is 0 so that the pipeline's inverse tone mapping at load is exact and an
  * unedited JPEG looks exactly as shot (see engine/gpu/rgb-input.wgsl).
  */
-export const DEFAULT_RGB_SETTINGS: DevelopSettings = {
-  ...DEFAULT_SETTINGS,
-  advanced: { ...DEFAULT_SETTINGS.advanced, baseExposure: 0, huePreservation: 0 },
-}
+export const DEFAULT_RGB_SETTINGS: DevelopSettings = (() => {
+  // JPEGs start unsharpened (Lightroom's JPEG default too, from general knowledge): no `detail`.
+  const { detail: _raw, ...rest } = DEFAULT_SETTINGS
+  void _raw
+  return { ...rest, advanced: { ...DEFAULT_SETTINGS.advanced, baseExposure: 0, huePreservation: 0 } }
+})()
 
-export const defaultsFor = (kind: SourceKind) => (kind === 'rgb' ? DEFAULT_RGB_SETTINGS : DEFAULT_SETTINGS)
+/**
+ * The defaults for a new photo of this kind. A RAW's default sharpening depends on its EXIF ISO (Amount 40, or 25
+ * above ISO 1000; `rawDetailFor`); without an ISO it is 40 (`DEFAULT_SETTINGS`).
+ */
+export function defaultsFor(kind: SourceKind, iso?: number | null): DevelopSettings {
+  if (kind === 'rgb') return DEFAULT_RGB_SETTINGS
+  const detail = rawDetailFor(iso)
+  return detail === DEFAULT_SETTINGS.detail ? DEFAULT_SETTINGS : { ...DEFAULT_SETTINGS, detail }
+}
 
 /**
  * Fills in missing fields (e.g. from older saved edits) with the defaults for this kind of photo. A saved edit
@@ -133,8 +154,11 @@ export const defaultsFor = (kind: SourceKind) => (kind === 'rgb' ? DEFAULT_RGB_S
  */
 export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined, kind: SourceKind = 'raw'): DevelopSettings {
   const d = defaultsFor(kind)
+  // Detail comes only from the stored edit: an edit without it is off (old edits render as before).
+  const { detail: _dd, ...base } = d
+  void _dd
   const out: DevelopSettings = {
-    ...d,
+    ...base,
     ...s,
     whiteBalance: { ...d.whiteBalance, ...s?.whiteBalance },
     advanced: { ...d.advanced, ...s?.advanced },
@@ -143,6 +167,10 @@ export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined
     process: validProcess(s?.process),
     geometry: normalizeGeometry(s?.geometry),
   }
+  // No Detail settings stay none (no key is added to older edits).
+  const detail = normalizeDetail(s?.detail)
+  if (detail) out.detail = detail
+  else delete out.detail
   // The tone curve is only kept when it isn't at its defaults (an edit without one has no key at all).
   const tc = normalizeToneCurve(s?.toneCurve)
   if (tc) out.toneCurve = tc
@@ -186,10 +214,15 @@ export interface DisplayUniforms {
   huePreservation: number
   /** Crop, straighten, rotate and flip; the engine resolves it against the photo's size. */
   geometry: GeometrySettings
+  /** Sharpening and noise reduction (absent = off); the engine resolves them against the photo (its noise profile). */
+  detail?: DetailSettings
+  /** Show Sharpening's mask instead of the photo (Masking preview, a view only). */
+  detailMask?: boolean
   /** The Tone Curve's lookup table and options, or null when it changes nothing (the shader skips it). */
   toneCurve: ToneCurveGpu | null
   /** Remove, Heal and Clone spots; absent when there are none. */
   spots?: Spot[]
+
 }
 
 export function displayUniforms(s: DevelopSettings): DisplayUniforms {
@@ -210,6 +243,7 @@ export function displayUniforms(s: DevelopSettings): DisplayUniforms {
     }),
     huePreservation: Math.min(1, Math.max(0, s.advanced.huePreservation / 100)),
     geometry: s.geometry ?? DEFAULT_GEOMETRY,
+    ...(s.detail ? { detail: s.detail } : {}),
     toneCurve: toneCurveGpu(s.toneCurve),
     ...(s.spots?.length ? { spots: s.spots } : {}),
   }

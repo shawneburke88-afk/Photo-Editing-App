@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 import { lensfun } from './lensfun-plugin.ts'
+import { noiseProfiles } from './noiseprofiles-plugin.ts'
 import { serviceWorker } from './sw-plugin.ts'
 
 const commit = (() => {
@@ -21,7 +22,8 @@ export default defineConfig({
   base: process.env.BASE_PATH ?? '/',
   // serviceWorker: offline use + COOP/COEP on GitHub Pages (production build only; see sw-plugin.ts).
   // lensfun: the Lensfun lens database as one JSON file, downloaded on first use (lensfun-plugin.ts).
-  plugins: [react(), lensfun(), serviceWorker({ version, releases })],
+  // noiseProfiles: darktable's noise profiles as one JSON file, downloaded on first use (noiseprofiles-plugin.ts).
+  plugins: [react(), lensfun(), noiseProfiles(), serviceWorker({ version, releases })],
   define: { __APP_VERSION__: JSON.stringify(version) },
   worker: { format: 'es' },
   // These packages locate their .wasm files at runtime; pre-bundling breaks that.

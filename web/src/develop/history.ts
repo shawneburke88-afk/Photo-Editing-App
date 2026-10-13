@@ -61,9 +61,9 @@ export interface SavedHistory {
 
 export const savedForm = (h: History): SavedHistory => ({ steps: h.steps.map(({ label, settings }) => ({ label, settings })), index: h.index })
 
-/** A photo's history as saved in the catalog (or a fresh one at the defaults for its kind). */
-export function loadHistory(saved: { settings: string; history: string } | null, kind: SourceKind): History {
-  if (!saved) return startHistory(defaultsFor(kind))
+/** A photo's history as saved in the catalog (or a fresh one at the defaults for its kind and EXIF ISO). */
+export function loadHistory(saved: { settings: string; history: string } | null, kind: SourceKind, iso?: number | null): History {
+  if (!saved) return startHistory(defaultsFor(kind, iso))
   try {
     const sh = JSON.parse(saved.history) as SavedHistory
     const steps = sh.steps.map((st) => ({ label: st.label, settings: normalizeSettings(st.settings, kind), at: 0 }))
@@ -74,6 +74,6 @@ export function loadHistory(saved: { settings: string; history: string } | null,
   try {
     return startHistory(normalizeSettings(JSON.parse(saved.settings), kind))
   } catch {
-    return startHistory(defaultsFor(kind))
+    return startHistory(defaultsFor(kind, iso))
   }
 }

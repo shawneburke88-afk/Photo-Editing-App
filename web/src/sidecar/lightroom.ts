@@ -50,9 +50,20 @@
 // keystone isn't darktable's lens shift), so the numbers carry over but the look is approximate. Lightroom's Scale
 // below 100 % (empty edges) becomes 100 %.
 
+// The Detail panel's fields (Phase 3, Part 13; the same rules): crs:Sharpness, SharpenRadius, SharpenDetail,
+// SharpenEdgeMasking, LuminanceSmoothing, LuminanceNoiseReductionDetail, LuminanceNoiseReductionContrast,
+// ColorNoiseReduction, ColorNoiseReductionDetail, ColorNoiseReductionSmoothness (names from ExifTool's crs table and
+// the owner's list). LightBench's Detail sliders have Lightroom's names and ranges, so the numbers carry over one for
+// one, Radius included: LightBench's Radius (0.5–3.0, default 1.0) multiplies the photo's automatic radius, so
+// Lightroom's default 1.0 is LightBench's measured radius. The algorithms differ (Lightroom's aren't public; LightBench's are darktable's), so the look is only approximately
+// Lightroom's. A sidecar without these fields leaves LightBench's Detail alone, and an absent sub-field
+// reads as Lightroom's default (Radius 1.0, Detail 25, Masking 0, Luminance Detail 50, Contrast 0, Color Detail 50,
+// Smoothness 50; from general knowledge of Lightroom, not checked). Not checked against a sidecar Lightroom wrote.
+
 import { composeOrientation, normalizeGeometry, orientationMatrix, orientationParts, setLocked, withOrientation, type GeometrySettings } from '../engine/develop/geometry'
 import { fromPoints, UNIT_RECT, withAngle, type Rect } from '../engine/develop/crop'
 import { DEFAULT_TRANSFORM, normalizeTransform, SCALE_RANGE, ZERO_PERSPECTIVE, type Orient, type TransformSettings, type UprightMode } from '../engine/develop/upright'
+import { DEFAULT_DETAIL, normalizeDetail, type DetailSettings } from '../engine/detail/settings'
 
 export const NS_CRS = 'http://ns.adobe.com/camera-raw-settings/1.0/'
 export const NS_TIFF = 'http://ns.adobe.com/tiff/1.0/'
@@ -78,7 +89,32 @@ export interface LrFields {
   y?: number
   /** Guided Upright's lines in the sidecar (crs:UprightFourSegmentsCount, or how many UprightFourSegments_N). */
   guides?: number
+  /** The Detail panel (Part 13). */
+  sharpness?: number
+  sharpenRadius?: number
+  sharpenDetail?: number
+  sharpenEdgeMasking?: number
+  luminanceSmoothing?: number
+  luminanceDetail?: number
+  luminanceContrast?: number
+  colorNoiseReduction?: number
+  colorDetail?: number
+  colorSmoothness?: number
 }
+
+/** The Detail fields in LrState order, with their crs: names and Lightroom's defaults. */
+export const LR_DETAIL_FIELDS = [
+  ['sharpness', 'Sharpness', 0],
+  ['sharpenRadius', 'SharpenRadius', 1],
+  ['sharpenDetail', 'SharpenDetail', 25],
+  ['sharpenEdgeMasking', 'SharpenEdgeMasking', 0],
+  ['luminanceSmoothing', 'LuminanceSmoothing', 0],
+  ['luminanceDetail', 'LuminanceNoiseReductionDetail', 50],
+  ['luminanceContrast', 'LuminanceNoiseReductionContrast', 0],
+  ['colorNoiseReduction', 'ColorNoiseReduction', 0],
+  ['colorDetail', 'ColorNoiseReductionDetail', 50],
+  ['colorSmoothness', 'ColorNoiseReductionSmoothness', 50],
+] as const
 
 /** What a sidecar says about Lightroom's geometry. */
 export interface LrRead {
@@ -101,10 +137,39 @@ export interface LrState {
   upright: number
   /** Vertical, Horizontal, Rotate, Scale, Aspect, X, Y (Lightroom's defaults when absent). */
   sliders: [number, number, number, number, number, number, number]
+  /**
+   * The Detail panel in LR_DETAIL_FIELDS order; null (or absent, in keys stored before Part 13) when the sidecar has
+   * none of Sharpness, LuminanceSmoothing and ColorNoiseReduction: unknown, so never counted as a difference.
+   */
+  detail?: number[] | null
 }
 
-export type LrGroup = 'orientation' | 'crop' | 'transform'
-export const LR_GROUPS: LrGroup[] = ['orientation', 'crop', 'transform']
+export type LrGroup = 'orientation' | 'crop' | 'transform' | 'detail'
+export const LR_GROUPS: LrGroup[] = ['orientation', 'crop', 'transform', 'detail']
+
+/** The Detail settings as Lightroom's ten numbers. */
+export function detailToLr(d: DetailSettings | undefined): number[] {
+  const x = d ?? DEFAULT_DETAIL
+  return [x.sharpen.amount, x.sharpen.radius, x.sharpen.detail, x.sharpen.masking, x.noise.luminance, x.noise.luminanceDetail, x.noise.luminanceContrast, x.noise.color, x.noise.colorDetail, x.noise.colorSmoothness]
+}
+
+/** Lightroom's ten numbers as Detail settings (clamped to the sliders' ranges). */
+export function detailFromLr(v: number[]): DetailSettings {
+  return normalizeDetail({
+    sharpen: { amount: v[0], radius: v[1], detail: v[2], masking: v[3] },
+    noise: { luminance: v[4], luminanceDetail: v[5], luminanceContrast: v[6], color: v[7], colorDetail: v[8], colorSmoothness: v[9] },
+  })!
+}
+
+/** The Detail settings of develop settings saved as JSON (none for missing or damaged settings). */
+export function detailOf(develop: string | null | undefined): DetailSettings | undefined {
+  try {
+    if (develop) return normalizeDetail((JSON.parse(develop) as { detail?: unknown }).detail)
+  } catch {
+    // damaged settings: none
+  }
+  return undefined
+}
 
 /** The photo as Lightroom stores it: its width and height, and the file's own orientation (EXIF code 1–8). */
 export interface LrFrame {
@@ -174,21 +239,26 @@ export function lrState(f: LrFields | undefined, frame: LrFrame): LrState {
     crop,
     upright: x.upright !== undefined && UPRIGHT_FROM_CODE[x.upright] ? x.upright : 0,
     sliders: [x.vertical ?? 0, x.horizontal ?? 0, x.rotate ?? 0, x.scale ?? 100, x.aspect ?? 0, x.x ?? 0, x.y ?? 0].map((v) => (finite(v) ? v : 0)) as LrState['sliders'],
+    detail:
+      x.sharpness === undefined && x.luminanceSmoothing === undefined && x.colorNoiseReduction === undefined
+        ? null
+        : LR_DETAIL_FIELDS.map(([k, , d]) => (finite(x[k]) ? x[k]! : d)),
   }
 }
 
 /** A stable text form, for remembering and comparing (sidecar/changes.ts, the marker). */
 export function lrKey(s: LrState): string {
-  return JSON.stringify({ o: s.orientation, c: s.crop && s.crop.map((v) => round(v)), u: s.upright, t: s.sliders.map((v) => round(v, 3)) })
+  return JSON.stringify({ o: s.orientation, c: s.crop && s.crop.map((v) => round(v)), u: s.upright, t: s.sliders.map((v) => round(v, 3)), ...(s.detail ? { d: s.detail.map((v) => round(v, 2)) } : {}) })
 }
 
 export function parseLrKey(key: string | null | undefined): LrState | null {
   if (!key) return null
   try {
-    const j = JSON.parse(key) as { o: number; c: LrState['crop']; u: number; t: LrState['sliders'] }
+    const j = JSON.parse(key) as { o: number; c: LrState['crop']; u: number; t: LrState['sliders']; d?: number[] }
     if (typeof j.o !== 'number' || typeof j.u !== 'number' || !Array.isArray(j.t) || j.t.length !== 7) return null
     if (j.c !== null && (!Array.isArray(j.c) || j.c.length !== 5)) return null
-    return { orientation: j.o, crop: j.c, upright: j.u, sliders: j.t }
+    const detail = Array.isArray(j.d) && j.d.length === LR_DETAIL_FIELDS.length ? j.d : null
+    return { orientation: j.o, crop: j.c, upright: j.u, sliders: j.t, ...(detail ? { detail } : {}) }
   } catch {
     return null
   }
@@ -201,6 +271,7 @@ export function sameGroup(a: LrState, b: LrState, g: LrGroup): boolean {
     if (!a.crop || !b.crop) return !a.crop && !b.crop
     return a.crop.every((v, i) => Math.abs(v - b.crop![i]) <= (i === 4 ? 1e-3 : 1e-5))
   }
+  if (g === 'detail') return !a.detail || !b.detail || a.detail.every((v, i) => Math.abs(v - b.detail![i]) <= 0.05)
   return a.upright === b.upright && a.sliders.every((v, i) => Math.abs(v - b.sliders[i]) <= 0.05)
 }
 
@@ -222,8 +293,8 @@ const totalOrientation = (g: GeometrySettings, frame: LrFrame) => composeOrienta
 /** The size of LightBench's straightened frame for an orientation. */
 const frameSize = (o: Orient, frame: LrFrame): [number, number] => (swaps(o) ? [frame.stored[1], frame.stored[0]] : frame.stored)
 
-/** What Lightroom's fields would be for LightBench's geometry. */
-export function toLightroom(g: GeometrySettings, frame: LrFrame): LrState {
+/** What Lightroom's fields would be for LightBench's geometry (and Detail settings: none = all off). */
+export function toLightroom(g: GeometrySettings, frame: LrFrame, detail?: DetailSettings): LrState {
   const o = totalOrientation(g, frame)
   const [W, H] = frame.stored
   const [fw, fh] = frameSize(o, frame)
@@ -259,6 +330,7 @@ export function toLightroom(g: GeometrySettings, frame: LrFrame): LrState {
     crop,
     upright: UPRIGHT_CODE[t?.upright ?? 'off'],
     sliders: t ? [-t.vertical + 0, -t.horizontal + 0, t.rotate, t.scale, -t.aspect + 0, t.offsetX, t.offsetY] : [0, 0, 0, 100, 0, 0, 0],
+    detail: detailToLr(detail),
   }
 }
 
@@ -266,6 +338,8 @@ export function toLightroom(g: GeometrySettings, frame: LrFrame): LrState {
 
 export interface FromLightroom {
   geometry: GeometrySettings
+  /** Detail settings read from Lightroom, when that group was taken. */
+  detail?: DetailSettings
   /** The groups that were taken from Lightroom (the others already matched). */
   changed: LrGroup[]
   /** The Upright mode read must be solved again on the photo (Auto, Level, Vertical, Full). */
@@ -277,8 +351,8 @@ export interface FromLightroom {
  * taken, so the parts Lightroom can't describe (the aspect lock, a Guided correction drawn in LightBench) stay when
  * nothing changed there.
  */
-export function fromLightroom(current: GeometrySettings, s: LrState, frame: LrFrame): FromLightroom {
-  const ours = toLightroom(current, frame)
+export function fromLightroom(current: GeometrySettings, s: LrState, frame: LrFrame, currentDetail?: DetailSettings): FromLightroom {
+  const ours = toLightroom(current, frame, currentDetail)
   const changed = LR_GROUPS.filter((g) => !sameGroup(ours, s, g))
   let g = current
   if (changed.includes('orientation')) {
@@ -331,11 +405,12 @@ export function fromLightroom(current: GeometrySettings, s: LrState, frame: LrFr
     void _old
     g = nt ? { ...rest, transform: nt } : rest
   }
-  return { geometry: g, changed, rerun }
+  const detail = changed.includes('detail') && s.detail ? detailFromLr(s.detail) : undefined
+  return { geometry: g, changed, rerun, ...(detail ? { detail } : {}) }
 }
 
-/** Whether Lightroom's fields would change LightBench's geometry. */
-export const lrDiffers = (current: GeometrySettings, s: LrState, frame: LrFrame) => !sameState(toLightroom(current, frame), s)
+/** Whether Lightroom's fields would change LightBench's geometry or Detail settings. */
+export const lrDiffers = (current: GeometrySettings, s: LrState, frame: LrFrame, detail?: DetailSettings) => !sameState(toLightroom(current, frame, detail), s)
 
 // ---- writing
 
@@ -358,6 +433,11 @@ export interface LrWritePlan {
    * write, so a later import or check can tell Lightroom's own later changes from LightBench's. Undefined: leave it.
    */
   marker?: string
+  /**
+   * The Detail fields to write (indices into LR_DETAIL_FIELDS): only those LightBench changed, so turning on noise
+   * reduction in LightBench never resets Lightroom's sharpening it didn't touch.
+   */
+  detailFields?: number[]
 }
 
 /**
@@ -373,28 +453,50 @@ export interface LrWritePlan {
  * rewrites the crop (not even before LightBench has read it, or when reading it failed), and an edit made before this
  * version, where LightBench didn't read Lightroom's crop, is only written once its geometry is changed in LightBench.
  */
-export function planLightroomWrite(file: LrRead | undefined, fileDevelop: GeometrySettings | null, ours: GeometrySettings, frame: LrFrame): LrWritePlan {
-  const state = toLightroom(ours, frame)
+export function planLightroomWrite(
+  file: LrRead | undefined,
+  fileDevelop: GeometrySettings | null,
+  ours: GeometrySettings,
+  frame: LrFrame,
+  fileDetail?: DetailSettings,
+  oursDetail?: DetailSettings,
+): LrWritePlan {
+  const state = toLightroom(ours, frame, oursDetail)
   if (!file || !file.processVersion || file.applied) return { groups: [], state }
   const theirs = lrState(file.fields, frame)
   // What LightBench's geometry was when this file was last written (or read): its own settings in the file, none if
   // it has none yet.
-  const before = toLightroom(fileDevelop ?? normalizeGeometry(null), frame)
+  const before = toLightroom(fileDevelop ?? normalizeGeometry(null), frame, fileDevelop ? fileDetail : undefined)
   const marker = parseLrKey(file.marker)
   const groups = LR_GROUPS.filter((g) => !sameGroup(state, theirs, g) && (!sameGroup(state, before, g) || (!!marker && !sameGroup(marker, theirs, g))))
+  // Detail, field by field: those LightBench changed (or all, after Ignore), where they differ from the file's.
+  const ignored = !!marker && !sameGroup(marker, theirs, 'detail')
+  const od = state.detail!
+  const detailFields = groups.includes('detail') && theirs.detail
+    ? od.map((_, i) => i).filter((i) => Math.abs(od[i] - theirs.detail![i]) > 0.05 && (ignored || Math.abs(od[i] - before.detail![i]) > 0.05))
+    : []
+  if (groups.includes('detail') && !detailFields.length) groups.splice(groups.indexOf('detail'), 1)
   const after: LrState = {
     orientation: groups.includes('orientation') ? state.orientation : theirs.orientation,
     crop: groups.includes('crop') ? state.crop : theirs.crop,
     upright: groups.includes('transform') ? state.upright : theirs.upright,
     sliders: groups.includes('transform') ? state.sliders : theirs.sliders,
+    detail: groups.includes('detail') && theirs.detail ? theirs.detail.map((v, i) => (detailFields.includes(i) ? od[i] : v)) : theirs.detail,
   }
-  return { groups, state, marker: sameState(after, state) ? lrKey(after) : undefined }
+  return { groups, state, marker: sameState(after, state) ? lrKey(after) : undefined, ...(detailFields.length ? { detailFields } : {}) }
 }
 
 /** The values written for a group, as Lightroom-style text (tiff:Orientation is in the TIFF namespace). */
-export function lrValues(s: LrState, g: LrGroup): [ns: string, local: string, value: string][] {
+export function lrValues(s: LrState, g: LrGroup, detailFields?: number[]): [ns: string, local: string, value: string][] {
   const num = (v: number, digits: number) => String(round(v, digits))
   if (g === 'orientation') return [[NS_TIFF, 'Orientation', String(s.orientation)]]
+  if (g === 'detail') {
+    const d = s.detail ?? detailToLr(undefined)
+    // Lightroom writes the radius with a sign and one decimal ("+1.0", as ExifTool shows it; not checked against a file
+    // Lightroom wrote here), the others as integers.
+    const all = LR_DETAIL_FIELDS.map(([, name], i): [string, string, string] => [NS_CRS, name, i === 1 ? `+${d[i].toFixed(1)}` : String(Math.round(d[i]))])
+    return detailFields ? all.filter((_, i) => detailFields.includes(i)) : all
+  }
   if (g === 'crop') {
     const c = s.crop ?? [0, 0, 1, 1, 0]
     return [

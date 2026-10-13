@@ -574,7 +574,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     const kind: SourceKind = isRawFile(p.fileName) ? 'raw' : 'rgb'
     const { keys, rerunAuto } = rememberedChoice()
     const sourceName = p.version > 0 ? `${p.fileName} (${p.versionName ?? `Copy ${p.version}`})` : p.fileName
-    setPasting({ mode, ids, clip: { settings: savedSettings(await catalog.getEdit(focus), kind), keys, rerunAuto, sourceKind: kind, sourceName } })
+    setPasting({ mode, ids, clip: { settings: savedSettings(await catalog.getEdit(focus), kind, p.iso), keys, rerunAuto, sourceKind: kind, sourceName } })
   }
 
   function openPaste() {

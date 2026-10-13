@@ -9,7 +9,10 @@ struct Params {
   m1: vec4f,
   m2: vec4f,
   outSize: vec2u,
-  pad: vec2u,
+  // The Detail stage (Part 13) warps a smaller copy of the scene for a smaller view: sensor positions are scaled by
+  // `srcScale` (source texels per full-size sensor pixel) before reading, and alpha (its sharpening mask) is kept.
+  // 0 = the full-size scene, read exactly as before.
+  srcScale: vec2f,
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -48,6 +51,10 @@ fn warp(@builtin(global_invocation_id) id: vec3u) {
   let q = vec3f(dot(P.m0.xyz, p), dot(P.m1.xyz, p), dot(P.m2.xyz, p));
   // Sensor position in texel units (texel centres at whole numbers).
   let s = q.xy / q.z - 0.5;
+  if (P.srcScale.x > 0.0) {
+    textureStore(dst, vec2i(id.xy), scaledSample(s));
+    return;
+  }
   if (L.mode != 0u) {
     textureStore(dst, vec2i(id.xy), vec4f(lensSample(s), 1.0));
     return;
@@ -71,6 +78,11 @@ fn warp(@builtin(global_invocation_id) id: vec3u) {
 
 /** The same bicubic read as `warp`, at texel position `s`. */
 fn bicubic(s: vec2f) -> vec3f {
+  return bicubic4(s).rgb;
+}
+
+/** The same with alpha. */
+fn bicubic4(s: vec2f) -> vec4f {
   let base = floor(s);
   let wx = weights(s.x - base.x);
   let wy = weights(s.y - base.y);
@@ -85,7 +97,24 @@ fn bicubic(s: vec2f) -> vec3f {
     }
     acc += wy[j] * row;
   }
-  return acc.rgb;
+  return acc;
+}
+
+/** A full-size sensor position read from the smaller source (`srcScale`), with or without the lens function. */
+fn scaledSample(s: vec2f) -> vec4f {
+  let k = P.srcScale;
+  if (L.mode == 0u) { return bicubic4((s + 0.5) * k - 0.5); }
+  let pg = lensPos(s, 1u);
+  let g = bicubic4((pg + 0.5) * k - 0.5);
+  if ((L.flags & 1u) == 0u) { return vec4f(g.rgb * vigGain(pg), g.a); }
+  let pr = lensPos(s, 0u);
+  let pb = lensPos(s, 2u);
+  let cam = vec3f(
+    dot(L.toCam0.xyz, bicubic((pr + 0.5) * k - 0.5)) * vigGain(pr),
+    dot(L.toCam1.xyz, g.rgb) * vigGain(pg),
+    dot(L.toCam2.xyz, bicubic((pb + 0.5) * k - 0.5)) * vigGain(pb),
+  );
+  return vec4f(dot(L.toWork0.xyz, cam), dot(L.toWork1.xyz, cam), dot(L.toWork2.xyz, cam), g.a);
 }
 
 /** The corrected colour at texel position `s` (working space). */

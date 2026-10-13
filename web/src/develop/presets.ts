@@ -5,6 +5,7 @@
 import { HIGHEST_TEMPERATURE, LOWEST_TEMPERATURE } from '../engine/color/temperature'
 import { AUTO_SLIDERS, BUILT_IN_TARGETS } from '../engine/develop/auto'
 import { DEFAULT_SETTINGS, type DevelopSettings, type SourceKind } from '../engine/develop/settings'
+import { DEFAULT_DETAIL, DETAIL_RANGES, withDetail, type DetailSettings } from '../engine/detail/settings'
 import type { Clipboard, PasteKey } from './paste'
 import { blendToneCurve, withToneCurve } from '../engine/develop/tone-curve'
 
@@ -122,10 +123,42 @@ export function blendSettings(before: DevelopSettings, after: DevelopSettings, a
   out = { ...out, whiteBalance: blendWhiteBalance(before.whiteBalance, after.whiteBalance, t, asShot) }
   // The tone curve: its change from the photo's own curve (or a straight line) scaled by the amount.
   if (before.toneCurve !== after.toneCurve) out = withToneCurve(out, blendToneCurve(before.toneCurve, after.toneCurve, t))
+  if (before.detail || after.detail) out = withDetail(out, blendDetail(before.detail ?? DEFAULT_DETAIL, after.detail ?? DEFAULT_DETAIL, t))
   // Keep the sliders' own precision.
   for (const k of ['contrast', 'highlights', 'shadows', 'whites', 'blacks', 'vibrance', 'saturation'] as const) out[k] = Math.round(out[k])
   out.exposure = Math.round(out.exposure * 100) / 100
   return out
+}
+
+/**
+ * Sharpening and Noise Reduction under a preset's Amount: every slider moves from the photo's value (off when it has
+ * none) towards the preset's, like the other sliders, at the slider's own precision (LightBench's choice).
+ */
+function blendDetail(before: DetailSettings, after: DetailSettings, t: number): DetailSettings {
+  const b = (k: 'amount' | 'radius' | 'detail' | 'masking', x: number, y: number, digits = 0) => {
+    const [lo, hi] = DETAIL_RANGES[k]
+    return Math.round(clamp(lerp(x, y, t), [lo, hi]) * 10 ** digits) / 10 ** digits
+  }
+  const n = (k: keyof DetailSettings['noise']) => {
+    const [lo, hi] = DETAIL_RANGES[k]
+    return Math.round(clamp(lerp(before.noise[k], after.noise[k], t), [lo, hi]))
+  }
+  return {
+    sharpen: {
+      amount: b('amount', before.sharpen.amount, after.sharpen.amount),
+      radius: b('radius', before.sharpen.radius, after.sharpen.radius, 1),
+      detail: b('detail', before.sharpen.detail, after.sharpen.detail),
+      masking: b('masking', before.sharpen.masking, after.sharpen.masking),
+    },
+    noise: {
+      luminance: n('luminance'),
+      luminanceDetail: n('luminanceDetail'),
+      luminanceContrast: n('luminanceContrast'),
+      color: n('color'),
+      colorDetail: n('colorDetail'),
+      colorSmoothness: n('colorSmoothness'),
+    },
+  }
 }
 
 function blendWhiteBalance(

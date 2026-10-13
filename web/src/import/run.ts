@@ -11,10 +11,10 @@ import { baseNameOf, dateFolder, extensionOf, JPEG_EXTENSIONS, joinPath, renamed
 import type { ScannedFile } from './scan'
 import { fullSidecarName, sidecarCandidates, stemOwners, stemSidecarName } from '../sidecar/naming'
 import { readXmp, type SidecarRead } from '../sidecar/xmp'
-import { geometryOf, lrDiffers, lrFrame, lrKey, lrState, parseLrKey, sameState } from '../sidecar/lightroom'
+import { detailOf, geometryOf, lrDiffers, lrFrame, lrKey, lrState, parseLrKey, sameState } from '../sidecar/lightroom'
 import { batch, lightroomStep } from '../develop/batch'
 import { lrToneDiffers, lrToneKey, lrToneState, parseLrToneKey, sameLrTone, toneCurveOf } from '../sidecar/lightroomCurve'
-import { normalizeSettings } from '../engine/develop/settings'
+import { defaultsFor, normalizeSettings } from '../engine/develop/settings'
 import { isRawFile } from '../engine/raw/decoder'
 
 export interface ImportItem {
@@ -146,12 +146,16 @@ async function readLightroomSettings(catalog: Catalog, id: number, r: SidecarRea
   if (!hasGeometry && !hasTone) return
   const p = await catalog.getPhoto(id)
   if (!p) return
+  const kind = isRawFile(p.fileName) ? 'raw' : 'rgb'
   let geometry: string | null = null
   if (hasGeometry) {
     const frame = lrFrame(p)
     const state = lrState(lr.fields, frame)
     const marker = parseLrKey(lr.marker)
-    if ((!r.develop || (marker && !sameState(marker, state))) && lrDiffers(geometryOf(r.develop), state, frame)) geometry = lrKey(state)
+    // Lightroom's Detail fields are part of this state. A photo without a LightBench edit has the defaults for its
+    // kind and ISO (RAWs are sharpened by default).
+    const detail = r.develop ? detailOf(r.develop) : defaultsFor(kind, p.iso).detail
+    if ((!r.develop || (marker && !sameState(marker, state))) && lrDiffers(geometryOf(r.develop), state, frame, detail)) geometry = lrKey(state)
   }
   let tone: string | null = null
   if (hasTone) {
@@ -160,7 +164,6 @@ async function readLightroomSettings(catalog: Catalog, id: number, r: SidecarRea
     if ((!r.develop || (marker && !sameLrTone(marker, state))) && lrToneDiffers(toneCurveOf(r.develop), state)) tone = lrToneKey(state)
   }
   if (!geometry && !tone) return
-  const kind = isRawFile(p.fileName) ? 'raw' : 'rgb'
   batch.run({
     label: lightroomStep(!!geometry, !!tone),
     ids: [id],
