@@ -30,6 +30,7 @@ import exportWgsl from './export.wgsl?raw'
 import { currentDisplaySpace, REC2020_TO_DISPLAY_P3, srgbColourIn, watchDisplaySpace, type DisplaySpace } from './display-space'
 import statsWgsl from './stats.wgsl?raw'
 import warpWgsl from './warp.wgsl?raw'
+import lensWgsl from './lens.wgsl?raw'
 
 export interface RawStageOptions {
   /** White balance multipliers [R, G, B], green = 1. */
@@ -118,6 +119,8 @@ const STATS_WORDS = 1028
 const IDENTITY: Mat3 = [1, 0, 0, 0, 1, 0, 0, 0, 1]
 const RAW_PARAMS_SIZE = 176
 const VIEW_SIZE = 432
+/** lens.wgsl's `struct Lens` (`lensUniforms`). */
+const LENS_UNIFORM_SIZE = 576
 /** demosaic-xtrans.wgsl's Const: 4 ints, the pattern, 3 matrix rows, 36 × vec4i of hexagon offsets. */
 const XTRANS_CONST_SIZE = 16 + 16 + 48 + 36 * 16
 /** Memory for one X-Trans demosaic strip (its working buffers). */
@@ -163,6 +166,12 @@ export class DevelopEngine {
   private readonly mipPipe: GPURenderPipeline
   private readonly sampler: GPUSampler
   private readonly viewBuf: GPUBuffer
+  /**
+   * The lens function of what is drawn (lens.wgsl, binding 4 of develop-display.wgsl), for the sensor-clipping
+   * overlay; `viewLensFor` is the warp it holds (null: none; the buffer starts zeroed, i.e. mode 0).
+   */
+  private readonly viewLensBuf: GPUBuffer
+  private viewLensFor: LensWarp | null = null
   private readonly statsModule: GPUShaderModule
   private statsPipe: GPUComputePipeline | null = null
   private sensor: SensorData | null = null
@@ -231,7 +240,7 @@ export class DevelopEngine {
     })
 
     this.rawModule = device.createShaderModule({ code: rawWgsl })
-    const displayModule = device.createShaderModule({ code: displayWgsl })
+    const displayModule = device.createShaderModule({ code: displayWgsl + lensWgsl })
     const renderPipe = (format: GPUTextureFormat) =>
       device.createRenderPipeline({
         layout: 'auto',
@@ -249,6 +258,7 @@ export class DevelopEngine {
     })
     this.sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear' })
     this.viewBuf = device.createBuffer({ size: VIEW_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    this.viewLensBuf = device.createBuffer({ size: LENS_UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.statsModule = device.createShaderModule({ code: statsWgsl })
   }
 
@@ -486,7 +496,7 @@ export class DevelopEngine {
   private buildWarp(r: ResolvedGeometry): GPUTexture {
     const { device } = this
     const [w, h] = r.size
-    this.warpPipe ??= device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: warpWgsl }), entryPoint: 'warp' } })
+    this.warpPipe ??= device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: warpWgsl + lensWgsl }), entryPoint: 'warp' } })
     const m = r.toSensor
     const params = new ArrayBuffer(64)
     new Float32Array(params).set([m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0], 0)
@@ -1016,6 +1026,13 @@ export class DevelopEngine {
     const d = REC2020_TO_DISPLAY_P3
     f.set([d[0], d[1], d[2], 0, d[3], d[4], d[5], 0, d[6], d[7], d[8], 0], 92)
     this.device.queue.writeBuffer(this.viewBuf, 0, v)
+    // The sensor-clipping overlay reads the sensor through the same lens function as the warp (rawMap ends in the
+    // lens-corrected frame). Only the overlay uses it; the picture itself is unchanged.
+    const lw = src.lens ?? null
+    if (lw !== this.viewLensFor) {
+      this.device.queue.writeBuffer(this.viewLensBuf, 0, lensUniforms(lw, this.camToWorking))
+      this.viewLensFor = lw
+    }
   }
 
   /**
@@ -1270,6 +1287,7 @@ export class DevelopEngine {
         { binding: 1, resource: this.sampler },
         { binding: 2, resource: { buffer: this.viewBuf } },
         { binding: 3, resource: { buffer: this.rawBuf! } },
+        { binding: 4, resource: { buffer: this.viewLensBuf } },
       ],
     })
   }
@@ -1309,6 +1327,7 @@ export class DevelopEngine {
     this.scene?.destroy()
     this.rawBuf?.destroy()
     this.viewBuf.destroy()
+    this.viewLensBuf.destroy()
     this.device.destroy()
   }
 }
@@ -1319,7 +1338,7 @@ export class DevelopEngine {
  * aberration on camera RGB.
  */
 export function lensUniforms(w: LensWarp | null, camToWorking: Mat3): ArrayBuffer {
-  const buf = new ArrayBuffer(576)
+  const buf = new ArrayBuffer(LENS_UNIFORM_SIZE)
   if (!w) return buf
   const u = new Uint32Array(buf)
   const f = new Float32Array(buf)
