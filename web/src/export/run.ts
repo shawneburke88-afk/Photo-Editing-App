@@ -13,6 +13,7 @@ import { buildExif } from './exif-writer'
 import { encodeJpeg, type ChromaSubsampling } from './jpeg-encoder'
 import { DEFAULT_METADATA, exportXmp, type MetadataOptions } from './metadata'
 import { encodePng } from './png'
+import { clampPpi, DEFAULT_OUTPUT_SHARPENING, DEFAULT_PPI, sharpenParams, type OutputSharpening } from './sharpen'
 import { DEFAULT_SIZE, outputSize, type SizeSettings } from './size'
 import { expandTemplate } from './template'
 import { encodeTiff } from './tiff'
@@ -33,6 +34,10 @@ export interface ExportSettings {
   tiffCompression: 'deflate' | 'none'
   space: OutputSpace
   size: SizeSettings
+  /** Resolution in pixels per inch, written into the file and used to size print sharpening. */
+  ppi: number
+  /** Output sharpening (export only; the edit and Develop are unchanged). */
+  sharpen: OutputSharpening
   /**
    * Triangular dither of ±1 output step before rounding, for 8-bit PNG/TIFF (the benchmark measured it
    * removing banding there; it had no effect in JPEGs, so JPEGs are never dithered).
@@ -61,6 +66,8 @@ export const DEFAULT_EXPORT: ExportSettings = {
   tiffCompression: 'deflate',
   space: 'srgb',
   size: DEFAULT_SIZE,
+  ppi: DEFAULT_PPI,
+  sharpen: DEFAULT_OUTPUT_SHARPENING,
   dither: true,
   metadata: DEFAULT_METADATA,
   template: '$(FILE.NAME)',
@@ -152,6 +159,7 @@ export async function runExport(
         // The crop at 100 % (the whole photo when it isn't cropped).
         const [iw, ih] = engine.outputSize(settings.geometry)
         const { width, height } = outputSize(iw, ih, s.size)
+        const ppi = clampPpi(s.ppi ?? DEFAULT_PPI)
         const bits = s.format === 'jpeg' ? 8 : s.bits
         const out = await engine.renderOutput(displayUniforms(settings), multipliers(settings, info), {
           width,
@@ -160,12 +168,14 @@ export async function runExport(
           trc: outputTrc(space.profile),
           bits,
           dither: s.dither && s.format !== 'jpeg' && bits === 8 ? 1 : 0,
+          // The scale actually used (floor rounding included), so screen sharpening follows the pixel size.
+          sharpen: sharpenParams(s.sharpen, Math.min(width / iw, height / ih), ppi),
         })
 
         const exif = s.metadata.camera
           ? buildExif(
               { make: p.cameraMake, model: p.cameraModel, lens: p.lens, iso: p.iso, shutter: p.shutter, aperture: p.aperture, focalLength: p.focalLength, capturedAt: p.capturedAt },
-              { width, height, srgb: s.space === 'srgb' },
+              { width, height, srgb: s.space === 'srgb', dpi: ppi },
             )
           : undefined
         const xmp = exportXmp(p, saved?.settings ?? null, s.metadata, await catalog.photoKeywords(id), await catalog.photoMetadata(id))
@@ -176,7 +186,7 @@ export async function runExport(
             quality: s.quality, subsampling: s.jpegChroma, maxBytes: Math.round(s.limitKb * 1024), exif, xmp, icc,
           })).blob
         } else if (s.format === 'png') {
-          blob = await encodePng({ width, height, pixels: toRgb(out.rgba), icc: { name: space.profile.name, data: icc }, cicp: space.cicp, exif, xmp, dpi: 300 })
+          blob = await encodePng({ width, height, pixels: toRgb(out.rgba), icc: { name: space.profile.name, data: icc }, cicp: space.cicp, exif, xmp, dpi: ppi })
         } else {
           blob = await encodeTiff({
             width,
@@ -186,7 +196,7 @@ export async function runExport(
             icc,
             xmp,
             exif: s.metadata.camera
-              ? { source: { make: p.cameraMake, model: p.cameraModel, lens: p.lens, iso: p.iso, shutter: p.shutter, aperture: p.aperture, focalLength: p.focalLength, capturedAt: p.capturedAt }, options: { width, height, srgb: s.space === 'srgb' } }
+              ? { source: { make: p.cameraMake, model: p.cameraModel, lens: p.lens, iso: p.iso, shutter: p.shutter, aperture: p.aperture, focalLength: p.focalLength, capturedAt: p.capturedAt }, options: { width, height, srgb: s.space === 'srgb', dpi: ppi } }
               : undefined,
           })
         }

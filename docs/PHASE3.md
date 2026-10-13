@@ -600,3 +600,74 @@ Owner's choices (2026-10-12):
 - The stored size comes from the catalog. For a JPEG whose EXIF has an orientation but no pixel dimensions, the catalog may hold the turned size, which would turn a straightened Lightroom crop slightly wrongly; JPEGs with mirrored EXIF orientations are read as unmirrored, as before.
 - As before this part, LightBench's sidecar writer re-serializes the file: names, values and element content are kept, but whitespace inside start tags and around the packet wrapper isn't.
 - A photo whose Lightroom geometry was read but whose edit wasn't written yet (the folder waiting for write permission), and whose crop is then removed in LightBench, keeps Lightroom's crop in the sidecar until the crop is changed again.
+
+## Part 8: Output sharpening on Export
+
+**What it does.** The Export dialog has an **Output sharpening** section, as Lightroom Classic's Export dialog does (owner, 2026-10-12): **Sharpen for** Screen, Matte paper or Glossy paper, with an **Amount** of Low, Standard or High. It is off by default. Only the exported file is sharpened, as the last step after it has been resized to its final size; the photo's edit, Develop, the 100 % view and thumbnails don't change, so no process version is involved. The strength follows the export: for paper it is sized by the print resolution (a new **Resolution** field under Size, written into the file), for screen by how much the photo is downsized. The choice is remembered with the other export settings (this browser's `lightbench.export`, which backups already include). LightBench has no export presets yet; when they come, they store the whole `ExportSettings` and so this choice too.
+
+**What it is not.** Lightroom's output sharpening comes from PixelGenius PhotoKit Sharpener and isn't published. LightBench doesn't try to match it, and the numbers below are not Lightroom's. Adobe's help says only that its output sharpening is adaptive, “based on the output media and resolution you choose”, that it adds to the sharpening done in Develop, and that Standard suits most cases (Adobe, *Export files to disk or CD*, Lightroom Classic help, read through a search summary; the page itself couldn't be opened from the test machine).
+
+### The algorithm
+
+| Behaviour | Detail | Source |
+|---|---|---|
+| Sharpening | darktable's unsharp mask, with its maths unchanged: a separable Gaussian blur of Lab L with a window of `ceil(2.5 · sigma)` pixels each side (at most 12), detail = L − blurred L, a **soft threshold** (differences below the threshold are left alone and the threshold is subtracted from larger ones), L′ = L + amount · detail, a and b kept. darktable's “radius” slider is the Gaussian's sigma: `commit_params` multiplies it by 2.5 for the window and the kernel divides by 2.5 again. | darktable `src/iop/sharpen.c`: parameters and defaults (radius 2, amount 0.5, threshold 0.5) lines 44-49, Lab input 84-89, kernel 112-124, window `rad` 258, sigma 282-283, threshold and mix 353-361, `commit_params` 376-379 |
+| Luminance only | L* changes and a* and b* are kept, so fx, fy and fz all move by ΔL/116 and the pixel changes by the matching XYZ difference (`export.wgsl` `sharpenMixEncode`). Lab's white is the working space's white (linear Rec.2020, D65), so greys stay grey. Pixels the threshold leaves alone pass through untouched. | darktable (Lab L only) |
+| Where | In `renderOutput` (`engine/gpu/develop-engine.ts`, `export.wgsl`): develop at full size → Lanczos3 resize in linear light → **sharpen** → output colour space and tone curve → quantise. The image is display-referred at this point (after the tone mapping), and L* is a perceptual scale, as in darktable's Lab sharpen. Full-size exports are sharpened straight from the developed image. | LightBench |
+| Why after the resize | darktable has no output sharpening. Its sharpen module sits early in the pipe (`src/common/iop_order.c`, v5.0 order: sharpen at 35.0, line 366; finalscale 69.4 and colorout 70.0, lines 417-418). Without “high quality processing” an export runs the whole pipe at the output scale and sharpen's sigma is multiplied by that scale (`roi_in->scale / piece->iscale`, sharpen.c 258 and 282), so the sharpening stays relative to the full-size photo; with it, the pipe runs at full size and `finalscale` downsizes near the end, after sharpen (`src/imageio/imageio.c`, `dt_imageio_export_with_flags`, lines 1279 and 1338-1381; `src/iop/finalscale.c` 100-103). Either way darktable sharpens before the resize. Output sharpening is meant for the final pixels, so LightBench runs darktable's filter on the resized image, with sigma in output pixels (scale 1). | darktable, as cited |
+| Edges of the photo | Samples beyond the border repeat the edge pixel, so the border is sharpened too. darktable leaves the outer `rad` pixels unsharpened instead (sharpen.c 296-305, 341-342, 362-363). | LightBench |
+| Halo limit | The sharpened L* is kept within the lightest and darkest L* of the pixel's 3 × 3 neighbourhood, widened by **10 %** of their difference. darktable's sharpen has no such limit. It was added because a 25 % limit still let a perfectly sharp mid-grey edge overshoot by 36 levels at the stronger settings (below); on soft, photographic edges it changed no edge width. L* is also kept within 0–100 unless the pixel was already outside. | LightBench, chosen by eye on the test chart |
+| Off | Without sharpening the export runs the same shader entry points as before (`encodeOnly`, `resampleX`, `resampleYEncode`; the vertical pass only moved into a helper) and is byte-identical to 0.4.1 (below). | — |
+
+### The parameter table (LightBench's own)
+
+Chosen by LightBench and checked by eye on the test chart and two photos; **not Lightroom's values and not checked on prints**. Amount and threshold are in darktable's units (amount multiplies the detail; threshold is in L*, 0–100). `export/sharpen.ts`, `SHARPEN_TABLE`.
+
+| Sharpen for | Radius (Gaussian sigma) | Low | Standard | High | Threshold |
+|---|---|---|---|---|---|
+| Screen | 0.78 px at 100 % size, shrinking towards 0.5 px as the export is downsized: √(0.5² + (0.6 · scale)²) | 0.35 | 0.6 | 0.9 | 0.5 |
+| Glossy paper | 0.075 mm on the print, × ppi / 25.4: 0.71 px at 240 ppi, **0.89 px at 300 ppi**, 1.77 px at 600 ppi | 0.5 | 0.85 | 1.25 | 0.5 |
+| Matte paper | 0.095 mm on the print: 0.90 px at 240 ppi, **1.12 px at 300 ppi**, 2.24 px at 600 ppi | 0.65 | 1.1 | 1.6 | 0.5 |
+
+- **Radius limits:** sigma is held between 0.25 px and 4.8 px (darktable's 12-pixel window); the window is `ceil(2.5 · sigma)`.
+- **Screen:** an export is usually seen at one pixel per screen pixel, so the radius is in output pixels. The softness a photo has at 100 % (lens, demosaic) shrinks when it is downsized, so the radius does too: 0.78 px at full size, 0.58 px at half size, 0.52 px at a quarter (`screenSigma`; “scale” is output pixels / photo pixels; enlargements count as 100 %). The 0.6 px for that softness is LightBench's assumption, not measured on cameras.
+- **Paper:** the radius is a physical size on the print, converted with the Resolution, so a 600 ppi print gets twice the pixel radius of a 300 ppi one and the same look on paper. Matte paper gets a larger radius and amount than glossy, and screen the least. That order follows common print practice (uncoated matte papers spread ink more and show less contrast; general knowledge, not checked against a source), and users testing Lightroom report the same order (Screen < Glossy < Matte, in a dgrin.com forum thread seen through a search summary: **anecdotal, not an Adobe statement**). The millimetre values are LightBench's.
+- **Threshold 0.5** is darktable's default. **Resolution** defaults to 300 ppi, the value LightBench always wrote into its files; it accepts 72–1200 ppi. Adobe's help suggests 180–480 ppi for inkjet prints (search summary, as above).
+- Under the buttons the dialog says what the first photo gets, e.g. “Radius 0.71 px, amount 1.25 for glossy paper at 240 ppi (a 21.7 × 14.4 cm print)”.
+
+### The dialog
+
+| Control | Detail |
+|---|---|
+| Output sharpening | A checkbox “Sharpen for”, with a one-line note that only the exported file is sharpened. When it is on: three buttons (Screen, Matte paper, Glossy paper) and three for Amount (Low, Standard, High), the same chip buttons as Format, each with a tooltip saying what it is for, and the note on the first photo. Turning it on first gives Screen / Standard. |
+| Resolution | Under Size: “Resolution [300] pixels per inch”, with a tooltip: it is written into the file, a print's size is its pixels divided by it, and paper sharpening is sized for it. Values outside 72–1200 are corrected when the field is left. It is written wherever LightBench already wrote 300 ppi: PNG always, JPEG and TIFF with the camera metadata. |
+
+### Verified
+
+Headless Chromium, software WebGPU (SwiftShader); scratch scripts in `scratchpad/followups-c/` (`e2e-sharpen.mjs`, `mkchart.py`, `analyse.py`, `photo-crops.py`). Test files: the Nikon D700 RAW `philadelphia.nef` (immich test-assets), `test-srgb.jpg`, and a synthetic 2400 × 1600 chart (q100 4:4:4 JPEG): slanted edges at 5° (64/192 and 96/160 grey, red/cyan and green/yellow, blurred by a Gaussian of sigma 1 px like a photo; 64/192 and black/white perfectly sharp), flat colour patches, a blurred noise texture and fine bars.
+
+- **Off is byte-identical to main (0.4.1, `6b69136`).** Both were built (`vite build`), served with `vite preview` and driven through the Export dialog with a fixed clock (the export time goes into EXIF and the ICC profile): the RAW and the JPEG, as JPEG and 8-bit PNG at full size, JPEG at 1024 px long edge and 16-bit PNG at 1024 px, from stored settings without the new keys (as main leaves them). All 8 files had the same SHA-256 (e.g. the RAW's full-size JPEG `b69f30b9ad195254…`, its 1024 px 16-bit PNG `191cff85235ed5fd…`).
+- **Sharper edges** (chart, full size, 8-bit PNG without dither; edge spread function of each slanted edge in ⅛ px bins; “10-90” is the 10–90 % rise distance, “slope” the steepest rise in levels per pixel, “over/under” the overshoot past the bright and dark plateaus in 8-bit levels):
+
+  | Export | 64/192 soft edge: 10-90; slope change; over / under | 96/160 soft edge: 10-90 | 64/192 sharp edge: over / under |
+  |---|---|---|---|
+  | Off | 2.65 px; —; 0.0 / 0.1 | 2.65 px | 0.1 / 0.1 |
+  | Screen Low / Standard / High | 2.52 / 2.46 / 2.36 px; +11 / +13 / +19 %; at most 0.4 / 1.0 | 2.52 / 2.51 / 2.41 px | 11.3 / 8.7, then 14.2 / 11.3 |
+  | Glossy Low / Standard / High (300 ppi) | 2.44 / 2.30 / 2.15 px; +12 / +20 / +32 %; at most 1.7 / 1.4 | 2.49 / 2.37 / 2.23 px | 14.2 / 11.3 |
+  | Matte Low / Standard / High (300 ppi) | 2.25 / 2.02 / 1.77 px; +23 / +37 / +54 %; at most 4.0 / 3.6 | 2.29 / 2.08 / 1.87 px | 14.2 / 11.3 |
+  | Matte High, 600 ppi | 1.17 px; +96 %; 4.0 / 3.9 | 1.23 px | 14.2 / 11.3 |
+
+  The soft edge narrows by 5–11 % for screen, 8–19 % for glossy and 15–33 % for matte at 300 ppi. Downsized to 50 % (Screen / Standard, sigma 0.58 px): 1.43 → 1.22 px.
+- **Haloes:** with the 10 % limit the perfectly sharp 64/192 edge overshoots by at most 14.2 levels above and 11.3 below, a one-pixel line; with a 25 % limit (first run) it reached 35.6 / 28.0, while the soft edges' widths were the same. The black/white edge can't overshoot (0 above; 1 level below, where pixels next to the edge go from 1 to 0). On a 50 % downsized sharp edge the Lanczos3 resize itself already undershoots by 31.8 levels without sharpening; Screen / Standard makes that 42.3 (the limit allows 10 % past the neighbourhood, which includes that ringing).
+- **No colour shift:** the chart's mean colour changed by at most +0.13 level per channel (8-bit; +0.18 at Matte High, 600 ppi), and by +0.125 / +0.120 / +0.111 level measured in 16-bit at Matte High; flat patches 0; the noise texture's mean at most 0.03 level. Across the soft red/cyan edge the chromaticity r/(r+g+b) moved by at most 0.03 at the edge pixels (mean 0.0001), and no colour fringe was visible at 400 %.
+- **Real photos** (Screen / Standard at full size, against off): the D700 RAW's mean colour moved +0.033 / +0.035 / +0.034 level and `test-srgb.jpg`'s +0.023 / +0.019 / +0.014; local contrast (mean |Laplacian| of luma) rose 17 % and 22 %; 22–24 % of the pixels changed (the rest stay below the threshold). Crops at 100 % and 200 % of the most detailed areas (water spray, foliage) looked crisper without haloes or colour fringes (checked by eye).
+- **The dialog** (`e2e-sharpen.mjs photo`): off by default with no buttons shown; turned on with its checkbox, Glossy paper and High clicked, Resolution typed as 240: the note read “Radius 0.71 px, amount 1.25 for glossy paper at 240 ppi (a 21.7 × 14.4 cm print)”; both photos exported (2048 px JPEG); `lightbench.export` held `sharpen: {on: true, medium: 'glossy', amount: 'high'}` and `ppi: 240`, and the reopened dialog showed them. Neither photo had a saved edit before or after the exports. Screenshots of the dialog were checked by eye.
+- **Unit tests** (`export/sharpen.test.ts`, 9): off by default and 300 ppi in the defaults; the table's values; amounts rise Low < Standard < High, and matte > glossy > screen in amount and in amount × radius; darktable's window `ceil(2.5 · sigma)` ≤ 12 and the sigma limits over 72–1200 ppi and scales 0.05–2; screen sigma 0.78 / 0.58 / 0.52 / 0.5 px at scales 1 / ½ / ¼ / 0, enlargements as 100 %, independent of the resolution; paper sigma proportional to ppi and independent of the downsizing; ppi clamping; unknown stored values fall back to Screen / Standard; the dialog's note. `npx tsc -b`, `npx oxlint` (the two existing warnings), `npx vitest run` and `npm run build` passed.
+
+**Limitations and unverified:**
+- **Nothing was printed.** The paper settings were judged on screen, at 100 % and 400 %; whether Matte and Glossy at each amount look right on real paper is untested, and the table may need adjusting after test prints.
+- **Not compared with Lightroom**, which wasn't available: how these strengths compare with Lightroom's Low / Standard / High is unknown.
+- The screen radius's dependence on downsizing (the 0.6 px “capture softness”) is an assumption, not measured on cameras.
+- Adobe's help page and the forum report were read only through search summaries.
+- Speed was measured only on SwiftShader, where sharpening added about 1–2 s to a 2400 × 1600 export; real GPUs weren't timed. A sharpened export needs one more output-size float image (16 bytes per pixel, unless it is full size) and a 4-byte-per-pixel blur image on the GPU.
+- JPEG and TIFF files exported without the camera metadata carry no resolution from LightBench (as before); the Resolution then only sizes the paper sharpening.
