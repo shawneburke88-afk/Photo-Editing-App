@@ -11,6 +11,9 @@ import { DEFAULT_LENS, LEGACY_LENS, lensfunKey, lensWarpKey, normalizeLens, pick
 import { LensfunDb } from './lensfun'
 import { parseLensfunXml, type LensfunData } from './lensfun-xml'
 import { sonyFromTags, type LensMeta } from './meta'
+import lensWgsl from '../gpu/lens.wgsl?raw'
+import warpWgsl from '../gpu/warp.wgsl?raw'
+import displayWgsl from '../gpu/develop-display.wgsl?raw'
 
 const data: LensfunData = { source: { repo: '', commit: '', date: '', licence: '' }, mounts: [], cameras: [], lenses: [] }
 for (const xml of [slrNikon, milSony, milZeiss]) parseLensfunXml(xml, data)
@@ -150,6 +153,25 @@ describe('the warp shader’s lens uniforms (warp.wgsl struct Lens)', () => {
     expect(f[48]).toBeCloseTo(w.knotsDist[0], 6)
     expect(f[80 + 3]).toBeCloseTo(w.cor[1][3], 6)
     expect(f[128 + 10]).toBeCloseTo(w.vig[10], 6)
+  })
+})
+
+describe('one lens function for the warp and the sensor-clipping overlay (lens.wgsl)', () => {
+  it('is defined once and bound by both shaders', () => {
+    expect(lensWgsl).toMatch(/fn lensPos\(s: vec2f, ch: u32\)/)
+    expect(lensWgsl).toMatch(/struct Lens \{/)
+    for (const s of [warpWgsl, displayWgsl]) {
+      expect(s).not.toMatch(/fn lensPos\(/)
+      expect(s).not.toMatch(/struct Lens \{/)
+    }
+    expect(warpWgsl).toMatch(/@group\(0\) @binding\(3\) var<uniform> L: Lens;/)
+    expect(displayWgsl).toMatch(/@group\(0\) @binding\(4\) var<uniform> L: Lens;/)
+  })
+  it('the overlay reads the sensor where the warp reads green', () => {
+    // sensorUv: the 3×3 map, then the lens function for channel 1 (green), in texel units (centres at whole numbers)
+    expect(displayWgsl).toMatch(/lensPos\(suv \* size - 0\.5, 1u\)/)
+    expect(displayWgsl).toMatch(/rawOverexposed\(sensorUv\(uv\), out\)/)
+    expect(displayWgsl).toMatch(/sensorTileClipped\(sensorUv\(uv\)\)/)
   })
 })
 

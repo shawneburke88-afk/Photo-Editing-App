@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { HIGHEST_TEMPERATURE, LOWEST_TEMPERATURE } from '../engine/color/temperature'
-import { sliderFromTint, tintFromSlider, type DevelopSettings, type SourceKind } from '../engine/develop/settings'
+import { sliderFromTint, tintFromSlider, type DemosaicMethod, type DevelopSettings, type SourceKind } from '../engine/develop/settings'
 import type { SensorLayout } from '../engine/raw/types'
 import { AutoControls, type AutoProps } from './AutoControls'
 import { HELP } from './help'
@@ -185,10 +185,12 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, layo
                 ) : (
                   <label className="adv-row">
                     Method
-                    {/* The stored value names the Bayer method; an X-Trans photo uses darktable's X-Trans counterpart. */}
-                    <select value={s.advanced.demosaic} disabled={disabled}
-                      onChange={(e) => setAdv('Demosaic', { demosaic: e.target.value as 'rcd' | 'bilinear' })}>
+                    {/* The stored value names the Bayer method; an X-Trans photo uses darktable's X-Trans counterpart.
+                        Markesteijn 3-pass is X-Trans only; on a Bayer photo (e.g. pasted) it renders as RCD, as darktable does. */}
+                    <select value={layout !== 'xtrans' && s.advanced.demosaic === 'markesteijn3' ? 'rcd' : s.advanced.demosaic} disabled={disabled}
+                      onChange={(e) => setAdv('Demosaic', { demosaic: e.target.value as DemosaicMethod })}>
                       <option value="rcd">{layout === 'xtrans' ? 'Markesteijn 1-pass' : 'RCD'}</option>
+                      {layout === 'xtrans' && <option value="markesteijn3" title="darktable's Markesteijn 3-pass: three refinement passes and eight directions instead of one and four. Several times slower to develop and about twice the GPU memory.">Markesteijn 3-pass (slower)</option>}
                       <option value="bilinear">{layout === 'xtrans' ? 'linear (fast preview)' : 'bilinear (fast preview)'}</option>
                     </select>
                   </label>

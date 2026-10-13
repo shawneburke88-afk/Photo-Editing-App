@@ -12,6 +12,20 @@ import { DEFAULT_LENS, LEGACY_LENS, normalizeLens, type LensSettings } from '../
 import { DEFAULT_GEOMETRY, normalizeGeometry, type GeometrySettings } from './geometry'
 import { CURRENT_PROCESS, processParams, validProcess, type ToneMask } from './process'
 
+/**
+ * The demosaic method (Develop › Advanced). The stored value names the method for the photo's sensor as darktable
+ * pairs them: 'rcd' is RCD on Bayer sensors and Markesteijn 1-pass on X-Trans (darktable's defaults); 'markesteijn3'
+ * is darktable's Markesteijn 3-pass on X-Trans (offered only there; on a Bayer photo it means RCD, as darktable maps
+ * an X-Trans method on a Bayer photo); 'bilinear' is the fast preview (linear interpolation on X-Trans).
+ */
+export type DemosaicMethod = 'rcd' | 'bilinear' | 'markesteijn3'
+
+/** The algorithm a stored method runs on a sensor layout (darktable src/iop/demosaic.c lines 1503-1506). */
+export function demosaicAlgorithm(layout: 'bayer' | 'xtrans', method: DemosaicMethod): 'rcd' | 'bilinear' | 'markesteijn1' | 'markesteijn3' | 'linear' {
+  if (layout === 'xtrans') return method === 'bilinear' ? 'linear' : method === 'markesteijn3' ? 'markesteijn3' : 'markesteijn1'
+  return method === 'bilinear' ? 'bilinear' : 'rcd'
+}
+
 export interface DevelopSettings {
   /** Layout of this settings object (the JSON schema), not the rendering: see `process`. */
   version: 1
@@ -46,7 +60,7 @@ export interface DevelopSettings {
     /** Highlight reconstruction (darktable "inpaint opposed") and its clipping threshold. */
     highlightReconstruction: boolean
     highlightClip: number
-    demosaic: 'rcd' | 'bilinear'
+    demosaic: DemosaicMethod
   }
   /**
    * Set when the tone sliders came from Auto (cleared when one of its sliders is then moved by hand), so pasting
