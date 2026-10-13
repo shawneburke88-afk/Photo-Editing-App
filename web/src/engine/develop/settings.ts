@@ -11,6 +11,7 @@ import type { AutoRecord } from './auto'
 import { DEFAULT_LENS, LEGACY_LENS, normalizeLens, type LensSettings } from '../lens/correction'
 import { DEFAULT_GEOMETRY, normalizeGeometry, type GeometrySettings } from './geometry'
 import { CURRENT_PROCESS, processParams, validProcess, type ToneMask } from './process'
+import { normalizeDetail, type DetailSettings } from '../detail/settings'
 
 /**
  * The demosaic method (Develop › Advanced). The stored value names the method for the photo's sensor as darktable
@@ -72,6 +73,11 @@ export interface DevelopSettings {
    * they render as before; new edits get Auto.
    */
   lens: LensSettings
+  /**
+   * The Detail group: Sharpening and Noise Reduction (engine/detail/settings.ts). Absent = all off: every edit saved
+   * before it existed, and new edits (off by default), so they render as before.
+   */
+  detail?: DetailSettings
 }
 
 export const DEFAULT_SETTINGS: DevelopSettings = {
@@ -121,7 +127,7 @@ export const defaultsFor = (kind: SourceKind) => (kind === 'rgb' ? DEFAULT_RGB_S
  */
 export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined, kind: SourceKind = 'raw'): DevelopSettings {
   const d = defaultsFor(kind)
-  return {
+  const out: DevelopSettings = {
     ...d,
     ...s,
     whiteBalance: { ...d.whiteBalance, ...s?.whiteBalance },
@@ -131,6 +137,11 @@ export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined
     process: validProcess(s?.process),
     geometry: normalizeGeometry(s?.geometry),
   }
+  // No Detail settings stay none (no key is added to older edits).
+  const detail = normalizeDetail(s?.detail)
+  if (detail) out.detail = detail
+  else delete out.detail
+  return out
 }
 
 /** Lightroom-style tint slider (−150 green … +150 magenta) ⇄ darktable tint (1 = neutral, >1 greener). */
@@ -166,6 +177,10 @@ export interface DisplayUniforms {
   huePreservation: number
   /** Crop, straighten, rotate and flip; the engine resolves it against the photo's size. */
   geometry: GeometrySettings
+  /** Sharpening and noise reduction (absent = off); the engine resolves them against the photo (its noise profile). */
+  detail?: DetailSettings
+  /** Show Sharpening's mask instead of the photo (Masking preview, a view only). */
+  detailMask?: boolean
 }
 
 export function displayUniforms(s: DevelopSettings): DisplayUniforms {
@@ -186,5 +201,6 @@ export function displayUniforms(s: DevelopSettings): DisplayUniforms {
     }),
     huePreservation: Math.min(1, Math.max(0, s.advanced.huePreservation / 100)),
     geometry: s.geometry ?? DEFAULT_GEOMETRY,
+    ...(s.detail ? { detail: s.detail } : {}),
   }
 }

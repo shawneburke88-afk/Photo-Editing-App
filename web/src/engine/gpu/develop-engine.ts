@@ -37,6 +37,11 @@ import { currentDisplaySpace, REC2020_TO_DISPLAY_P3, srgbColourIn, watchDisplayS
 import statsWgsl from './stats.wgsl?raw'
 import warpWgsl from './warp.wgsl?raw'
 import lensWgsl from './lens.wgsl?raw'
+import { DetailStage } from './detail-stage'
+import { detailRun, type DetailMeta, type DetailRun } from '../detail/run'
+import { noiseOn } from '../detail/settings'
+import { loadNoiseProfiles, noiseProfilesState } from '../detail/noise-db'
+import type { ProfileChoice } from '../detail/noiseprofiles'
 
 export interface RawStageOptions {
   /** White balance multipliers [R, G, B], green = 1. */
@@ -80,6 +85,12 @@ interface Source {
   frame: boolean
   /** Lens correction between `rawMap` and the sensor, if any. */
   lens?: LensWarp
+  /**
+   * The Detail stage (Part 13): `tex` is (a warp of) the detailed scene at 1/2^level of the full size, and `plain`
+   * gives the same view without it (the tone mask is measured on that, so every size uses the same mask).
+   */
+  level?: number
+  plain?: () => Promise<Source>
 }
 
 export type PresentMode = 'canvas' | 'readback'
@@ -247,6 +258,15 @@ export class DevelopEngine {
   private nextTexId = 1
   /** The last `render` call, to draw again when the screen's gamut changes. */
   private lastRender: Parameters<DevelopEngine['render']> | null = null
+  /** The Detail stage (Part 13): its kernels, the photo's metadata, the last results and their warps. */
+  private detailStage: DetailStage | null = null
+  private detailMeta: DetailMeta = { maker: '', model: '', iso: 0, kind: 'raw' }
+  private detailCache: { key: string; gen: number; level: number; tex: GPUTexture }[] = []
+  private detailWarps: { key: string; gen: number; tex: GPUTexture }[] = []
+  /** Detail stages run one at a time. */
+  private detailChain: Promise<unknown> = Promise.resolve()
+  /** The noise profile the last Detail run used (for the Noise Reduction section). */
+  lastProfile: ProfileChoice | null = null
 
   private constructor(device: GPUDevice, mode: PresentMode) {
     this.device = device
@@ -493,6 +513,85 @@ export class DevelopEngine {
     return r
   }
 
+  /** The loaded photo's camera and ISO, for its noise profile (develop/source.ts `loadIntoEngine`). */
+  setDetailMeta(meta: DetailMeta) {
+    this.detailMeta = this.rgbInput ? { ...meta, kind: 'rgb' } : meta
+  }
+
+  /**
+   * The Detail stage's run for these settings at a level (0 = full size; k = 1/2^k, darktable's roi scale), or
+   * null when the Detail group changes nothing. Downloads the noise profiles first when noise reduction needs them
+   * (a JPEG uses the generic profile and needs none); if they can't be had, darktable's generic profile is used.
+   */
+  async detailFor(u: DisplayUniforms, level: number): Promise<DetailRun | null> {
+    const d = u.detail
+    if (!d || !this.sensor) return null
+    if (noiseOn(d) && this.detailMeta.kind === 'raw') await loadNoiseProfiles()
+    const db = noiseProfilesState()
+    const wb: [number, number, number] = this.rgbInput ? [1, 1, 1] : [this.builtWb[0], this.builtWb[1], this.builtWb[2]]
+    const max = this.scene ? this.scene.mipLevelCount - 1 : 0
+    const run = detailRun(d, this.detailMeta, wb, [this.sensor.width, this.sensor.height], Math.min(level, max), db && typeof db === 'object' ? db : null, !!u.detailMask)
+    if (run?.profile) this.lastProfile = run.profile
+    return run
+  }
+
+  /** The Detail level for a view drawn at mip `lod`: the largest whose image still has at least the view's pixels. */
+  private detailLevel(lod: number): number {
+    return Math.max(0, Math.min(6, Math.floor(lod + 1e-6)))
+  }
+
+  /** The scene after the Detail stage at the run's level, from the cache when the same run was made last. */
+  private detailed(run: DetailRun): Promise<GPUTexture> {
+    const job = this.detailChain.then(async () => {
+      const hit = this.detailCache.find((d) => d.key === run.key && d.gen === this.sceneGen)
+      if (hit) return hit.tex
+      this.checkAlive()
+      this.detailStage ??= new DetailStage(this.device)
+      const wb: [number, number, number] = this.rgbInput ? [1, 1, 1] : [this.builtWb[0], this.builtWb[1], this.builtWb[2]]
+      const tex = await this.detailStage.run(this.scene!, run, this.camToWorking, wb, (enc, t) => this.encodeMips(enc, t))
+      // Two are kept, of different levels: the fitted view's and the full size (100 % and Export).
+      const keep = this.detailCache.filter((d) => d.gen === this.sceneGen && d.level !== run.level).slice(0, 1)
+      for (const d of this.detailCache) if (!keep.includes(d)) d.tex.destroy()
+      this.detailCache = [{ key: run.key, gen: this.sceneGen, level: run.level, tex }, ...keep]
+      return tex
+    })
+    this.detailChain = job.catch(() => {})
+    return job
+  }
+
+  /** A detailed scene at `level` warped through a geometry map, at 1/2^level of the output size. */
+  private warpedDetail(r: ResolvedGeometry, run: DetailRun, base: GPUTexture): Promise<{ tex: GPUTexture; w: number; h: number }> {
+    const job = this.warpChain.then(() => {
+      const key = `${r.key}|${run.key}`
+      const hit = this.detailWarps.find((d) => d.key === key && d.gen === this.sceneGen)
+      if (hit) return { tex: hit.tex, w: hit.tex.width, h: hit.tex.height }
+      this.checkAlive()
+      const tex = this.buildWarp(r, { tex: base, level: run.level })
+      const keep = this.detailWarps.filter((d) => d.gen === this.sceneGen && d.tex.width !== tex.width)
+      for (const d of this.detailWarps) if (!keep.includes(d)) d.tex.destroy()
+      this.detailWarps = [{ key, gen: this.sceneGen, tex }, ...keep.slice(0, 1)]
+      return { tex, w: tex.width, h: tex.height }
+    })
+    this.warpChain = job.catch(() => {})
+    return job
+  }
+
+  /**
+   * What to sample with the Detail stage: like `source`, but the detailed scene at the run's level (warped at that
+   * level when the geometry needs it). The crop tool's view shows the photo without it.
+   */
+  private async detailSource(g: GeometrySettings, whole: boolean, lens: LensSettings | undefined, run: DetailRun | null): Promise<Source> {
+    if (!run || whole) return this.source(g, whole, lens)
+    const lw = (await this.lensCorrection(lens)).warp
+    const r = withLens(this.geometry(g, false), lw, lensWarpKey(lw))
+    const base = await this.detailed(run)
+    const plain = () => this.source(g, whole, lens)
+    if (r.exact) return { tex: base, texMap: r.uvToSensor, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: false, level: run.level, plain }
+    const wd = await this.warpedDetail(r, run, base)
+    // The warp at this level has its own size; the shown image keeps the full output size (uv maps are size-free).
+    return { tex: wd.tex, texMap: IDENTITY_MAP, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: false, lens: r.lens, level: Math.log2(r.size[0] / wd.w), plain }
+  }
+
   /** What to sample for a geometry: the scene itself (whole-pixel maps, and the crop tool's view) or its warped copy. */
   private async source(g: GeometrySettings, whole = false, lens?: LensSettings): Promise<Source> {
     const lw = (await this.lensCorrection(lens)).warp
@@ -538,15 +637,22 @@ export class DevelopEngine {
     return job
   }
 
-  /** One bicubic resample of the scene through the combined geometry map (warp.wgsl), then its mip chain. */
-  private buildWarp(r: ResolvedGeometry): GPUTexture {
+  /**
+   * One bicubic resample of the scene through the combined geometry map (warp.wgsl), then its mip chain. With
+   * `scaled` (the Detail stage), a smaller copy of the scene at 1/2^level is warped into an output 1/2^level the size.
+   */
+  private buildWarp(r: ResolvedGeometry, scaled?: { tex: GPUTexture; level: number }): GPUTexture {
     const { device } = this
-    const [w, h] = r.size
+    const k = scaled ? 2 ** -scaled.level : 1
+    const w = scaled ? Math.max(1, Math.round(r.size[0] * k)) : r.size[0]
+    const h = scaled ? Math.max(1, Math.round(r.size[1] * k)) : r.size[1]
     this.warpPipe ??= device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: warpWgsl + lensWgsl }), entryPoint: 'warp' } })
-    const m = r.toSensor
+    // A smaller output: its pixel (x + 0.5) is the full output's (x + 0.5) · size / w.
+    const m = scaled ? mul(r.toSensor, [r.size[0] / w, 0, 0, 0, r.size[1] / h, 0, 0, 0, 1]) : r.toSensor
     const params = new ArrayBuffer(64)
     new Float32Array(params).set([m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0], 0)
     new Uint32Array(params).set([w, h], 12)
+    if (scaled) new Float32Array(params).set([scaled.tex.width / this.scene!.width, scaled.tex.height / this.scene!.height], 14)
     const paramBuf = device.createBuffer({ size: params.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     device.queue.writeBuffer(paramBuf, 0, params)
     const lens = lensUniforms(r.lens ?? null, this.camToWorking)
@@ -565,7 +671,7 @@ export class DevelopEngine {
       layout: this.warpPipe.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: { buffer: paramBuf } },
-        { binding: 1, resource: this.scene!.createView({ baseMipLevel: 0, mipLevelCount: 1 }) },
+        { binding: 1, resource: (scaled?.tex ?? this.scene!).createView({ baseMipLevel: 0, mipLevelCount: 1 }) },
         { binding: 2, resource: tex.createView({ baseMipLevel: 0, mipLevelCount: 1 }) },
         { binding: 3, resource: { buffer: lensBuf } },
       ],
@@ -590,6 +696,14 @@ export class DevelopEngine {
     this.lensOnly = null
     for (const m of this.maskCache) m.tex.destroy()
     this.maskCache = []
+    this.dropDetail()
+  }
+
+  private dropDetail() {
+    for (const d of this.detailCache) d.tex.destroy()
+    for (const d of this.detailWarps) d.tex.destroy()
+    this.detailCache = []
+    this.detailWarps = []
   }
 
   /** Stage A. Resolves with the GPU time in ms. */
@@ -961,14 +1075,16 @@ export class DevelopEngine {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
     const { device } = this
-    const src = await this.source(u.geometry, false, u.lens)
+    // Exports develop the full-size photo, so the Detail stage runs at full size.
+    const src = await this.detailSource(u.geometry, false, u.lens, await this.detailFor(u, 0))
+    const maskSrc = await this.toneSource(u, src)
     const { w: iw, h: ih } = src
     const max = device.limits.maxTextureDimension2D
     if (o.width > max || o.height > max) throw new Error(`The export size is larger than this GPU allows (${max} px)`)
     const pipes = (this.exportPipes ??= this.createExportPipes())
 
     const dev = device.createTexture({ size: [iw, ih], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING })
-    this.writeView(u, wb, src, { x: 0, y: 0, w: iw, h: ih }, 0, NO_INDICATORS, 2)
+    this.writeView(u, wb, src, { x: 0, y: 0, w: iw, h: ih }, 0, NO_INDICATORS, 2, 'srgb', maskSrc)
     const enc = device.createCommandEncoder()
     const rp = enc.beginRenderPass({ colorAttachments: [{ view: dev.createView(), loadOp: 'clear', storeOp: 'store' }] })
     rp.setPipeline(this.statsRenderPipe)
@@ -1124,8 +1240,17 @@ export class DevelopEngine {
     return mul(mul(m, d), invert(m))
   }
 
+  /**
+   * What the tone mask is measured on: with the Detail stage, the same view without it at full size, so the fitted
+   * view, 100 % and Export share one mask (Part 10). darktable measures it after its denoise (toneequal comes after
+   * denoiseprofile); LightBench's choice is documented in PHASE3.md Part 13.
+   */
+  private async toneSource(u: DisplayUniforms, src: Source): Promise<Source> {
+    return src.plain && u.toneEnabled && u.toneMask.filter === 'eigf' ? src.plain() : src
+  }
+
   /** `display`: the colour space of the target (only the on-screen canvas is ever Display P3). */
-  private writeView(u: DisplayUniforms, wb: Vec3, src: Source, rect: { x: number; y: number; w: number; h: number }, lod: number, ind: Indicators = NO_INDICATORS, pass: 0 | 1 | 2 = 0, display: DisplaySpace = 'srgb') {
+  private writeView(u: DisplayUniforms, wb: Vec3, src: Source, rect: { x: number; y: number; w: number; h: number }, lod: number, ind: Indicators = NO_INDICATORS, pass: 0 | 1 | 2 = 0, display: DisplaySpace = 'srgb', maskSrc: Source = src) {
     const statsPass = pass === 1
     const v = new ArrayBuffer(VIEW_SIZE)
     const f = new Float32Array(v)
@@ -1135,7 +1260,8 @@ export class DevelopEngine {
     f.set([fix[0], fix[1], fix[2], 0, fix[3], fix[4], fix[5], 0, fix[6], fix[7], fix[8], 0], 4)
     f.set(u.toneFactors.slice(0, 8), 16)
     f.set([0.09, 0.094, 0.106, 1], 24)
-    f[28] = lod
+    // A Detail source is already 1/2^level of the full size (Part 13).
+    f[28] = src.level ? lod - src.level : lod
     f[29] = u.exposureGain
     ui[30] = u.toneEnabled ? 1 : 0
     ui[31] = src.frame ? 1 : 0
@@ -1155,6 +1281,7 @@ export class DevelopEngine {
     ui[63] = s.cfa.reduce((acc, c, i) => acc | (c << (i * 2)), 0)
     ui[64] = pass
     ui[66] = s.layout === 'xtrans' ? 1 : s.layout === 'linear' ? 2 : 0
+    ui[67] = u.detailMask && src.level !== undefined && pass === 0 ? 1 : 0
     if (s.layout === 'xtrans' && s.xtrans) ui.set(packXtrans(s.xtrans), 104)
     const t = src.texMap
     const r = src.rawMap
@@ -1167,7 +1294,7 @@ export class DevelopEngine {
     const tm = u.toneMask
     if (u.toneEnabled && tm.filter === 'eigf') {
       const toMask = this.maskSpace()
-      const mask = this.toneMask(src, mul(toMask, fix), tm.blending)
+      const mask = this.toneMask(maskSrc, mul(toMask, fix), tm.blending)
       this.boundMask = mask.tex
       f.set(mask.cells, 108)
       ui[110] = 1
@@ -1301,10 +1428,13 @@ export class DevelopEngine {
       this.canvas.height = ch
     }
     this.lastRender = [u, wb, view, indicators]
-    const src = await this.source(u.geometry, !!view.frame, u.lens)
+    // The Detail stage runs at the level the view is drawn at (darktable's preview at the roi scale).
+    const run = u.detail && !view.frame ? await this.detailFor(u, this.detailLevel(this.layout(view, cw, ch, this.geometry(u.geometry).size).lod)) : null
+    const src = await this.detailSource(u.geometry, !!view.frame, u.lens, run)
+    const maskSrc = await this.toneSource(u, src)
     const l = this.layout(view, cw, ch, [src.w, src.h])
     this.shown = { w: src.w, h: src.h, rawMap: src.rawMap, lens: src.lens }
-    this.writeView(u, wb, src, l, l.lod, indicators, 0, this.displaySpace)
+    this.writeView(u, wb, src, l, l.lod, indicators, 0, this.displaySpace, maskSrc)
     const target = this.gpuCtx
       ? this.gpuCtx.getCurrentTexture()
       : this.device.createTexture({ size: [cw, ch], format: this.format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
@@ -1320,12 +1450,15 @@ export class DevelopEngine {
   async renderImage(u: DisplayUniforms, wb: Vec3, maxSize: number): Promise<ImageData> {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
-    const src = await this.source(u.geometry, false, u.lens)
+    const [gw, gh] = this.geometry(u.geometry).size
+    const run = u.detail ? await this.detailFor(u, this.detailLevel(Math.log2(Math.max(gw, gh) / Math.min(maxSize, Math.max(gw, gh))))) : null
+    const src = await this.detailSource(u.geometry, false, u.lens, run)
+    const maskSrc = await this.toneSource(u, src)
     const { w: iw, h: ih } = src
     const scale = Math.min(1, maxSize / Math.max(iw, ih))
     const w = Math.max(1, Math.round(iw * scale))
     const h = Math.max(1, Math.round(ih * scale))
-    this.writeView(u, wb, src, { x: 0, y: 0, w, h }, Math.max(0, Math.log2(1 / scale)))
+    this.writeView(u, wb, src, { x: 0, y: 0, w, h }, Math.max(0, Math.log2(1 / scale)), NO_INDICATORS, 0, 'srgb', maskSrc)
     const target = this.device.createTexture({ size: [w, h], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
     const pixels = (await this.draw(this.offscreenPipe, target, src.tex, w, h, true))!
     target.destroy()
@@ -1464,11 +1597,12 @@ export class DevelopEngine {
   async renderLoupe(u: DisplayUniforms, wb: Vec3, cu: number, cv: number, size: number): Promise<ImageData> {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
-    const src = await this.source(u.geometry, false, u.lens)
+    const src = await this.detailSource(u.geometry, false, u.lens, await this.detailFor(u, 0))
+    const maskSrc = await this.toneSource(u, src)
     const { w: iw, h: ih } = src
     const cx = Math.floor(cu * iw) + 0.5
     const cy = Math.floor(cv * ih) + 0.5
-    this.writeView(u, wb, src, { x: size / 2 - cx, y: size / 2 - cy, w: iw, h: ih }, 0)
+    this.writeView(u, wb, src, { x: size / 2 - cx, y: size / 2 - cy, w: iw, h: ih }, 0, NO_INDICATORS, 0, 'srgb', maskSrc)
     const target = this.device.createTexture({ size: [size, size], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
     const pixels = (await this.draw(this.offscreenPipe, target, src.tex, size, size, true))!
     target.destroy()
@@ -1482,13 +1616,16 @@ export class DevelopEngine {
     const statsPipe = (this.statsPipe ??= device.createComputePipeline({ layout: 'auto', compute: { module: this.statsModule, entryPoint: 'histogram' } }))
     const bins = device.createBuffer({ size: STATS_WORDS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST })
     const read = device.createBuffer({ size: STATS_WORDS * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
-    const src = await this.source(u.geometry, false, u.lens)
+    const [gw, gh] = this.geometry(u.geometry).size
+    const run = u.detail ? await this.detailFor({ ...u, detailMask: false }, this.detailLevel(Math.log2(Math.max(gw, gh) / Math.min(maxSize, Math.max(gw, gh))))) : null
+    const src = await this.detailSource(u.geometry, false, u.lens, run)
+    const maskSrc = await this.toneSource(u, src)
     const enc = device.createCommandEncoder()
     const { w: iw, h: ih } = src
     const scale = Math.min(1, maxSize / Math.max(iw, ih))
     const w = Math.max(1, Math.round(iw * scale))
     const h = Math.max(1, Math.round(ih * scale))
-    this.writeView(u, wb, src, { x: 0, y: 0, w, h }, Math.max(0, Math.log2(1 / scale)), indicators, 1)
+    this.writeView(u, wb, src, { x: 0, y: 0, w, h }, Math.max(0, Math.log2(1 / scale)), indicators, 1, 'srgb', maskSrc)
     const target = device.createTexture({ size: [w, h], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING })
     const rp = enc.beginRenderPass({ colorAttachments: [{ view: target.createView(), loadOp: 'clear', storeOp: 'store' }] })
     rp.setPipeline(this.statsRenderPipe)
@@ -1565,6 +1702,7 @@ export class DevelopEngine {
     this.warp?.tex.destroy()
     this.lensOnly?.tex.destroy()
     for (const m of this.maskCache) m.tex.destroy()
+    this.dropDetail()
     this.noMask?.destroy()
     this.scene?.destroy()
     this.rawBuf?.destroy()

@@ -42,8 +42,9 @@ export function serviceWorker(build: SwBuildInfo): Plugin {
         const outDir = resolve(config.root, config.build.outDir)
         const precache = filesIn(outDir)
           .map((file) => relative(outDir, file).split(sep).join('/'))
-          // The Lensfun database is downloaded only when a photo needs it (lensfun-plugin.ts), not with every install.
-          .filter((url) => url !== 'sw.js' && !url.startsWith('lensfun/'))
+          // The Lensfun database is downloaded only when a photo needs it (lensfun-plugin.ts), and darktable's noise
+          // profiles only when noise reduction is used (noiseprofiles-plugin.ts), not with every install.
+          .filter((url) => url !== 'sw.js' && !url.startsWith('lensfun/') && !url.startsWith('noiseprofiles/'))
           .sort()
           .map((url) => ({ url, rev: revision(readFileSync(join(outDir, url))) }))
         const cache = `lightbench-${revision(JSON.stringify({ precache, build }))}`

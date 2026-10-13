@@ -59,6 +59,7 @@ export function loadIntoEngine(engine: DevelopEngine, r: DecodeResult): SensorIn
     // JPEG: the engine inverts the JPEG defaults' tone mapping so the unedited photo looks as shot.
     const du = displayUniforms(defaultsFor('rgb'))
     engine.loadRgb(r.rgb, du.sigmoid, du.exposureGain)
+    engine.setDetailMeta({ maker: r.info.make, model: r.info.model, iso: r.info.iso, kind: 'rgb' })
     // White balance works on the file's linear colours: "camera" RGB is the profile's RGB.
     const xyzToCam = invert(mul(REC2020_TO_XYZ, r.rgb.toRec2020 as Mat3))
     const wb: Vec3 = [1, 1, 1]
@@ -66,6 +67,8 @@ export function loadIntoEngine(engine: DevelopEngine, r: DecodeResult): SensorIn
   }
   if (!r.sensor) throw new Error(r.sensorUnsupported ?? 'This RAW file can’t be developed yet.')
   engine.loadSensor(r.sensor, r.info.flip)
+  // The camera and ISO pick the noise profile for noise reduction (engine/detail/noiseprofiles.ts).
+  engine.setDetailMeta({ maker: r.info.make, model: r.info.model, iso: r.info.iso, kind: 'raw' })
   // Lens corrections then apply to everything this engine renders (engine/lens/correction.ts).
   engine.setLensMeta(r.lens ?? null)
   const xyzToCam = r.sensor.xyzToCam as Mat3

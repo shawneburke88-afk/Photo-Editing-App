@@ -1,0 +1,8 @@
+{
+  "repo": "https://github.com/darktable-org/darktable",
+  "commit": "ca5a02038b93e41dc96231ad80837fe5c54f4fbd",
+  "date": "2026-10-12",
+  "path": "data/noiseprofiles.json (noise profile file version 0), unchanged",
+  "sha256": "e22730cf69ead3534b2d2e7500ab24af6da99834250b852ca1831002ba2450f8",
+  "licence": "GPL-3.0-or-later (part of darktable)"
+}
