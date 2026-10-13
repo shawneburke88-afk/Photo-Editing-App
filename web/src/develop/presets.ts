@@ -143,9 +143,7 @@ function blendDetail(before: DetailSettings, after: DetailSettings, t: number): 
   return {
     sharpen: {
       amount: b('amount', before.sharpen.amount, after.sharpen.amount),
-      radius: b('radius', before.sharpen.radius, after.sharpen.radius, 2),
-      // A switch, like the others: it follows the preset.
-      radiusAuto: after.sharpen.radiusAuto,
+      radius: b('radius', before.sharpen.radius, after.sharpen.radius, 1),
       detail: b('detail', before.sharpen.detail, after.sharpen.detail),
       masking: b('masking', before.sharpen.masking, after.sharpen.masking),
     },

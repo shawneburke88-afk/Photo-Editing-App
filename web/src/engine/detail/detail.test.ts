@@ -3,7 +3,7 @@ import { defaultsFor, DEFAULT_RGB_SETTINGS, DEFAULT_SETTINGS, displayUniforms, n
 import { bandThreshold, denoiseCpu, denoiseRun, f16, fastMexp2, inferBias, inferShadows, maxScale, VARF, y0u0v0Matrices } from './denoise'
 import { GENERIC_PROFILE, type NoiseProfile } from './noiseprofiles'
 import { detailRun } from './run'
-import { autoThreshold, captureParams, DEFAULT_DETAIL, denoiseCurves, detailOn, normalizeDetail, RAW_DETAIL, RAW_DETAIL_HIGH_ISO, rawDetailFor, type DetailSettings } from './settings'
+import { autoThreshold, captureParams, DEFAULT_DETAIL, denoiseCurves, detailOn, normalizeDetail, RAW_DETAIL, RAW_DETAIL_HIGH_ISO, rawDetailFor, sharpenSigma, type DetailSettings } from './settings'
 import { captureKernels, diffractionRadius, kernelIndex, KERNEL_ALIGN } from './capture'
 
 const D700_3200: NoiseProfile = { iso: 3200, a: [0.00004404345, 0.000020206908, 0.00002897195], b: [2.3825315e-7, 1.4574454e-7, 2.7817939e-7] }
@@ -18,14 +18,14 @@ describe('Detail settings', () => {
     expect(detailOn(s.detail)).toBe(false)
     // New RAW photos are sharpened (owner, 2026-10-13); JPEGs aren't, and nothing has noise reduction.
     expect(DEFAULT_SETTINGS.detail).toEqual(RAW_DETAIL)
-    expect(RAW_DETAIL.sharpen).toMatchObject({ amount: 40, radiusAuto: true, detail: 25, masking: 0 })
+    expect(RAW_DETAIL.sharpen).toMatchObject({ amount: 40, radius: 1, detail: 25, masking: 0 })
     expect('detail' in DEFAULT_RGB_SETTINGS).toBe(false)
     expect(detailOn({ ...RAW_DETAIL, sharpen: { ...RAW_DETAIL.sharpen, amount: 0 } })).toBe(false)
   })
 
   it('fills in and clamps stored values', () => {
     const d = normalizeDetail({ sharpen: { amount: 400, radius: 0.1 }, noise: { luminance: 30, colorDetail: 'x' } })!
-    expect(d.sharpen).toEqual({ amount: 150, radius: 0.25, radiusAuto: true, detail: 25, masking: 0 })
+    expect(d.sharpen).toEqual({ amount: 150, radius: 0.5, detail: 25, masking: 0 })
     expect(d.noise.luminance).toBe(30)
     expect(d.noise.colorDetail).toBe(50)
     expect(normalizeDetail(null)).toBeUndefined()
@@ -259,14 +259,17 @@ describe('the Detail run', () => {
     const r2 = detailRun(withNoise({ luminance: 31 }), meta, [2, 1, 1.5], [400, 300], 1, null, AUTO)!
     expect(r2.key).not.toBe(r.key)
   })
-  it('scales the sharpening radius with the level, auto or set by hand', () => {
+  it('multiplies the photo\'s automatic radius by Radius, clamped to 0.25…1.5 px, and scales it with the level', () => {
     const r = detailRun(withNoise({}, { amount: 50 }), { ...meta, white: 16383, iso: 100 }, [1, 1, 1], [400, 300], 1, null, AUTO)!
     expect(r.capture).toMatchObject({ sigma: 0.3, iterations: 10, halo: 0.25 })
     expect(r.capture!.threshold).toBeCloseTo(autoThreshold(16383, 100), 9)
-    expect(r.radius).toEqual(AUTO)
-    const m = detailRun(withNoise({}, { amount: 50, radius: 1.2, radiusAuto: false }), meta, [1, 1, 1], [400, 300], 0, null, AUTO)!
-    expect(m.capture!.sigma).toBe(1.2)
-    expect(m.radius).toEqual({ sigma: 1.2, from: 'manual' })
+    expect(r.radius).toEqual({ ...AUTO, auto: 0.6, multiplier: 1 })
+    const m = detailRun(withNoise({}, { amount: 50, radius: 2 }), meta, [1, 1, 1], [400, 300], 0, null, AUTO)!
+    expect(m.capture!.sigma).toBeCloseTo(1.2, 12)
+    expect(m.radius).toMatchObject({ sigma: m.capture!.sigma, from: 'measured', auto: 0.6, multiplier: 2 })
+    expect(detailRun(withNoise({}, { amount: 50, radius: 3 }), meta, [1, 1, 1], [400, 300], 0, null, AUTO)!.capture!.sigma).toBe(1.5)
+    expect(detailRun(withNoise({}, { amount: 50, radius: 0.5 }), meta, [1, 1, 1], [400, 300], 0, null, { sigma: 0.4, from: 'default' })!.capture!.sigma).toBe(0.25)
+    expect(sharpenSigma(1, 0.62)).toBeCloseTo(0.62, 12)
     expect(r.denoise).toBeNull()
   })
   it('makes a mask-only run for the Masking preview', () => {

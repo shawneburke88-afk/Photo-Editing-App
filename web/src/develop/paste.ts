@@ -92,7 +92,7 @@ export const PASTE_ITEMS: PasteItem[] = [
   slider('saturation', 'Saturation', 'Presence'),
   // Lightroom's Copy Settings lists Sharpening and Noise Reduction (Luminance, Color) (from general knowledge).
   detailItem('sharpening', 'Sharpening', (to, from) => ({ ...to, sharpen: { ...from.sharpen } }), (d) =>
-    d.sharpen.amount === 0 ? 'off' : `Amount ${d.sharpen.amount}, Radius ${d.sharpen.radiusAuto ? 'auto (each photo’s own)' : `${d.sharpen.radius.toFixed(2)} px`}, Detail ${d.sharpen.detail}, Masking ${d.sharpen.masking}`),
+    d.sharpen.amount === 0 ? 'off' : `Amount ${d.sharpen.amount}, Radius ${d.sharpen.radius.toFixed(1)} × each photo’s own radius, Detail ${d.sharpen.detail}, Masking ${d.sharpen.masking}`),
   detailItem('luminanceNoise', 'Noise reduction: Luminance', (to, from) => ({ ...to, noise: { ...to.noise, luminance: from.noise.luminance, luminanceDetail: from.noise.luminanceDetail, luminanceContrast: from.noise.luminanceContrast } }), (d) =>
     d.noise.luminance === 0 ? 'off' : `${d.noise.luminance}, Detail ${d.noise.luminanceDetail}, Contrast ${d.noise.luminanceContrast} (each photo’s own noise profile)`),
   detailItem('colorNoise', 'Noise reduction: Color', (to, from) => ({ ...to, noise: { ...to.noise, color: from.noise.color, colorDetail: from.noise.colorDetail, colorSmoothness: from.noise.colorSmoothness } }), (d) =>

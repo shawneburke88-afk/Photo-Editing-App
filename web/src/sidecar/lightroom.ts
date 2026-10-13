@@ -54,9 +54,8 @@
 // SharpenEdgeMasking, LuminanceSmoothing, LuminanceNoiseReductionDetail, LuminanceNoiseReductionContrast,
 // ColorNoiseReduction, ColorNoiseReductionDetail, ColorNoiseReductionSmoothness (names from ExifTool's crs table and
 // the owner's list). LightBench's Detail sliders have Lightroom's names and ranges, so the numbers carry over one for
-// one, except the Radius: Lightroom's 0.5–3.0 is LightBench's capture-sharpening sigma 0.25–1.5 px doubled, and
-// Lightroom's default 1.0 reads as LightBench's automatic radius (and the automatic radius is written as 1.0). The
-// algorithms differ (Lightroom's aren't public; LightBench's are darktable's), so the look is only approximately
+// one, Radius included: LightBench's Radius (0.5–3.0, default 1.0) multiplies the photo's automatic radius, so
+// Lightroom's default 1.0 is LightBench's measured radius. The algorithms differ (Lightroom's aren't public; LightBench's are darktable's), so the look is only approximately
 // Lightroom's. A sidecar without these fields leaves LightBench's Detail alone, and an absent sub-field
 // reads as Lightroom's default (Radius 1.0, Detail 25, Masking 0, Luminance Detail 50, Contrast 0, Color Detail 50,
 // Smoothness 50; from general knowledge of Lightroom, not checked). Not checked against a sidecar Lightroom wrote.
@@ -151,13 +150,13 @@ export const LR_GROUPS: LrGroup[] = ['orientation', 'crop', 'transform', 'detail
 /** The Detail settings as Lightroom's ten numbers. */
 export function detailToLr(d: DetailSettings | undefined): number[] {
   const x = d ?? DEFAULT_DETAIL
-  return [x.sharpen.amount, x.sharpen.radiusAuto ? 1 : 2 * x.sharpen.radius, x.sharpen.detail, x.sharpen.masking, x.noise.luminance, x.noise.luminanceDetail, x.noise.luminanceContrast, x.noise.color, x.noise.colorDetail, x.noise.colorSmoothness]
+  return [x.sharpen.amount, x.sharpen.radius, x.sharpen.detail, x.sharpen.masking, x.noise.luminance, x.noise.luminanceDetail, x.noise.luminanceContrast, x.noise.color, x.noise.colorDetail, x.noise.colorSmoothness]
 }
 
 /** Lightroom's ten numbers as Detail settings (clamped to the sliders' ranges). */
 export function detailFromLr(v: number[]): DetailSettings {
   return normalizeDetail({
-    sharpen: { amount: v[0], radius: v[1] / 2, radiusAuto: Math.abs(v[1] - 1) < 0.05, detail: v[2], masking: v[3] },
+    sharpen: { amount: v[0], radius: v[1], detail: v[2], masking: v[3] },
     noise: { luminance: v[4], luminanceDetail: v[5], luminanceContrast: v[6], color: v[7], colorDetail: v[8], colorSmoothness: v[9] },
   })!
 }

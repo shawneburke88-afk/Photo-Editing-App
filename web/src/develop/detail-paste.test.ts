@@ -43,7 +43,7 @@ describe('Detail in Copy / Paste', () => {
     const lines = describePaste(clip(withNr(40, 0, 60)), 'raw')
     expect(lines.length).toBeGreaterThan(0)
     const all = describePaste(clip(withNr(40, 0, 60), [...DEFAULT_PASTE_KEYS, 'sharpening', 'luminanceNoise', 'colorNoise']), 'raw')
-    expect(all).toContain('Sharpening: Amount 60, Radius auto (each photo’s own), Detail 25, Masking 0')
+    expect(all).toContain('Sharpening: Amount 60, Radius 1.0 × each photo’s own radius, Detail 25, Masking 0')
     expect(all.some((l) => l.startsWith('Noise reduction: Luminance: 40'))).toBe(true)
     expect(all).toContain('Noise reduction: Color: off')
     expect(changedKeys(withNr(40, 0), withNr(45, 0))).toEqual(['luminanceNoise'])

@@ -557,7 +557,8 @@ export class DevelopEngine {
     const wb: [number, number, number] = this.rgbInput ? [1, 1, 1] : [this.builtWb[0], this.builtWb[1], this.builtWb[2]]
     const max = this.scene ? this.scene.mipLevelCount - 1 : 0
     const sharpen = d.sharpen.amount > 0 || !!u.detailMask
-    const auto = sharpen && d.sharpen.radiusAuto ? this.autoRadius() : { sigma: d.sharpen.radius, from: 'manual' as const }
+    // Measured only when sharpening needs it (90–480 ms once per photo).
+    const auto = sharpen ? this.autoRadius() : { sigma: 0.5, from: 'default' as const }
     const run = detailRun(d, this.detailMeta, wb, [this.sensor.width, this.sensor.height], Math.min(level, max), db && typeof db === 'object' ? db : null, auto, !!u.detailMask)
     if (run?.profile) this.lastProfile = run.profile
     if (run?.radius) this.lastRadius = run.radius

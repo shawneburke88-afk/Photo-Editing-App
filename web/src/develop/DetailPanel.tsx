@@ -4,7 +4,7 @@
 // Lightroom; "Show mask" does the same without a key (some Linux desktops take Alt-drag for moving windows).
 
 import { useEffect, useRef, useState } from 'react'
-import { DEFAULT_DETAIL, HIGH_ISO, type DetailSettings, type NoiseSettings, type SharpenSettings } from '../engine/detail/settings'
+import { DEFAULT_DETAIL, HIGH_ISO, sharpenSigma, type DetailSettings, type NoiseSettings, type SharpenSettings } from '../engine/detail/settings'
 import type { RadiusChoice } from '../engine/detail/capture'
 import type { NoiseProfileData, ProfileChoice } from '../engine/detail/noiseprofiles'
 import type { SourceKind } from '../engine/develop/settings'
@@ -51,18 +51,18 @@ function profileLine(p: ProfileChoice | null, kind: SourceKind, db: Props['db'])
   }
 }
 
-function radiusLine(r: RadiusChoice | null): string {
-  if (!r) return 'Measured from the photo when it is first sharpened.'
-  switch (r.from) {
-    case 'measured':
-      return `Measured from the photo: ${r.sigma.toFixed(2)} px (darktable’s method, from the raw data).`
-    case 'diffraction':
-      return `Estimated from the aperture (f/${r.fNumber}) and pixel size: ${r.sigma.toFixed(2)} px. It couldn’t be measured from this photo.`
-    case 'default':
-      return `darktable’s default, ${r.sigma.toFixed(2)} px: it couldn’t be measured from this photo.`
-    default:
-      return ''
-  }
+/** The photo's automatic radius and where it came from; Radius multiplies it. */
+function radiusLine(r: RadiusChoice | null, multiplier: number): string {
+  if (!r) return 'Radius multiplies the photo’s own blur radius, measured when it is first sharpened.'
+  const auto = r.auto ?? r.sigma
+  const source =
+    r.from === 'measured'
+      ? `measured from the photo’s raw data (darktable’s method)`
+      : r.from === 'diffraction'
+        ? `estimated from the aperture (f/${r.fNumber}) and pixel size; it couldn’t be measured from this photo`
+        : `darktable’s default; it couldn’t be measured from this photo`
+  const limited = Math.abs(sharpenSigma(multiplier, auto) - multiplier * auto) > 1e-6 ? ` (limited to ${sharpenSigma(multiplier, auto).toFixed(2)} px)` : ''
+  return `Automatic radius ${auto.toFixed(2)} px, ${source}. Sharpening radius ${multiplier.toFixed(1)} × ${auto.toFixed(2)} = ${(multiplier * auto).toFixed(2)} px${limited}.`
 }
 
 export function DetailPanel({ detail, kind, defaults, disabled, showHint, profile, radius, db, onLoadDb, zoomedOut, onChange, onMaskPreview }: Props) {
@@ -122,28 +122,25 @@ export function DetailPanel({ detail, kind, defaults, disabled, showHint, profil
       <section>
         <div className="dpanel-head">
           <h3>Sharpening</h3>
-          <button className="button small" disabled={disabled || JSON.stringify(d.sharpen) === JSON.stringify(base.sharpen)} onClick={() => onChange('Reset Sharpening', { ...d, sharpen: base.sharpen })} title={kind === 'raw' ? `Sharpening back to this RAW photo's default: Amount ${base.sharpen.amount} (40, or 25 above ISO ${HIGH_ISO}), automatic radius, Detail 25, Masking 0` : 'Sharpening back to off (JPEGs are already sharpened by the camera)'}>
+          <button className="button small" disabled={disabled || JSON.stringify(d.sharpen) === JSON.stringify(base.sharpen)} onClick={() => onChange('Reset Sharpening', { ...d, sharpen: base.sharpen })} title={kind === 'raw' ? `Sharpening back to this RAW photo's default: Amount ${base.sharpen.amount} (40, or 25 above ISO ${HIGH_ISO}), Radius 1.0 (the photo's own radius), Detail 25, Masking 0` : 'Sharpening back to off (JPEGs are already sharpened by the camera)'}>
             Reset
           </button>
         </div>
         <Slider label="Amount" value={d.sharpen.amount} min={0} max={150} step={1} defaultValue={base.sharpen.amount} format={int} disabled={disabled} {...guide('sharpenAmount')} onChange={(v) => setS('Sharpening: Amount', { amount: v })} />
         <Slider
           label="Radius"
-          value={d.sharpen.radiusAuto && radius ? radius.sigma : d.sharpen.radius}
-          min={0.25}
-          max={1.5}
-          step={0.01}
-          defaultValue={d.sharpen.radiusAuto && radius ? radius.sigma : DEFAULT_DETAIL.sharpen.radius}
-          format={(v) => (d.sharpen.radiusAuto ? `Auto ${v.toFixed(2)}` : v.toFixed(2))}
+          value={d.sharpen.radius}
+          min={0.5}
+          max={3}
+          step={0.1}
+          defaultValue={DEFAULT_DETAIL.sharpen.radius}
+          // "1.0 × (0.62 px)": the multiplier and the photo's automatic radius it multiplies.
+          format={(v) => (radius ? `${v.toFixed(1)} × (${(radius.auto ?? radius.sigma).toFixed(2)} px)` : `${v.toFixed(1)} ×`)}
           disabled={sharpOff}
           {...guide('sharpenRadius')}
-          // Moving the slider sets the radius by hand; the Auto radius box goes back to the measured one.
-          onChange={(v) => (d.sharpen.radiusAuto && radius && Math.abs(v - radius.sigma) < 1e-9 ? undefined : setS('Sharpening: Radius', { radius: v, radiusAuto: false }))}
+          onChange={(v) => setS('Sharpening: Radius', { radius: Math.round(v * 10) / 10 })}
         />
-        <label className="detail-check" title="Measure the blur radius from the photo itself (darktable's automatic radius)">
-          <input type="checkbox" checked={d.sharpen.radiusAuto} disabled={sharpOff} onChange={(e) => setS(e.target.checked ? 'Sharpening: Radius Auto' : 'Sharpening: Radius', { radiusAuto: e.target.checked, radius: radius && e.target.checked === false ? Math.round(radius.sigma * 100) / 100 : d.sharpen.radius })} /> Auto radius
-        </label>
-        {d.sharpen.radiusAuto && d.sharpen.amount > 0 && <p className="muted small detail-note detail-radius">{radiusLine(radius)}</p>}
+        {d.sharpen.amount > 0 && <p className="muted small detail-note detail-radius">{radiusLine(radius, d.sharpen.radius)}</p>}
         <Slider label="Detail" value={d.sharpen.detail} min={0} max={100} step={1} defaultValue={base.sharpen.detail} format={int} disabled={sharpOff} {...guide('sharpenDetail')} onChange={(v) => setS('Sharpening: Detail', { detail: v })} />
         <div
           className="detail-masking"

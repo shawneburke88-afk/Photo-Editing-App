@@ -182,11 +182,11 @@ export const HELP: Record<string, ControlHelp> = {
   },
   sharpenRadius: {
     hint: 'Size of the blur to undo',
-    what: 'The width of the blur being undone, in pixels (a Gaussian’s sigma). Auto measures it from the photo’s raw data, as darktable does; usually 0.5–0.8 px.',
-    left: 'Smaller: only the finest detail.',
-    right: 'Larger: for softer photos (small apertures, older lenses).',
-    pitfalls: 'A radius larger than the photo’s real blur makes ringing haloes. Leave it on Auto unless the result looks wrong.',
-    engine: 'darktable capture sharpening: radius (auto-calculated)',
+    what: 'How wide a blur to undo, as a multiple of the photo’s own blur radius, which LightBench measures from the raw data as darktable does (usually 0.5–0.8 px). 1.0 uses the measured radius; the result is shown next to the value and kept between 0.25 and 1.5 px.',
+    left: 'Below 1.0: a smaller radius, only the finest detail.',
+    right: 'Above 1.0: a larger radius, for softer photos (small apertures, older lenses).',
+    pitfalls: 'A radius larger than the photo’s real blur makes ringing haloes. Leave it at 1.0 unless the result looks wrong. Lightroom’s Radius values carry over as this multiplier.',
+    engine: 'darktable capture sharpening: radius (auto-calculated) × this multiplier (LightBench’s mapping)',
   },
   sharpenDetail: {
     hint: 'Holds back haloes at low values',

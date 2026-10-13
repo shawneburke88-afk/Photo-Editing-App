@@ -26,10 +26,12 @@
 export interface SharpenSettings {
   /** Lightroom's Amount, 0…150. 0 = off. Richardson–Lucy iterations = Amount / 5. */
   amount: number
-  /** The blur radius (Gaussian sigma), 0.25…1.5 px, used when `radiusAuto` is off. */
+  /**
+   * Lightroom's Radius, 0.5…3.0 (default 1.0): a multiplier of the photo's automatic radius (owner's decision,
+   * 2026-10-13, after docs/research/DETAIL_MAPPING_BRIEF.md). The PSF's sigma = radius × the automatic radius
+   * (measured from the raw data, or the diffraction / 0.5 px fallback), clamped to 0.25…1.5 px (`sharpenSigma`).
+   */
   radius: number
-  /** Measure the radius from the photo (darktable's automatic radius), else use `radius`. */
-  radiusAuto: boolean
   /** Lightroom's Detail, 0…100. */
   detail: number
   /** Lightroom's Masking, 0…100: 0 sharpens everything, 100 only strong edges. */
@@ -59,11 +61,10 @@ export interface DetailSettings {
 /**
  * Everything off, with Lightroom's defaults for the dependent sliders (Detail 25, Masking 0; Luminance Detail 50,
  * Contrast 0; Color Detail 50, Smoothness 50 — Lightroom Classic's, from general knowledge, not checked in Lightroom
- * here) and the automatic radius (0.5 px, darktable's default `cs_radius`, when set by hand). What an edit without
- * `detail` means, and JPEGs' default.
+ * here) and Radius 1.0 (the automatic radius as measured). What an edit without `detail` means, and JPEGs' default.
  */
 export const DEFAULT_DETAIL: DetailSettings = {
-  sharpen: { amount: 0, radius: 0.5, radiusAuto: true, detail: 25, masking: 0 },
+  sharpen: { amount: 0, radius: 1, detail: 25, masking: 0 },
   noise: { luminance: 0, luminanceDetail: 50, luminanceContrast: 0, color: 0, colorDetail: 50, colorSmoothness: 50 },
 }
 
@@ -89,7 +90,7 @@ export const rawDetailFor = (iso: number | null | undefined): DetailSettings => 
 /** Slider ranges (Lightroom's). */
 export const DETAIL_RANGES = {
   amount: [0, 150],
-  radius: [0.25, 1.5],
+  radius: [0.5, 3],
   detail: [0, 100],
   masking: [0, 100],
   luminance: [0, 100],
@@ -114,7 +115,6 @@ export function normalizeDetail(d: unknown): DetailSettings | undefined {
     sharpen: {
       amount: num(s.amount, D.sharpen.amount, R.amount),
       radius: num(s.radius, D.sharpen.radius, R.radius),
-      radiusAuto: typeof s.radiusAuto === 'boolean' ? s.radiusAuto : D.sharpen.radiusAuto,
       detail: num(s.detail, D.sharpen.detail, R.detail),
       masking: num(s.masking, D.sharpen.masking, R.masking),
     },
@@ -192,12 +192,17 @@ export function denoiseCurves(n: NoiseSettings): { y0: number[]; uv: number[] } 
 
 // ---- Sharpening: Lightroom's sliders → darktable's capture sharpening (LightBench's mapping)
 
+/** The sharpening σ's range (px): darktable's radius tops out at 1.5 (its 9 × 9 kernel); below 0.25 it does nothing. */
+export const SIGMA_RANGE = [0.25, 1.5] as const
+
+/** The PSF's sigma for Radius (a multiplier) and the photo's automatic radius, clamped to `SIGMA_RANGE`. */
+export const sharpenSigma = (radius: number, autoSigma: number): number => Math.min(SIGMA_RANGE[1], Math.max(SIGMA_RANGE[0], radius * autoSigma))
+
 /**
  * The capture-sharpening parameters of the four sliders (docs/research/DETAIL_DENOISE_SHARPEN.md section 4.3):
  *  - Amount → Richardson–Lucy iterations = Amount / 5 (40 → 8, darktable's default; 150 → 30), fractional counts
  *    interpolated between ⌊n⌋ and ⌈n⌉ iterations so the slider is smooth;
- *  - Radius → the Gaussian PSF's sigma: measured from the photo when automatic (darktable `_calc_auto_radius`), else
- *    the slider (0.25–1.5 px; darktable's range is 0–1.5);
+ *  - Radius → a multiplier of the photo's automatic radius (darktable `_calc_auto_radius`): `sharpenSigma`;
  *  - Detail → halo suppression: the result's overshoot beyond the original pixel's 3 × 3 neighbourhood range is kept
  *    in proportion Detail / 100 (100 = the deconvolution unchanged, 0 = no overshoot at all);
  *  - Masking → darktable's contrast sensitivity: auto + Masking / 100 · (1 − auto), where auto is darktable's

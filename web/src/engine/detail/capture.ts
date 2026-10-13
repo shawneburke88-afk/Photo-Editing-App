@@ -186,9 +186,16 @@ export function diffractionRadius(fNumber: number, cropFactor: number, widthPx: 
   return Math.min(1.5, Math.max(0.25, Math.hypot(diffraction, 1 / Math.sqrt(12))))
 }
 
-/** How the radius of a photo was found, for the Sharpening section. */
+/**
+ * A photo's automatic radius and how it was found (for the Sharpening section). In a run, also the Radius
+ * multiplier and the sigma it gave (`auto` × `multiplier`, clamped).
+ */
 export interface RadiusChoice {
   sigma: number
-  from: 'measured' | 'diffraction' | 'default' | 'manual'
+  from: 'measured' | 'diffraction' | 'default'
   fNumber?: number
+  /** The automatic radius before the multiplier (in a run). */
+  auto?: number
+  /** Radius, the multiplier (in a run). */
+  multiplier?: number
 }

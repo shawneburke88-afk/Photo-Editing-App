@@ -5,7 +5,7 @@
 import type { RadiusChoice } from './capture'
 import { denoiseRun, type DenoiseRun } from './denoise'
 import { chooseProfile, type NoiseProfileData, type ProfileChoice } from './noiseprofiles'
-import { autoThreshold, captureParams, denoiseCurves, noiseOn, sharpenOn, type DetailSettings } from './settings'
+import { autoThreshold, captureParams, denoiseCurves, noiseOn, sharpenOn, sharpenSigma, type DetailSettings } from './settings'
 
 /** What the engine knows about the loaded photo for the Detail stage. */
 export interface DetailMeta {
@@ -74,7 +74,8 @@ export function detailRun(
   let radius: RadiusChoice | null = null
   if (sharpen) {
     const p = captureParams(d.sharpen, autoThreshold(meta.white ?? 255, meta.iso))
-    radius = d.sharpen.radiusAuto ? autoRadius : { sigma: d.sharpen.radius, from: 'manual' }
+    // Radius multiplies the photo's automatic radius (each photo keeps its own).
+    radius = { ...autoRadius, sigma: sharpenSigma(d.sharpen.radius, autoRadius.sigma), auto: autoRadius.sigma, multiplier: d.sharpen.radius }
     // The PSF at this level's pixels (darktable runs capture sharpening only at full size; a smaller preview of a
     // sharpened photo shows little of it).
     capture = { sigma: radius.sigma * scale, iterations: p.iterations, halo: p.halo, threshold: p.threshold }
