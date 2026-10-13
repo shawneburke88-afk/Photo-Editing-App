@@ -3,9 +3,9 @@
 // (src/common/eigf.h, darktable developers, GPL-3.0-or-later). engine/color/tone-mask.ts explains the plan and holds
 // the same arithmetic on the CPU (`eigfStatsCpu`); develop-display.wgsl blends each pixel with the result.
 //
-// moments: I = |RGB| (Euclidean norm, white-balance fix applied, before exposure: the filter's output scales with
-//          exposure exactly, so the display shader multiplies instead of recomputing) averaged with I² over
-//          blocks of `block`×`block` full-size output pixels.
+// moments: I = |RGB| (Euclidean norm, in the RGB darktable measures it in, with the white-balance fix, before exposure:
+//          the filter's output scales with exposure exactly, so the display shader multiplies instead of recomputing)
+//          averaged with I² over blocks of `block`×`block` full-size output pixels.
 // reduce:  2×2 averages (cells past the edge are left out).
 // blurX, blurY: a sampled Gaussian, clamped at the edges (darktable's recursive Gaussian repeats the edge pixel);
 //          blurY writes [E[I], var = E[I²] − E[I]²].
@@ -14,9 +14,9 @@ struct Params {
   texMap0: vec4f,   // output uv → uv of the bound texture, rows (as View.texMap in develop-display.wgsl)
   texMap1: vec4f,
   texMap2: vec4f,
-  wbFix0: vec4f,    // live white-balance correction (Rec.2020), rows
-  wbFix1: vec4f,
-  wbFix2: vec4f,
+  toMask0: vec4f,   // scene (Rec.2020) → the mask's RGB, white-balance fix included, rows
+  toMask1: vec4f,
+  toMask2: vec4f,
   size: vec2u,      // output frame at 100 %
   block: u32,
   radius: i32,
@@ -53,7 +53,7 @@ fn moments(@builtin(global_invocation_id) id: vec3u) {
       if (px >= P.size.x) { break; }
       let uv = (vec2f(f32(px), f32(py)) + 0.5) / vec2f(P.size);
       let s = textureSampleLevel(img, samp, applyMap(uv), 0.0).rgb;
-      let c = vec3f(dot(P.wbFix0.xyz, s), dot(P.wbFix1.xyz, s), dot(P.wbFix2.xyz, s));
+      let c = vec3f(dot(P.toMask0.xyz, s), dot(P.toMask1.xyz, s), dot(P.toMask2.xyz, s));
       let i = length(c);
       s1 += i;
       s2 += i * i;

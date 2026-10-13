@@ -36,7 +36,7 @@ export interface BandWeights {
  * - Version 2: darktable's defaults (toneequal.c, lines 184-192): the RGB Euclidean norm, refined by the
  *   exposure-independent guided filter (EIGF, src/common/eigf.h), so a pixel is corrected by the brightness of
  *   its surroundings except across strong edges: fewer haloes, and local contrast is kept. The other values are
- *   darktable's defaults too; tone-mask.ts implements exactly these (see `checkToneMask`).
+ *   darktable's defaults too, and the only values the engine implements (engine/color/tone-mask.ts).
  */
 export type ToneMask =
   | { estimator: 'mean'; filter: 'none' }
@@ -93,12 +93,20 @@ const V1: ProcessParams = {
  */
 export const TONE_EQ_PROCESS = 2
 
-/** Band weights of version 2 (retuned below, Part 10). */
+/**
+ * Band weights of version 2. The Euclidean norm of a neutral pixel is √3 × its RGB average (+0.79 EV; more for
+ * saturated colours), so version 1's weights would act about 0.8 EV lower down the tones (Highlights would darken
+ * the mid-tones). Blacks and Shadows are version 1's weights moved up by 0.79 EV (linear interpolation between
+ * bands); Highlights and Whites were tuned by hand and then by eye (PHASE3.md Part 10) because everything from
+ * 0.79 EV below the top band up shares the top band (darktable clamps the mask to −8…0 EV), so the top can't follow
+ * version 1 exactly: Highlights now peaks lower (1.2 EV instead of 1.5 EV at +100) and keeps more on the brightest
+ * tones, Whites reaches a little further down.
+ */
 const V2_BAND_WEIGHTS: BandWeights = {
-  blacks: [1, 1, 0.5, 0.1, 0, 0, 0, 0, 0],
-  shadows: [0, 0.1, 0.3, 0.8, 1, 0.5, 0.1, 0, 0],
-  highlights: [0, 0, 0, 0, 0, 0.1, 0.5, 1, 0.4],
-  whites: [0, 0, 0, 0, 0, 0, 0, 0.35, 1],
+  blacks: [1, 1, 0.9, 0.42, 0.08, 0, 0, 0, 0],
+  shadows: [0, 0.02, 0.14, 0.4, 0.84, 0.9, 0.42, 0.08, 0],
+  highlights: [0, 0, 0, 0, 0, 0.02, 0.18, 0.7, 0.8],
+  whites: [0, 0, 0, 0, 0, 0, 0, 0.1, 1],
 }
 
 const V2: ProcessParams = {

@@ -145,7 +145,7 @@ const STATS_WORDS = 1028
 
 const IDENTITY: Mat3 = [1, 0, 0, 0, 1, 0, 0, 0, 1]
 const RAW_PARAMS_SIZE = 176
-const VIEW_SIZE = 448
+const VIEW_SIZE = 496
 /** demosaic-xtrans.wgsl's Const: 4 ints, the pattern, 3 matrix rows, 36 × vec4i of hexagon offsets. */
 const XTRANS_CONST_SIZE = 16 + 16 + 48 + 36 * 16
 /** Memory for one X-Trans demosaic strip (its working buffers). */
@@ -1115,11 +1115,13 @@ export class DevelopEngine {
     f.set([d[0], d[1], d[2], 0, d[3], d[4], d[5], 0, d[6], d[7], d[8], 0], 92)
     const tm = u.toneMask
     if (u.toneEnabled && tm.filter === 'eigf') {
-      const mask = this.toneMask(src, fix, tm.blending)
+      const toMask = this.maskSpace()
+      const mask = this.toneMask(src, mul(toMask, fix), tm.blending)
       this.boundMask = mask.tex
       f.set(mask.cells, 108)
       ui[110] = 1
       f[111] = 1 / tm.feathering
+      f.set([toMask[0], toMask[1], toMask[2], 0, toMask[3], toMask[4], toMask[5], 0, toMask[6], toMask[7], toMask[8], 0], 112)
     } else {
       this.boundMask = null
     }
@@ -1127,13 +1129,23 @@ export class DevelopEngine {
   }
 
   /**
-   * The tone equalizer's guided-filter statistics for a source (tone-mask.wgsl), from the cache when the same
-   * source, frame and white-balance fix were computed last. Exposure isn't part of it (the shader scales them).
+   * Rec.2020 → the RGB the tone mask is measured in. darktable's tone equalizer comes before its input colour profile
+   * for RAWs (src/common/iop_order.c, v5.0 order: toneequal 24, colorin 28), so it measures white-balanced camera RGB;
+   * for JPEGs it comes after (the v5.0 JPEG order) and measures the working space, Rec.2020 as here.
    */
-  private toneMask(src: Source, fix: Mat3, blending: number): { tex: GPUTexture; cells: [number, number] } {
+  private maskSpace(): Mat3 {
+    return this.rgbInput ? IDENTITY : invert(this.camToWorking)
+  }
+
+  /**
+   * The tone equalizer's guided-filter statistics for a source (tone-mask.wgsl), from the cache when the same
+   * source, frame and colour matrix (`toMask`: scene → mask RGB, white-balance fix included) were computed last.
+   * Exposure isn't part of it (the shader scales them).
+   */
+  private toneMask(src: Source, toMask: Mat3, blending: number): { tex: GPUTexture; cells: [number, number] } {
     let id = this.texIds.get(src.tex)
     if (!id) this.texIds.set(src.tex, (id = this.nextTexId++))
-    const key = [id, src.w, src.h, blending, ...src.texMap, ...fix].join(',')
+    const key = [id, src.w, src.h, blending, ...src.texMap, ...toMask].join(',')
     const hit = this.maskCache.find((m) => m.key === key)
     if (hit) {
       this.maskCache = [hit, ...this.maskCache.filter((m) => m !== hit)]
@@ -1151,7 +1163,7 @@ export class DevelopEngine {
     const pf = new Float32Array(params)
     const t = src.texMap
     pf.set([t[0], t[1], t[2], 0, t[3], t[4], t[5], 0, t[6], t[7], t[8], 0], 0)
-    pf.set([fix[0], fix[1], fix[2], 0, fix[3], fix[4], fix[5], 0, fix[6], fix[7], fix[8], 0], 12)
+    pf.set([toMask[0], toMask[1], toMask[2], 0, toMask[3], toMask[4], toMask[5], 0, toMask[6], toMask[7], toMask[8], 0], 12)
     new Uint32Array(params).set([src.w, src.h, plan.block], 24)
     new Int32Array(params)[27] = plan.radius
     pf[28] = plan.sigma

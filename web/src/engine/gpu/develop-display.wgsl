@@ -61,6 +61,9 @@ struct View {
   maskCells: vec2f,   // tone mask (version 2): cells of `maskStats` per unit of the shown image's uv
   toneMode: u32,      // tone equalizer mask: 0 RGB average of the pixel (version 1), 1 guided (EIGF, version 2)
   maskFeather: f32,   // EIGF regularisation, 1 / feathering
+  toMask0: vec4f,     // tone mask: Rec.2020 → the RGB darktable measures it in (white-balanced camera RGB for RAWs:
+  toMask1: vec4f,     // its tone equalizer runs before the input colour profile), rows
+  toMask2: vec4f,
 }
 
 @group(0) @binding(0) var img: texture_2d<f32>;
@@ -118,7 +121,7 @@ fn maskAt(uv: vec2f) -> vec2f {
  * The statistics were measured before exposure; I and E[I] scale with the gain, the variance with its square.
  */
 fn guidedMask(c: vec3f, uv: vec2f) -> f32 {
-  let i = max(length(c), 1.52587890625e-05);
+  let i = max(length(vec3f(dot(V.toMask0.xyz, c), dot(V.toMask1.xyz, c), dot(V.toMask2.xyz, c))), 1.52587890625e-05);
   let m = maskAt(uv);
   let avg = m.x * V.exposure;
   let variance = m.y * V.exposure * V.exposure;
