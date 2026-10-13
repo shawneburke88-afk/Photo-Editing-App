@@ -1226,3 +1226,124 @@ Headless Chromium with software WebGPU (SwiftShader), on a machine shared with o
 - The hover marker reads 3 × 3 rendered pixels per pointer move; on SwiftShader it lags the pointer by a few hundred ms. A real GPU wasn't measured.
 - The Fade preset and the Regions amounts were tuned by eye on two photos.
 - **Found in passing (not changed):** on main too, when Develop opens a photo while the background developer applies a Lightroom sidecar to another, SwiftShader can lose the background developer's GPU device ("A valid external Instance reference no longer exists"), and that photo is reported as a problem (`e2e-contention.mjs`: 2 of 2 runs on main). Run alone, the same import works on both main and this branch. A real GPU wasn't tried.
+
+## Part 14: GPU robustness
+
+**What it does.** LightBench no longer writes a black file when the graphics card fails during an export, no longer loses background work when Develop opens on setups that can't show WebGPU canvases, and recovers by itself after the graphics device is lost (a driver reset, the browser taking the device back), in Develop, the background developer, the Library's 100 % view and Export. Background GPU work now waits while Develop is busy, and background engines free each photo's textures as soon as they are done with it. Nothing renders differently: old edits export, thumbnail and measure byte-identically (below).
+
+**Why.** Two diagnoses on main `60b1170` ([EXPORT_BLANK_FILE.md](diagnosis/EXPORT_BLANK_FILE.md), [GPU_DEVICE_LOST.md](diagnosis/GPU_DEVICE_LOST.md)):
+- WebGPU only reports a validation or out-of-memory error to the console and drops the command buffer; the read-back buffer is still valid, so it maps fine and holds zeros. Export encoded those zeros and counted the file as saved. A lost device gave the browser's own text ("Failed to execute 'mapAsync'…") and then "Reload the page to continue" for every later photo, because Export used one engine for the whole run.
+- `DevelopEngine.create('auto')` tested whether a WebGPU canvas can be shown on every Develop mount (twice under StrictMode) and in the System check. Where it can't (headless SwiftShader here; software or blocklisted GPUs, some Linux/Vulkan drivers and virtual machines in the field), Chromium drops the page's whole GPU channel, so every other GPU device in the page was lost too: a Paste running when Develop opened ended with "1 with problems … A valid external Instance reference no longer exists." Part 12 met the same loss in passing.
+- Develop never made a new engine after a loss, the Library's 100 % renderer never reset its engine, and the background developer started a new engine only for the next photo, reporting the one in flight as a problem.
+- Develop, the background developer and the 100 % renderer each hold a full-size photo (about 1.1–1.6 GB at 24 MP on SwiftShader), and each kept its last photo's textures until the next one.
+
+Owner's choices (2026-10-13): all four parts of the diagnoses' fixes — no black exports; the present probe once per page; recovery everywhere; less GPU memory (a foreground gate and `unload()`).
+
+### Guarded GPU work (no black files)
+
+| Behaviour | Detail |
+|---|---|
+| `GpuWorkError` | `engine/gpu/develop-engine.ts`. `kind` is `lost`, `out-of-memory`, `validation` or `internal`; the message is for people, `detail` keeps the browser's text (also written to the console). |
+| `guarded(work)` | Pushes internal, out-of-memory and validation error scopes on the engine's device, runs `work`, pops them, and throws a `GpuWorkError` if a scope caught an error, if the device was lost meanwhile, or if `work` failed with an `AbortError` (a `mapAsync` on a lost device). A failure is given 250 ms for a loss to be reported (Chromium can reject the read-back before `device.lost` resolves). Other errors pass through unchanged, so "The photo's folder isn't connected" stays as it was. |
+| **Only on a private engine** | Error scopes belong to the whole device: anything else using the device at the same time would have its errors caught by these scopes, and its own scopes would catch this work's. So `guarded` is used only on engines nothing else uses concurrently: Export's (one per run), the background developer's and the 100 % renderer's. Never on Develop's engine, which the histogram, the loupe, Auto and saves use at the same time. |
+| Retries | Lost, out of memory and internal: once more on a fresh engine. Validation: never (the same commands would be rejected again). |
+| Output size check | `renderOutput` now checks the encoded image's buffer (4 bytes a pixel, 8 at 16 bits) against `maxStorageBufferBindingSize` and `maxBufferSize` up front, next to the existing texture-size check (both now run before the photo is warped): "The export is too large for this graphics card: 6400×4288 at 16 bits needs 209 MB in one piece, and the card allows 128 MB. Choose a smaller size or 8 bits." |
+
+Messages a person now sees (Export's failed list, the background developer's problems):
+
+| Kind | Message |
+|---|---|
+| lost | The graphics card stopped responding (it was reset, or the browser took it back). Try again. |
+| out-of-memory | The graphics card ran out of memory. Try a smaller size, or close other tabs and apps that use graphics. |
+| validation | The graphics card rejected the work for this photo. Try a smaller size; if it keeps happening, please report it. |
+| internal | The graphics card reported an internal error. Try again. |
+
+No help text described the old messages, so none changed.
+
+### Export
+
+| Situation | Before (main) | Now |
+|---|---|---|
+| A command buffer fails (an invalid intermediate stands in for out of memory) | File written, every pixel 0, counted as saved | That photo fails with the validation message, no file; the others are written |
+| 16-bit export over the device's buffer limits | Files written, all black | Fails up front with the size message, no file |
+| Device lost once during a photo | That photo fails with "Failed to execute 'mapAsync'…", every later one with "Reload the page" | The photo is retried on a fresh engine and written; later photos are fine |
+| Device lost on every attempt | — | Each photo fails with the lost message, no files |
+| Engine found lost before a photo | Every later photo failed | A new engine is made before the photo |
+
+Each photo's load, process and render run in one `guarded` call (`export/run.ts`); the photo is unloaded after its render, before encoding.
+
+### One present probe per page
+
+| Behaviour | Detail |
+|---|---|
+| When | `engine/gpu/present.ts`; `main.tsx` starts it at start-up, before any GPU work. It runs at most once per page and its answer is kept. |
+| What | One frame on a 1×1 WebGPU canvas of a device of its own (destroyed afterwards); if that device is lost, read-back. |
+| Skipped | `?gpu=readback` / `?gpu=canvas` decide without a test (as before). A fallback (software) adapter (`adapter.info.isFallbackAdapter`, or the older `adapter.isFallbackAdapter`) uses read-back without a test. No adapter: read-back. |
+| Users | `DevelopEngine.create('auto')`, `DevelopRenderer.create('auto')` (System check), and the System check's message, which now says why it is in compatibility mode (chosen in the address, software graphics, no adapter, or the test failed). |
+| No device while it runs | Every `DevelopEngine.create` (all modes) waits for the probe first. |
+
+### Recovery
+
+| Component | After a lost device (before → now) |
+|---|---|
+| Develop | Showed the error; never recreated within a mount → `onLost` bumps an `engineGen` state; a new engine is made, the photo shown is uploaded again from the decode Develop keeps and developed with its current settings (unsaved changes included) before anything uses the engine; a photo still loading is loaded again. The lost canvas is removed. A notice for 8 s: "The graphics card was reset, so Develop restarted it. Your edit is safe." Errors caused by the loss aren't shown. A read-back canvas is redrawn on `contextrestored`. The Tone Curve's table is per engine and is built again by the new engine's first drawing. |
+| Background developer | New engine for the next photo; the photo in flight was a problem → Its GPU steps are guarded and the failed step is retried once on a fresh engine: working out the settings (nothing saved yet), or, after the edit was saved, only the thumbnail. So a retry never adds a second history step, and a photo that works on the retry is not reported. If the thumbnail fails twice: "Settings applied; the thumbnail wasn't refreshed. …" |
+| Library 100 % view (`FullRenderer`) | Never reset → replaces a lost engine before a render (as the background developer does), guards the full-size read-back, retries once on a fresh engine. |
+| Export | One engine per run → as above. |
+
+### Less GPU memory
+
+| Behaviour | Detail |
+|---|---|
+| Foreground gate | `engine/gpu/gate.ts`. Develop holds it while it loads and develops a photo, re-runs the RAW stage, draws, and measures the histogram and the Tone Curve's input. The background developer (before each GPU step), the 100 % renderer and Export (before each photo) wait until Develop has been idle for 150 ms. |
+| Can't starve | A background step waits at most 2 s (Export: 1 s), then goes ahead even if Develop is still busy, so a long slider drag doesn't stop a Paste or an Export. |
+| Can't deadlock | Only background work waits, and only between steps, never while holding anything Develop waits for; Develop never waits for background work. A hold that is never released (a drawing that hangs) ends after 30 s. |
+| `unload()` | Frees the scene, its warped and lens-corrected copies, the retouched copy, the tone masks, the Tone Curve's table, and the uploaded RAW buffer or JPEG pixels; the engine keeps its pipelines. Called after each background-developer photo, after each 100 % render and after each exported photo's render. Never on Develop's engine. |
+
+### Verified
+
+Headless Chromium 141 with SwiftShader WebGPU (which reports a fallback adapter), Vite dev builds of main `993f81b` (0.5.3, with the Tone Curve) and this branch merged with it, served side by side. Scripts in the scratchpad's `gpurob/` folder (copies of the diagnoses' and earlier parts' scripts). Earlier runs against main `60b1170` before the merge gave the same results where they overlap.
+
+- **Identity of old edits, engine level** (`identity.mjs`, 15 cases on the D700 and D80 NEFs, a 24 MP Sony ARW and `test-srgb.jpg`, including crop/turn/angle, custom white balance, three edits with Remove/Heal/Clone spots and three with a Tone Curve, one with spots too): full-size 8-bit export SHA-256, 1024 px export SHA-256, 512 px thumbnail and histogram statistics all **identical to main, 15 of 15**. Also identical, 15 of 15, with **one engine reused for every case and `unload()` between cases**.
+- **Identity through the app's code paths** (`export-identity.mjs`, saved edits with spots and a Tone Curve, fixed clock because the ICC profile holds the export time): `runExport` as full-size JPEG, 16-bit PNG at 1024 px and 8-bit TIFF at 50 %: **9 of 9 files byte-identical** to main; a Paste through the background developer: the three saved thumbnails and settings identical.
+- **Export failures** (`probe-export.mjs`, the diagnosis's probe through the real `runExport`, two copies of the JPEG; mean pixel value of each written file):
+
+  | Case | Main 993f81b | This branch |
+  |---|---|---|
+  | Baseline | 2 written, mean 142.37 | Same |
+  | Invalid intermediate on one photo | Written, mean 0 (black) | Fails with the validation message, no file; the other written, 142.37 |
+  | Device capped at default limits, 16-bit PNG at 400 % | 2 written, 6400×4288, mean 0 | Both fail with the size message, no files |
+  | Device destroyed once after the submit | Both fail ("mapAsync…", "Reload the page") | Retried; both written, 142.37 |
+  | Device destroyed on every attempt | Both fail, same raw messages | Both fail with the lost message, no files |
+- **The diagnosis's S2 scenario without `?gpu=readback`** (`s2.mjs`: a Paste on three photos running in the Library, then Develop opened on a 24 MP ARW): "3 photos updated.", no problems, Develop drawn. SwiftShader reports a fallback adapter, so the probe was skipped (read-back, "fallback-adapter"). With the adapter made to report a hardware one (an init script), the probe ran at start-up: its own device was lost 28 ms after it was made ("probe-failed", read-back), no other device was lost, and the same run ended "3 photos updated." with no problems. On main `993f81b` the same plain run ended "2 photos updated, 1 with problems … C.ARW: A valid external Instance reference no longer exists." (as in the diagnosis).
+- **Develop after `device.destroy()`** (`e2e-recover.mjs`, the D700 NEF, 14/14): twice in a row, the notice showed, the photo was drawn again on a new canvas with the same mean, no error message, one canvas and one live device; Before/After and an exposure change still drew. With a Tone Curve (Strong Contrast) on the photo (`e2e-recover-curve.mjs`, 9/9): drawn again with the curve (mean 91.8, as before the loss; 94.0 without the curve).
+- **Remove** (`e2e-remove.mjs`, the D700 and D80 NEFs): 16 passed, 2 failed on this branch, the same as on main `993f81b` in the same session: "turned right" and "cropped 1:1" (the fill lands about 80 px and 40 px from its pin, at the same coordinates on both), which fail on main too and are not from this part.
+- **Tone Curve** (`e2e-curve.mjs`, `e2e-curve2.mjs`, `test-srgb.jpg`): run alone, **35/35** on this branch without `?gpu=readback`, and 35/35 on main with it; main without it gave 29/35 (its Develop canvas read almost black in the failing checks, R 2.3 of 255; the cause wasn't looked into further). `e2e-curve2.mjs` (copy, paste, presets, Lightroom sidecars): 12/12 on this branch. Run with three other browsers at once, `e2e-curve.mjs` failed 2 timing-sensitive checks on this branch, different ones in each of three runs (clipping after a drag, a point drag, a point add, the Red curve, the eye), and main failed 10 in the same conditions; those runs are not counted.
+- **Memory** (`mem.mjs`, the diagnosis's method: the GPU process's RSS sampled every 500 ms; 24 MP ARWs, both builds with `?gpu=readback` so main loses no devices): Develop open on one ARW while a Paste runs on three others and Develop redraws every 4 s; then, in the Library, one 100 % render.
+
+  | GPU-process RSS (MB) | Main 993f81b | This branch |
+  |---|---|---|
+  | Idle, photos added | 124 | 128 |
+  | Develop showing the ARW | 1390 | 1394 |
+  | **Peak while the Paste ran with Develop open** | **2550** | **2062** |
+  | Lowest during the Paste | 777 | 772 |
+  | After the Paste, Develop open | 762 | 764 |
+  | Library, Develop closed | 204 | 205 |
+  | Peak during the 100 % render | 1446 | 1444 |
+  | After the 100 % render, renderer open | 1198 | 1195 |
+  | Renderer disposed | 276 | 274 |
+  | Paste duration | 710 s | 397 s |
+
+  One run each, with other browsers running at the same time (timings are not comparable). The peak with Develop open fell by 488 MB; this run can't tell how much of that is the gate (each Paste step now waits while Develop draws) and how much is `unload()`. **`unload()` alone showed no effect on SwiftShader:** in-page (`mem-unload.mjs`), after a 100 % render of the ARW the RSS stayed at 1152 MB whether or not the engine was unloaded (also with the device's queue ticked afterwards), and a second engine developing the same photo then reached 1726–1728 MB either way (peaks 2410–2424 MB). The software driver apparently doesn't give freed texture memory back to the process or to another device; the textures are destroyed, but what that saves on a real GPU wasn't measured.
+- **Unit tests** (38 new): `engine/gpu/guard.test.ts` (13: a fake device's validation, out-of-memory and internal errors, an `AbortError`, a loss during or after the work, a loss reported just after the failure, other errors passing through, balanced scopes, `DevelopEngine.guarded`, the retry rule, the up-front size check), `engine/gpu/present.test.ts` (6: one probe for concurrent and later calls, failure and exceptions, fallback adapters in both forms, `?gpu=`, no adapter), `engine/gpu/gate.test.ts` (6: idle, wait and quiet period, no starvation at the default and Export's limit, back-to-back frames, hold expiry, release on failure), `export/run.test.ts` (7: validation fails without a file or retry; a loss retries once on a fresh engine; out of memory and internal retry; a second loss fails; an engine lost before a photo is replaced first; other errors keep their message; each photo is unloaded), `develop/batch.test.ts` (6: retry while working out settings; retry of only the thumbnail after the save, one history step; no retry of validation; a second loss is a problem and the next photo goes on; "Settings applied" when only the thumbnail failed twice; unload per photo).
+- From a clean `npm ci`: `npx tsc -b`, `npx oxlint` (the two existing warnings), `npx vitest run` (70 files, 676 tests; main `993f81b` has 65 and 638) and `npm run build` passed.
+
+**Limitations and unverified:**
+- **No real GPU was tried.** A real driver reset (`chrome://gpucrash`), a real out-of-memory error and a real present failure on hardware weren't produced; out of memory was stood in for by an invalid texture, and loss by `device.destroy()`. By the WebGPU spec out of memory takes the same invalid-object path.
+- Whether other browsers reject `mapAsync` on a loss as Chromium does, and report `isFallbackAdapter`, wasn't checked.
+- The probe can still be wrong where a loss is reported more than 50 ms after the probe's frame; `?gpu=` overrides it.
+- Develop's own engine isn't guarded (error scopes would also catch the histogram's, loupe's and Auto's work): a validation or out-of-memory error during Develop's drawing still only reaches the console, as before. Develop's own read-backs (white balance picker, loupe, Auto) aren't guarded either.
+- After a loss, Develop uploads the photo again from its kept decode; the decode stays in memory as long as the photo is shown (the engine already held the same data).
+- A retry develops a photo twice; a photo whose thumbnail fails twice keeps its new settings with the old thumbnail.
+- **The memory saving of `unload()` is unmeasured on a real GPU**, and on SwiftShader the GPU process kept its memory (above). The diagnosis's other memory ideas (reusing RCD temporaries, Bayer Stage A in strips, one shared device) weren't done.
+- `e2e-remove.mjs` fails "turned right" and "cropped 1:1" on main too (known, not from this part).
