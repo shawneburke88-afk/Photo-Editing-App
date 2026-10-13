@@ -45,7 +45,7 @@ It reports that no finding contradicts a decision.
 ## Summary
 
 - **One decision shapes everything else: where the curve sits in the pipeline.** Before Contrast (the sigmoid), as darktable's rgb curve does, or after it, where darktable's tone curve sits and where darktable's own Lightroom importer puts Lightroom's curve. This doc recommends that the user always draws the curve on the **same axis as the histogram** (the tones on screen), and gives three ways to build that. It is open question 1.
-- **First version (focused):** point curve and R/G/B on the histogram's axis; the histogram behind the curve; hue-preserving colour by default with a single **Saturation** slider (Lightroom's Refine Saturation idea, Capture One's Luma-vs-RGB in one control); a TAT that shows the tone under the cursor on the curve before you click; clipping shown while dragging; numeric entry, keyboard and screen-reader control of points; a ghost of the curve before the drag; presets; and help text that says when to use Basic's sliders instead.
+- **First version (focused):** point curve and R/G/B on the histogram's axis; the histogram behind the curve; hue-preserving colour by default with a single **Refine Saturation** slider (Lightroom's name and idea, Capture One's Luma-vs-RGB in one control); a TAT that shows the tone under the cursor on the curve before you click; clipping shown while dragging; numeric entry, keyboard and screen-reader control of points; a ghost of the curve before the drag; presets; and help text that says when to use Basic's sliders instead.
 - **Later:** black/white/grey eyedroppers, "match a reference photo" and "match the camera's JPEG", an auto curve, a combined "what Basic is doing" ghost, curves in masks, and touch-specific behaviour for the mobile version (designed now, built later).
 - **Elsewhere:** Hue-vs-Hue/Sat/Lum and Sat-vs-Sat curves belong in the **Colour** group, on darktable's colour equalizer and its new saturation curve, not in the tone curve.
 - **No process-version change** is needed to add the tool: with no curve set, the stage is skipped and old edits render byte for byte as before (to be proven with an export-hash test like Part 10's). Any later change to the curve's maths needs a new process version.
@@ -260,7 +260,7 @@ What the table shows:
 - **A darktable pitfall:** its "sum" and "norm" estimators read a neutral grey 3× and √3× (+1.58 and +0.79 EV) brighter than it is [read] (`rgb_norms.h`), so grey tones don't sit where the histogram shows them. **LightBench should normalise every estimator so that a neutral grey reads its own value** [LightBench idea].
 
 **Proposal.**
-- **Default:** hue-preserving with Lightroom-like saturation (Adobe/Film-like in B; max-RGB/power-norm ratio in C), plus one **Saturation** slider under the curve (§2.3).
+- **Default:** hue-preserving with Lightroom-like saturation (Adobe/Film-like in B; max-RGB/power-norm ratio in C), plus one **Refine Saturation** slider under the curve (§2.3).
 - **Advanced ▸:** offers "Per channel (classic RGB)" and darktable's estimators by plain names ("brightness measured as: luminance / largest channel / average / power (balanced)"), normalised.
 - Why not darktable's default (luminance)? It crushes saturated reds and blues as shown, and new users will read that as a bug.
 - **Source:** darktable, RawTherapee, Lightroom. **Effort:** S per mode (shader: one norm, one table lookup, one multiply).
@@ -269,11 +269,11 @@ What the table shows:
 
 ### 2.3 Luma vs RGB (Capture One), luma mix (Resolve), Refine Saturation (Lightroom): one slider
 
-- **What:** a single **Saturation** slider under the curve, 0-100 %. At 0 the curve changes brightness only: colours keep their saturation (Capture One's Luma, Resolve's Y-only, Lightroom's Refine Saturation 0). At 100 % saturation follows contrast as in Lightroom and Capture One's RGB mode. In between it blends. Default 100 %, so Lightroom presets and habits look right.
+- **What:** a single **Refine Saturation** slider under the curve, 0-100 %. At 0 the curve changes brightness only: colours keep their saturation (Capture One's Luma, Resolve's Y-only, Lightroom's Refine Saturation 0). At 100 % saturation follows contrast as in Lightroom and Capture One's RGB mode. In between it blends. Default 100 %, so Lightroom presets and habits look right.
   - Hue is preserved at every setting (§2.2), which none of the three originals guarantees.
   - Why: one control replaces a mode switch (Capture One), a mix knob (Resolve) and a slider (Lightroom). Each of those apps' users recognises it.
   - A later refinement: Mantiuk et al. show the saturation needed to keep the appearance constant is non-linear, so "100 %" could follow their correction instead of plain RGB. RawTherapee's Perceptual mode aims at this. That needs a process version if changed after release.
-- **Source:** Capture One, Resolve, Lightroom, Mantiuk 2009. **Effort:** S. **Risks:** the name. "Saturation" collides with Basic's Saturation slider; alternatives are "Colour with contrast" or Lightroom's "Refine Saturation". The owner should choose (question 4). **Edits:** none.
+- **Source:** Capture One, Resolve, Lightroom, Mantiuk 2009. **Effort:** S. **Risks:** the name. "Saturation" collides with Basic's Saturation slider, so the owner chose Lightroom's "Refine Saturation" (2026-10-13, question 4). **Edits:** none.
 
 ### 2.4 Hue-vs and Sat-vs curves: in the Colour group, not here
 
@@ -439,7 +439,7 @@ The owner values usability over feature count. Lightroom users should find every
 | Pipeline position decided (§2.0, question 1), on the histogram's axis (§2.1) | Everything else depends on it; dragging must move the tones you see |
 | Point curve + R/G/B, ≤ 16 points, overshoot-free monotone interpolation (§2.10) | The core tool; simple smooth curves are what experts' edits reduce to |
 | Input histogram behind the graph, middle-grey tick, value readout (§2.1) | Lightroom parity, made truthful (input, not output) |
-| Hue-preserving default + one **Saturation** slider; darktable's estimators under Advanced (§2.2, §2.3) | Prettier than per-channel RGB by default, Lightroom-like punch, and Luma/RGB/Refine Saturation in one control |
+| Hue-preserving default + one **Refine Saturation** slider; darktable's estimators under Advanced (§2.2, §2.3) | Prettier than per-channel RGB by default, Lightroom-like punch, and Luma/RGB/Refine Saturation in one control |
 | TAT with hover marker, arrow-key nudge, drag-anywhere (§2.7) | Fastest way to edit; hover feedback is what Lightroom lacks |
 | Clipping shown while dragging (§2.5) | A display-side curve can clip; the J overlay already exists |
 | Baseline, drag ghost, channel overlays (§2.8) | Cheap, and makes every change readable |
@@ -467,7 +467,7 @@ The owner values usability over feature count. Lightroom users should find every
 ### Effect on existing edits
 
 - Adding the curve: none. The curve is absent from old edits, the stage is skipped, and the render stays byte-identical. Prove this with the export-hash check used in PHASE3 Part 10.
-- Changing the curve's maths later (norm, interpolation, axis, the Saturation slider's meaning, B → C): a new process version, as for the tone equalizer.
+- Changing the curve's maths later (norm, interpolation, axis, the Refine Saturation slider's meaning, B → C): a new process version, as for the tone equalizer.
 
 ---
 
@@ -482,8 +482,14 @@ The owner values usability over feature count. Lightroom users should find every
 - **After the Cowork report (2026-10-13):**
   - **Slider name:** the colour slider is renamed **Refine Saturation** (Lightroom's name), which avoids the clash with
     Basic's Saturation. This replaces "Saturation" wherever this document names the curve's slider.
-  - **Default brightness measure:** **Largest channel**, i.e. Adobe's hue-preserving "film-like" method at 100 %. Power
-    stays available.
+  - **Default brightness measure: Largest channel.** The brightness measure is the norm: the pixel's brightness that
+    the curve moves. Refine Saturation then sets how colour follows it:
+    - at **100**, the colour change follows Adobe's film-like method. With the Largest channel measure the result is
+      exactly Adobe's method (unit-tested in the built Tone Curve);
+    - at **0**, the curve changes brightness only (a ratio on the chosen measure), so colours keep their strength.
+
+    For this default, the §2.2 table's **Film-like** column describes the slider's 100 end and its **Max RGB** column
+    the 0 end. Power stays available as a measure.
   - **Not read from sidecars:** `crs:CurveRefineSaturation`. Only LightCraft's docs name that field, and it is
     unconfirmed.
 
