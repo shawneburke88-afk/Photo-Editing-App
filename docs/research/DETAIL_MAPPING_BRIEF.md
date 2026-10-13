@@ -2,6 +2,8 @@
 
 _Written 2026-10-13 on `lightbench/detail` for the owner's request "test the research suggestions and give me a performance brief before PR". It compares the shipped (built) mapping of the four Sharpening sliders with the research proposal, and measures one speed option (a separable blur). Nothing here changes the shipped app: both experiments ran behind a test-only switch (`mappingForTests`) in a commit that was reverted afterwards (see "Reproducing")._
 
+**Outcome (owner, 2026-10-13):** keep the built Amount and Detail; adopt **Radius as a multiplier of the automatic radius** (0.5–3.0, 1.0 = as measured, σ clamped to 0.25–1.5 px, Lightroom's `SharpenRadius` one for one) and **the separable blur**. Both are shipped on `lightbench/detail` and described in PHASE3.md Part 13.
+
 **How to read the numbers.** "Measured" means measured on this branch with the scripts listed at the end. Speeds come from SwiftShader, a software GPU running on the CPU: **its times are only good for comparing configurations with each other, not as real-GPU times**. Anything not measured is labelled **judgement** or **estimate**.
 
 ## The two mappings
