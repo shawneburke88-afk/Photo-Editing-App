@@ -225,7 +225,7 @@ export class RetouchStage {
     for (const [k, c] of reply.completions) this.completions.set(k, c)
     if (this.dead.has(scene)) throw new Error('The scene was rebuilt')
     // The new texture: the scene, the written tiles, its mips.
-    const tex = device.createTexture({ size: [w, h], format: scene.format, mipLevelCount: scene.mipLevelCount, usage: scene.usage })
+    const tex = device.createTexture({ size: [w, h], format: scene.format, mipLevelCount: scene.mipLevelCount, usage: scene.usage | GPUTextureUsage.COPY_DST })
     const enc = device.createCommandEncoder()
     enc.copyTextureToTexture({ texture: scene, mipLevel: 0 }, { texture: tex, mipLevel: 0 }, [w, h])
     device.queue.submit([enc.finish()])

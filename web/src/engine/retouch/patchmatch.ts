@@ -251,8 +251,24 @@ function patchSum(L: Level, r: number, t: number, s: number, limit: number): num
   return sum
 }
 
-function computeDistances(L: Level, r: number) {
-  for (let j = 0; j < L.centres.length; j++) L.dist[j] = patchSum(L, r, L.centres[j], L.src[j], Infinity) / L.count[j]
+/**
+ * How much a match at the preferred offset (the spot's source) is favoured: its distance counts this much. LightBench's
+ * choice, so the fill keeps the structure of the source where it fits (as Heal does) and only departs from it where
+ * other texture matches clearly better; moving the source therefore changes the fill. Chosen by measurement on the
+ * synthetic cases (PHASE3.md, Part 11): 1 (no preference) broke brick courses where Heal kept them (12.5 against
+ * 5.4 levels RMSE), 0.5 made Remove the same as Heal; 0.85 kept the courses (5.2) without losing the grass case.
+ */
+export const PREFER = 0.85
+
+/** True when s is t moved by the preferred offset. */
+const preferred = (L: Level, t: number, s: number, il: [number, number] | null) => !!il && s - t === il[1] * L.w + il[0] && Math.abs((s % L.w) - (t % L.w)) === Math.abs(il[0])
+
+function computeDistances(L: Level, r: number, il: [number, number] | null) {
+  for (let j = 0; j < L.centres.length; j++) {
+    const t = L.centres[j]
+    const d = patchSum(L, r, t, L.src[j], Infinity) / L.count[j]
+    L.dist[j] = preferred(L, t, L.src[j], il) ? d * PREFER : d
+  }
 }
 
 /** One PatchMatch sweep over all centres: propagation from the neighbours already visited, then random search. */
@@ -263,11 +279,12 @@ function sweep(L: Level, r: number, reverse: boolean, rand: () => number, initia
   const step = reverse ? -1 : 1
   const try1 = (j: number, t: number, s: number) => {
     if (s < 0 || !valid[s] || s === src[j]) return
-    const limit = dist[j] * count[j]
+    const k = preferred(L, t, s, initial) ? PREFER : 1
+    const limit = (dist[j] * count[j]) / k
     const d = patchSum(L, r, t, s, limit)
     if (d < limit) {
       src[j] = s
-      dist[j] = d / count[j]
+      dist[j] = (d / count[j]) * k
     }
   }
   for (let k = reverse ? n - 1 : 0; reverse ? k >= 0 : k < n; k += step) {
@@ -395,12 +412,21 @@ function randomValid(L: Level, rand: () => number): number {
   return L.validList[Math.min(L.validList.length - 1, Math.floor(rand() * L.validList.length))]
 }
 
-/** Fills the hole; returns the match field of the finest level (no centres when nothing can be copied from). */
+/**
+ * Fills the hole; returns the match field of the finest level (no centres when nothing can be copied from).
+ *
+ * With a preferred offset (the spot's source), two fills are computed and the more coherent one is kept: one that
+ * starts from the source healed into the hole, one that starts from a smooth interpolation (Newson et al.). Starting
+ * from the source keeps thin structures that cross a thin hole (brick courses across a wire); starting smoothly
+ * avoids copying the source when the source itself is wrong (another object). The one kept has the lower score: the
+ * mean distance between each target patch and its match at the end (the energy Wexler et al. minimise, without the
+ * source preference) plus how new its colours are to the hole's surroundings (`novelty`). LightBench's choice,
+ * measured on the synthetic cases (PHASE3.md, Part 11).
+ */
 export function complete(input: CompletionInput): Completion {
   const { width: w, height: h, image, hole } = input
   const r = input.radius ?? 3
   const blocked = input.blocked ?? new Uint8Array(w * h)
-  const rand = rng(input.seed || 1)
   const e0 = new Float32Array(w * h * 3)
   for (let i = 0; i < w * h * 3; i++) e0[i] = Math.sqrt(Math.max(0, image[i]))
 
@@ -414,18 +440,69 @@ export function complete(input: CompletionInput): Completion {
     const p = raw[l - 1]
     raw.push(downsample(p.w, p.h, p.e, p.hole, p.blocked))
   }
-  let pyr = raw.map((x) => makeLevel(x.w, x.h, x.e, x.hole, x.blocked, r))
-  while (pyr.length > 1 && !pyr[pyr.length - 1].validList.length) pyr = pyr.slice(0, -1)
+  const pyramid = () => {
+    let pyr = raw.map((x) => makeLevel(x.w, x.h, x.e.slice(), x.hole, x.blocked, r))
+    while (pyr.length > 1 && !pyr[pyr.length - 1].validList.length) pyr = pyr.slice(0, -1)
+    return pyr
+  }
   const empty: Completion = { width: w, height: h, radius: r, centres: new Int32Array(0), sources: new Int32Array(0), weights: new Float32Array(0) }
-  if (!pyr[0].validList.length || !pyr[0].centres.length) return empty
+  const first = pyramid()
+  if (!first[0].validList.length || !first[0].centres.length) return empty
+  const init = input.initial ?? null
+  if (!init) return solve(first, r, null, 'smooth', rng(input.seed || 1), (f) => input.onProgress?.(f)).completion
+  const a = solve(first, r, init, 'source', rng(input.seed || 1), (f) => input.onProgress?.(f / 2))
+  const b = solve(pyramid(), r, init, 'smooth', rng(((input.seed || 1) + 0x9e3779b9) >>> 0), (f) => input.onProgress?.(0.5 + f / 2))
+  return b.energy < a.energy ? b.completion : a.completion
+}
 
+/**
+ * How new the fill's colours are to the hole's surroundings: the mean, over the hole, of the squared distance from
+ * each filled pixel's colour to the nearest of (up to 512) colours sampled around the hole. A fill copied from a
+ * source that holds another object brings colours found nowhere around the hole; patch coherence alone can't see
+ * that, since the copied object sits in surroundings like the hole's own.
+ */
+function novelty(L: Level, r: number): number {
+  const { w, h, e, hole } = L
+  const near = boxSum(w, h, hole, 2 * r)
+  const ring: number[] = []
+  for (let p = 0; p < w * h; p++) if (!hole[p] && near[p] > 0) ring.push(p)
+  if (!ring.length) return 0
+  const step = Math.max(1, Math.ceil(ring.length / 512))
+  const cols: number[] = []
+  for (let k = 0; k < ring.length; k += step) cols.push(e[ring[k] * 3], e[ring[k] * 3 + 1], e[ring[k] * 3 + 2])
+  let sum = 0
+  let n = 0
+  // Every hole pixel, or a regular sample of them for big holes.
+  let count = 0
+  for (let p = 0; p < w * h; p++) count += hole[p]
+  const every = Math.max(1, Math.ceil(count / 4096))
+  let seen = 0
+  for (let p = 0; p < w * h; p++) {
+    if (!hole[p] || seen++ % every) continue
+    const a = e[p * 3]
+    const b = e[p * 3 + 1]
+    const c = e[p * 3 + 2]
+    let best = Infinity
+    for (let k = 0; k < cols.length; k += 3) {
+      const da = a - cols[k]
+      const db = b - cols[k + 1]
+      const dc = c - cols[k + 2]
+      const d = da * da + db * db + dc * dc
+      if (d < best) best = d
+    }
+    sum += best
+    n++
+  }
+  return n ? sum / n : 0
+}
+
+/** One coarse-to-fine completion (see `complete`). */
+function solve(pyr: Level[], r: number, init: [number, number] | null, start: 'source' | 'smooth', rand: () => number, onProgress: (f: number) => void): { completion: Completion; energy: number } {
   const top = pyr.length - 1
   const emIters = (l: number) => (l === top ? 10 : Math.max(3, 6 - (top - 1 - l)))
   const sweeps = (l: number) => (l === top ? 4 : 2)
   const work = pyr.reduce((s, L, l) => s + L.centres.length * emIters(l) * sweeps(l), 0)
   let done = 0
-  const init = input.initial ?? null
-
   for (let l = top; l >= 0; l--) {
     const L = pyr[l]
     const scale = 2 ** l
@@ -438,10 +515,9 @@ export function complete(input: CompletionInput): Completion {
       return x >= 0 && x < L.w && y >= 0 && y < L.h && L.valid[y * L.w + x] ? y * L.w + x : -1
     }
     if (l === top) {
-      // Start: with a preferred offset, the hole healed from there (darktable's heal: the copy plus a harmonic
-      // correction from around the hole); otherwise smoothly interpolated from around it (Newson et al.). Matches
-      // at the preferred offset, or at random.
-      if (il) healStart(L, il)
+      // Start: the hole healed from the preferred offset (darktable's heal: the copy plus a harmonic correction from
+      // around the hole), or smoothly interpolated from around it. Matches at the preferred offset, or at random.
+      if (il && start === 'source') healStart(L, il)
       else harmonicFill(L.w, L.h, L.hole, L.e, 3, 500)
       for (let j = 0; j < L.centres.length; j++) {
         const t = L.centres[j]
@@ -477,18 +553,24 @@ export function complete(input: CompletionInput): Completion {
       }
     }
     for (let it = 0; it < emIters(l); it++) {
-      computeDistances(L, r)
+      computeDistances(L, r, il)
       for (let k = 0; k < sweeps(l); k++) sweep(L, r, (it * sweeps(l) + k) % 2 === 1, rand, il)
       setWeights(L)
       vote(L, r)
       done += L.centres.length * sweeps(l)
-      input.onProgress?.(Math.min(1, done / work))
+      onProgress(Math.min(1, done / work))
     }
   }
   const F = pyr[0]
-  computeDistances(F, r)
+  // The energy: mean distance of each target patch (with the final estimate) to its match, without the preference.
+  computeDistances(F, r, null)
+  let energy = 0
+  for (let j = 0; j < F.centres.length; j++) energy += F.dist[j]
+  energy /= Math.max(1, F.centres.length)
+  energy += novelty(F, r)
+  computeDistances(F, r, init ? [Math.round(init[0]), Math.round(init[1])] : null)
   setWeights(F)
-  return { width: w, height: h, radius: r, centres: F.centres, sources: F.src, weights: F.weight }
+  return { completion: { width: F.w, height: F.h, radius: r, centres: F.centres, sources: F.src, weights: F.weight }, energy }
 }
 
 /**
