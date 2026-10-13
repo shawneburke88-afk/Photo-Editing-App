@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_RGB_SETTINGS, DEFAULT_SETTINGS, displayUniforms, normalizeSettings } from '../develop/settings'
+import { defaultsFor, DEFAULT_RGB_SETTINGS, DEFAULT_SETTINGS, displayUniforms, normalizeSettings } from '../develop/settings'
 import { bandThreshold, denoiseCpu, denoiseRun, f16, fastMexp2, inferBias, inferShadows, maxScale, VARF, y0u0v0Matrices } from './denoise'
 import { GENERIC_PROFILE, type NoiseProfile } from './noiseprofiles'
 import { detailRun } from './run'
-import { autoThreshold, captureParams, DEFAULT_DETAIL, denoiseCurves, detailOn, normalizeDetail, RAW_DETAIL, type DetailSettings } from './settings'
+import { autoThreshold, captureParams, DEFAULT_DETAIL, denoiseCurves, detailOn, normalizeDetail, RAW_DETAIL, RAW_DETAIL_HIGH_ISO, rawDetailFor, type DetailSettings } from './settings'
 import { captureKernels, diffractionRadius, kernelIndex, KERNEL_ALIGN } from './capture'
 
 const D700_3200: NoiseProfile = { iso: 3200, a: [0.00004404345, 0.000020206908, 0.00002897195], b: [2.3825315e-7, 1.4574454e-7, 2.7817939e-7] }
@@ -262,5 +262,27 @@ describe('the Detail run', () => {
     expect(r.maskOnly).toBe(true)
     // ISO 3200, 8-bit "white": darktable's automatic 0.4 − 0.012 · (−4) = 0.448 → 0.44; Masking 40 adds 40 % of the rest.
     expect(r.capture?.threshold).toBeCloseTo(0.44 + 0.4 * 0.56, 6)
+  })
+})
+
+describe('Default sharpening by ISO (owner, 2026-10-13)', () => {
+  it('is Amount 40 up to ISO 1000 and without an ISO, 25 above', () => {
+    for (const iso of [undefined, null, 0, 100, 800, 1000]) expect(rawDetailFor(iso).sharpen.amount).toBe(40)
+    for (const iso of [1001, 1250, 6400, 102400]) expect(rawDetailFor(iso).sharpen.amount).toBe(25)
+    // Everything else as at low ISO; noise reduction stays off.
+    expect({ ...RAW_DETAIL_HIGH_ISO.sharpen, amount: 40 }).toEqual(RAW_DETAIL.sharpen)
+    expect(RAW_DETAIL_HIGH_ISO.noise).toEqual(DEFAULT_DETAIL.noise)
+  })
+
+  it('gives each kind of photo its defaults', () => {
+    expect(defaultsFor('raw')).toBe(DEFAULT_SETTINGS)
+    expect(defaultsFor('raw', 400)).toBe(DEFAULT_SETTINGS)
+    expect(defaultsFor('raw', 6400)).toEqual({ ...DEFAULT_SETTINGS, detail: RAW_DETAIL_HIGH_ISO })
+    expect(defaultsFor('rgb', 6400)).toBe(DEFAULT_RGB_SETTINGS)
+    expect('detail' in defaultsFor('rgb', 6400)).toBe(false)
+  })
+
+  it('leaves saved edits alone at any ISO', () => {
+    expect(normalizeSettings({ version: 1, exposure: 0.5 } as never, 'raw').detail).toBeUndefined()
   })
 })

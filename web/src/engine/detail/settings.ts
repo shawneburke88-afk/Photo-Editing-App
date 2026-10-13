@@ -74,6 +74,18 @@ export const DEFAULT_DETAIL: DetailSettings = {
  */
 export const RAW_DETAIL: DetailSettings = { ...DEFAULT_DETAIL, sharpen: { ...DEFAULT_DETAIL.sharpen, amount: 40 } }
 
+/**
+ * Above this ISO new RAW photos get a lighter default sharpening (owner's decision, 2026-10-13): at ISO 6400 Amount
+ * 40 raised the noise of a plain wall by 11 % (PHASE3.md Part 13), and darktable's manual calls auto-applying capture
+ * sharpening safe below ISO 1000.
+ */
+export const HIGH_ISO = 1000
+/** New RAW photos above ISO 1000: Amount 25, the rest as `RAW_DETAIL`. */
+export const RAW_DETAIL_HIGH_ISO: DetailSettings = { ...RAW_DETAIL, sharpen: { ...RAW_DETAIL.sharpen, amount: 25 } }
+
+/** A new RAW photo's Detail settings for its EXIF ISO (unknown or 0: as at low ISO, Amount 40). */
+export const rawDetailFor = (iso: number | null | undefined): DetailSettings => (iso && iso > HIGH_ISO ? RAW_DETAIL_HIGH_ISO : RAW_DETAIL)
+
 /** Slider ranges (Lightroom's). */
 export const DETAIL_RANGES = {
   amount: [0, 150],

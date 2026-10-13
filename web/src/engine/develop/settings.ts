@@ -11,7 +11,7 @@ import type { AutoRecord } from './auto'
 import { DEFAULT_LENS, LEGACY_LENS, normalizeLens, type LensSettings } from '../lens/correction'
 import { DEFAULT_GEOMETRY, normalizeGeometry, type GeometrySettings } from './geometry'
 import { CURRENT_PROCESS, processParams, validProcess, type ToneMask } from './process'
-import { normalizeDetail, RAW_DETAIL, type DetailSettings } from '../detail/settings'
+import { normalizeDetail, RAW_DETAIL, rawDetailFor, type DetailSettings } from '../detail/settings'
 
 /**
  * The demosaic method (Develop › Advanced). The stored value names the method for the photo's sensor as darktable
@@ -75,7 +75,8 @@ export interface DevelopSettings {
   lens: LensSettings
   /**
    * The Detail group: Sharpening and Noise Reduction (engine/detail/settings.ts). Absent = all off: every edit saved
-   * before it existed reads so and renders as before. New RAW edits get sharpening on (`RAW_DETAIL`), JPEGs none.
+   * before it existed reads so and renders as before. New RAW edits get sharpening on (`rawDetailFor`: Amount 40, 25
+   * above ISO 1000), JPEGs none.
    */
   detail?: DetailSettings
 }
@@ -105,6 +106,7 @@ export const DEFAULT_SETTINGS: DevelopSettings = {
   },
   lens: DEFAULT_LENS,
   // New RAW photos are sharpened (capture sharpening, Amount 40, automatic radius; owner's decision 2026-10-13).
+  // `defaultsFor` lowers it to 25 above ISO 1000.
   detail: RAW_DETAIL,
 }
 
@@ -123,7 +125,15 @@ export const DEFAULT_RGB_SETTINGS: DevelopSettings = (() => {
   return { ...rest, advanced: { ...DEFAULT_SETTINGS.advanced, baseExposure: 0, huePreservation: 0 } }
 })()
 
-export const defaultsFor = (kind: SourceKind) => (kind === 'rgb' ? DEFAULT_RGB_SETTINGS : DEFAULT_SETTINGS)
+/**
+ * The defaults for a new photo of this kind. A RAW's default sharpening depends on its EXIF ISO (Amount 40, or 25
+ * above ISO 1000; `rawDetailFor`); without an ISO it is 40 (`DEFAULT_SETTINGS`).
+ */
+export function defaultsFor(kind: SourceKind, iso?: number | null): DevelopSettings {
+  if (kind === 'rgb') return DEFAULT_RGB_SETTINGS
+  const detail = rawDetailFor(iso)
+  return detail === DEFAULT_SETTINGS.detail ? DEFAULT_SETTINGS : { ...DEFAULT_SETTINGS, detail }
+}
 
 /**
  * Fills in missing fields (e.g. from older saved edits) with the defaults for this kind of photo. A saved edit

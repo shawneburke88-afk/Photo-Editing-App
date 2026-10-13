@@ -177,7 +177,7 @@ export class FullRenderer {
     this.raw ??= new RawDecoder()
     const decoded = await this.raw.decode(file, true)
     const info = loadIntoEngine(engine, decoded)
-    const settings = savedSettings(await getCatalog().getEdit(photo.id), info.kind)
+    const settings = savedSettings(await getCatalog().getEdit(photo.id), info.kind, info.iso)
     await engine.process(stageOptions(settings, info))
     const [width, height] = engine.outputSize(settings.geometry)
     const out = await engine.renderOutput(displayUniforms(settings), multipliers(settings, info), {

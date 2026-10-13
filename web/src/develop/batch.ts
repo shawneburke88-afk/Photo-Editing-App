@@ -201,7 +201,7 @@ class BatchDeveloper {
     }
     const kind: SourceKind = info?.kind ?? (isRawFile(p.fileName) ? 'raw' : 'rgb')
     // Read the edit now rather than when the job was queued, so a change made meanwhile (e.g. in Develop) isn't lost.
-    const h = loadHistory(await catalog.getEdit(id), kind)
+    const h = loadHistory(await catalog.getEdit(id), kind, info?.iso)
     let next = applyPaste(current(h), job.clip, kind, engine && info ? engine.imageSize : undefined)
     if (info) next = ownFocal(next, info)
     if (job.clip.keys.includes('upright') && wantsUprightRerun(job.clip.settings) && engine && info) {

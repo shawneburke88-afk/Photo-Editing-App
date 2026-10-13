@@ -201,7 +201,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const pendingSave = useRef<(() => Promise<void>) | null>(null)
   const saving = useRef<Promise<void> | null>(null)
 
-  const defaults = defaultsFor(info?.kind ?? 'raw')
+  const defaults = defaultsFor(info?.kind ?? 'raw', info?.iso)
   // The Lensfun database's state (downloaded on first use), so the Lens section and the photo update when it arrives.
   const lensDb = useSyncExternalStore(subscribeLensfun, lensfunState)
   // darktable's noise profiles (downloaded the first time noise reduction is used).
@@ -294,7 +294,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       const sensorInfo = loadIntoEngine(engine, r)
       const kind = sensorInfo.kind
 
-      const h = loadHistory(await catalog.getEdit(id), kind)
+      const h = loadHistory(await catalog.getEdit(id), kind, sensorInfo.iso)
       const opts = stageOptions(current(h), sensorInfo)
       const ms = await engine.process(opts)
       if (stale()) return
@@ -349,7 +349,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     // Before is the photo as shot: the defaults without lens corrections or sharpening.
     if (x.before) return { ...defaultsFor(inf.kind), lens: LEGACY_LENS, detail: undefined }
     let s = x.hover ?? x.settings
-    if (x.bypass.basic) s = withoutBasic(s, defaultsFor(inf.kind))
+    if (x.bypass.basic) s = withoutBasic(s, defaultsFor(inf.kind, inf.iso))
     if (x.bypass.detail && s.detail) s = { ...s, detail: undefined }
     if (x.draft) return { ...s, geometry: x.draft }
     return x.bypass.crop ? { ...s, geometry: DEFAULT_GEOMETRY, lens: LEGACY_LENS } : s
@@ -1535,6 +1535,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                 <DetailPanel
                   detail={settings.detail}
                   kind={info?.kind ?? 'raw'}
+                  defaults={defaults.detail}
                   disabled={status.kind !== 'ready'}
                   showHint={hintsPref === 1}
                   profile={noiseProfile}

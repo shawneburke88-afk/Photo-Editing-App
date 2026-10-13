@@ -4,7 +4,7 @@
 // Lightroom; "Show mask" does the same without a key (some Linux desktops take Alt-drag for moving windows).
 
 import { useEffect, useRef, useState } from 'react'
-import { DEFAULT_DETAIL, RAW_DETAIL, type DetailSettings, type NoiseSettings, type SharpenSettings } from '../engine/detail/settings'
+import { DEFAULT_DETAIL, HIGH_ISO, type DetailSettings, type NoiseSettings, type SharpenSettings } from '../engine/detail/settings'
 import type { RadiusChoice } from '../engine/detail/capture'
 import type { NoiseProfileData, ProfileChoice } from '../engine/detail/noiseprofiles'
 import type { SourceKind } from '../engine/develop/settings'
@@ -14,6 +14,8 @@ import { Slider } from './Slider'
 interface Props {
   detail: DetailSettings | undefined
   kind: SourceKind
+  /** This photo's defaults (`defaultsFor`: a RAW's sharpening depends on its ISO; none for JPEGs). */
+  defaults: DetailSettings | undefined
   disabled: boolean
   showHint: boolean
   /** The profile the last render used (null before noise reduction ran). */
@@ -63,10 +65,10 @@ function radiusLine(r: RadiusChoice | null): string {
   }
 }
 
-export function DetailPanel({ detail, kind, disabled, showHint, profile, radius, db, onLoadDb, zoomedOut, onChange, onMaskPreview }: Props) {
+export function DetailPanel({ detail, kind, defaults, disabled, showHint, profile, radius, db, onLoadDb, zoomedOut, onChange, onMaskPreview }: Props) {
   const d = detail ?? DEFAULT_DETAIL
   // The photo's defaults (RAW photos are sharpened by default; JPEGs aren't).
-  const base = kind === 'raw' ? RAW_DETAIL : DEFAULT_DETAIL
+  const base = defaults ?? DEFAULT_DETAIL
   const setS = (label: string, patch: Partial<SharpenSettings>) => onChange(label, { ...d, sharpen: { ...d.sharpen, ...patch } })
   const setN = (label: string, patch: Partial<NoiseSettings>) => onChange(label, { ...d, noise: { ...d.noise, ...patch } })
   const guide = (key: string) => ({ help: HELP[key], showHint })
@@ -120,7 +122,7 @@ export function DetailPanel({ detail, kind, disabled, showHint, profile, radius,
       <section>
         <div className="dpanel-head">
           <h3>Sharpening</h3>
-          <button className="button small" disabled={disabled || JSON.stringify(d.sharpen) === JSON.stringify(base.sharpen)} onClick={() => onChange('Reset Sharpening', { ...d, sharpen: base.sharpen })} title={kind === 'raw' ? 'Sharpening back to the default for RAW photos: Amount 40, automatic radius, Detail 25, Masking 0' : 'Sharpening back to off (JPEGs are already sharpened by the camera)'}>
+          <button className="button small" disabled={disabled || JSON.stringify(d.sharpen) === JSON.stringify(base.sharpen)} onClick={() => onChange('Reset Sharpening', { ...d, sharpen: base.sharpen })} title={kind === 'raw' ? `Sharpening back to this RAW photo's default: Amount ${base.sharpen.amount} (40, or 25 above ISO ${HIGH_ISO}), automatic radius, Detail 25, Masking 0` : 'Sharpening back to off (JPEGs are already sharpened by the camera)'}>
             Reset
           </button>
         </div>
@@ -156,7 +158,7 @@ export function DetailPanel({ detail, kind, disabled, showHint, profile, radius,
           <input type="checkbox" checked={showMask} disabled={sharpOff} onChange={(e) => setShowMask(e.target.checked)} /> Show mask <span className="muted">(or Alt-drag Masking)</span>
         </label>
         {d.sharpen.amount > 0 && zoomedOut && <p className="muted small detail-note">Zoom to 100 % to judge sharpening: at this size most of it is finer than the screen’s pixels.</p>}
-        {kind === 'raw' && d.sharpen.amount === 0 && <p className="muted small detail-note">New RAW photos are sharpened (Amount 40). Photos edited before sharpening existed start with it off, so they look as they did.</p>}
+        {kind === 'raw' && d.sharpen.amount === 0 && <p className="muted small detail-note">New RAW photos are sharpened (Amount 40, or 25 above ISO {HIGH_ISO}). Photos edited before sharpening existed start with it off, so they look as they did.</p>}
       </section>
       <section>
         <div className="dpanel-head">

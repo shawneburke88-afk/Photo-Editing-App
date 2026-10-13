@@ -149,7 +149,7 @@ async function readLightroomGeometry(catalog: Catalog, id: number, r: SidecarRea
   }
   const kind = isRawFile(p.fileName) ? 'raw' : 'rgb'
   // A photo without a LightBench edit has the defaults for its kind (RAWs are sharpened by default).
-  if (!lrDiffers(geometryOf(r.develop), state, frame, r.develop ? detailOf(r.develop) : defaultsFor(kind).detail)) return
+  if (!lrDiffers(geometryOf(r.develop), state, frame, r.develop ? detailOf(r.develop) : defaultsFor(kind, p.iso).detail)) return
   batch.run({
     label: LIGHTROOM_STEP,
     ids: [id],

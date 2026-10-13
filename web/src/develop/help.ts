@@ -174,7 +174,7 @@ export const HELP: Record<string, ControlHelp> = {
   // ---- Detail (Phase 3, Part 13). The Lightroom-to-darktable mappings are LightBench's own (engine/detail/settings.ts).
   sharpenAmount: {
     hint: 'Restores the crispness lost in capture',
-    what: 'Capture sharpening: undoes the slight blur of the lens, the sensor and the demosaic by deconvolution, so fine detail and edges come back without the look of an edge-boost. New RAW photos start at 40; photos edited before sharpening existed start at 0, so they look as they did. 0 is off.',
+    what: 'Capture sharpening: undoes the slight blur of the lens, the sensor and the demosaic by deconvolution, so fine detail and edges come back without the look of an edge-boost. New RAW photos start at 40, or at 25 above ISO 1000 (less noise sharpened); photos edited before sharpening existed start at 0, so they look as they did. 0 is off.',
     left: 'Less sharpening (0 = none).',
     right: 'More: more deconvolution steps (Amount ÷ 5; 40 = darktable’s 8).',
     pitfalls: 'Judge it at 100 % (Z): at fit size most of it is finer than the screen’s pixels. High amounts also sharpen noise; reduce noise first (it runs before sharpening) or raise Masking.',

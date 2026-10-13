@@ -29,6 +29,8 @@ export interface SensorInfo {
    * crop factor (FocalLengthIn35mmFilm / focal length; 1 when unknown); null when the file has no focal length.
    */
   focal35?: number | null
+  /** EXIF ISO (0 or absent when unknown): a new RAW's default sharpening depends on it (`defaultsFor`). */
+  iso?: number
 }
 
 function focalOf(r: DecodeResult): number | null {
@@ -70,7 +72,7 @@ export function loadIntoEngine(engine: DevelopEngine, r: DecodeResult): SensorIn
     // White balance works on the file's linear colours: "camera" RGB is the profile's RGB.
     const xyzToCam = invert(mul(REC2020_TO_XYZ, r.rgb.toRec2020 as Mat3))
     const wb: Vec3 = [1, 1, 1]
-    return { kind: 'rgb', asShotWb: wb, xyzToCam, asShot: multipliersToTemperature(wb, xyzToCam), profile: { name: r.rgb.profileName, note: r.rgb.profileNote }, focal35: focalOf(r) }
+    return { kind: 'rgb', asShotWb: wb, xyzToCam, asShot: multipliersToTemperature(wb, xyzToCam), profile: { name: r.rgb.profileName, note: r.rgb.profileNote }, focal35: focalOf(r), iso: r.info.iso }
   }
   if (!r.sensor) throw new Error(r.sensorUnsupported ?? 'This RAW file can’t be developed yet.')
   engine.loadSensor(r.sensor, r.info.flip)
@@ -89,6 +91,7 @@ export function loadIntoEngine(engine: DevelopEngine, r: DecodeResult): SensorIn
     asShot: temperatureOf(r.sensor.wb, model),
     lens: r.lens ?? null,
     focal35: focalOf(r),
+    iso: r.info.iso,
   }
 }
 
@@ -112,13 +115,13 @@ export function stageOptions(s: DevelopSettings, info: SensorInfo): RawStageOpti
   return opts
 }
 
-/** The settings saved in the catalog for a photo (or the defaults for its kind). */
-export function savedSettings(saved: { settings: string } | null, kind: SourceKind): DevelopSettings {
-  if (!saved) return defaultsFor(kind)
+/** The settings saved in the catalog for a photo (or the defaults for its kind and ISO). */
+export function savedSettings(saved: { settings: string } | null, kind: SourceKind, iso?: number | null): DevelopSettings {
+  if (!saved) return defaultsFor(kind, iso)
   try {
     return normalizeSettings(JSON.parse(saved.settings), kind)
   } catch {
-    return defaultsFor(kind)
+    return defaultsFor(kind, iso)
   }
 }
 
