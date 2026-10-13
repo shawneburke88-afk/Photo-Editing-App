@@ -2,6 +2,7 @@ import type { SensorData } from '../raw/types'
 import demosaicWgsl from './demosaic.wgsl?raw'
 import displayWgsl from './display.wgsl?raw'
 import { currentDisplaySpace, SRGB_TO_DISPLAY_P3, type DisplaySpace } from './display-space'
+import { presentMode, type PresentMode } from './present'
 
 export interface DevelopParams {
   exposure: number
@@ -33,7 +34,7 @@ export async function probeGpu(): Promise<GpuInfo | string> {
   }
 }
 
-export type PresentMode = 'canvas' | 'readback'
+export type { PresentMode } from './present'
 
 const VIEW_SIZE = 112
 
@@ -58,7 +59,6 @@ export class DevelopRenderer {
   private readonly gpuCtx: GPUCanvasContext | null = null
   private readonly ctx2d: CanvasRenderingContext2D | null = null
   private lost = false
-  private probing = false
   /** Display P3 on wide-gamut screens (display-space.ts), else sRGB; fixed for this renderer (the System check's). */
   private readonly displaySpace: DisplaySpace = currentDisplaySpace()
 
@@ -80,7 +80,7 @@ export class DevelopRenderer {
     device.addEventListener('uncapturederror', (e) => console.error('WebGPU error:', (e as GPUUncapturedErrorEvent).error.message))
     void device.lost.then((info) => {
       this.lost = true
-      if (info.reason !== 'destroyed' && !this.probing) console.error('WebGPU device lost:', info.message)
+      if (info.reason !== 'destroyed') console.error('WebGPU device lost:', info.message)
     })
 
     this.demosaicPipe = device.createComputePipeline({
@@ -105,33 +105,10 @@ export class DevelopRenderer {
     })
   }
 
-  /** Creates a renderer, checking that direct canvas output works and falling back to read-back if not. */
+  /** Creates a renderer; 'auto' uses the page's display mode, tested once per page (present.ts). */
   static async create(mode: PresentMode | 'auto' = 'auto'): Promise<DevelopRenderer> {
-    if (mode !== 'auto') return new DevelopRenderer(await DevelopRenderer.device(), mode)
-    const direct = new DevelopRenderer(await DevelopRenderer.device(), 'canvas')
-    if (await direct.presentWorks()) return direct
-    direct.destroy()
-    return new DevelopRenderer(await DevelopRenderer.device(), 'readback')
-  }
-
-  private async presentWorks(): Promise<boolean> {
-    this.probing = true
-    this.canvas.width = 1
-    this.canvas.height = 1
-    const enc = this.device.createCommandEncoder()
-    enc.beginRenderPass({
-      colorAttachments: [{ view: this.gpuCtx!.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store' }],
-    }).end()
-    this.device.queue.submit([enc.finish()])
-    try {
-      await this.device.queue.onSubmittedWorkDone()
-    } catch {
-      return false
-    }
-    // Device loss is reported asynchronously; give it a moment to surface.
-    await new Promise((r) => setTimeout(r, 50))
-    this.probing = false
-    return !this.lost
+    const chosen = await presentMode().catch((): PresentMode => 'readback')
+    return new DevelopRenderer(await DevelopRenderer.device(), mode === 'auto' ? chosen : mode)
   }
 
   /** Uploads sensor data and demosaics it on the GPU. Resolves with the GPU time in ms. */

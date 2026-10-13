@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { DevelopRenderer, type DevelopParams } from '../engine/gpu/develop'
+import { presentChoice, type PresentReason } from '../engine/gpu/present'
 import { RAW_EXTENSIONS } from '../engine/raw/decoder'
 import type { DecodeResult } from '../engine/raw/types'
 import { bytes, ms } from './format'
@@ -8,6 +9,15 @@ import { getDecoder, previewUrl } from './shared'
 import { Card, Facts, type Status } from './ui'
 
 const DEFAULTS: DevelopParams = { exposure: 0, contrast: 1.4, saturation: 1 }
+
+/** Why Develop draws in compatibility (read-back) mode, from the page's display test (engine/gpu/present.ts). */
+const READBACK_WHY: Record<PresentReason, string> = {
+  'forced': 'Compatibility mode (slower): chosen in the page address (?gpu=readback)',
+  'fallback-adapter': 'Compatibility mode (slower): this browser draws graphics in software, so WebGPU is not drawn directly to the screen',
+  'no-adapter': 'Compatibility mode (slower): no graphics adapter was found when the page started',
+  'probe-ok': 'Compatibility mode (slower)',
+  'probe-failed': 'Compatibility mode (slower): this browser could not draw WebGPU directly to the screen',
+}
 
 function exposureText(info: DecodeResult['info']) {
   const parts = []
@@ -26,7 +36,7 @@ export function RawCheck() {
   const [error, setError] = useState('')
   const [result, setResult] = useState<DecodeResult | null>(null)
   const [preview, setPreview] = useState('')
-  const [gpuMs, setGpuMs] = useState<{ demosaic: number; last: number; mode: string; bench?: number } | null>(null)
+  const [gpuMs, setGpuMs] = useState<{ demosaic: number; last: number; mode: string; why: PresentReason; bench?: number } | null>(null)
   const [params, setParams] = useState(DEFAULTS)
   const paramsRef = useRef(params)
   paramsRef.current = params
@@ -98,8 +108,8 @@ export function RawCheck() {
 
       if (!rendererRef.current) {
         try {
-          const forced = new URLSearchParams(location.search).get('gpu')
-          const r = await DevelopRenderer.create(forced === 'readback' || forced === 'canvas' ? forced : 'auto')
+          // The display mode tested once when the page started (present.ts); ?gpu= in the address still decides.
+          const r = await DevelopRenderer.create('auto')
           stageRef.current!.prepend(r.canvas)
           rendererRef.current = r
         } catch (e) {
@@ -108,7 +118,8 @@ export function RawCheck() {
       }
       const demosaic = await rendererRef.current.loadSensor(s, r.info.flip)
       const first = await rendererRef.current.render(DEFAULTS)
-      setGpuMs({ demosaic, last: first, mode: rendererRef.current.mode })
+      const why = (await presentChoice().catch(() => null))?.reason ?? 'probe-failed'
+      setGpuMs({ demosaic, last: first, mode: rendererRef.current.mode, why })
       lines.push(`GPU: output ${rendererRef.current.mode}, demosaic ${ms(demosaic)}, first render ${ms(first)}`)
       set('RAW photo', lines)
       setStatus('pass')
@@ -200,7 +211,7 @@ export function RawCheck() {
               ? [
                   ['Graphics processing (once per photo)', ms(gpuMs.demosaic), 'pass'] as [string, string, Status],
                   ...(gpuMs.mode === 'readback'
-                    ? [['Display mode', 'Compatibility mode (slower): this browser could not draw WebGPU directly to the screen', 'warn'] as [string, string, Status]]
+                    ? [['Display mode', READBACK_WHY[gpuMs.why], 'warn'] as [string, string, Status]]
                     : []),
                 ]
               : []),
