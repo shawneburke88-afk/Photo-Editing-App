@@ -11,10 +11,13 @@
 // the neighbours' matches, no random search. The owner decided so on 2026-10-13 after the patent search in
 // PHASE3.md, Part 11. Instead, as in hierarchical block matching (M. Bierling, "Displacement estimation by
 // hierarchical blockmatching", SPIE VCIP 1988, vol. 1001, 942-951):
-//   - on the coarsest level, every target patch is compared with every source patch of the (small) window: an
-//     exhaustive search, as in Wexler et al.'s and Criminisi et al.'s original methods;
-//   - on each finer level, each patch's match from the level above (its offset doubled) is refined by an exhaustive
-//     search of the offsets within ±REFINE pixels of it, and nothing else (plus the spot's source offset, if valid).
+//   - on the coarsest level, a full search: each target patch is compared with every source patch of the window, or,
+//     in a big window, with those on a regular grid followed by a halving-step search around the best (the
+//     logarithmic / three-step search of block matching: J. R. Jain, A. K. Jain, IEEE Trans. Commun. 29(12), 1981;
+//     T. Koga et al., NTC 1981);
+//   - on each finer level, and on the later iterations of a level, each patch's match is refined by an exhaustive
+//     search of the sources within ±REFINE pixels of it, and nothing else (plus the spot's source offset, if valid).
+// Unlike PatchMatch, a patch never looks at its neighbours' matches, and nothing is random.
 // Each search keeps the first best candidate in a fixed order, so ties never depend on anything but the input.
 // No code was copied from any implementation. See docs/PHASE3.md, Part 11 for the licence and patent notes.
 //
@@ -148,6 +151,9 @@ interface Level {
   src: Int32Array
   dist: Float32Array
   weight: Float32Array
+  /** The full search's candidates when the level has too many valid sources: every `gridStride`-th row and column. */
+  grid?: Int32Array
+  gridStride?: number
 }
 
 /** Chebyshev distance of every pixel to the nearest pixel outside `mask` (two-pass chamfer). */
@@ -335,26 +341,48 @@ function computeDistances(L: Level, r: number, il: [number, number] | null) {
 }
 
 /**
- * How far (in pixels of each finer level) a match from the level above is refined. The doubled offset is off by at
- * most one pixel, so ±2 covers it with a pixel to spare; over the levels the refinements add up to any offset.
+ * How far (in pixels of the level) a match is refined: on each finer level the match from the level above, its offset
+ * doubled (off by at most one pixel), and on every later iteration the current match. Over the levels the
+ * refinements add up to any offset. ±2 (25 candidates) gave the same results as ±1 (9) and took 1.5–1.7× as long.
  */
-const REFINE = 2
+const REFINE = 1
 
 /**
- * The coarsest level is made small enough for an exhaustive search: levels are added until its shorter side is at
- * most this many pixels (on top of Newson et al.'s levels for the hole's depth). Chosen by measurement (PHASE3.md,
- * Part 11).
+ * The coarsest level's full search compares each patch with at most about this many sources: every source when the
+ * level has no more than this, otherwise those on a grid of every `stride`-th row and column, then a halving-step
+ * search around the best of them. Chosen by measurement (PHASE3.md, Part 11): 512 gave the same results, more slowly.
  */
-const SEARCH_SIDE = 40
+const MAX_CANDIDATES = 256
 
 /**
- * Finds every target patch's match. `full`: exhaustive, over every valid source patch of the level. Otherwise each
- * patch's current match is refined over the offsets within ±REFINE of it; a patch whose neighbourhood holds no valid
- * source is searched exhaustively. The spot's source offset is tried first (it sets a tight bound for the early exit
+ * Iterations of the coarsest level that use the full search; the later ones refine (`REFINE`). The completion that
+ * starts from the spot's source looks within ±SOURCE_WINDOW of the source on its first iteration instead of
+ * everywhere, so it keeps the source's structure where that fits (brick courses across a wire: 5.5 levels RMSE
+ * against 5.8 with a full search there; PHASE3.md, Part 11).
+ */
+const FULL_ITERS = 2
+const SOURCE_WINDOW = 4
+
+/**
+ * Finds every target patch's match. `around` = Infinity: the full search (see MAX_CANDIDATES). Otherwise each patch's
+ * current match is refined over the sources within ±around of it; a patch whose neighbourhood holds no valid source
+ * gets the full search. The spot's source offset is tried first (it sets a tight bound for the early exit
  * of `patchSum`, which keeps the exhaustive search affordable), then the current match. Candidates are visited in a
  * fixed order and only a strictly better one replaces the best, so the result depends on the input alone.
  */
-function search(L: Level, r: number, il: [number, number] | null, full: boolean) {
+function search(L: Level, r: number, il: [number, number] | null, around: number) {
+  const full = around === Infinity
+  const stride = Math.max(1, Math.ceil(Math.sqrt(L.validList.length / MAX_CANDIDATES)))
+  if (full && stride > 1 && (!L.grid || L.gridStride !== stride)) {
+    const g: number[] = []
+    for (let k = 0; k < L.validList.length; k++) {
+      const v = L.validList[k]
+      const x = v % L.w
+      if (x % stride === 0 && ((v - x) / L.w) % stride === 0) g.push(v)
+    }
+    L.grid = Int32Array.from(g)
+    L.gridStride = stride
+  }
   const { w, h, centres, valid, validList, src, dist, count } = L
   for (let j = 0; j < centres.length; j++) {
     const t = centres[j]
@@ -383,14 +411,35 @@ function search(L: Level, r: number, il: [number, number] | null, full: boolean)
     if (!full && cur >= 0) {
       const cx = cur % w
       const cy = (cur - cx) / w
-      for (let y = Math.max(0, cy - REFINE); y <= Math.min(h - 1, cy + REFINE); y++) {
-        for (let x = Math.max(0, cx - REFINE); x <= Math.min(w - 1, cx + REFINE); x++) {
+      for (let y = Math.max(0, cy - around); y <= Math.min(h - 1, cy + around); y++) {
+        for (let x = Math.max(0, cx - around); x <= Math.min(w - 1, cx + around); x++) {
           const s = y * w + x
           if (valid[s]) consider(s)
         }
       }
     }
-    if (full || bs < 0) for (let k = 0; k < validList.length; k++) consider(validList[k])
+    if (full || bs < 0) {
+      if (stride === 1 || !L.grid) for (let k = 0; k < validList.length; k++) consider(validList[k])
+      else {
+        // Every source on a grid of `stride`, then every source within the grid's spacing of the best.
+        const grid = L.grid
+        for (let k = 0; k < grid.length; k++) consider(grid[k])
+        if (bs >= 0) {
+          // Halving steps around the best so far (the "three-step" / logarithmic search of block matching).
+          for (let step = stride >> 1; step >= 1; step >>= 1) {
+            const cx = bs % w
+            const cy = (bs - cx) / w
+            for (let dy = -step; dy <= step; dy += step) {
+              for (let dx = -step; dx <= step; dx += step) {
+                const x = cx + dx
+                const y = cy + dy
+                if (x >= 0 && x < w && y >= 0 && y < h && valid[y * w + x]) consider(y * w + x)
+              }
+            }
+          }
+        } else for (let k = 0; k < validList.length; k++) consider(validList[k])
+      }
+    }
     src[j] = bs
     dist[j] = best
   }
@@ -495,13 +544,11 @@ export function complete(input: CompletionInput): Completion {
   const blocked = input.blocked ?? new Uint8Array(w * h)
   const e0 = patchVectors(w, h, image, hole)
 
-  // Levels: until the hole is at most about two patch radii deep (Newson et al.: from the hole's size) and the window
-  // small enough for the exhaustive search, keeping the coarsest window at least two patches across and with
-  // somewhere to copy from.
+  // Levels: until the hole is at most about two patch radii deep (Newson et al.: from the hole's size), keeping the
+  // coarsest window at least two patches across and with somewhere to copy from.
   const deep = depth(w, h, hole).reduce((m, v) => Math.max(m, v), 0)
   let levels = 1
-  const more = () => deep / 2 ** (levels - 1) > 2 * r || Math.min(w, h) / 2 ** (levels - 1) > SEARCH_SIDE
-  while (levels < 9 && more() && Math.min(w, h) / 2 ** levels >= 4 * r + 2) levels++
+  while (levels < 7 && deep / 2 ** (levels - 1) > 2 * r && Math.min(w, h) / 2 ** levels >= 4 * r + 2) levels++
   const raw = [{ w, h, e: e0, hole: hole.slice(), blocked }]
   for (let l = 1; l < levels; l++) {
     const p = raw[l - 1]
@@ -603,8 +650,8 @@ function flatness(L: Level, r: number): number {
 function solve(pyr: Level[], r: number, init: [number, number] | null, start: 'source' | 'smooth', onProgress: (f: number) => void): { completion: Completion; energy: number } {
   const top = pyr.length - 1
   const emIters = (l: number) => (l === top ? 10 : Math.max(3, 6 - (top - 1 - l)))
-  // The exhaustive search of the coarsest level costs about as much as the refinements of the next level or two.
-  const cost = (l: number) => (l === top ? 8 : 1)
+  // The full searches of the coarsest level cost about as much as the refinements of a finer level.
+  const cost = (l: number) => (l === top ? 4 : 1)
   const work = pyr.reduce((s, L, l) => s + L.centres.length * emIters(l) * cost(l), 0)
   let done = 0
   for (let l = top; l >= 0; l--) {
@@ -616,6 +663,12 @@ function solve(pyr: Level[], r: number, init: [number, number] | null, start: 's
       // around the hole), or smoothly interpolated from around it. The matches come from the exhaustive search.
       if (il && start === 'source') healStart(L, il)
       else harmonicFill(L.w, L.h, L.hole, L.e, NC, 500)
+      for (let j = 0; j < L.centres.length; j++) {
+        const t = L.centres[j]
+        const x = t % L.w
+        const y = (t - x) / L.w
+        L.src[j] = il ? Math.min(L.h - 1, Math.max(0, y + il[1])) * L.w + Math.min(L.w - 1, Math.max(0, x + il[0])) : -1
+      }
     } else {
       // From the coarser level: its estimate (nearest pixel) and its matches' offsets, doubled (the centre of each
       // patch's refinement; it may land just outside the valid sources, the refinement looks around it).
@@ -645,7 +698,8 @@ function solve(pyr: Level[], r: number, init: [number, number] | null, start: 's
       }
     }
     for (let it = 0; it < emIters(l); it++) {
-      search(L, r, il, l === top)
+      const around = l < top || it >= FULL_ITERS ? REFINE : start === 'source' && il && it === 0 ? SOURCE_WINDOW : Infinity
+      search(L, r, il, around)
       setWeights(L)
       vote(L, r)
       done += L.centres.length * cost(l)

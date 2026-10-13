@@ -42,7 +42,10 @@ export interface Spot {
    * automatically when the spot is painted and stored, so it never changes unless the user drags it.
    */
   offset: [number, number]
-  /** Seed of Remove's random patch search, so a spot always fills the same way. */
+  /**
+   * Reserved. Remove's search used to be randomised and seeded; it no longer uses random numbers (PHASE3.md, Part 11),
+   * so the seed changes nothing today. Kept so the stored format stays the same and for a future (AI) mode.
+   */
   seed: number
 }
 
