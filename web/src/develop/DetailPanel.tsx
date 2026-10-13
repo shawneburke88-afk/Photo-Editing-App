@@ -53,11 +53,11 @@ function radiusLine(r: RadiusChoice | null): string {
   if (!r) return 'Measured from the photo when it is first sharpened.'
   switch (r.from) {
     case 'measured':
-      return `Auto: ${r.sigma.toFixed(2)} px, measured from the photo’s raw data (darktable’s method).`
+      return `Measured from the photo: ${r.sigma.toFixed(2)} px (darktable’s method, from the raw data).`
     case 'diffraction':
-      return `Auto: ${r.sigma.toFixed(2)} px, estimated from the aperture (f/${r.fNumber}) and the pixel size: it couldn’t be measured from the photo.`
+      return `Estimated from the aperture (f/${r.fNumber}) and pixel size: ${r.sigma.toFixed(2)} px. It couldn’t be measured from this photo.`
     case 'default':
-      return `Auto: ${r.sigma.toFixed(2)} px (darktable’s default): it couldn’t be measured from the photo.`
+      return `darktable’s default, ${r.sigma.toFixed(2)} px: it couldn’t be measured from this photo.`
     default:
       return ''
   }
@@ -140,8 +140,8 @@ export function DetailPanel({ detail, kind, disabled, showHint, profile, radius,
         />
         <label className="detail-check" title="Measure the blur radius from the photo itself (darktable's automatic radius)">
           <input type="checkbox" checked={d.sharpen.radiusAuto} disabled={sharpOff} onChange={(e) => setS(e.target.checked ? 'Sharpening: Radius Auto' : 'Sharpening: Radius', { radiusAuto: e.target.checked, radius: radius && e.target.checked === false ? Math.round(radius.sigma * 100) / 100 : d.sharpen.radius })} /> Auto radius
-          {d.sharpen.radiusAuto && d.sharpen.amount > 0 && <span className="muted"> · {radiusLine(radius).replace(/^Auto: /, '')}</span>}
         </label>
+        {d.sharpen.radiusAuto && d.sharpen.amount > 0 && <p className="muted small detail-note detail-radius">{radiusLine(radius)}</p>}
         <Slider label="Detail" value={d.sharpen.detail} min={0} max={100} step={1} defaultValue={base.sharpen.detail} format={int} disabled={sharpOff} {...guide('sharpenDetail')} onChange={(v) => setS('Sharpening: Detail', { detail: v })} />
         <div
           className="detail-masking"

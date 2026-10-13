@@ -189,7 +189,7 @@ export const HELP: Record<string, ControlHelp> = {
     engine: 'darktable capture sharpening: radius (auto-calculated)',
   },
   sharpenDetail: {
-    hint: 'Halo suppression ↔ full deconvolution',
+    hint: 'Holds back haloes at low values',
     what: 'How much of the deconvolution’s overshoot along edges is kept. At 0 nothing gets brighter or darker than its neighbours were (no haloes); at 100 the deconvolution is kept as it is.',
     left: 'Halo-free, slightly softer edges.',
     right: 'Crisper fine texture, with small haloes on strong edges.',

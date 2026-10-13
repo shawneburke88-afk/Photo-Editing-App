@@ -394,6 +394,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     pending.current = true
     if (rendering.current) return
     rendering.current = true
+    // Set on the element directly (no React render per frame): assistive tech, and tests, can tell a frame is coming.
+    stageRef.current?.setAttribute('aria-busy', 'true')
     void (async () => {
       while (pending.current) {
         pending.current = false
@@ -422,6 +424,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         }
       }
       rendering.current = false
+      stageRef.current?.setAttribute('aria-busy', 'false')
     })()
   }, [scheduleStats])
 

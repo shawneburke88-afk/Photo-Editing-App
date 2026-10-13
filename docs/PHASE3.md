@@ -890,3 +890,139 @@ Headless Chromium with software WebGPU (SwiftShader), scripts in `scratchpad/fol
 - Version 2's Highlights and Whites weights were settled by eye on three photos. They are LightBench's choice, not darktable's: darktable has no such sliders.
 - For RAWs, the camera RGB comes from LightBench's camera matrix (LibRaw's), not darktable's input profile. For the D700 the two gave the same match; other cameras weren't checked.
 - Real-GPU speed is an estimate. During a live white-balance drag, or while turning the photo in the crop tool, the mask is recomputed every frame (a full-size pass); on SwiftShader that adds 0.5–2 s per frame for 12–24 MP photos.
+
+## Part 13: Detail — sharpening and noise reduction
+
+**What it does.** A **Detail** group after Basic (jump bar: the magnifier) with Lightroom's two sections and slider names:
+- **Sharpening**: Amount, Radius (with an **Auto radius** switch), Detail, Masking, and **Show mask** (also while Alt / Option is held during a Masking drag).
+- **Noise reduction**: Luminance (with Detail and Contrast) and Color (with Detail and Smoothness). Each sub-slider is greyed out while its parent is 0. A line under the sliders names the noise profile used (camera and ISO, interpolated, or generic and why).
+
+Both run on darktable's processing, translated to WebGPU compute: **denoise (profiled)** with darktable's per-camera noise profiles, then **capture sharpening** (Richardson–Lucy deconvolution, darktable's port of RawTherapee's). Owner's decisions (2026-10-13): capture sharpening as the method, run after the denoise (research: [research/DETAIL_DENOISE_SHARPEN.md](research/DETAIL_DENOISE_SHARPEN.md) on the `lightbench/detail-research` branch); sharpening on by default for RAW photos (Amount 40, automatic radius), off for JPEGs; noise reduction off by default.
+
+### Defaults, and old edits
+
+| | Sharpening | Noise reduction |
+|---|---|---|
+| New RAW photo, unedited RAW, Reset of a RAW | **On**: Amount 40, Auto radius, Detail 25, Masking 0 | Off (Luminance 0, Color 0) |
+| New JPEG (and other non-RAW) | Off | Off |
+| Edit saved before this part (no `detail` field) | **Off**, renders byte for byte as before | Off |
+
+This follows the lens-correction precedent (Part 2): the settings say whether the photo is sharpened, so no process version is needed (the current one stays 2). An edit without `detail` means "everything off"; a new RAW edit stores `detail` with Amount 40. The Detail section's hint says so when a RAW shows Amount 0 ("New RAW photos are sharpened (Amount 40). Photos edited before sharpening existed start with it off, so they look as they did."), and so does Amount's help text. When all ten values are at the "off" defaults the key is dropped (`withDetail`), so a reset JPEG or an old edit stays as it was stored.
+
+Detail 25 and Masking 0 are Lightroom's defaults (general knowledge; Lightroom wasn't available to check). With LightBench's mapping (below) Detail 25 lets a quarter of the deconvolution's overshoot through, and Masking 0 still keeps darktable's automatic noise threshold, so flat noisy areas are not sharpened.
+
+**What the defaults are elsewhere.**
+- **darktable** (source at `ca5a020`, 2026-10-12): denoise (profiled) is not on by default (no auto-apply preset), and capture sharpening is off (`cs_enabled $DEFAULT: FALSE`, `src/iop/demosaic.c` 169; 8 iterations, radius 0.5, contrast 0.4 when switched on). darktable 4.6.1's `darktable-cli` on a fresh configuration applied neither to the D80 (ISO 100) and the 1D Mark III (ISO 6400): the history was rawprepare, temperature, highlights, demosaic, colorin, channelmixerrgb, exposure, filmicrgb, colorout, finalscale.
+- **Lightroom Classic**: Sharpening Amount 40, Radius 1.0, Detail 25, Masking 0 and Color noise reduction 25 for RAW photos; 0 for JPEGs (general knowledge and a third-party tutorial; not checked in Lightroom). LightBench does not turn Color noise reduction on by default (owner's decision).
+
+### Noise reduction: darktable's denoise (profiled)
+
+| | darktable | LightBench |
+|---|---|---|
+| Mode | Wavelets, Y0U0V0 colour mode, the module's default (`src/iop/denoiseprofile.c` `reload_defaults` 2677-2747, `$DEFAULT`s 103-136) | The same. Non-local means isn't offered: darktable-cli took 27.1 s for it against 5.4 s for wavelets on the 10 MP 1D Mark III file (CPU, this machine). |
+| Order of work | OpenCL path `process_wavelets_cl` (2186-2578) and `data/kernels/denoiseprofile.cl`: precondition (generalised Anscombe + Y0U0V0) → per scale the edge-aware à-trous decomposition → the band's sum of squares → BayesShrink thresholds (`variance_stabilizing_xform` 1391-1414) → soft thresholding → synthesis → backtransform | The same kernels in `engine/gpu/detail.wgsl`. Each band's thresholded detail is added to an accumulator as soon as its threshold is known (the same sum), so three images are needed instead of up to nine. |
+| Parameters derived from the profile | shadows, bias (`infer_*_from_profile` 2626-2644), `wb_adaptive_anscombe`, `use_new_vst`, strength 1, central pixel weight 0.1 | The same (`engine/detail/denoise.ts`). |
+| Scale | A preview at scale s drops wavelet bands finer than its pixels and rescales the transform (2196-2215, 2330-2364) | The same: the fitted view and thumbnails run on the scene's mip level k with scale 2⁻ᵏ. |
+| Precision | float | Intermediates are half floats (`pack2x16float` in storage buffers); the GPU agrees with a float64 CPU reference of the same arithmetic within a mean relative 1.8·10⁻⁴. |
+| Where in the pipe | After demosaic, before the input colour matrix (camera RGB) | On the scene after demosaic and highlight handling, converted back to white-balanced camera RGB for the kernels and returned to the working space. JPEGs: on the working space with the generic profile. |
+
+**Noise profiles.** darktable's `data/noiseprofiles.json` (commit `ca5a020`, 1,819,899 bytes, 544,614 gzipped; 437 cameras, 8,182 profiles) is pinned in `web/noiseprofiles/` and converted at build time (`noiseprofiles-plugin.ts`) to a compact JSON of float32 values (739,415 bytes, 267,177 gzipped at level 9). Like Lensfun (Part 2) it is **not part of the install**: it is downloaded the first time noise reduction is used on a RAW and kept for offline use (`engine/detail/noise-db.ts`). Until it arrives, or if it can't be fetched, the generic profile is used and the profile line offers **Try again**.
+
+Matching (`engine/detail/noiseprofiles.ts`, ported from `src/common/noiseprofiles.c` `dt_noiseprofile_get_matching` and `dt_noiseprofile_interpolate`): the file's maker must contain the profile's maker, the model must match exactly, entries marked `skip` are dropped, profiles are sorted by ISO, an exact ISO is used as it is, an ISO between two profiles interpolates a and b linearly, and anything else falls back to darktable's generic Poissonian profile (a = 10⁻⁴, b = 0; `noiseprofiles.c` 26). The ISO is truncated to an integer, as darktable does. Cases: X-Trans and Bayer RAWs use their camera's profile; linear DNGs (phones) use it when darktable has one for the camera (rare), else the generic profile; JPEGs always use the generic profile (their noise has been processed, so no camera profile fits).
+
+**The six sliders → darktable's band curves** (`denoiseCurves`, **LightBench's own mapping**; Lightroom's maths isn't public). darktable thresholds each wavelet band's luminance (Y0) and chroma (U0V0) by a "force" per band (its GUI curves, coarse → fine); a band's threshold is multiplied by (2 · force)². With x = 0 for the coarsest of the 7 bands and 1 for the finest:
+
+| Slider | Effect on the curves |
+|---|---|
+| Luminance L | every Y0 band at L / 100 (50 = darktable's default curve, 0.5 everywhere) |
+| Luminance Detail D (50) | finest bands × 2^(−(D − 50) / 50 · w), w = ((x − 0.5) / 0.5)² for x > 0.5: higher keeps more fine detail |
+| Luminance Contrast K (0) | bands × 2^(−1.5 · K / 100 · (1 − x)), strongest on coarse bands: higher keeps low-frequency contrast |
+| Color C | every U0V0 band at C / 100 |
+| Color Detail (50) | as Luminance Detail, on U0V0: higher protects thin colour edges |
+| Color Smoothness S (50) | U0V0 bands × 2^((S − 50) / 50 · (1 − x)²): higher removes larger colour blotches |
+
+### Sharpening: darktable's capture sharpening
+
+Ported from `src/iop/demosaicing/capture.c` and `data/kernels/capture.cl` (darktable `ca5a020`; GPL-3.0-or-later; "Credits go to: Ingo Weyrich … he implemented the original algorithm for rawtherapee", RawTherapee 5.8). Steps, per darktable's OpenCL path `_capture_sharpen_cl`:
+
+1. **Luminance** Y of white-balanced camera RGB with BT.709 weights (`_prepare_blend`).
+2. **Clip mask**: a pixel is excluded when any photosite in its 21-pixel diamond is above 0.9 × its white-balance coefficient (`CAPTURE_CFACLIP`). LightBench tests the demosaiced RGB, not the CFA (the CFA isn't kept after Stage A).
+3. **Contrast mask**: a sigmoid of the local modified coefficient of variation of Y against the contrast threshold (`modify_blend`), blurred with σ 2 and re-combined with the unblurred value (`final_blend`). darktable keeps the unblurred values outside the mask (a quirk of its `tmp2` buffer); LightBench does the same.
+4. **Richardson–Lucy iterations**: est ← est · G*(Y / G*est) (`kernel_9x9_div`, `kernel_9x9_mul`), with darktable's per-pixel Gaussian table (256 kernels in 0.01 px steps, 9 × 9, 5 × 5 below σ 0.66, tapered over 8 px at the image border; `_cs_precalc_gauss_idx`; no corner boost).
+5. **Result**: Y_new = mask · Y_rl + (1 − mask) · Y, and RGB × Y_new / Y (`capture_result`).
+
+**Automatic values.** The radius is measured from the raw data like darktable's `_calc_auto_radius` (Bayer and X-Trans variants, centre 60 % of the frame, +0.2 for X-Trans, at most 1.5 px), once per photo in JavaScript (90–480 ms). When it can't be measured (linear DNGs, JPEGs, tiny images) the fallback is the **diffraction blur** from the EXIF f-number and pixel pitch: σ = √((0.42 · 0.55 µm · N / pitch)² + 1/12) px (Airy core as a Gaussian at 550 nm, plus the pixel's own box), the pitch from the crop factor (36 mm / crop factor / width in pixels); without an f-number, darktable's default 0.5 px. The contrast threshold is darktable's estimate from the ISO and raw bit depth (`_get_variance_threshold` 49-77, truncated to 0.01, in float arithmetic as darktable computes it).
+
+**The four sliders → capture sharpening** (**LightBench's own mapping**, from the research's section 4.3):
+
+| Slider (Lightroom's name, range, default) | Capture sharpening |
+|---|---|
+| Amount 0–150 (RAW 40) | Iterations = Amount / 5 (40 → 8, darktable's default; 150 → 30). Fractional counts mix ⌊n⌋ and ⌈n⌉ iterations so the slider is smooth. |
+| Radius 0.5–3.0 in Lightroom; **0.25–1.5 px here** (Auto) | The Gaussian PSF's σ. Auto = measured (or the diffraction fallback); with Auto off, the slider. The slider shows "Auto 0.62" while Auto is on. |
+| Detail 0–100 (25) | Halo limit: overshoot of the result beyond the original pixel's 3 × 3 range is kept × Detail / 100. 100 = the plain deconvolution, 0 = no overshoot at all. (LightBench's addition; darktable has no halo limit.) |
+| Masking 0–100 (0) | darktable's contrast sensitivity: auto + Masking / 100 · (1 − auto). 0 = darktable's automatic threshold (flat, noisy areas stay unsharpened, unlike Lightroom's 0), 100 = only strong edges. |
+
+**Order.** Denoise first, then sharpening (darktable runs capture sharpening inside demosaic, before denoise; its manual says to denoise before sharpening, and RawTherapee's newer code adds a pre-denoise for the same reason). The Masking preview shows the mask after the denoise.
+
+**Scale.** darktable runs capture sharpening only when its demosaic works at full resolution, and never in its small navigation-preview pipe (`demosaic.c` 695, 744, 763). LightBench runs it at the Detail stage's level k (below) with σ scaled by 2⁻ᵏ: a fitted view of a 12 MP photo runs at half size with σ / 2, which shows little sharpening, as a full-size sharpened photo looks after the reduction to screen size. The section says "Zoom to 100 % to judge sharpening" while the view is fitted. At 100 % and on Export the full-size result is used.
+
+### Engine
+
+- **Where:** a Detail stage between Stage A (the scene after demosaic, highlights and white balance) and the geometry warp (`engine/gpu/detail-stage.ts`). The display shader's bindings are unchanged (one `pad2` became `showMask`); the work is separate compute passes.
+- **Levels:** the fitted view (and thumbnails and previews) use the scene's mip level k = ⌊lod⌋ − 1, twice the view's size; the denoise runs at darktable's roi scale 2⁻ᵏ. When the geometry needs a warp, the detailed image is warped at its own size (`warp.wgsl` got a `srcScale`) and the view reduces it. At the view's own level (k = ⌊lod⌋) the warp's bicubic read softened the preview: with lens correction on, the fitted preview with default sharpening differed from the one without Detail by a mean of 0.92 levels (D700) and 0.47 (1D Mark III), |Laplacian| 9.82 → 8.69 on the D700. One level finer: 0.22 and 0.20, |Laplacian| 9.82 → 9.65, at 4× the work. (Warping a level-k result to 2× instead was worse: 1.02.) 100 % and Export use level 0. Two results are cached (fitted and full size), keyed by settings, photo and white balance, so tone and colour sliders never re-run the Detail stage.
+- **Tone mask:** the tone equalizer's mask (Part 10) is measured on the scene without Detail, so denoise and sharpening don't shift tone.
+- **Turning it off:** the group's eye bypasses both sections (Before/After, the Hidden badge lists Detail); the group Reset and the two section Resets go to the photo kind's default.
+
+### Copy/Paste, presets, history, Lightroom sidecars
+
+- **Copy/Paste and Sync:** three items in a **Detail** group: Sharpening, Luminance noise reduction, Color noise reduction. They are **unticked by default**, as Lens is: otherwise pasting from an edit made before this part (no `detail`) would turn sharpening off on new RAWs. A pasted automatic radius stays automatic ("Radius auto (each photo's own)").
+- **Presets:** a preset can hold the Detail items; the preset Amount scales every Detail slider between the photo's value and the preset's (radius to 2 decimals; Auto follows the preset).
+- **History:** every slider, switch and Reset is one step, named by the slider.
+- **Lightroom sidecars** (Part 7's rules: read when the sidecar has Camera Raw settings; written only into a sidecar that already has `crs:ProcessVersion`, only the fields LightBench changed since the file was last written). Fields: `crs:Sharpness`, `SharpenRadius`, `SharpenDetail`, `SharpenEdgeMasking`, `LuminanceSmoothing`, `LuminanceNoiseReductionDetail`, `LuminanceNoiseReductionContrast`, `ColorNoiseReduction`, `ColorNoiseReductionDetail`, `ColorNoiseReductionSmoothness`. Numbers carry over one for one except the radius: Lightroom's `SharpenRadius` 0.5–3.0 is LightBench's σ doubled, and Lightroom's default 1.0 reads as Auto (Auto is written as `+1.0`). A sidecar with none of Sharpness, LuminanceSmoothing and ColorNoiseReduction leaves Detail alone; a missing sub-field takes Lightroom's default. The look is only approximately Lightroom's (different algorithms). **Unverified:** the field names come from ExifTool's crs table and the owner's list; the "+1.0" radius format, and how Lightroom reads a sidecar where LightBench changed some Detail fields, were not checked in Lightroom. The batch step that takes settings from Lightroom is now called "Lightroom settings" (it was "Lightroom crop & Transform"; the old name is still recognised).
+
+### Verified
+
+Headless Chromium with software WebGPU (SwiftShader); scripts in `scratchpad/followups-h/` (`e2e-gpucpu.mjs`, `e2e-quality.mjs`, `e2e-radius.mjs`, `e2e-agree.mjs`, `e2e-identity.mjs`, `e2e-detail-ui.mjs`, `lbdump.mjs` + `dtcompare.sh` + `py/cmp_dt.py`). Test files: Nikon D700 `philadelphia.nef`, D80 `glarus.nef`, Sony ILCE-6300 and ILCE-7M2 ARWs, `test-srgb.jpg` (immich test-assets), and darktable-ai's denoise samples: Canon EOS-1D Mark III ISO 6400 (`1D3_6400.CR2`), Sony ILCE-6000 ISO 12800 (`DSC04028.ARW`), Fujifilm X-T2 / X100F / X-T4 RAFs.
+
+{{IDENT}}
+
+- **GPU = CPU reference** (12 of 12 checks): the denoise at levels 0 and 1, with every slider moved, agrees with `denoiseCpu` within a mean relative 1.8·10⁻⁴ (half-float intermediates); capture sharpening with `captureCpu` within a mean relative 8.7·10⁻⁵ or better, its mask within 4.6·10⁻⁴ at most; the mask preview exactly.
+- **Against darktable itself** (darktable 4.6.1's `darktable-cli`, denoise (profiled) wavelets/Y0U0V0 with the same profile and the curves LightBench's mapping produces, compared on linear camera-RGB renders without other modules' differences):
+
+  | Photo, setting | Removed noise: correlation with darktable's | Noise left (R G B, of the original) |
+  |---|---|---|
+  | 1D Mark III ISO 6400, L50 C50 | 0.9992–0.9994 | darktable 0.568 0.697 0.478; LightBench 0.567 0.698 0.480 |
+  | ILCE-6000 ISO 12800, L50 C50 | 0.9995–0.9996 | darktable 0.470 0.578 0.515; LightBench 0.470 0.578 0.516 |
+  | ILCE-6000 ISO 12800, L80 D30 K20 C30 CD60 CS80 | 0.9990–0.9994 | darktable 0.239 0.286 0.275; LightBench 0.225 0.268 0.260 |
+  {{XT4}}
+
+  The remaining differences match the difference of the two programs' renders with denoise off (demosaic and highlight handling), plus half-float rounding. Capture sharpening could not be compared: darktable 4.6.1 predates it (5.4).
+- **On a synthetic chart with real sensor noise** (768 × 512, the 1D Mark III ISO 6400 profile as Poisson–Gaussian noise; flat patches at 0.02 / 0.08 / 0.25; slanted edges blurred by σ 0.8 px; `e2e-quality.mjs`):
+  - Luminance 25 leaves 64 % of the luminance noise, 50 leaves 46 %; above 50 it changes little on this chart (the Y0 channel isn't the luminance measured, and the colour noise left in it stays). Color 25 takes the colour noise (R/G spread at 0.08) from 0.033 to 0.0011. Edges are not softened: the edge-aware wavelets make the low-contrast edge steeper (10–90 % rise 2.14 → 1.29 px at L50), the strong edge slightly (2.14 → 1.96 px).
+  - **Capture sharpening at Amount 40, σ 0.8:** the 10–90 % edge rise goes from 2.14 to 1.47 px, MTF50 from 0.23 to 0.33 cycles/px, with 1.1 % / 0.5 % overshoot and **no increase of noise in the flat patches** (×1.00: the contrast mask). Detail 0: 1.48 px with 0.2 % / 0.2 % overshoot; Detail 100: 1.44 px with 5.1 % / 1.8 %. Masking 50 leaves the low-contrast edge (0.10 → 0.20) unsharpened and still sharpens the strong one (1.55 px). Denoise (L50 C25) followed by Amount 40: 1.41 px, 3.0 % / 0.8 % overshoot, flat-patch noise 4 % of the original. Amount 100: 1.36 px; Amount 150 with Detail 100: 1.28 px, 5.9 % overshoot. With the automatic radius (0.5 px on this chart, which has no raw data to measure) 1.88 px.
+  - **Against darktable's unsharp mask** (the interim method, Lightroom-like Amount 40): 10–90 % rise 1.82 px, MTF50 0.265, overshoot 0.7 / 1.3 %, but flat-patch noise ×1.26. Capture sharpening gives a steeper edge with less noise; the cost is the iterations (below).
+- **Automatic radius** on the test RAWs (`e2e-radius.mjs`): D700 0.60, D80 0.65, ILCE-6300 0.62, ILCE-7M2 at f/22 0.91 (diffraction estimate 0.90), 1D Mark III 0.60, ILCE-6000 0.56, X100F 0.69, X-T2 0.67 px. All inside darktable's manual's "typical radius … between 0.5 and 0.8" except the f/22 photo, where diffraction explains it.
+- **Preview against export** (`e2e-agree.mjs`; the 1024 px preview against the full-size export resized by Lanczos3; tone on 8 × 8 block means): {{AGREE}}
+- **In Develop** (`e2e-detail-ui.mjs`): {{UI}}
+- **Unit tests** (`engine/detail/noiseprofiles.test.ts`, `detail.test.ts`, `sidecar/lightroom-detail.test.ts`, `develop/detail-paste.test.ts`): profile matching and interpolation against darktable's rules, the generic fallback and the JPEG case; the curves, captureParams and darktable's automatic threshold; maxScale and the transform against darktable's formulas; the CPU references (flat input stays flat, noise goes down, the RL kernel table); the radius measurement on synthetic blur; Lightroom read/write per field, Auto ↔ 1.0, absent fields; paste items and preset Amount. `npx tsc -b`, `npx oxlint` (the two existing warnings), `npx vitest run` (607 tests in 64 files) and `npm run build` passed.
+
+### Speed
+
+**SwiftShader** (a CPU pretending to be a GPU, shared with other test runs; slow and noisy):
+- Capture sharpening, 0.39 MP chart: 8 iterations 0.5–1 s, 30 iterations 1.7 s. The full-size 12 MP D700 export took 94 s with the default sharpening (8 iterations) and 156 s with Amount 100 (20 iterations), against 9.6 s without; so about 5 s per iteration and 45 s for the rest (masks, the 9 × 9 table look-ups, the result) at 12 MP.
+- Denoise, 0.39 MP: 4–7 s; full size 10 MP 125 s, 24 MP 410–560 s.
+- The fitted view runs at level 1 for 12–24 MP photos in a 1000–1500 px view (1/4 of the pixels), level 2 for larger ones.
+
+**Real GPUs were not measured.** Estimates from the work done: capture sharpening at 8 iterations is about 20 full-image passes, most of them a 9 × 9 gather (81 reads) over one float channel, so ≈ 24 M × 81 × 16 ≈ 31 G reads for 24 MP: **about 10–40 ms** on a mid-range discrete GPU, 3–6× that on an integrated GPU. Denoise at full size is 7 scales of a 5 × 5 edge-aware gather over 4-channel half floats plus reductions: **about 50–150 ms** for 24 MP on a mid-range discrete GPU, 3–6× on integrated. The fitted view usually costs a quarter of that (level 1), e.g. about 12–40 ms of denoise for a 24 MP photo per Detail slider move on a mid-range GPU, more on integrated graphics. Each result is cached, so only Detail sliders (and white balance, which changes the camera-RGB input) recompute.
+
+### Limitations and unverified
+
+- **The mappings are LightBench's own.** Lightroom's algorithms aren't public, so the same numbers look only roughly like Lightroom's. Detail as a halo limit, Masking as a threshold above darktable's automatic one, and the band curves were chosen and measured here, not matched to Lightroom.
+- Lightroom's defaults (Amount 40, Radius 1.0, Detail 25, Masking 0, Color 25) are from general knowledge and a third-party tutorial, not checked in Lightroom. The Lightroom sidecar mapping wasn't tested with Lightroom.
+- The clip mask tests demosaiced RGB, not the CFA photosites; darktable's corner boost and sharp-centre options aren't used.
+- Half-float intermediates in the denoise; darktable uses floats (measured above: no visible effect).
+- darktable's ISO shift for highlight-preservation modes in noise-profile matching isn't implemented (LightBench has no such mode).
+- On the chart, Luminance above 50 removes little more luminance noise; on real photos it does (the darktable comparison). Whether the slider's upper half should reach further is open.
+- In the fitted view sharpening is barely visible (it is finer than the screen's pixels); at 100 % it is. The section says so.
+- While a slow GPU computes the Detail stage the picture doesn't change and there is no progress indicator (the stage is marked `aria-busy` for assistive technology).
+- Speed on real GPUs is an estimate.
