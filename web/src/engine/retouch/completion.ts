@@ -3,21 +3,28 @@
 //     every patch overlapping it looks like some patch of the known image; alternate between finding each patch's
 //     best match and setting each hole pixel to the weighted mean of what the overlapping matches say (an EM-like
 //     iteration), coarse to fine; weights fall with the match distance, scaled by its 75th percentile.
-//   - C. Barnes, E. Shechtman, A. Finkelstein, D. B. Goldman, "PatchMatch: A Randomized Correspondence Algorithm for
-//     Structural Image Editing", ACM SIGGRAPH 2009: find the matches with random initialisation, propagation from
-//     the neighbours' matches and a random search at halving radii, instead of an exhaustive search.
 //   - A. Newson, A. Almansa, Y. Gousseau, P. Pérez, "Non-Local Patch-Based Image Inpainting", IPOL 7, 2017 (the
 //     method above described in reproducible detail): initialisation of the coarsest level by smooth interpolation,
-//     upsampling of the match field from level to level, the number of levels from the hole's size.
+//     the number of levels from the hole's size, texture features in the patch distance.
+//
+// The nearest-neighbour search is NOT PatchMatch (Barnes et al. 2009): no random initialisation, no propagation of
+// the neighbours' matches, no random search. The owner decided so on 2026-10-13 after the patent search in
+// PHASE3.md, Part 11. Instead, as in hierarchical block matching (M. Bierling, "Displacement estimation by
+// hierarchical blockmatching", SPIE VCIP 1988, vol. 1001, 942-951):
+//   - on the coarsest level, every target patch is compared with every source patch of the (small) window: an
+//     exhaustive search, as in Wexler et al.'s and Criminisi et al.'s original methods;
+//   - on each finer level, each patch's match from the level above (its offset doubled) is refined by an exhaustive
+//     search of the offsets within ±REFINE pixels of it, and nothing else (plus the spot's source offset, if valid).
+// Each search keeps the first best candidate in a fixed order, so ties never depend on anything but the input.
 // No code was copied from any implementation. See docs/PHASE3.md, Part 11 for the licence and patent notes.
 //
-// Determinism: a seeded generator (the spot's seed) drives every random choice, the order of work is fixed, and the
-// arithmetic uses only +, −, ×, ÷ and √ (correctly rounded in every JavaScript engine; no exp or pow), so the same
-// input always gives the same field, in any browser.
+// Determinism: there are no random numbers at all, the order of work is fixed, and the arithmetic uses only +, −, ×,
+// ÷ and √ (correctly rounded in every JavaScript engine; no exp or pow), so the same input always gives the same
+// field, in any browser.
 //
-// Matches are compared on √(linear RGB), so dark areas count about as much as they look. The result is the match
-// field (a source for every patch around the hole) and each match's weight; `renderCompletion` turns it into
-// pixels of whatever the image is now (e.g. after a white balance change), so the field is computed once.
+// Matches are compared on √(linear RGB) plus texture features, so dark areas count about as much as they look. The
+// result is the match field (a source for every patch around the hole) and each match's weight; `renderCompletion`
+// turns it into pixels of whatever the image is now (e.g. after a white balance change), so the field is computed once.
 
 import { harmonicFill } from './membrane'
 
@@ -32,7 +39,6 @@ export interface CompletionInput {
   blocked?: Uint8Array
   /** A preferred offset (source − target, pixels): tried first everywhere. */
   initial?: [number, number] | null
-  seed: number
   /** Patch radius: 3 gives Wexler's 7 × 7 patches. */
   radius?: number
   onProgress?: (f: number) => void
@@ -48,18 +54,6 @@ export interface Completion {
   sources: Int32Array
   /** Each match's vote weight. */
   weights: Float32Array
-}
-
-/** A small seeded generator (mulberry32): 32-bit integer arithmetic only. */
-export function rng(seed: number) {
-  let a = seed >>> 0
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0
-    let t = a
-    t = Math.imul(t ^ (t >>> 15), t | 1)
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
 }
 
 /**
@@ -340,55 +334,65 @@ function computeDistances(L: Level, r: number, il: [number, number] | null) {
   }
 }
 
-/** One PatchMatch sweep over all centres: propagation from the neighbours already visited, then random search. */
-function sweep(L: Level, r: number, reverse: boolean, rand: () => number, initial: [number, number] | null) {
-  const { w, h, centres, at, valid, src, dist, count } = L
-  const n = centres.length
-  const maxR = Math.max(w, h)
-  const step = reverse ? -1 : 1
-  const try1 = (j: number, t: number, s: number) => {
-    if (s < 0 || !valid[s] || s === src[j]) return
-    const k = preferred(L, t, s, initial) ? PREFER : 1
-    const limit = (dist[j] * count[j]) / k
-    const d = patchSum(L, r, t, s, limit)
-    if (d < limit) {
-      src[j] = s
-      dist[j] = (d / count[j]) * k
-    }
-  }
-  for (let k = reverse ? n - 1 : 0; reverse ? k >= 0 : k < n; k += step) {
-    const t = centres[k]
+/**
+ * How far (in pixels of each finer level) a match from the level above is refined. The doubled offset is off by at
+ * most one pixel, so ±2 covers it with a pixel to spare; over the levels the refinements add up to any offset.
+ */
+const REFINE = 2
+
+/**
+ * The coarsest level is made small enough for an exhaustive search: levels are added until its shorter side is at
+ * most this many pixels (on top of Newson et al.'s levels for the hole's depth). Chosen by measurement (PHASE3.md,
+ * Part 11).
+ */
+const SEARCH_SIDE = 40
+
+/**
+ * Finds every target patch's match. `full`: exhaustive, over every valid source patch of the level. Otherwise each
+ * patch's current match is refined over the offsets within ±REFINE of it; a patch whose neighbourhood holds no valid
+ * source is searched exhaustively. The spot's source offset is tried first (it sets a tight bound for the early exit
+ * of `patchSum`, which keeps the exhaustive search affordable), then the current match. Candidates are visited in a
+ * fixed order and only a strictly better one replaces the best, so the result depends on the input alone.
+ */
+function search(L: Level, r: number, il: [number, number] | null, full: boolean) {
+  const { w, h, centres, valid, validList, src, dist, count } = L
+  for (let j = 0; j < centres.length; j++) {
+    const t = centres[j]
     const tx = t % w
     const ty = (t - tx) / w
-    // Propagation: the left / upper neighbour's match, moved by one (right / lower when sweeping backwards).
-    if (reverse ? tx < w - 1 : tx > 0) {
-      const jn = at[t - step]
-      if (jn >= 0) {
-        const sn = src[jn] + step
-        if ((sn % w) - (src[jn] % w) === step) try1(k, t, sn)
+    const n = count[j]
+    let best = Infinity
+    let bs = -1
+    const consider = (s: number) => {
+      if (s === bs) return
+      const k = preferred(L, t, s, il) ? PREFER : 1
+      const limit = best === Infinity ? Infinity : (best * n) / k
+      const d = patchSum(L, r, t, s, limit)
+      if (d < limit) {
+        best = (d / n) * k
+        bs = s
       }
     }
-    if (reverse ? ty < h - 1 : ty > 0) {
-      const jn = at[t - step * w]
-      if (jn >= 0) {
-        const sn = src[jn] + step * w
-        if (sn >= 0 && sn < w * h) try1(k, t, sn)
+    if (il) {
+      const x = tx + il[0]
+      const y = ty + il[1]
+      if (x >= 0 && x < w && y >= 0 && y < h && valid[y * w + x]) consider(y * w + x)
+    }
+    const cur = src[j]
+    if (cur >= 0 && valid[cur]) consider(cur)
+    if (!full && cur >= 0) {
+      const cx = cur % w
+      const cy = (cur - cx) / w
+      for (let y = Math.max(0, cy - REFINE); y <= Math.min(h - 1, cy + REFINE); y++) {
+        for (let x = Math.max(0, cx - REFINE); x <= Math.min(w - 1, cx + REFINE); x++) {
+          const s = y * w + x
+          if (valid[s]) consider(s)
+        }
       }
     }
-    if (initial) {
-      const ix = tx + initial[0]
-      const iy = ty + initial[1]
-      if (ix >= 0 && ix < w && iy >= 0 && iy < h) try1(k, t, iy * w + ix)
-    }
-    // Random search around the current match, at radii halving from the window's size.
-    const s0 = src[k]
-    const cx = s0 % w
-    const cy = (s0 - cx) / w
-    for (let R = maxR; R >= 1; R >>= 1) {
-      const x = Math.min(w - 1, Math.max(0, cx + Math.floor((rand() * 2 - 1) * R)))
-      const y = Math.min(h - 1, Math.max(0, cy + Math.floor((rand() * 2 - 1) * R)))
-      try1(k, t, y * w + x)
-    }
+    if (full || bs < 0) for (let k = 0; k < validList.length; k++) consider(validList[k])
+    src[j] = bs
+    dist[j] = best
   }
 }
 
@@ -473,10 +477,6 @@ function healStart(L: Level, [ox, oy]: [number, number]) {
   }
 }
 
-function randomValid(L: Level, rand: () => number): number {
-  return L.validList[Math.min(L.validList.length - 1, Math.floor(rand() * L.validList.length))]
-}
-
 /**
  * Fills the hole; returns the match field of the finest level (no centres when nothing can be copied from).
  *
@@ -495,11 +495,13 @@ export function complete(input: CompletionInput): Completion {
   const blocked = input.blocked ?? new Uint8Array(w * h)
   const e0 = patchVectors(w, h, image, hole)
 
-  // Levels: until the hole is at most about two patch radii deep (Newson et al.: from the hole's size), keeping the
-  // coarsest window at least two patches across and with somewhere to copy from.
+  // Levels: until the hole is at most about two patch radii deep (Newson et al.: from the hole's size) and the window
+  // small enough for the exhaustive search, keeping the coarsest window at least two patches across and with
+  // somewhere to copy from.
   const deep = depth(w, h, hole).reduce((m, v) => Math.max(m, v), 0)
   let levels = 1
-  while (levels < 7 && deep / 2 ** (levels - 1) > 2 * r && Math.min(w, h) / 2 ** levels >= 4 * r + 2) levels++
+  const more = () => deep / 2 ** (levels - 1) > 2 * r || Math.min(w, h) / 2 ** (levels - 1) > SEARCH_SIDE
+  while (levels < 9 && more() && Math.min(w, h) / 2 ** levels >= 4 * r + 2) levels++
   const raw = [{ w, h, e: e0, hole: hole.slice(), blocked }]
   for (let l = 1; l < levels; l++) {
     const p = raw[l - 1]
@@ -514,9 +516,9 @@ export function complete(input: CompletionInput): Completion {
   const first = pyramid()
   if (!first[0].validList.length || !first[0].centres.length) return empty
   const init = input.initial ?? null
-  if (!init) return solve(first, r, null, 'smooth', rng(input.seed || 1), (f) => input.onProgress?.(f)).completion
-  const a = solve(first, r, init, 'source', rng(input.seed || 1), (f) => input.onProgress?.(f / 2))
-  const b = solve(pyramid(), r, init, 'smooth', rng(((input.seed || 1) + 0x9e3779b9) >>> 0), (f) => input.onProgress?.(0.5 + f / 2))
+  if (!init) return solve(first, r, null, 'smooth', (f) => input.onProgress?.(f)).completion
+  const a = solve(first, r, init, 'source', (f) => input.onProgress?.(f / 2))
+  const b = solve(pyramid(), r, init, 'smooth', (f) => input.onProgress?.(0.5 + f / 2))
   return b.energy < a.energy ? b.completion : a.completion
 }
 
@@ -598,35 +600,25 @@ function flatness(L: Level, r: number): number {
 }
 
 /** One coarse-to-fine completion (see `complete`). */
-function solve(pyr: Level[], r: number, init: [number, number] | null, start: 'source' | 'smooth', rand: () => number, onProgress: (f: number) => void): { completion: Completion; energy: number } {
+function solve(pyr: Level[], r: number, init: [number, number] | null, start: 'source' | 'smooth', onProgress: (f: number) => void): { completion: Completion; energy: number } {
   const top = pyr.length - 1
   const emIters = (l: number) => (l === top ? 10 : Math.max(3, 6 - (top - 1 - l)))
-  const sweeps = (l: number) => (l === top ? 4 : 2)
-  const work = pyr.reduce((s, L, l) => s + L.centres.length * emIters(l) * sweeps(l), 0)
+  // The exhaustive search of the coarsest level costs about as much as the refinements of the next level or two.
+  const cost = (l: number) => (l === top ? 8 : 1)
+  const work = pyr.reduce((s, L, l) => s + L.centres.length * emIters(l) * cost(l), 0)
   let done = 0
   for (let l = top; l >= 0; l--) {
     const L = pyr[l]
     const scale = 2 ** l
     const il: [number, number] | null = init ? [Math.round(init[0] / scale), Math.round(init[1] / scale)] : null
-    const offsetValid = (t: number, ox: number, oy: number) => {
-      const tx = t % L.w
-      const ty = (t - tx) / L.w
-      const x = tx + ox
-      const y = ty + oy
-      return x >= 0 && x < L.w && y >= 0 && y < L.h && L.valid[y * L.w + x] ? y * L.w + x : -1
-    }
     if (l === top) {
       // Start: the hole healed from the preferred offset (darktable's heal: the copy plus a harmonic correction from
-      // around the hole), or smoothly interpolated from around it. Matches at the preferred offset, or at random.
+      // around the hole), or smoothly interpolated from around it. The matches come from the exhaustive search.
       if (il && start === 'source') healStart(L, il)
       else harmonicFill(L.w, L.h, L.hole, L.e, NC, 500)
-      for (let j = 0; j < L.centres.length; j++) {
-        const t = L.centres[j]
-        const s = il ? offsetValid(t, il[0], il[1]) : -1
-        L.src[j] = s >= 0 ? s : randomValid(L, rand)
-      }
     } else {
-      // From the coarser level: its estimate (nearest pixel) and its matches, doubled.
+      // From the coarser level: its estimate (nearest pixel) and its matches' offsets, doubled (the centre of each
+      // patch's refinement; it may land just outside the valid sources, the refinement looks around it).
       const C = pyr[l + 1]
       for (let p = 0; p < L.w * L.h; p++) {
         if (!L.hole[p]) continue
@@ -641,22 +633,22 @@ function solve(pyr: Level[], r: number, init: [number, number] | null, start: 's
         const y = (t - x) / L.w
         const jc = C.at[(y >> 1) * C.w + (x >> 1)]
         let s = -1
-        if (jc >= 0) {
+        if (jc >= 0 && C.src[jc] >= 0) {
           const sc = C.src[jc]
           const scx = sc % C.w
           const scy = (sc - scx) / C.w
-          s = offsetValid(t, 2 * (scx - (x >> 1)), 2 * (scy - (y >> 1)))
+          const sx = Math.min(L.w - 1, Math.max(0, x + 2 * (scx - (x >> 1))))
+          const sy = Math.min(L.h - 1, Math.max(0, y + 2 * (scy - (y >> 1))))
+          s = sy * L.w + sx
         }
-        if (s < 0 && il) s = offsetValid(t, il[0], il[1])
-        L.src[j] = s >= 0 ? s : randomValid(L, rand)
+        L.src[j] = s
       }
     }
     for (let it = 0; it < emIters(l); it++) {
-      computeDistances(L, r, il)
-      for (let k = 0; k < sweeps(l); k++) sweep(L, r, (it * sweeps(l) + k) % 2 === 1, rand, il)
+      search(L, r, il, l === top)
       setWeights(L)
       vote(L, r)
-      done += L.centres.length * sweeps(l)
+      done += L.centres.length * cost(l)
       onProgress(Math.min(1, done / work))
     }
   }

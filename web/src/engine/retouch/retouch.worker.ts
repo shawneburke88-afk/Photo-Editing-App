@@ -1,7 +1,7 @@
 // The retouch worker: applies spots to tiles of the scene (run.ts) and picks sources (pick.ts) off the main thread.
 
 import type { Spot, SpotPx, PxRect } from '../develop/spots'
-import type { Completion } from './patchmatch'
+import type { Completion } from './completion'
 import { pickSource } from './pick'
 import { runSpots } from './run'
 import { TileImage, type HalfTile } from './tiles'

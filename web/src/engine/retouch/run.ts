@@ -7,13 +7,13 @@
 //     (`rt_copy_image_masked`: out = in × (1 − m·opacity) + src × m·opacity).
 //   - Heal: darktable's `_retouch_heal` / `dt_heal`: (destination − source) is made harmonic over the mask, from the
 //     differences around it, and added to the source; then blended in the same way.
-//   - Remove (LightBench's): the patch-based fill (patchmatch.ts) computed once on the photo's canonical scene, its
+//   - Remove (LightBench's): the patch-based fill (completion.ts) computed once on the photo's canonical scene, its
 //     pixels taken from the scene as it is now, then healed into the surroundings like Heal (the same harmonic
 //     correction, so a later white balance change or a seam between two strokes doesn't show), then blended.
 
 import { emptyRect, type PxRect, type Spot } from '../develop/spots'
 import { harmonicFill } from './membrane'
-import { complete, renderCompletion, type Completion } from './patchmatch'
+import { complete, renderCompletion, type Completion } from './completion'
 import { chunkOwners, planSpots, rasterize, sourceRect, type SpotPlan } from './plan'
 import { TileImage, tilesOf } from './tiles'
 
@@ -182,7 +182,6 @@ function computeFill(canon: TileImage, plans: SpotPlan[], p: SpotPlan, ci: numbe
     image: canon.read(win),
     hole,
     initial: [p.px.dx, p.px.dy],
-    seed: (p.px.seed + 7919 * ci) >>> 0,
     onProgress,
   })
 }

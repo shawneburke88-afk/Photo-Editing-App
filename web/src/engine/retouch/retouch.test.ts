@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Spot } from '../develop/spots'
 import { floatToHalf, halfToFloat } from './half'
 import { harmonicFill } from './membrane'
-import { complete, renderCompletion, rng } from './patchmatch'
+import { complete, renderCompletion } from './completion'
 import { pickSource } from './pick'
 import { chunkSide, planSpots, pickRegion, splitStroke } from './plan'
 import { runSpots, tilesNeeded } from './run'
@@ -10,6 +10,18 @@ import { TILE, TileImage, tilesAcross, type HalfTile } from './tiles'
 import { clipRect, spotBounds, spotPixels } from '../develop/spots'
 
 type Img = { w: number; h: number; rgb: Float32Array }
+
+/** A small seeded generator (mulberry32), for test images. */
+function rng(seed: number) {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0
+    let t = a
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
 
 /** Vertical stripes (period 12) with a little seeded noise, in linear RGB. */
 function stripes(w: number, h: number, seed = 1): Img {
@@ -99,15 +111,15 @@ describe('patch-based fill', () => {
   for (let i = 0; i < hole.length; i++) if (hole[i]) damaged.set([0.9, 0.1, 0.9], i * 3)
 
   it('is deterministic: the same input gives the same field', () => {
-    const a = complete({ width: 160, height: 120, image: damaged, hole, seed: 7, initial: [30, 0] })
-    const b = complete({ width: 160, height: 120, image: damaged, hole, seed: 7, initial: [30, 0] })
+    const a = complete({ width: 160, height: 120, image: damaged, hole, initial: [30, 0] })
+    const b = complete({ width: 160, height: 120, image: damaged, hole, initial: [30, 0] })
     expect(Array.from(a.sources)).toEqual(Array.from(b.sources))
     expect(Array.from(a.weights)).toEqual(Array.from(b.weights))
   })
 
   it('continues the stripes across the hole, with or without a preferred offset', () => {
     for (const initial of [null, [31, 0] as [number, number]]) {
-      const c = complete({ width: 160, height: 120, image: damaged, hole, seed: 3, initial })
+      const c = complete({ width: 160, height: 120, image: damaged, hole, initial })
       const { fill } = renderCompletion(c, damaged)
       let err = 0
       let n = 0
@@ -124,7 +136,7 @@ describe('patch-based fill', () => {
   })
 
   it('gives nothing to copy from when the whole window is the hole', () => {
-    const c = complete({ width: 20, height: 20, image: new Float32Array(1200), hole: new Uint8Array(400).fill(1), seed: 1 })
+    const c = complete({ width: 20, height: 20, image: new Float32Array(1200), hole: new Uint8Array(400).fill(1) })
     expect(c.centres.length).toBe(0)
   })
 })

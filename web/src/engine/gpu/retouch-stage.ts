@@ -16,7 +16,7 @@
 
 import type { Spot } from '../develop/spots'
 import { canonicalTilesNeeded, tilesNeeded } from '../retouch/run'
-import type { Completion } from '../retouch/patchmatch'
+import type { Completion } from '../retouch/completion'
 import { planSpots, pickRegion } from '../retouch/plan'
 import type { RetouchReply, RetouchRequest } from '../retouch/retouch.worker'
 import { tileRect, tilesOf, type HalfTile } from '../retouch/tiles'
