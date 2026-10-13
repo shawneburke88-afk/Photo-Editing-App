@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.5.1",
+    "date": "2026-10-13",
+    "newFeatures": [
+      "On Fujifilm X-Trans photos, Develop › Advanced › Demosaic now offers darktable's Markesteijn 3-pass (slower). Markesteijn 1-pass stays the default, so existing edits don't change."
+    ],
+    "bugFixes": [
+      "The sensor-clipping overlay (Shift+O) now lines up with the photo near the corners when lens corrections are on."
+    ]
+  },
+  {
+    "version": "0.5.0",
+    "date": "2026-10-13",
+    "newFeatures": [
+      "New process version 2: Highlights, Shadows, Whites and Blacks now work like darktable's tone equalizer. Each area is brightened or darkened by its surroundings, so fine detail and local contrast are kept and edges no longer get pale fringes.",
+      "Photos edited before keep their look. Use “Update to current process” in Develop to move them to version 2; its tooltip says what changes. Photos with the four tone sliders at 0 look the same."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.4.3",
     "date": "2026-10-13",
     "newFeatures": [

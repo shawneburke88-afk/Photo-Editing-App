@@ -251,7 +251,7 @@ export const PASTE_ITEMS: PasteItem[] = [
     group: 'Advanced (darktable modules)',
     sameKindOnly: true,
     copy: (to, from) => ({ ...to, advanced: { ...to.advanced, demosaic: from.advanced.demosaic } }),
-    show: (s) => s.advanced.demosaic.toUpperCase(),
+    show: (s) => (s.advanced.demosaic === 'markesteijn3' ? 'Markesteijn 3-pass' : s.advanced.demosaic.toUpperCase()),
   },
 ]
 

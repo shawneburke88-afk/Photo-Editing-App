@@ -83,6 +83,20 @@ export const MARKESTEIJN_BORDER = 12
  * with 18 (a multiple of 6, keeping the pattern's phase) each strip's output equals a whole-image run.
  */
 export const MARKESTEIJN_OVERLAP = 18
+/** The same for 3 passes: darktable's pad_tile 17 (xtrans.c process_markesteijn_cl, line 1660). */
+export const MARKESTEIJN3_BORDER = 17
+/**
+ * Extra rows per strip for 3 passes. Each further pass first recalculates green at red/blue photosites from red
+ * and blue at green photosites up to 2 rows away (the previous pass's result), then interpolates the solitary
+ * greens, red/blue (3 rows) and the 2×2 greens (2 rows) again: up to 7 more rows per pass. With the first pass's
+ * chain (11 rows to the 2×2 greens) and the 4 rows of the homogeneity test, a pixel depends on input up to
+ * 11 + 7 + 7 + 4 = 29 rows away; 30 is the next multiple of 6 (also checked on real files, PHASE3.md Part 9).
+ */
+export const MARKESTEIJN3_OVERLAP = 30
+
+/** Border and strip overlap for Markesteijn with `passes` passes (1 or 3). */
+export const markesteijnTiling = (passes: number) =>
+  passes === 3 ? { border: MARKESTEIJN3_BORDER, overlap: MARKESTEIJN3_OVERLAP } : { border: MARKESTEIJN_BORDER, overlap: MARKESTEIJN_OVERLAP }
 
 export interface Strip {
   /** First image row the strip reads. A multiple of 6, so the strip's pattern phase is the image's. */
@@ -95,17 +109,19 @@ export interface Strip {
 }
 
 /**
- * Splits the rows [BORDER, height − BORDER) that Markesteijn writes into strips of at most `rows` output rows (rounded
- * down to a multiple of 6, at least 6), each reading OVERLAP extra rows on both sides where the photo has them.
+ * Splits the rows [border, height − border) that Markesteijn writes into strips of at most `rows` output rows
+ * (rounded down to a multiple of 6, at least 6), each reading `overlap` extra rows on both sides where the photo
+ * has them (a multiple of 6, at least the border).
  */
-export function markesteijnStrips(height: number, rows: number): Strip[] {
-  const B = MARKESTEIJN_BORDER
-  const O = MARKESTEIJN_OVERLAP
+export function markesteijnStrips(height: number, rows: number, border = MARKESTEIJN_BORDER, overlap = MARKESTEIJN_OVERLAP): Strip[] {
+  const B = border
+  const O = overlap
   const step = Math.max(6, Math.floor(rows / 6) * 6)
   const strips: Strip[] = []
   for (let outStart = B; outStart < height - B; outStart += step) {
     const outEnd = Math.min(outStart + step, height - B)
-    const inStart = Math.max(0, outStart - O)
+    // A multiple of 6 at least O rows above (with 1 pass, border 12 and overlap 18, exactly O rows).
+    const inStart = Math.max(0, Math.floor((outStart - O) / 6) * 6)
     const inEnd = Math.min(height, outEnd + O)
     strips.push({ inStart, inRows: inEnd - inStart, outStart, outEnd })
   }

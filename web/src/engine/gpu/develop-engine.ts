@@ -10,6 +10,9 @@
 //   scene made by retouch-stage.ts, used instead of the scene by everything after it.
 // Stage B (every slider move): exposure → tone equalizer → presence → sigmoid → sRGB, at screen size; on wide-gamut
 //   screens the canvas is Display P3 and Stage B writes Display P3 (display-space.ts).
+// Tone mask (process version 2, when a tone slider is moved): the tone equalizer's guided-filter statistics are
+//   computed once per photo, geometry and white balance from the full-size photo (tone-mask.wgsl) and cached, so
+//   every rendering at any size samples the same mask.
 
 import { apply, invert, mul, REC2020_TO_XYZ, SRGB_TO_REC2020, type Mat3, type Vec3 } from '../color/matrix'
 import { clipUniforms, DEFAULT_CLIP, DEFAULT_RAW_CLIP, RAW_COLOURS, rawModeCode, rawThresholds, type Indicators } from '../develop/indicators'
@@ -21,7 +24,8 @@ import type { LensMeta } from '../lens/meta'
 import type { DisplayUniforms } from '../develop/settings'
 import { inverseLoglogistic, type SigmoidCurve } from '../color/sigmoid'
 import type { RgbImage, SensorData } from '../raw/types'
-import { MARKESTEIJN_BORDER, MARKESTEIJN_OVERLAP, markesteijnHexagons, markesteijnStrips, packXtrans } from '../raw/xtrans'
+import { markesteijnHexagons, markesteijnStrips, markesteijnTiling, packXtrans } from '../raw/xtrans'
+import { demosaicAlgorithm, type DemosaicMethod } from '../develop/settings'
 import displayWgsl from './develop-display.wgsl?raw'
 import mipWgsl from './mip.wgsl?raw'
 import rawWgsl from './raw-pipeline.wgsl?raw'
@@ -29,9 +33,12 @@ import rawLinearWgsl from './raw-linear.wgsl?raw'
 import xtransWgsl from './demosaic-xtrans.wgsl?raw'
 import rgbInputWgsl from './rgb-input.wgsl?raw'
 import exportWgsl from './export.wgsl?raw'
+import toneMaskWgsl from './tone-mask.wgsl?raw'
+import { maskPlan } from '../color/tone-mask'
 import { currentDisplaySpace, REC2020_TO_DISPLAY_P3, srgbColourIn, watchDisplaySpace, type DisplaySpace } from './display-space'
 import statsWgsl from './stats.wgsl?raw'
 import warpWgsl from './warp.wgsl?raw'
+import lensWgsl from './lens.wgsl?raw'
 import type { Spot } from '../develop/spots'
 import { RetouchStage, type RetouchProgress } from './retouch-stage'
 
@@ -43,10 +50,11 @@ export interface RawStageOptions {
   highlightClip: number
   /**
    * 'rcd': the sensor's high-quality method (RCD for Bayer, Markesteijn 1-pass for X-Trans, as darktable picks a
-   * Bayer method's X-Trans counterpart in src/iop/demosaic.c, lines 1505-1506); 'bilinear': the fast one (bilinear,
-   * or linear interpolation for X-Trans). Linear DNGs aren't demosaiced.
+   * Bayer method's X-Trans counterpart in src/iop/demosaic.c, lines 1505-1506); 'markesteijn3': Markesteijn 3-pass
+   * on X-Trans, RCD on Bayer (darktable maps an X-Trans method on a Bayer photo to RCD, lines 1503-1504);
+   * 'bilinear': the fast one (bilinear, or linear interpolation for X-Trans). Linear DNGs aren't demosaiced.
    */
-  demosaic: 'rcd' | 'bilinear'
+  demosaic: DemosaicMethod
   /** White-balanced camera RGB → Rec.2020 for this white balance (the DNG colour model); else the sensor's matrix. */
   camToWorking?: Mat3
 }
@@ -146,14 +154,16 @@ const STATS_WORDS = 1028
 
 const IDENTITY: Mat3 = [1, 0, 0, 0, 1, 0, 0, 0, 1]
 const RAW_PARAMS_SIZE = 176
-const VIEW_SIZE = 432
+const VIEW_SIZE = 496
+/** lens.wgsl's `struct Lens` (`lensUniforms`). */
+const LENS_UNIFORM_SIZE = 576
 /** demosaic-xtrans.wgsl's Const: 4 ints, the pattern, 3 matrix rows, 36 × vec4i of hexagon offsets. */
 const XTRANS_CONST_SIZE = 16 + 16 + 48 + 36 * 16
 /** Memory for one X-Trans demosaic strip (its working buffers). */
 const XTRANS_STRIP_BUDGET = 192 * 1024 * 1024
 
 type Res = GPUBindingResource
-type ShaderSet = 'raw' | 'rawX' | 'linear' | 'xtrans'
+type ShaderSet = 'raw' | 'rawX' | 'linear' | 'xtrans' | 'xtrans3'
 const B = (b: GPUBuffer): Res => ({ buffer: b })
 
 // Without explicit indicators (e.g. for Auto), clipping is counted on screen values only: sensor
@@ -185,6 +195,8 @@ export class DevelopEngine {
   private xtransModule: GPUShaderModule | null = null
   /** Testing: output rows per X-Trans demosaic strip (null = chosen from the photo's width and a memory budget). */
   xtransStripRows: number | null = null
+  /** Testing: rows read above and below each X-Trans strip (null = engine/raw/xtrans.ts markesteijnTiling). */
+  xtransOverlap: number | null = null
   private readonly rawPipes = new Map<string, GPUComputePipeline>()
   private readonly displayPipe: GPURenderPipeline
   private readonly offscreenPipe: GPURenderPipeline
@@ -192,6 +204,12 @@ export class DevelopEngine {
   private readonly mipPipe: GPURenderPipeline
   private readonly sampler: GPUSampler
   private readonly viewBuf: GPUBuffer
+  /**
+   * The lens function of what is drawn (lens.wgsl, binding 4 of develop-display.wgsl), for the sensor-clipping
+   * overlay; `viewLensFor` is the warp it holds (null: none; the buffer starts zeroed, i.e. mode 0).
+   */
+  private readonly viewLensBuf: GPUBuffer
+  private viewLensFor: LensWarp | null = null
   private readonly statsModule: GPUShaderModule
   private statsPipe: GPUComputePipeline | null = null
   private sensor: SensorData | null = null
@@ -226,6 +244,13 @@ export class DevelopEngine {
   /** What the canvas holds: Display P3 on wide-gamut screens (display-space.ts), else sRGB. */
   private displaySpace: DisplaySpace
   private readonly unwatchDisplay: () => void
+  /** Tone mask (process version 2): its pipelines, the last two computed masks, and the one bound next. */
+  private maskPipes: Record<'moments' | 'reduce' | 'blurX' | 'blurY', GPUComputePipeline> | null = null
+  private maskCache: { key: string; tex: GPUTexture; cells: [number, number] }[] = []
+  private noMask: GPUTexture | null = null
+  private boundMask: GPUTexture | null = null
+  private readonly texIds = new WeakMap<GPUTexture, number>()
+  private nextTexId = 1
   /** The last `render` call, to draw again when the screen's gamut changes. */
   private lastRender: Parameters<DevelopEngine['render']> | null = null
   /** Remove, Heal and Clone spots (retouch-stage.ts). */
@@ -265,7 +290,7 @@ export class DevelopEngine {
     })
 
     this.rawModule = device.createShaderModule({ code: rawWgsl })
-    const displayModule = device.createShaderModule({ code: displayWgsl })
+    const displayModule = device.createShaderModule({ code: displayWgsl + lensWgsl })
     const renderPipe = (format: GPUTextureFormat) =>
       device.createRenderPipeline({
         layout: 'auto',
@@ -283,6 +308,7 @@ export class DevelopEngine {
     })
     this.sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear' })
     this.viewBuf = device.createBuffer({ size: VIEW_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    this.viewLensBuf = device.createBuffer({ size: LENS_UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.statsModule = device.createShaderModule({ code: statsWgsl })
     this.retouch = new RetouchStage({
       device,
@@ -350,10 +376,12 @@ export class DevelopEngine {
     if (!p) {
       const module = set === 'linear'
         ? (this.linearModule ??= this.device.createShaderModule({ code: rawLinearWgsl }))
-        : set === 'xtrans'
+        : set === 'xtrans' || set === 'xtrans3'
           ? (this.xtransModule ??= this.device.createShaderModule({ code: xtransWgsl }))
           : this.rawModule
-      const compute: GPUProgrammableStage = set === 'rawX' ? { module, entryPoint, constants: { XTRANS: 1 } } : { module, entryPoint }
+      const compute: GPUProgrammableStage = set === 'rawX'
+        ? { module, entryPoint, constants: { XTRANS: 1 } }
+        : set === 'xtrans3' ? { module, entryPoint, constants: { PASSES: 3 } } : { module, entryPoint }
       p = this.device.createComputePipeline({ layout: 'auto', compute })
       this.rawPipes.set(key, p)
     }
@@ -545,7 +573,7 @@ export class DevelopEngine {
   private buildWarp(r: ResolvedGeometry, base: GPUTexture = this.scene!): GPUTexture {
     const { device } = this
     const [w, h] = r.size
-    this.warpPipe ??= device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: warpWgsl }), entryPoint: 'warp' } })
+    this.warpPipe ??= device.createComputePipeline({ layout: 'auto', compute: { module: device.createShaderModule({ code: warpWgsl + lensWgsl }), entryPoint: 'warp' } })
     const m = r.toSensor
     const params = new ArrayBuffer(64)
     new Float32Array(params).set([m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0], 0)
@@ -592,6 +620,8 @@ export class DevelopEngine {
     this.warp = null
     this.lensOnly?.tex.destroy()
     this.lensOnly = null
+    for (const m of this.maskCache) m.tex.destroy()
+    this.maskCache = []
   }
 
   /** Stage A. Resolves with the GPU time in ms. */
@@ -728,7 +758,7 @@ export class DevelopEngine {
       // 3. Demosaic → scene-linear Rec.2020
       if (xtrans) {
         this.encodeXtrans(enc, hl, out, opts.demosaic, temps)
-      } else if (opts.demosaic === 'rcd' && w > 32 && h > 32) {
+      } else if (demosaicAlgorithm('bayer', opts.demosaic) === 'rcd' && w > 32 && h > 32) {
         const rgb0 = buf(px)
         const rgb1 = buf(px)
         const rgb2 = buf(px)
@@ -797,7 +827,8 @@ export class DevelopEngine {
 
   /**
    * X-Trans demosaic (demosaic-xtrans.wgsl): linear interpolation everywhere (darktable's border and its fast
-   * method), then, for the default method, Markesteijn 1-pass inside a 12-pixel border, strip by strip.
+   * method), then, for the high-quality methods, Markesteijn 1-pass inside a 12-pixel border or 3-pass inside a
+   * 17-pixel one, strip by strip.
    */
   private encodeXtrans(enc: GPUCommandEncoder, hl: GPUBuffer, out: Res, method: RawStageOptions['demosaic'], temps: GPUBuffer[]) {
     const { device } = this
@@ -818,65 +849,99 @@ export class DevelopEngine {
     device.queue.writeBuffer(constBuf, 0, c)
     temps.push(constBuf)
     const C = B(constBuf)
+
+    const algorithm = demosaicAlgorithm('xtrans', method)
+    const passes = algorithm === 'markesteijn3' ? 3 : 1
+    const set: ShaderSet = passes === 3 ? 'xtrans3' : 'xtrans'
     const run = (entry: string, bindings: Record<number, Res>, x: number, y: number) =>
-      this.dispatch(enc, this.pipe(entry, 'xtrans'), bindings, x, y)
+      this.dispatch(enc, this.pipe(entry, set), bindings, x, y)
 
     run('xtLinear', { 0: C, 2: B(hl), 13: out }, w, h)
-    if (method !== 'rcd' || w <= 2 * MARKESTEIJN_BORDER + 6 || h <= 2 * MARKESTEIJN_BORDER + 6) return
+    const tiling = markesteijnTiling(passes)
+    if (algorithm === 'linear' || w <= 2 * tiling.border + 6 || h <= 2 * tiling.border + 6) return
+    const overlap = this.xtransOverlap ?? tiling.overlap
 
-    // About 120 bytes per strip pixel: four RGB directions (64), min/max green (8), YPbPr (16), derivatives (16,
-    // later the homogeneity sums) and homogeneity (16).
+    // Bytes per strip pixel: 1 pass about 120 (four RGB directions 64, min/max green 8, YPbPr 16, derivatives 16,
+    // later the homogeneity sums, and homogeneity 16); 3 passes 216 (eight directions 128, and the derivatives and
+    // homogeneity of directions 4-7 in second buffers, 32).
+    const perPixel = passes === 3 ? 216 : 120
     const lim = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize)
-    const byBudget = Math.floor(XTRANS_STRIP_BUDGET / (120 * w))
-    const byLimit = Math.floor(lim / (16 * w)) - 2 * MARKESTEIJN_OVERLAP
-    const strips = markesteijnStrips(h, Math.max(6, this.xtransStripRows ?? Math.min(byBudget, byLimit)))
+    const byBudget = Math.floor(XTRANS_STRIP_BUDGET / (perPixel * w))
+    const byLimit = Math.floor(lim / (16 * w)) - 2 * overlap - (passes === 3 ? 6 : 0)
+    const strips = markesteijnStrips(h, Math.max(6, this.xtransStripRows ?? Math.min(byBudget, byLimit)), tiling.border, overlap)
     const n = w * Math.max(...strips.map((x) => x.inRows))
-    const sb = (bytesPerPixel: number) => {
-      const b = device.createBuffer({ size: Math.max(16, n * bytesPerPixel), usage: GPUBufferUsage.STORAGE })
+    const sb = (bytesPerPixel: number, usage = 0) => {
+      const b = device.createBuffer({ size: Math.max(16, n * bytesPerPixel), usage: GPUBufferUsage.STORAGE | usage })
       temps.push(b)
       return b
     }
-    const rgb = [sb(16), sb(16), sb(16), sb(16)]
+    // 3 passes: the first set of four directions is copied into the second (darktable's pass == 1 copy).
+    const copy = passes === 3 ? GPUBufferUsage.COPY_SRC : 0
+    const rgb = [sb(16, copy), sb(16, copy), sb(16, copy), sb(16, copy)]
     const gminmax = sb(8)
     const aux = sb(16)
     const drv = sb(16) // also the homogeneity sums, once the derivatives have been used
     const homo = sb(16)
+    const rgbB = passes === 3 ? [sb(16, GPUBufferUsage.COPY_DST), sb(16, GPUBufferUsage.COPY_DST), sb(16, GPUBufferUsage.COPY_DST), sb(16, GPUBufferUsage.COPY_DST)] : []
+    const drvB = passes === 3 ? sb(16) : null
+    const homoB = passes === 3 ? sb(16) : null
 
-    // Per strip and pass: the strip's rows and the pass's direction (solitary green, d = 0…5: direction (1, 0) or
-    // (0, 1) and colour complement 0 or 2, as the host loop of process_markesteijn_cl sets them, xtrans.c line 1808).
+    // Per strip and step: the strip's rows and the step's direction (solitary green, d = 0…5: direction (1, 0) or
+    // (0, 1) and colour complement 0 or 2, as the host loop of process_markesteijn_cl sets them, xtrans.c line 1808;
+    // d = 0…7 for the derivatives).
     const SLOT = 256
-    const vary = new Int32Array((strips.length * 6 * SLOT) / 4)
+    const NSLOT = 8
+    const vary = new Int32Array((strips.length * NSLOT * SLOT) / 4)
     strips.forEach((st, k) => {
-      for (let d = 0; d < 6; d++) {
+      for (let d = 0; d < NSLOT; d++) {
         const i = d % 2 === 0 ? 1 : 0
-        vary.set([st.inStart, st.inRows, st.outStart, st.outEnd, d, i, i ^ 1, d % 2 === 0 ? 0 : 2], ((k * 6 + d) * SLOT) / 4)
+        vary.set([st.inStart, st.inRows, st.outStart, st.outEnd, d, i, i ^ 1, d % 2 === 0 ? 0 : 2], ((k * NSLOT + d) * SLOT) / 4)
       }
     })
     const varyBuf = device.createBuffer({ size: vary.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     device.queue.writeBuffer(varyBuf, 0, vary)
     temps.push(varyBuf)
 
-    const RGB = { 4: B(rgb[0]), 5: B(rgb[1]), 6: B(rgb[2]), 7: B(rgb[3]) }
+    const bindSet = (b: GPUBuffer[]) => ({ 4: B(b[0]), 5: B(b[1]), 6: B(b[2]), 7: B(b[3]) })
+    const RGB = bindSet(rgb)
     // Solitary-green passes 0 and 1 write rgb 0 and 1; passes 2-3 and 4-5 (the better of each pair) rgb 2 and 3.
     const solitaryTarget = [0, 1, 2, 2, 3, 3]
     strips.forEach((st, k) => {
-      const V = (d: number): Res => ({ buffer: varyBuf, offset: (k * 6 + d) * SLOT, size: 32 })
+      const V = (d: number): Res => ({ buffer: varyBuf, offset: (k * NSLOT + d) * SLOT, size: 32 })
       const sh = st.inRows
       run('xtCopy', { 0: C, 1: V(0), 2: B(hl), ...RGB }, w, sh)
       run('xtGreenMinMax', { 0: C, 1: V(0), 4: B(rgb[0]), 8: B(gminmax) }, w, sh)
       run('xtGreen', { 0: C, 1: V(0), ...RGB, 8: B(gminmax) }, w, sh)
-      for (let d = 0; d < 6; d++) run('xtSolitary', { 0: C, 1: V(d), 3: B(rgb[solitaryTarget[d]]), 9: B(aux) }, w, sh)
-      for (let d = 0; d < 4; d++) run('xtRedBlue', { 0: C, 1: V(d), 3: B(rgb[d]) }, w, sh)
-      // 1 pass: the 2×2 green blocks for d = 0 and 2, into rgb 0 and 1 (as darktable and dcraw do).
-      run('xtTwoByTwo', { 0: C, 1: V(0), 3: B(rgb[0]) }, w, sh)
-      run('xtTwoByTwo', { 0: C, 1: V(2), 3: B(rgb[1]) }, w, sh)
-      for (let d = 0; d < 4; d++) {
-        run('xtYuv', { 0: C, 1: V(d), 3: B(rgb[d]), 9: B(aux) }, w, sh)
-        run('xtDiff', { 0: C, 1: V(d), 9: B(aux), 10: B(drv) }, w, sh)
+      // darktable's pass loop (process_markesteijn_cl lines 1770-1866); the second and third passes work on the
+      // second set of buffers, a copy of the first after pass 1.
+      for (let pass = 0; pass < passes; pass++) {
+        if (pass === 1) {
+          for (let d = 0; d < 4; d++) enc.copyBufferToBuffer(rgb[d], 0, rgbB[d], 0, rgb[d].size)
+        }
+        const cur = pass === 0 ? rgb : rgbB
+        if (pass > 0) run('xtRecalc', { 0: C, 1: V(0), ...bindSet(cur), 8: B(gminmax) }, w, sh)
+        for (let d = 0; d < 6; d++) run('xtSolitary', { 0: C, 1: V(d), 3: B(cur[solitaryTarget[d]]), 9: B(aux) }, w, sh)
+        for (let d = 0; d < 4; d++) run('xtRedBlue', { 0: C, 1: V(d), 3: B(cur[d]) }, w, sh)
+        // The 2×2 green blocks for d = 0, 2 (1 pass) or 0, 2, 4, 6 (3 passes) into rgb 0, 1 (, 2, 3), as darktable
+        // and dcraw do (ndir = 4 or 8).
+        for (let d = 0, j = 0; d < 4 * (passes === 3 ? 2 : 1); d += 2, j++) run('xtTwoByTwo', { 0: C, 1: V(d), 3: B(cur[j]) }, w, sh)
       }
-      run('xtHomoSet', { 0: C, 1: V(0), 10: B(drv), 11: B(homo) }, w, sh)
-      run('xtHomoSum', { 0: C, 1: V(0), 11: B(homo), 12: B(drv) }, w, sh)
-      run('xtFinal', { 0: C, 1: V(0), ...RGB, 12: B(drv), 13: out }, w, sh)
+      for (let d = 0; d < 4 * (passes === 3 ? 2 : 1); d++) {
+        const src = d < 4 ? rgb[d] : rgbB[d - 4]
+        run('xtYuv', { 0: C, 1: V(d), 3: B(src), 9: B(aux) }, w, sh)
+        run('xtDiff', { 0: C, 1: V(d), 9: B(aux), 10: B(d < 4 ? drv : drvB!) }, w, sh)
+      }
+      if (passes === 1) {
+        run('xtHomoSet', { 0: C, 1: V(0), 10: B(drv), 11: B(homo) }, w, sh)
+        run('xtHomoSum', { 0: C, 1: V(0), 11: B(homo), 12: B(drv) }, w, sh)
+        run('xtFinal', { 0: C, 1: V(0), ...RGB, 12: B(drv), 13: out }, w, sh)
+      } else {
+        run('xtHomoSet8', { 0: C, 1: V(0), 10: B(drv), 14: B(drvB!), 11: B(homo), 15: B(homoB!) }, w, sh)
+        run('xtHomoSum', { 0: C, 1: V(0), 11: B(homo), 12: B(drv) }, w, sh)
+        run('xtHomoSum', { 0: C, 1: V(0), 11: B(homoB!), 12: B(drvB!) }, w, sh)
+        run('xtFinal8a', { 0: C, 1: V(0), ...RGB, 12: B(drv), 16: B(drvB!), 9: B(aux) }, w, sh)
+        run('xtFinal8b', { 0: C, 1: V(0), ...bindSet(rgbB), 12: B(drv), 16: B(drvB!), 9: B(aux), 13: out }, w, sh)
+      }
     })
   }
 
@@ -1165,7 +1230,109 @@ export class DevelopEngine {
     ui[65] = display === 'display-p3' ? 1 : 0
     const d = REC2020_TO_DISPLAY_P3
     f.set([d[0], d[1], d[2], 0, d[3], d[4], d[5], 0, d[6], d[7], d[8], 0], 92)
+    const tm = u.toneMask
+    if (u.toneEnabled && tm.filter === 'eigf') {
+      const toMask = this.maskSpace()
+      const mask = this.toneMask(src, mul(toMask, fix), tm.blending)
+      this.boundMask = mask.tex
+      f.set(mask.cells, 108)
+      ui[110] = 1
+      f[111] = 1 / tm.feathering
+      f.set([toMask[0], toMask[1], toMask[2], 0, toMask[3], toMask[4], toMask[5], 0, toMask[6], toMask[7], toMask[8], 0], 112)
+    } else {
+      this.boundMask = null
+    }
     this.device.queue.writeBuffer(this.viewBuf, 0, v)
+    // The sensor-clipping overlay reads the sensor through the same lens function as the warp (rawMap ends in the
+    // lens-corrected frame). Only the overlay uses it; the picture itself is unchanged.
+    const lw = src.lens ?? null
+    if (lw !== this.viewLensFor) {
+      this.device.queue.writeBuffer(this.viewLensBuf, 0, lensUniforms(lw, this.camToWorking))
+      this.viewLensFor = lw
+    }
+  }
+
+  /**
+   * Rec.2020 → the RGB the tone mask is measured in. darktable's tone equalizer comes before its input colour profile
+   * for RAWs (src/common/iop_order.c, v5.0 order: toneequal 24, colorin 28), so it measures white-balanced camera RGB;
+   * for JPEGs it comes after (the v5.0 JPEG order) and measures the working space, Rec.2020 as here.
+   */
+  private maskSpace(): Mat3 {
+    return this.rgbInput ? IDENTITY : invert(this.camToWorking)
+  }
+
+  /**
+   * The tone equalizer's guided-filter statistics for a source (tone-mask.wgsl), from the cache when the same
+   * source, frame and colour matrix (`toMask`: scene → mask RGB, white-balance fix included) were computed last.
+   * Exposure isn't part of it (the shader scales them).
+   */
+  private toneMask(src: Source, toMask: Mat3, blending: number): { tex: GPUTexture; cells: [number, number] } {
+    let id = this.texIds.get(src.tex)
+    if (!id) this.texIds.set(src.tex, (id = this.nextTexId++))
+    const key = [id, src.w, src.h, blending, ...src.texMap, ...toMask].join(',')
+    const hit = this.maskCache.find((m) => m.key === key)
+    if (hit) {
+      this.maskCache = [hit, ...this.maskCache.filter((m) => m !== hit)]
+      return hit
+    }
+    const { device } = this
+    const plan = maskPlan(src.w, src.h, Math.max(...this.imageSize), blending)
+    if (!this.maskPipes) {
+      const module = device.createShaderModule({ code: toneMaskWgsl })
+      const make = (entryPoint: string) => device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint } })
+      this.maskPipes = { moments: make('moments'), reduce: make('reduce'), blurX: make('blurX'), blurY: make('blurY') }
+    }
+    const pipes = this.maskPipes
+    const params = new ArrayBuffer(128)
+    const pf = new Float32Array(params)
+    const t = src.texMap
+    pf.set([t[0], t[1], t[2], 0, t[3], t[4], t[5], 0, t[6], t[7], t[8], 0], 0)
+    pf.set([toMask[0], toMask[1], toMask[2], 0, toMask[3], toMask[4], toMask[5], 0, toMask[6], toMask[7], toMask[8], 0], 12)
+    new Uint32Array(params).set([src.w, src.h, plan.block], 24)
+    new Int32Array(params)[27] = plan.radius
+    pf[28] = plan.sigma
+    const paramBuf = device.createBuffer({ size: params.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    device.queue.writeBuffer(paramBuf, 0, params)
+    // COPY_SRC: tests read the statistics back.
+    const grid = ([w, h]: [number, number]) =>
+      device.createTexture({ size: [w, h], format: 'rg32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC })
+    const enc = device.createCommandEncoder()
+    const run = (pipe: GPUComputePipeline, entries: GPUBindGroupEntry[], [w, h]: [number, number]) => {
+      const pass = enc.beginComputePass()
+      pass.setPipeline(pipe)
+      pass.setBindGroup(0, device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries }))
+      pass.dispatchWorkgroups(Math.ceil(w / 16), Math.ceil(h / 16))
+      pass.end()
+    }
+    const temps: GPUTexture[] = []
+    let cur = grid(plan.sizes[0])
+    temps.push(cur)
+    run(pipes.moments, [
+      { binding: 0, resource: { buffer: paramBuf } },
+      { binding: 1, resource: src.tex.createView() },
+      { binding: 2, resource: this.sampler },
+      { binding: 3, resource: cur.createView() },
+    ], plan.sizes[0])
+    for (let l = 1; l <= plan.levels; l++) {
+      const next = grid(plan.sizes[l])
+      temps.push(next)
+      run(pipes.reduce, [{ binding: 3, resource: next.createView() }, { binding: 4, resource: cur.createView() }], plan.sizes[l])
+      cur = next
+    }
+    const size: [number, number] = [plan.gridW, plan.gridH]
+    const across = grid(size)
+    temps.push(across)
+    run(pipes.blurX, [{ binding: 0, resource: { buffer: paramBuf } }, { binding: 3, resource: across.createView() }, { binding: 4, resource: cur.createView() }], size)
+    const tex = grid(size)
+    run(pipes.blurY, [{ binding: 0, resource: { buffer: paramBuf } }, { binding: 3, resource: tex.createView() }, { binding: 4, resource: across.createView() }], size)
+    device.queue.submit([enc.finish()])
+    paramBuf.destroy()
+    for (const x of temps) x.destroy()
+    const entry = { key, tex, cells: [src.w / plan.cell, src.h / plan.cell] as [number, number] }
+    // Two are kept (e.g. Before/After with different white balances); work already submitted still completes.
+    for (const m of this.maskCache.slice(1)) m.tex.destroy()
+    this.maskCache = [entry, ...this.maskCache.slice(0, 1)]
+    return entry
   }
 
   /**
@@ -1478,8 +1645,15 @@ export class DevelopEngine {
         { binding: 1, resource: this.sampler },
         { binding: 2, resource: { buffer: this.viewBuf } },
         { binding: 3, resource: { buffer: this.rawBuf! } },
+        { binding: 4, resource: { buffer: this.viewLensBuf } },
+        { binding: 5, resource: (this.boundMask ?? this.emptyMask()).createView() },
       ],
     })
+  }
+
+  /** Bound in place of the tone mask when there is none (version 1, or no tone slider moved). */
+  private emptyMask(): GPUTexture {
+    return (this.noMask ??= this.device.createTexture({ size: [1, 1], format: 'rg32float', usage: GPUTextureUsage.TEXTURE_BINDING }))
   }
 
   private async draw(pipe: GPURenderPipeline, target: GPUTexture, tex: GPUTexture, w: number, h: number, readback: boolean, space: DisplaySpace = 'srgb'): Promise<ImageData | null> {
@@ -1514,10 +1688,13 @@ export class DevelopEngine {
     this.rgbInput?.texture.destroy()
     this.warp?.tex.destroy()
     this.lensOnly?.tex.destroy()
+    for (const m of this.maskCache) m.tex.destroy()
+    this.noMask?.destroy()
     this.retouch.destroy()
     this.scene?.destroy()
     this.rawBuf?.destroy()
     this.viewBuf.destroy()
+    this.viewLensBuf.destroy()
     this.device.destroy()
   }
 }
@@ -1528,7 +1705,7 @@ export class DevelopEngine {
  * aberration on camera RGB.
  */
 export function lensUniforms(w: LensWarp | null, camToWorking: Mat3): ArrayBuffer {
-  const buf = new ArrayBuffer(576)
+  const buf = new ArrayBuffer(LENS_UNIFORM_SIZE)
   if (!w) return buf
   const u = new Uint32Array(buf)
   const f = new Float32Array(buf)

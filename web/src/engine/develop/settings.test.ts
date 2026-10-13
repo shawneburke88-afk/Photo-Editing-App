@@ -12,12 +12,18 @@ describe('develop settings', () => {
     expect(sigmoidContrast(0)).toBe(1.5)
   })
   it('maps tone sliders onto the right brightness bands', () => {
-    const shadows = toneBands({ ...DEFAULT_SETTINGS, shadows: 100 })
+    // Process version 1 (RGB average)
+    const shadows = toneBands({ ...DEFAULT_SETTINGS, process: 1, shadows: 100 })
     expect(shadows[4]).toBeCloseTo(1.5) // −4 EV
     expect(shadows[8]).toBe(0) // whites untouched
-    const whites = toneBands({ ...DEFAULT_SETTINGS, whites: -100 })
+    const whites = toneBands({ ...DEFAULT_SETTINGS, process: 1, whites: -100 })
     expect(whites[8]).toBeCloseTo(-1.5)
     expect(whites[0]).toBe(0)
+    // Version 2 (Euclidean norm, about 0.8 EV brighter): Shadows peaks one band higher
+    const shadows2 = toneBands({ ...DEFAULT_SETTINGS, process: 2, shadows: 100 })
+    expect(Math.max(...shadows2)).toBeCloseTo(shadows2[5]) // −3 EV
+    expect(shadows2[8]).toBe(0)
+    expect(toneBands({ ...DEFAULT_SETTINGS, process: 2, whites: -100 })[8]).toBeCloseTo(-1.5)
   })
   it('round-trips the tint slider', () => {
     expect(sliderFromTint(tintFromSlider(37, 1.04), 1.04)).toBeCloseTo(37)

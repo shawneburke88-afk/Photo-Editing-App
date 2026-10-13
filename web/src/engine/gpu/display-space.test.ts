@@ -62,7 +62,7 @@ describe('display colour space', () => {
     srgbColourIn('display-p3', [1, 1, 1]).forEach((v) => expect(v).toBeCloseTo(1, 3))
   })
 
-  it('the shader’s View struct has the Display P3 matrix at byte 368 and the X-Trans pattern after it (VIEW_SIZE 432)', () => {
+  it('the shader’s View struct has the Display P3 matrix at byte 368, the X-Trans pattern and the tone mask after it (VIEW_SIZE 496)', () => {
     const struct = /struct View \{([\s\S]*?)\n\}/.exec(developDisplay)![1]
     const fields = [...struct.matchAll(/^\s+(\w+): (\w+),/gm)].map((m) => [m[1], m[2]])
     let at = 0
@@ -80,6 +80,11 @@ describe('display colour space', () => {
     // raw formats (PHASE3.md Part 5): the sensor layout and the X-Trans pattern, as writeView sets them
     expect(offsets.rawLayout).toBe(66 * 4)
     expect(offsets.xt).toBe(104 * 4)
-    expect(Math.ceil(at / 16) * 16).toBe(432)
+    // tone mask (process version 2, PHASE3.md Part 10), as writeView sets it
+    expect(offsets.maskCells).toBe(108 * 4)
+    expect(offsets.toneMode).toBe(110 * 4)
+    expect(offsets.maskFeather).toBe(111 * 4)
+    expect(offsets.toMask0).toBe(112 * 4)
+    expect(Math.ceil(at / 16) * 16).toBe(496)
   })
 })

@@ -6,7 +6,7 @@ import type { PhotoDetail } from '../catalog/types'
 import { AUTO_SLIDERS, BUILT_IN_TARGETS, metricsFromStats, solveAuto, statsFromPixels, targetFromMetrics, type AutoKey, type AutoTarget } from '../engine/develop/auto'
 import { defaultsFor, displayUniforms, type DevelopSettings } from '../engine/develop/settings'
 import { DEFAULT_GEOMETRY, flip, isIdentityGeometry, rotate90, sameGeometry, setAngle, setAspect, setLocked, swapAspect, type GeometrySettings } from '../engine/develop/geometry'
-import { CURRENT_PROCESS, processStatus } from '../engine/develop/process'
+import { CURRENT_PROCESS, PROCESS_VERSIONS, processStatus } from '../engine/develop/process'
 import { DevelopEngine, type ImageStats, type RawStageOptions, type ViewState } from '../engine/gpu/develop-engine'
 import type { RetouchProgress } from '../engine/gpu/retouch-stage'
 import { newSeed, newSpotId, simplifyStroke, STROKE_EPSILON, type Spot, type SpotMode } from '../engine/develop/spots'
@@ -1630,7 +1630,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                 <button
                   className="button small"
                   onClick={updateProcess}
-                  title={`Render it with LightBench’s current rendering (version ${CURRENT_PROCESS}). The photo may change; the previous step stays in the History, so you can compare and undo.`}
+                  title={`Render it with LightBench’s current rendering (version ${CURRENT_PROCESS}). The photo may change; the previous step stays in the History, so you can compare and undo.\n\n${PROCESS_VERSIONS.filter((p) => p.version > settings.process).map((p) => `Version ${p.version}: ${p.summary}`).join('\n')}`}
                 >
                   Update to current process
                 </button>
