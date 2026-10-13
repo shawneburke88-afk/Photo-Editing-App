@@ -1,20 +1,11 @@
 [
   {
-    "version": "0.3.0",
+    "version": "0.4.0",
     "date": "2026-10-12",
     "newFeatures": [
-      "Crop and straighten (R): drag corners or edges, drag inside to move, drag outside to turn the photo under a level crop box. Enter applies, Esc cancels.",
-      "Crop aspects Original, 1:1, 4:5, 5:7, 2:3, 16:9 and Custom, with a lock; X swaps portrait and landscape; O cycles thirds, grid, golden ratio and diagonals.",
-      "Straighten with the Angle slider, or draw a level line along the horizon (the Level button, or Ctrl-drag while cropping).",
-      "Rotate left and right (Ctrl+[ and Ctrl+]) and flip horizontally or vertically.",
-      "The crop is used everywhere: histogram, Auto, thumbnails, Export, 100 % views, and Paste, Sync and presets (tick Crop to copy it).",
-      "Develop's tools are now one scrolling list with a jump bar (Crop, Basic); groups can be closed, and an eye shows the photo without a group.",
-      "Process versions: each edit remembers which version of LightBench's rendering it uses, so later changes never alter it until you choose “Update to current process”.",
       "Lens corrections: distortion, chromatic aberration and dark corners are corrected with the camera's own data (Sony, and Fujifilm, Olympus, DNG and Panasonic as darktable reads them) or a Lensfun profile. On for new photos; earlier edits stay as they were until you tick Lens corrections.",
       "The Lens section (in Crop & Lens) shows which data corrected the photo, lets you pick the camera or lens when the match is wrong, and has Distortion and Vignetting amounts.",
       "Lensfun's lens data is downloaded the first time a photo needs it, then works offline.",
-      "Back up the whole library (catalog, thumbnails and settings) to one checked file, and restore it safely.",
-      "LightBench notices when Lightroom, darktable or another app changes a photo's sidecar, and asks before overwriting it.",
       "Transform: Upright Auto, Level, Vertical and Full straighten leaning buildings and tilted horizons in one click, using darktable's line detection and the photo's focal length; when the lines found aren't reliable, the photo is left alone and LightBench says why.",
       "Guided Upright (Shift+T): draw 2–4 lines along edges that should be vertical or horizontal; drag their ends to adjust, Delete removes one.",
       "Transform sliders: Vertical, Horizontal, Rotate, Aspect, Scale and X/Y Offset. The photo is enlarged so no empty corners show.",
@@ -29,13 +20,30 @@
       "Linear DNGs (Apple ProRAW and other phone or converter DNGs) now open, develop and export, using the colour matrices stored in the file."
     ],
     "bugFixes": [
+      "Extreme Tint or Temp settings on a JPEG no longer turn its colours inside out (e.g. Tint +150).",
+      "Phone DNGs whose camera LibRaw doesn't know (e.g. Google Pixel) no longer fail with “Matrix is not invertible”."
+    ]
+  },
+  {
+    "version": "0.3.0",
+    "date": "2026-10-12",
+    "newFeatures": [
+      "Crop and straighten (R): drag corners or edges, drag inside to move, drag outside to turn the photo under a level crop box. Enter applies, Esc cancels.",
+      "Crop aspects Original, 1:1, 4:5, 5:7, 2:3, 16:9 and Custom, with a lock; X swaps portrait and landscape; O cycles thirds, grid, golden ratio and diagonals.",
+      "Straighten with the Angle slider, or draw a level line along the horizon (the Level button, or Ctrl-drag while cropping).",
+      "Rotate left and right (Ctrl+[ and Ctrl+]) and flip horizontally or vertically.",
+      "The crop is used everywhere: histogram, Auto, thumbnails, Export, 100 % views, and Paste, Sync and presets (tick Crop to copy it).",
+      "Develop's tools are now one scrolling list with a jump bar (Crop, Basic); groups can be closed, and an eye shows the photo without a group.",
+      "Process versions: each edit remembers which version of LightBench's rendering it uses, so later changes never alter it until you choose “Update to current process”.",
+      "Back up the whole library (catalog, thumbnails and settings) to one checked file, and restore it safely.",
+      "LightBench notices when Lightroom, darktable or another app changes a photo's sidecar, and asks before overwriting it."
+    ],
+    "bugFixes": [
       "Star ratings changed in Lightroom or Bridge are no longer overridden when LightBench re-reads the sidecar.",
       "Keywords that other apps store only as plain (flat) keywords are no longer dropped.",
       "Photos copied from a card are now checked byte-for-byte; a bad copy is reported instead of being added.",
       "A library saved by a newer LightBench is refused untouched, with a Reload button.",
-      "Notices when the browser may clear the library, or when a save fails.",
-      "Extreme Tint or Temp settings on a JPEG no longer turn its colours inside out (e.g. Tint +150).",
-      "Phone DNGs whose camera LibRaw doesn't know (e.g. Google Pixel) no longer fail with “Matrix is not invertible”."
+      "Notices when the browser may clear the library, or when a save fails."
     ]
   },
   {
