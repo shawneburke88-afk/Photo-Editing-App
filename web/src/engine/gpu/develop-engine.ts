@@ -658,8 +658,7 @@ export class DevelopEngine {
    * With spots, Remove, Heal and Clone work on the detailed scene, as darktable's retouch module comes after its
    * denoise and its demosaic's capture sharpening: denoise and sharpening are computed once and a new spot only
    * retouches their result. That needs the full-size result, so with spots the callers ask for level 0
-   * (`detailLevelFor`). The tone mask is then measured on the result itself (the plain scene would need its own
-   * retouched copy).
+   * (`detailLevelFor`). The tone mask is measured on the scene without Detail and without spots (see below).
    */
   private async detailSource(g: GeometrySettings, whole: boolean, lens: LensSettings | undefined, run: DetailRun | null, spots?: Spot[], wait = true): Promise<Source> {
     if (!run || whole) return this.source(g, whole, lens, spots, wait)
@@ -676,7 +675,9 @@ export class DevelopEngine {
         lease()
       }
       const baseKey = got.key ? `${run.key}|rt:${got.key}` : run.key
-      const plain = spots?.length ? undefined : () => this.source(g, whole, lens)
+      // The tone mask: measured on the scene without Detail (and without spots: a second retouched copy would cost a
+      // second Remove run; the mask is a wide blur, so the spots hardly change it), so Detail never shifts tone.
+      const plain = () => this.source(g, whole, lens)
       if (r.exact) return { tex: got.tex, texMap: r.uvToSensor, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: false, level: run.level, plain, release }
       const wd = await this.warpedDetail(r, run.level, got.tex, baseKey)
       // The warp at this level has its own size; the shown image keeps the full output size (uv maps are size-free).
