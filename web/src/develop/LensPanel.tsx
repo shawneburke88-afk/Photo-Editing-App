@@ -90,7 +90,7 @@ export function LensPanel({ lens, status, meta, db, disabled, showHint, onLoadDb
           <button className="button small" onClick={onLoadDb}>Try again</button>
         )}
         {meta && !lens.enabled && !disabled && (
-          <p className="muted small lens-status">Edits made before LightBench 0.3.0 start with this off, so they look as they did.</p>
+          <p className="muted small lens-status">Edits made before LightBench 0.4.0 start with this off, so they look as they did.</p>
         )}
 
         {meta?.embedded && (

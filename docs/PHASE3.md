@@ -162,7 +162,7 @@ Owner's choices (2026-10-12):
 |---|---|---|
 | Stored | `lens` in the develop settings: on/off, the data source (Auto or Lensfun), a hand-picked Lensfun camera and lens with the photo they were picked for, Distortion and Vignetting amounts, CA. In the catalog, the history and the `lightbench:Develop` sidecar field. | LightBench |
 | Old and new edits | A saved edit without `lens` (everything saved before this part) reads as **off**, so it renders as before (byte-identical, Verified). New edits, photos never edited and **Reset** get **Auto**: corrected when a profile is found. **Before** shows the photo as shot (the defaults without lens correction), and the Crop & Lens group's eye hides lens correction along with the crop. | Owner's decision 3 |
-| Not a process version | Process versions are for the same settings rendering differently (`engine/develop/process.ts`). Here the settings themselves say whether the lens is corrected, an old edit's settings render exactly as they did, and turning lens correction on is an edit like any other (one history step) — so the process version stays 1. The Lens section notes that edits made before 0.3.0 start with it off; the checkbox turns it on. | LightBench's decision under Part 1's rules |
+| Not a process version | Process versions are for the same settings rendering differently (`engine/develop/process.ts`). Here the settings themselves say whether the lens is corrected, an old edit's settings render exactly as they did, and turning lens correction on is an edit like any other (one history step) — so the process version stays 1. The Lens section notes that edits made before 0.4.0 start with it off; the checkbox turns it on. | LightBench's decision under Part 1's rules |
 
 ### The Lens section
 
