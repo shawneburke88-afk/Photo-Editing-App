@@ -433,6 +433,16 @@ The owner values usability over feature count. Lightroom users should find every
 
 ---
 
+## Owner's decisions (2026-10-13)
+
+- **Position:** after Contrast (the sigmoid), on the tones you see, like Lightroom (option B). The hybrid (option C: drawn on the same axis, applied before the sigmoid) is tested later and kept only if it measures better.
+- **Parametric curve:** kept, renamed **"Regions"** so its sliders don't sound like Basic's.
+- **Colour with contrast:** stronger by default (100 %), like Lightroom, with one slider named **"Saturation"**; hue is preserved either way.
+- **R/G/B curves:** in the first version.
+- Not yet decided: the grey eyedropper (a later item) and whether tone curves are read from sidecars at the Lightroom/darktable import step (question 7).
+- Sources marked [search] or [memory] could not be opened from the build machine (the environment's network policy blocks those sites); they stay marked until checked.
+
+
 ## 4. Open questions for the owner
 
 1. **Where should the curve act?** (a) after Contrast, on the tones you see, like Lightroom, where a steep curve can clip to pure white; or (b) before Contrast, like darktable's rgb curve, where it can't clip but what you drag isn't what you see. Recommended: **(a)** first, with (c), drawing on screen tones but applying before Contrast, tested as an experiment.

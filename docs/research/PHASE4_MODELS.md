@@ -370,6 +370,13 @@ For models, add a SHA-256 check and a licence dialog before download, as LightCr
 
 ---
 
+## Owner's decisions so far (2026-10-13)
+
+- **GPL-3.0 weights** (RawNIND for AI Denoise): to be decided when Phase 4 starts.
+- The other open questions below are taken up when Phase 4 starts. The depth-of-field approach is in [DEPTH_OF_FIELD.md](DEPTH_OF_FIELD.md); its "blur grows in front of and behind the focus plane" requirement is the owner's (2026-10-12/13).
+- Sources marked unverified or "from search results" could not be opened from the build machine (the environment's network policy blocks those sites).
+
+
 ## Open questions for the owner
 
 1. **Training-data policy.** Accept permissively licensed weights trained on Places2 (image terms unverified),

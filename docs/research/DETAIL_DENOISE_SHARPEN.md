@@ -446,6 +446,14 @@ Licence evidence was read from each repository's `LICENSE` file on GitHub unless
 
 ---
 
+## Owner's decisions (2026-10-13)
+
+- **Sharpening method:** capture sharpening (Richardson–Lucy deconvolution, darktable 5.4's port of RawTherapee's Capture Sharpening), run after the denoise, with Lightroom's four controls mapped as in section 4.
+- **Default:** on for new RAW photos (Amount 40, automatic radius), off for JPEGs. Saved edits are never changed.
+- **Noise reduction:** darktable's denoise (profiled) stands.
+- **GPL-3.0 model weights (RawNIND) for AI Denoise:** to be decided when Phase 4 starts.
+
+
 ## 8. Open questions for the owner
 
 1. **GPL model weights:** may LightBench offer a model whose weights are GPL-3.0 (RawNIND, the one darktable uses)? GPL allows commercial use and matches LightBench's own licence, but it is copyleft, not "permissive". **Yes** gives the best AI denoise available now. **No** means a weaker permissive model, or training our own.
