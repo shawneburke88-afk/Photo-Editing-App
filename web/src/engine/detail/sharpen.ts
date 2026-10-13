@@ -1,6 +1,6 @@
 // CPU reference of the capture-sharpening kernels (engine/gpu/detail.wgsl; darktable's data/kernels/capture.cl and
 // src/iop/demosaicing/capture.c `_capture_sharpen`), for tests: the contrast mask, Richardson–Lucy iterations with the
-// per-pixel Gaussian table, and LightBench's fractional iterations and halo limit.
+// per-pixel Gaussian table (as two 1-D passes, like the GPU), and LightBench's fractional iterations and halo limit.
 
 import { captureKernels, kernelIndex, KERNEL_ALIGN } from './capture'
 import type { CaptureRun } from './run'
@@ -102,21 +102,37 @@ export function captureCpu(cam: Float32Array, w: number, h: number, run: Capture
     BM[i] = Math.min(1, Math.max(0, k * T2[i] + (1 - k) * BM[i]))
   }
   if (maskOnly) return BM
-  // Richardson–Lucy (kernel_9x9_div / kernel_9x9_mul).
+  // Richardson–Lucy (kernel_9x9_div / kernel_9x9_mul), with the blur separable as on the GPU: the kernel's centre row,
+  // normalised, horizontally into H for every pixel, then vertically.
   table ??= captureKernels()
   const K = table
-  const blur = (src: Float32Array, x: number, y: number) => {
+  const row = (x: number, y: number) => {
     const ki = kernelIndex(run.sigma, x, y, w, h)
     const bd = ki < SMALL_ULIM ? 2 : 4
+    let s = 0
+    for (let j = -bd; j <= bd; j++) s += K[KERNEL_ALIGN * ki + Math.abs(j)]
+    return { base: KERNEL_ALIGN * ki, bd, norm: 1 / s }
+  }
+  const H = new Float32Array(n)
+  const blurX = (src: Float32Array) => {
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const { base, bd, norm } = row(x, y)
+      let v = 0
+      for (let ic = -bd; ic <= bd; ic++) {
+        const c = x + ic
+        if (c < 0 || c >= w) continue
+        v += K[base + Math.abs(ic)] * norm * src[y * w + c]
+      }
+      H[y * w + x] = v
+    }
+  }
+  const blurY = (x: number, y: number) => {
+    const { base, bd, norm } = row(x, y)
     let v = 0
     for (let ir = -bd; ir <= bd; ir++) {
       const r = y + ir
       if (r < 0 || r >= h) continue
-      for (let ic = -bd; ic <= bd; ic++) {
-        const c = x + ic
-        if (c < 0 || c >= w) continue
-        v += K[KERNEL_ALIGN * ki + 5 * Math.abs(ir) + Math.abs(ic)] * src[r * w + c]
-      }
+      v += K[base + Math.abs(ir)] * norm * H[r * w + x]
     }
     return v
   }
@@ -124,16 +140,16 @@ export function captureCpu(cam: Float32Array, w: number, h: number, run: Capture
   const floor = Math.floor(run.iterations)
   let BX = floor === 0 ? Y.slice() : new Float32Array(n)
   for (let k = 0; k < total; k++) {
+    blurX(T1)
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       const i = y * w + x
-      if (BM[i] > 0) T2[i] = f(Y[i] / Math.max(blur(T1, x, y), YMIN))
+      if (BM[i] > 0) T2[i] = f(Y[i] / Math.max(blurY(x, y), YMIN))
     }
-    const next = T1.slice()
+    blurX(T2)
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       const i = y * w + x
-      if (BM[i] > 0) next[i] = f(T1[i] * blur(T2, x, y))
+      if (BM[i] > 0) T1[i] = f(T1[i] * blurY(x, y))
     }
-    T1.set(next)
     if (k + 1 === floor) BX = T1.slice()
   }
   const frac = run.iterations - floor

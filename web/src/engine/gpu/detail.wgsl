@@ -64,6 +64,7 @@ struct Scale {
 @group(0) @binding(12) var<storage, read_write> csBM: array<f32>;
 @group(0) @binding(13) var<storage, read_write> csBX: array<f32>;
 @group(0) @binding(14) var<storage, read> kernels: array<f32>;
+@group(0) @binding(15) var<storage, read_write> csH: array<f32>;        // the separable blur's horizontal pass
 
 fn idx(x: i32, y: i32) -> u32 { return u32(y) * P.size.x + u32(x); }
 fn ld(b: vec2u) -> vec3f { return vec3f(unpack2x16float(b.x), unpack2x16float(b.y).x); }
@@ -316,43 +317,73 @@ fn kernelOf(x: i32, y: i32) -> u32 {
   return u32(clamp(i32(s / 0.01), 0, 255));
 }
 
-/** One 9 × 9 (or 5 × 5) Gaussian of `which` (0 = the estimate csT1, 1 = the ratio csT2) at a pixel (capture.cl). */
-fn blur9(x: i32, y: i32, which: u32) -> f32 {
+// The Richardson–Lucy blur, separable (owner's decision 2026-10-13, after docs/research/DETAIL_MAPPING_BRIEF.md):
+// darktable's kernel is a 9 × 9 (5 × 5 below σ 0.66) Gaussian cut to a disc, read 81 times per pixel; here it is two
+// 9-tap passes, a horizontal one into csH and a vertical one, 18 reads. The 1-D weights are the kernel's centre row
+// (the same table, `kernelOf` per pixel, so the border taper is kept), normalised to sum 1; their outer product is
+// the full square instead of the disc. Measured against the 9 × 9: at most 1 level, mean 0.0001–0.0004 levels on
+// 8-bit exports (PHASE3.md Part 13).
+
+/** 1 / the sum of a kernel's centre row: the 1-D weights' normalisation. */
+fn rowNorm(base: u32, bd: i32) -> f32 {
+  var s = 0.0;
+  for (var j = -bd; j <= bd; j++) { s += kernels[base + u32(abs(j))]; }
+  return 1.0 / s;
+}
+
+/** Horizontal pass of S.mult's buffer (0 = the estimate csT1, 1 = the ratio csT2) into csH, every pixel. */
+@compute @workgroup_size(16, 16)
+fn csBlurX(@builtin(global_invocation_id) id: vec3u) {
+  if (!inside(id)) { return; }
+  let x = i32(id.x);
+  let y = i32(id.y);
   let k = kernelOf(x, y);
   let base = KERNEL_ALIGN * k;
   let bd = select(4, 2, k < SMALL_ULIM);
+  let norm = rowNorm(base, bd);
   let w = i32(P.size.x);
+  var val = 0.0;
+  for (var ic = -bd; ic <= bd; ic++) {
+    let c = x + ic;
+    if (c < 0 || c >= w) { continue; }
+    let kv = kernels[base + u32(abs(ic))] * norm;
+    if (S.mult == 0) { val += kv * csT1[idx(c, y)]; } else { val += kv * csT2[idx(c, y)]; }
+  }
+  csH[idx(x, y)] = val;
+}
+
+/** Vertical pass of csH at a pixel: the blur's result. */
+fn blurY(x: i32, y: i32) -> f32 {
+  let k = kernelOf(x, y);
+  let base = KERNEL_ALIGN * k;
+  let bd = select(4, 2, k < SMALL_ULIM);
+  let norm = rowNorm(base, bd);
   let h = i32(P.size.y);
   var val = 0.0;
   for (var ir = -bd; ir <= bd; ir++) {
     let r = y + ir;
     if (r < 0 || r >= h) { continue; }
-    for (var ic = -bd; ic <= bd; ic++) {
-      let c = x + ic;
-      if (c < 0 || c >= w) { continue; }
-      let kv = kernels[base + u32(5 * abs(ir) + abs(ic))];
-      if (which == 0u) { val += kv * csT1[idx(c, r)]; } else { val += kv * csT2[idx(c, r)]; }
-    }
+    val += kernels[base + u32(abs(ir))] * norm * csH[idx(x, r)];
   }
   return val;
 }
 
-/** capture.cl `kernel_9x9_div`: tmp2 = Y / blur(tmp1) inside the mask. */
+/** capture.cl `kernel_9x9_div`: tmp2 = Y / blur(tmp1) inside the mask (after csBlurX of csT1). */
 @compute @workgroup_size(16, 16)
 fn csDiv(@builtin(global_invocation_id) id: vec3u) {
   if (!inside(id)) { return; }
   let i = idx(i32(id.x), i32(id.y));
   if (csBM[i] <= 0.0) { return; }
-  csT2[i] = csY[i] / max(blur9(i32(id.x), i32(id.y), 0u), YMIN);
+  csT2[i] = csY[i] / max(blurY(i32(id.x), i32(id.y)), YMIN);
 }
 
-/** capture.cl `kernel_9x9_mul`: tmp1 *= blur(tmp2) inside the mask. */
+/** capture.cl `kernel_9x9_mul`: tmp1 *= blur(tmp2) inside the mask (after csBlurX of csT2). */
 @compute @workgroup_size(16, 16)
 fn csMul(@builtin(global_invocation_id) id: vec3u) {
   if (!inside(id)) { return; }
   let i = idx(i32(id.x), i32(id.y));
   if (csBM[i] <= 0.0) { return; }
-  csT1[i] *= blur9(i32(id.x), i32(id.y), 1u);
+  csT1[i] *= blurY(i32(id.x), i32(id.y));
 }
 
 /**

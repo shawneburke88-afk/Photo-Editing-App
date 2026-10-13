@@ -11,7 +11,7 @@ import detailWgsl from './detail.wgsl?raw'
 
 type Entry =
   | 'precondition' | 'decompose' | 'reduceFirst' | 'reduceSecond' | 'synthesize' | 'backtransform'
-  | 'csPrepare' | 'csVariance' | 'csMaskBlur' | 'csFinal' | 'csDiv' | 'csMul' | 'csResult'
+  | 'csPrepare' | 'csVariance' | 'csMaskBlur' | 'csFinal' | 'csBlurX' | 'csDiv' | 'csMul' | 'csResult'
 
 const PARAMS_SIZE = 384
 const SCALE_SIZE = 32
@@ -187,9 +187,15 @@ export class DetailStage {
         const floor = Math.floor(c.iterations)
         // The estimate after ⌊n⌋ iterations (Yold for none) is kept in BX for fractional counts.
         if (floor === 0) enc.copyBufferToBuffer(Y, 0, BX, 0, n * 4)
+        // Each blur is separable: a horizontal pass into H, then the vertical pass inside csDiv / csMul.
+        const H = buf()
+        const ofT1 = R(scaleBuf(0, 0, 0, 0, [0, 0, 0, 0]))
+        const ofT2 = R(scaleBuf(1, 0, 0, 0, [0, 0, 0, 0]))
         for (let k = 0; k < total; k++) {
-          dispatch('csDiv', { 0: R(P), 9: R(Y), 10: R(T1), 11: R(T2), 12: R(BM), 14: K })
-          dispatch('csMul', { 0: R(P), 10: R(T1), 11: R(T2), 12: R(BM), 14: K })
+          dispatch('csBlurX', { 0: R(P), 5: ofT1, 10: R(T1), 11: R(T2), 14: K, 15: R(H) })
+          dispatch('csDiv', { 0: R(P), 9: R(Y), 11: R(T2), 12: R(BM), 14: K, 15: R(H) })
+          dispatch('csBlurX', { 0: R(P), 5: ofT2, 10: R(T1), 11: R(T2), 14: K, 15: R(H) })
+          dispatch('csMul', { 0: R(P), 10: R(T1), 12: R(BM), 14: K, 15: R(H) })
           if (k + 1 === floor) enc.copyBufferToBuffer(T1, 0, BX, 0, n * 4)
         }
       }
