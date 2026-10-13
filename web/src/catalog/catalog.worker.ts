@@ -25,6 +25,9 @@ function conn(): Database {
   return db
 }
 
+/** The open database, for unit tests that need to set up states the API doesn't create (e.g. photos from older versions). */
+export const openDatabase = conn
+
 /** Opens the catalog once; concurrent callers share the same attempt. */
 function open(options: { inMemory?: boolean } = {}): Promise<{ persistent: boolean }> {
   opening ??= openOnce(options).then((r) => {
@@ -317,6 +320,12 @@ export function migrate(d: Database) {
         ALTER TABLE photos ADD COLUMN gps_alt REAL;
       `)
     }
+    if (version < 13) {
+      // The one-time refresh after the extras bundle (library/refresh.ts): photos already in the library get 0, so their
+      // GPS is read and an Adobe RGB camera preview's thumbnail made again, once; photos added from now on get 1. A
+      // library restored from a backup made before the refresh has 0s again, so the refresh runs again for it.
+      d.exec('ALTER TABLE photos ADD COLUMN extras_read INTEGER NOT NULL DEFAULT 0')
+    }
     d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     d.exec('COMMIT')
   } catch (err) {
@@ -416,8 +425,8 @@ function addPhotos(photos: NewPhoto[]): (number | null)[] {
     const stmt = d.prepare(`
       INSERT OR IGNORE INTO photos (folder_id, file_name, original_name, file_type, file_size, file_modified,
         captured_at, imported_at, camera_make, camera_model, lens, iso, shutter, aperture, focal_length,
-        width, height, orientation, gps_lat, gps_lon, gps_alt, keywords_read, metadata_read)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1)`)
+        width, height, orientation, gps_lat, gps_lon, gps_alt, keywords_read, metadata_read, extras_read)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1,1)`)
     for (const p of photos) {
       stmt.bind([
         folderId(p.rootId, p.folderPath), p.fileName, p.originalName, p.fileType, p.fileSize, p.fileModified,
@@ -1080,10 +1089,10 @@ function createVirtualCopy(sourceId: number, name?: string): number {
     conn().exec({
       sql: `INSERT INTO photos (folder_id, file_name, original_name, file_type, file_size, file_modified, captured_at, imported_at,
               camera_make, camera_model, lens, iso, shutter, aperture, focal_length, width, height, orientation,
-              rating, flag, color_label, keywords_read, metadata_read, version, version_name)
+              rating, flag, color_label, keywords_read, metadata_read, version, version_name, gps_lat, gps_lon, gps_alt, extras_read)
             SELECT folder_id, file_name, original_name, file_type, file_size, file_modified, captured_at, ?,
               camera_make, camera_model, lens, iso, shutter, aperture, focal_length, width, height, orientation,
-              rating, flag, color_label, 1, 1, ?, ? FROM photos WHERE id = ?`,
+              rating, flag, color_label, 1, 1, ?, ?, gps_lat, gps_lon, gps_alt, extras_read FROM photos WHERE id = ?`,
       bind: [Math.floor(Date.now() / 1000), next, finalName, sourceId],
     })
     const id = Number(conn().selectValue('SELECT last_insert_rowid()'))
@@ -1157,6 +1166,40 @@ function saveEdit(photoId: number, settings: string, history: string) {
     sql: `INSERT INTO edits (photo_id, settings, history, updated_at) VALUES (?, ?, ?, ?)
           ON CONFLICT (photo_id) DO UPDATE SET settings = excluded.settings, history = excluded.history, updated_at = excluded.updated_at`,
     bind: [photoId, settings, history, Math.floor(Date.now() / 1000)],
+  })
+}
+
+function isEdited(photoId: number): boolean {
+  return conn().selectValue('SELECT 1 FROM edits WHERE photo_id = ?', [photoId]) !== undefined
+}
+
+/**
+ * Photos still waiting for the one-time refresh after the extras bundle (library/refresh.ts), grouped by file in
+ * the order they are read: library folder, folder, file, then virtual copies after their original.
+ */
+function extrasPending(): { id: number; rootId: number; folderPath: string; fileName: string }[] {
+  return conn().selectObjects(
+    `SELECT p.id, f.root_id AS rootId, f.path AS folderPath, p.file_name AS fileName
+     FROM photos p JOIN folders f ON f.id = p.folder_id
+     WHERE p.extras_read = 0 ORDER BY f.root_id, f.path, p.file_name, p.version`,
+  ) as unknown as { id: number; rootId: number; folderPath: string; fileName: string }[]
+}
+
+/**
+ * Finishes the refresh for photos of one file: stores the position read from it (a position already stored is
+ * never cleared when the file has none) and marks them done. Nothing else about the photos changes. Returns how
+ * many of them had no position before and have one now.
+ */
+function saveExtras(ids: number[], gps: { lat: number; lon: number; alt: number | null } | null): number {
+  return inTransaction(() => {
+    let located = 0
+    for (const id of ids) {
+      if (gps) {
+        if (conn().selectValue('SELECT gps_lat IS NULL OR gps_lon IS NULL FROM photos WHERE id = ?', [id])) located++
+        conn().exec({ sql: 'UPDATE photos SET gps_lat = ?, gps_lon = ?, gps_alt = ?, extras_read = 1 WHERE id = ?', bind: [gps.lat, gps.lon, gps.alt, id] })
+      } else conn().exec({ sql: 'UPDATE photos SET extras_read = 1 WHERE id = ?', bind: [id] })
+    }
+    return located
   })
 }
 
@@ -1367,6 +1410,9 @@ export const handlers = {
   getEdit,
   saveEdit,
   deleteEdit,
+  isEdited,
+  extrasPending,
+  saveExtras,
   listTargets,
   saveTarget,
   deleteTarget,

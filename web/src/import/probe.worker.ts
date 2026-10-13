@@ -23,6 +23,11 @@ export interface ProbeResult {
   camera?: Partial<PhotoMetadata>
   /** Keywords from a JPEG's IPTC-IIM, used only when the XMP has none (Adobe's XMP Toolkit, Import2WayIPTC). */
   iptcKeywords?: string[]
+  /**
+   * The thumbnail was made from JPEG data that preview-space.ts reads as Adobe RGB and had tagged (a RAW's camera
+   * preview, or a JPEG with InteropIndex R03), so it differs from one made before LightBench knew (library/refresh.ts).
+   */
+  thumbAdobeRgb?: boolean
 }
 
 const THUMB_SIZE = 512
@@ -109,12 +114,16 @@ async function probeRaw(file: File): Promise<ProbeResult> {
       ...gpsColumns(gpsFromLibRaw(other.parsed_gps)),
     }
     let thumb: Uint8Array<ArrayBuffer> | null = null
+    let thumbAdobeRgb = false
     try {
       lr.unpackThumb()
       const img = lr.dcrawMakeMemThumb()
       let bmp: ImageBitmap | null = null
       if (img.type_ === 'LIBRAW_IMAGE_JPEG') {
-        bmp = await createImageBitmap(new Blob([tagPreview(new Uint8Array(img.data), previewSpace)], { type: 'image/jpeg' }))
+        const jpeg = new Uint8Array(img.data)
+        const tagged = tagPreview(jpeg, previewSpace)
+        thumbAdobeRgb = tagged !== jpeg
+        bmp = await createImageBitmap(new Blob([tagged], { type: 'image/jpeg' }))
       } else if (img.type_ === 'LIBRAW_IMAGE_BITMAP' && img.colors === 3 && img.bits === 8) {
         const rgba = new Uint8ClampedArray(img.width * img.height * 4)
         for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
@@ -135,7 +144,7 @@ async function probeRaw(file: File): Promise<ProbeResult> {
       // No usable embedded preview: the photo still imports, with a placeholder thumbnail.
     }
     // LibRaw reads Artist and ImageDescription (not Copyright) into imgother.
-    return { meta, thumb, camera: cameraText({ creator: other.artist ?? '', caption: other.desc ?? '' }) }
+    return { meta, thumb, camera: cameraText({ creator: other.artist ?? '', caption: other.desc ?? '' }), thumbAdobeRgb: !!thumb && thumbAdobeRgb }
   } finally {
     lr.dispose()
   }
@@ -145,7 +154,8 @@ async function probeJpeg(file: File): Promise<ProbeResult> {
   const head = new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer())
   const exif = readJpegExif(head)
   // The browser applies the EXIF orientation while decoding, so the thumbnail comes out upright.
-  const bmp = await createImageBitmap(jpegFileBlob(file, head))
+  const blob = jpegFileBlob(file, head)
+  const bmp = await createImageBitmap(blob)
   const meta: PhotoMeta = {
     fileName: file.name,
     fileSize: file.size,
@@ -174,6 +184,7 @@ async function probeJpeg(file: File): Promise<ProbeResult> {
     xmp: extractJpegXmp(head) ?? undefined,
     camera: camera && Object.keys(camera).length ? camera : undefined,
     iptcKeywords: iptc?.keywords.length ? iptc.keywords : undefined,
+    thumbAdobeRgb: blob !== file,
   }
 }
 

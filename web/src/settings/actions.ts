@@ -74,6 +74,18 @@ export const ACTIONS: ActionDef[] = [
   { id: 'photo.rate3', label: '3 stars', contexts: PHOTO, keys: ['3'] },
   { id: 'photo.rate4', label: '4 stars', contexts: PHOTO, keys: ['4'] },
   { id: 'photo.rate5', label: '5 stars', contexts: PHOTO, keys: ['5'] },
+  // Lightroom Classic: ] / [ raise or lower the rating by one star, Shift+1–5 rate and go to the next photo (Adobe's
+  // shortcut page, seen through search excerpts; docs/PHASE3.md Part 6). Lightroom gives [ and ] to the brush size
+  // while a brush tool is active: a brush context will be one more Develop context (like 'crop' and 'guided'), where
+  // these photo actions don't run, so it can take [ and ] without a clash.
+  { id: 'photo.rateUp', label: 'One star more', contexts: PHOTO, keys: [']'] },
+  { id: 'photo.rateDown', label: 'One star less', contexts: PHOTO, keys: ['['] },
+  { id: 'photo.rateNext0', label: 'No stars, then the next photo', contexts: PHOTO, keys: ['Shift+0'] },
+  { id: 'photo.rateNext1', label: '1 star, then the next photo', contexts: PHOTO, keys: ['Shift+1'] },
+  { id: 'photo.rateNext2', label: '2 stars, then the next photo', contexts: PHOTO, keys: ['Shift+2'] },
+  { id: 'photo.rateNext3', label: '3 stars, then the next photo', contexts: PHOTO, keys: ['Shift+3'] },
+  { id: 'photo.rateNext4', label: '4 stars, then the next photo', contexts: PHOTO, keys: ['Shift+4'] },
+  { id: 'photo.rateNext5', label: '5 stars, then the next photo', contexts: PHOTO, keys: ['Shift+5'] },
   { id: 'photo.label1', label: 'Red label', contexts: PHOTO, keys: ['6'] },
   { id: 'photo.label2', label: 'Yellow label', contexts: PHOTO, keys: ['7'] },
   { id: 'photo.label3', label: 'Green label', contexts: PHOTO, keys: ['8'] },
@@ -178,6 +190,12 @@ export const ACTIONS: ActionDef[] = [
 ]
 
 export const ACTION_BY_ID = new Map(ACTIONS.map((a) => [a.id, a]))
+
+/** Shift+0–5: set the rating, then go to the next photo (for hint lines). */
+export const RATE_NEXT = [0, 1, 2, 3, 4, 5].map((n) => `photo.rateNext${n}`)
+
+/** ] / [ on a photo rated `rating`: one star more or less, staying within 0–5. */
+export const stepStars = (rating: number, delta: 1 | -1) => Math.min(5, Math.max(0, rating + delta))
 
 /** The keys of an action in a shortcut set. */
 export function presetKeys(a: ActionDef, preset: PresetId): Chord[] {
