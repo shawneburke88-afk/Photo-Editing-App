@@ -279,10 +279,12 @@ describe('settings and cache keys', () => {
   })
 
   it('profile hashes follow the bytes', async () => {
-    const a = await profileHash(builtinIcc('srgb'))
+    // (Built-in profiles carry their creation time, so they are keyed by id instead: store.ts `proofSource`.)
+    const bytes = testPrinterProfile('rgb')
+    const a = await profileHash(bytes)
     expect(a).toMatch(/^[0-9a-f]{16}$/)
-    expect(await profileHash(builtinIcc('srgb'))).toBe(a)
-    expect(await profileHash(builtinIcc('display-p3'))).not.toBe(a)
+    expect(await profileHash(bytes.slice())).toBe(a)
+    expect(await profileHash(testPrinterProfile('cmyk'))).not.toBe(a)
   })
 
   it('the grid runs red fastest', () => {

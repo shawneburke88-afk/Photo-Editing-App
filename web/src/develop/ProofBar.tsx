@@ -99,7 +99,7 @@ export function ProofBar({ proof, screen, screenNote, disabled, onProofCopy, cop
           }}
           title="Remove this loaded profile from this browser"
         >
-          Remove
+          Remove profile
         </button>
       )}
       <label className="proof-field">

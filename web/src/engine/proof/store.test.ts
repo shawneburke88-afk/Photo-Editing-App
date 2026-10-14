@@ -83,7 +83,9 @@ describe('loaded profiles', () => {
   it('built-in profiles resolve without storage', async () => {
     const s = await proofSource('builtin:display-p3')
     expect(s).toMatchObject({ hash: 'builtin-display-p3', label: 'Display P3', space: 'RGB' })
-    expect([...s!.bytes]).toEqual([...builtinIcc('display-p3')])
+    // The same profile, but for its creation time (header bytes 24–35).
+    const noDate = (b: Uint8Array) => [...b.slice(0, 24), ...b.slice(36)]
+    expect(noDate(s!.bytes)).toEqual(noDate(builtinIcc('display-p3')))
     expect(await proofSource('builtin:nope')).toBeNull()
     expect(await proofSource('bogus')).toBeNull()
   })
