@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { CpuBudget } from '../cpu-budget'
-import { complete, prepare, search, searchRange, solve, type Completion, type Level } from './completion'
+import { complete, patchVectorRows, prepare, searchRange, solve, voteSums, voteWrite, type Completion, type Steps } from './completion'
 import { FILL_CASES, SPOT_CASES, fingerprint, sceneTiles } from './fill-cases'
 import { computeFills, FillWorkers, planFills, type FillPlan, type FillWorkerLike } from './fill-pool'
-import { BLOCK, handleFillRequest, type FillReply, type FillRequest } from './fill-split'
+import { handleFillRequest, type FillReply, type FillRequest } from './fill-split'
 import { fillJobs, runSpots } from './run'
 import { TileImage } from './tiles'
 
@@ -71,25 +71,46 @@ describe('Remove fills: the same as main', () => {
   }, 60000)
 })
 
-describe('the patch search split', () => {
-  it('gives the serial matches whatever the split and its order', () => {
-    // Every search done in blocks, last block first: each patch's search is independent of the others.
-    const backwards = (L: Level, r: number, il: [number, number] | null, around: number) => {
-      const n = L.centres.length
-      for (let j0 = Math.floor((n - 1) / BLOCK) * BLOCK; j0 >= 0; j0 -= BLOCK) searchRange(L, r, il, around, j0, Math.min(n, j0 + BLOCK))
+describe('the split steps', () => {
+  /** Pieces 0…n in blocks of `b`, last block first (each piece must not depend on another). */
+  const backwards = (n: number, b: number, work: (i0: number, i1: number) => void) => {
+    for (let i0 = Math.floor((n - 1) / b) * b; i0 >= 0; i0 -= b) work(i0, Math.min(n, i0 + b))
+  }
+  /** An odd split: a piece of one, then the rest, in reverse. */
+  const odd = (n: number, _b: number, work: (i0: number, i1: number) => void) => {
+    const cuts = [0, Math.floor(n / 3), Math.min(n, Math.floor(n / 3) + 1), n]
+    for (let k = cuts.length - 2; k >= 0; k--) if (cuts[k + 1] > cuts[k]) work(cuts[k], cuts[k + 1])
+  }
+  const steps = (order: typeof backwards): Steps => ({
+    search: (L, r, il, around) => order(L.centres.length, 32, (j0, j1) => searchRange(L, r, il, around, j0, j1)),
+    vote: (L, r) => {
+      const rows = L.box[3] - L.box[1]
+      order(rows, 4, (k0, k1) => voteSums(L, r, k0, k1))
+      order(rows, 3, (k0, k1) => voteWrite(L, k0, k1))
+    },
+  })
+
+  it('patch vectors made by rows, in any split, are the whole computation’s', () => {
+    for (const c of FILL_CASES) {
+      const { width: w, height: h, image, hole } = c.input()
+      const whole = new Float32Array(w * h * 5)
+      patchVectorRows(w, h, image, hole, 0, h, whole)
+      for (const order of [backwards, odd]) {
+        const split = new Float32Array(w * h * 5)
+        order(h, 3, (y0, y1) => patchVectorRows(w, h, image, hole, y0, y1, split))
+        expect(fingerprint(split), c.name).toBe(fingerprint(whole))
+      }
     }
-    const oddSplit = (L: Level, r: number, il: [number, number] | null, around: number) => {
-      const n = L.centres.length
-      const cuts = [0, Math.floor(n / 3), Math.floor(n / 3) + 1, n]
-      for (let k = cuts.length - 2; k >= 0; k--) searchRange(L, r, il, around, cuts[k], cuts[k + 1])
-    }
-    for (const c of FILL_CASES.slice(0, 6)) {
+  })
+
+  it('searches and votes in any split give the serial completion', () => {
+    for (const c of FILL_CASES.slice(0, 7)) {
       const input = c.input()
       const prep = prepare(input)
       const start = prep.init ? 'source' : 'smooth'
-      const ref = solve(prep.pyramid(), prep.r, prep.init, start, () => {}, search)
-      for (const s of [backwards, oddSplit]) {
-        const got = solve(prep.pyramid(), prep.r, prep.init, start, () => {}, s)
+      const ref = solve(prep.pyramid(), prep.r, prep.init, start, () => {})
+      for (const order of [backwards, odd]) {
+        const got = solve(prep.pyramid(), prep.r, prep.init, start, () => {}, steps(order))
         expect(print(got.completion), c.name).toBe(print(ref.completion))
         expect(got.energy).toBe(ref.energy)
       }

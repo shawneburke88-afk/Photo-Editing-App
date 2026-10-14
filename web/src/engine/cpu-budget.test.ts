@@ -185,6 +185,24 @@ describe('worker pools on the budget', () => {
     pool.dispose()
   })
 
+  it('with hold, takes its lease at once and keeps it until dispose (background work waits meanwhile)', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = new CpuBudget(2)
+      const bg = b.acquire('background', 2)
+      const pool = new WorkerPool<W>({ create: () => ({ id: 1 }), terminate: () => {}, priority: 'foreground', want: 2, budget: b, hold: true })
+      expect(pool.size).toBe(0)
+      expect(bg.slots).toBe(0)
+      await pool.run(async () => {})
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(bg.slots).toBe(0)
+      pool.dispose()
+      expect(bg.slots).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('clear() drops queued tasks; dispose() ends the workers and gives the slots back', async () => {
     const b = new CpuBudget(1)
     const ended: number[] = []

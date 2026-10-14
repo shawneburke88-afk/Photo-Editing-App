@@ -75,63 +75,84 @@ const TEXTURE = 3
 
 function patchVectors(w: number, h: number, image: Float32Array, hole: Uint8Array): Float32Array {
   const e = new Float32Array(w * h * NC)
-  const lum = new Float32Array(w * h)
-  for (let p = 0; p < w * h; p++) {
-    const r = Math.sqrt(Math.max(0, image[p * 3]))
-    const g = Math.sqrt(Math.max(0, image[p * 3 + 1]))
-    const b = Math.sqrt(Math.max(0, image[p * 3 + 2]))
-    e[p * NC] = r
-    e[p * NC + 1] = g
-    e[p * NC + 2] = b
-    lum[p] = 0.25 * r + 0.5 * g + 0.25 * b
-  }
-  // Absolute differences to the next pixel, where both are known; then their means over 5 × 5 (known ones only).
-  const gx = new Float32Array(w * h)
-  const gy = new Float32Array(w * h)
-  const ok = new Uint8Array(w * h)
-  const okY = new Uint8Array(w * h)
-  for (let y = 0; y < h; y++) {
+  patchVectorRows(w, h, image, hole, 0, h, e)
+  return e
+}
+
+/**
+ * `patchVectors` for rows y0 <= y < y1 only, into `e` (the whole image's vectors; its other rows are left alone). A
+ * pixel's vector depends on the image within 2 rows (3 for the vertical differences), which are read here, so any split
+ * of the rows (the fill pool's workers each take some) gives exactly the whole computation's values.
+ */
+export function patchVectorRows(w: number, h: number, image: Float32Array, hole: Uint8Array, y0: number, y1: number, e: Float32Array) {
+  // Rows of √luminance needed (la <= y < lb), and of the differences (ga <= y < gb).
+  const la = Math.max(0, y0 - 2)
+  const lb = Math.min(h, y1 + 3)
+  const ga = la
+  const gb = Math.min(h, y1 + 2)
+  const lum = new Float32Array((lb - la) * w)
+  for (let y = la; y < lb; y++) {
     for (let x = 0; x < w; x++) {
       const p = y * w + x
+      const r = Math.sqrt(Math.max(0, image[p * 3]))
+      const g = Math.sqrt(Math.max(0, image[p * 3 + 1]))
+      const b = Math.sqrt(Math.max(0, image[p * 3 + 2]))
+      if (y >= y0 && y < y1) {
+        e[p * NC] = r
+        e[p * NC + 1] = g
+        e[p * NC + 2] = b
+      }
+      lum[p - la * w] = 0.25 * r + 0.5 * g + 0.25 * b
+    }
+  }
+  // Absolute differences to the next pixel, where both are known; then their means over 5 × 5 (known ones only).
+  const n = (gb - ga) * w
+  const gx = new Float32Array(n)
+  const gy = new Float32Array(n)
+  const ok = new Uint8Array(n)
+  const okY = new Uint8Array(n)
+  for (let y = ga; y < gb; y++) {
+    for (let x = 0; x < w; x++) {
+      const p = y * w + x
+      const i = p - ga * w
       if (hole[p]) continue
       if (x + 1 < w && !hole[p + 1]) {
-        const d = lum[p + 1] - lum[p]
-        gx[p] = d < 0 ? -d : d
-        ok[p] = 1
+        const d = lum[p + 1 - la * w] - lum[p - la * w]
+        gx[i] = d < 0 ? -d : d
+        ok[i] = 1
       }
       if (y + 1 < h && !hole[p + w]) {
-        const d = lum[p + w] - lum[p]
-        gy[p] = d < 0 ? -d : d
-        okY[p] = 1
+        const d = lum[p + w - la * w] - lum[p - la * w]
+        gy[i] = d < 0 ? -d : d
+        okY[i] = 1
       }
     }
   }
   const box = (v: Float32Array, m: Uint8Array, c: number) => {
-    for (let y = 0; y < h; y++) {
+    for (let y = y0; y < y1; y++) {
       for (let x = 0; x < w; x++) {
         const p = y * w + x
         if (hole[p]) continue
         let s = 0
-        let n = 0
+        let k = 0
         for (let dy = -2; dy <= 2; dy++) {
           const yy = y + dy
           if (yy < 0 || yy >= h) continue
           for (let dx = -2; dx <= 2; dx++) {
             const xx = x + dx
             if (xx < 0 || xx >= w) continue
-            const q = yy * w + xx
+            const q = (yy - ga) * w + xx
             if (!m[q]) continue
             s += v[q]
-            n++
+            k++
           }
         }
-        e[p * NC + c] = n ? (TEXTURE * s) / n : 0
+        e[p * NC + c] = k ? (TEXTURE * s) / k : 0
       }
     }
   }
   box(gx, ok, 3)
   box(gy, okY, 4)
-  return e
 }
 
 export interface Level {
@@ -156,6 +177,9 @@ export interface Level {
   gridStride?: number
   /** The hole's bounding box [x0, y0, x1, y1) (all 0 without a hole): where `vote` writes. */
   box: [number, number, number, number]
+  /** The vote's sums over the box (NC per pixel) and of the weights. */
+  acc: Float64Array
+  ws: Float64Array
 }
 
 /**
@@ -164,10 +188,11 @@ export interface Level {
  */
 export interface Alloc {
   f32(n: number): Float32Array
+  f64(n: number): Float64Array
   i32(n: number): Int32Array
   u8(n: number): Uint8Array
 }
-const plain: Alloc = { f32: (n) => new Float32Array(n), i32: (n) => new Int32Array(n), u8: (n) => new Uint8Array(n) }
+const plain: Alloc = { f32: (n) => new Float32Array(n), f64: (n) => new Float64Array(n), i32: (n) => new Int32Array(n), u8: (n) => new Uint8Array(n) }
 
 /** Chebyshev distance of every pixel to the nearest pixel outside `mask` (two-pass chamfer). */
 function depth(w: number, h: number, mask: Uint8Array): Int32Array {
@@ -245,6 +270,8 @@ function makeLevel(w: number, h: number, e: Float32Array, hole: Uint8Array, bloc
   }
   const near = boxSum(w, h, hole, r)
   const at = new Int32Array(w * h).fill(-1)
+  const holeCopy = alloc.u8(w * h)
+  holeCopy.set(hole)
   const cl: number[] = []
   for (let i = 0; i < w * h; i++) {
     if (near[i] > 0) {
@@ -275,12 +302,16 @@ function makeLevel(w: number, h: number, e: Float32Array, hole: Uint8Array, bloc
       y1 = y + 1
     }
   }
+  const box: [number, number, number, number] = x1 > x0 ? [x0, y0, x1, y1] : [0, 0, 0, 0]
+  const boxPixels = (box[2] - box[0]) * (box[3] - box[1])
   return {
-    w, h, e, hole, valid, validList, centres, at, count,
+    w, h, e, hole: holeCopy, valid, validList, centres, at, count,
     src: alloc.i32(centres.length).fill(-1),
     dist: alloc.f32(centres.length),
-    weight: new Float32Array(centres.length),
-    box: x1 > x0 ? [x0, y0, x1, y1] : [0, 0, 0, 0],
+    weight: alloc.f32(centres.length),
+    box,
+    acc: alloc.f64(boxPixels * NC),
+    ws: alloc.f64(boxPixels),
   }
 }
 
@@ -496,23 +527,37 @@ function setWeights(L: Level) {
   for (let j = 0; j < n; j++) L.weight[j] = 1 / (1 + L.dist[j] / s2)
 }
 
-/** Each hole pixel becomes the weighted mean of what the overlapping matched patches say. */
-function vote(L: Level, r: number) {
-  const { w, h, e, hole, centres, src, weight } = L
-  // Only hole pixels are written, so the sums are kept over the hole's bounding box (the same sums, in the same order).
-  const [bx0, by0, bx1, by1] = L.box
+/**
+ * Each hole pixel becomes the weighted mean of what the overlapping matched patches say. Only hole pixels are written,
+ * so the sums are kept over the hole's bounding box. In two steps, each over any split of the box's rows: `voteSums`
+ * (every pixel's sums, over the matches in their order, so any split gives the same sums), then, once every sum is
+ * made, `voteWrite` (the means; the sums read the estimate before any of it is written, as in one pass).
+ */
+export function vote(L: Level, r: number) {
+  const rows = L.box[3] - L.box[1]
+  voteSums(L, r, 0, rows)
+  voteWrite(L, 0, rows)
+}
+
+/** The vote's sums for the box's rows k0 <= k < k1 (counted from the box's top). */
+export function voteSums(L: Level, r: number, k0: number, k1: number) {
+  const { w, h, e, hole, centres, src, weight, acc, ws } = L
+  const [bx0, by0, bx1] = L.box
   const bw = bx1 - bx0
-  const acc = new Float64Array(bw * (by1 - by0) * NC)
-  const ws = new Float64Array(bw * (by1 - by0))
+  const y0 = by0 + k0
+  const y1 = by0 + k1
+  acc.fill(0, k0 * bw * NC, k1 * bw * NC)
+  ws.fill(0, k0 * bw, k1 * bw)
   for (let j = 0; j < centres.length; j++) {
     const t = centres[j]
-    const s = src[j]
-    const wt = weight[j]
     const tx = t % w
     const ty = (t - tx) / w
+    if (ty + r < y0 || ty - r >= y1) continue
+    const s = src[j]
+    const wt = weight[j]
     for (let dy = -r; dy <= r; dy++) {
       const yy = ty + dy
-      if (yy < 0 || yy >= h) continue
+      if (yy < 0 || yy >= h || yy < y0 || yy >= y1) continue
       for (let dx = -r; dx <= r; dx++) {
         const xx = tx + dx
         if (xx < 0 || xx >= w) continue
@@ -525,7 +570,14 @@ function vote(L: Level, r: number) {
       }
     }
   }
-  for (let y = by0; y < by1; y++) {
+}
+
+/** The vote's means for the box's rows k0 <= k < k1, from the sums. */
+export function voteWrite(L: Level, k0: number, k1: number) {
+  const { w, e, hole, acc, ws } = L
+  const [bx0, by0, bx1] = L.box
+  const bw = bx1 - bx0
+  for (let y = by0 + k0; y < by0 + k1; y++) {
     for (let x = bx0; x < bx1; x++) {
       const p = y * w + x
       const b = (y - by0) * bw + (x - bx0)
@@ -620,11 +672,12 @@ export type Start = 'source' | 'smooth'
  * levels each time, as a completion changes its levels' estimates), the patch radius, the preferred offset and the
  * result when there is nothing to copy from.
  */
-export function prepare(input: CompletionInput) {
+export function prepare(input: CompletionInput, vectors?: Float32Array) {
   const { width: w, height: h, image, hole } = input
   const r = input.radius ?? 3
   const blocked = input.blocked ?? new Uint8Array(w * h)
-  const e0 = patchVectors(w, h, image, hole)
+  // The patch vectors, unless already made (by the fill pool's workers, `patchVectorRows`).
+  const e0 = vectors ?? patchVectors(w, h, image, hole)
 
   // Levels: until the hole is at most about two patch radii deep (Newson et al.: from the hole's size), keeping the
   // coarsest window at least two patches across and with somewhere to copy from.
@@ -727,13 +780,22 @@ function flatness(L: Level, r: number): number {
   return d > 0 ? d * d : 0
 }
 
+/** How `solve` searches and votes: serially here; the fill pool splits both among workers (fill-split.ts). */
+export interface Steps {
+  search: (L: Level, r: number, il: [number, number] | null, around: number) => void
+  vote: (L: Level, r: number) => void
+}
+const SERIAL: Steps = { search, vote }
+
 /**
- * One coarse-to-fine completion (see `complete`). `searcher` does each search (the fill pool splits it among workers);
- * everything else here is sequential: the levels depend on each other (each starts from the coarser one's estimate
- * and matches), so do the iterations (each searches with the estimate the previous one voted); the vote sums the
- * matches' patches in their order, and the starts solve Laplace's equation by Gauss-Seidel (membrane.ts).
+ * One coarse-to-fine completion (see `complete`). `steps` does each search and vote (the fill pool splits them among
+ * workers, which gives the same matches and sums). Everything else here is sequential: the levels depend on each other
+ * (each starts from the coarser one's estimate and matches), so do the iterations (each searches with the estimate the
+ * previous one voted) and the two halves of a vote; the weights need every distance (a percentile); the starts solve
+ * Laplace's equation by Gauss-Seidel (membrane.ts), whose sweeps and stopping test depend on the order of the updates;
+ * and the final score.
  */
-export function solve(pyr: Level[], r: number, init: [number, number] | null, start: Start, onProgress: (f: number) => void, searcher: typeof search = search): Solved {
+export function solve(pyr: Level[], r: number, init: [number, number] | null, start: Start, onProgress: (f: number) => void, steps: Steps = SERIAL): Solved {
   const top = pyr.length - 1
   const emIters = (l: number) => (l === top ? 10 : Math.max(3, 6 - (top - 1 - l)))
   // The full searches of the coarsest level cost about as much as the refinements of a finer level.
@@ -788,9 +850,9 @@ export function solve(pyr: Level[], r: number, init: [number, number] | null, st
       // The completion from the source only ever refines (it adapts the source to the hole, as Heal would, keeping
       // its structure); the smooth one searches the whole window on the coarsest level's first iterations.
       const around = l < top || it >= FULL_ITERS || (start === 'source' && il) ? REFINE : Infinity
-      searcher(L, r, il, around)
+      steps.search(L, r, il, around)
       setWeights(L)
-      vote(L, r)
+      steps.vote(L, r)
       done += L.centres.length * cost(l)
       onProgress(Math.min(1, done / work))
     }

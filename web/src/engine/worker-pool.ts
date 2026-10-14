@@ -3,7 +3,8 @@
 //
 // - Lazy: no worker exists until a task is queued; a worker is made only when a slot is free and no idle one is left.
 // - The lease is taken when the first task is queued and given back `lingerMs` after the queue empties (so a run of
-//   tasks doesn't take and give it back between items).
+//   tasks doesn't take and give it back between items); with `hold`, it is taken at once and kept until `dispose`
+//   (Export: the whole run is foreground work, also while its encoders wait for the next photo).
 // - A task starts only while fewer than `lease.slots` run: when the budget shrinks the lease (foreground work came),
 //   running tasks finish and the next one waits, so the pool yields between items, never in the middle of one.
 // - Workers idle for `idleMs` are terminated (their memory, e.g. jpegli's WebAssembly heap, goes with them).
@@ -22,6 +23,8 @@ export interface WorkerPoolOptions<W> {
   idleMs?: number
   /** The lease is kept this long after the last task (default 500 ms). */
   lingerMs?: number
+  /** Take the lease now and keep it until `dispose`. */
+  hold?: boolean
   budget?: CpuBudget
 }
 
@@ -44,6 +47,13 @@ export class WorkerPool<W> {
 
   constructor(o: WorkerPoolOptions<W>) {
     this.o = o
+    if (o.hold) this.takeLease()
+  }
+
+  private takeLease() {
+    const budget = this.o.budget ?? cpuBudget
+    this.lease = budget.acquire(this.o.priority, this.o.want, this.o.min)
+    this.lease.onChange(() => this.pump())
   }
 
   /** Workers alive now. */
@@ -103,11 +113,7 @@ export class WorkerPool<W> {
         clearTimeout(this.linger)
         this.linger = null
       }
-      if (!this.lease) {
-        const budget = this.o.budget ?? cpuBudget
-        this.lease = budget.acquire(this.o.priority, this.o.want, this.o.min)
-        this.lease.onChange(() => this.pump())
-      }
+      if (!this.lease) this.takeLease()
     }
     while (this.queue.length && this.running < this.slots) {
       const job = this.queue.shift()!
@@ -128,7 +134,7 @@ export class WorkerPool<W> {
         this.pump()
       })
     }
-    if (!this.queue.length && !this.running && this.lease && !this.linger) {
+    if (!this.queue.length && !this.running && this.lease && !this.linger && !this.o.hold) {
       this.linger = setTimeout(() => {
         this.linger = null
         const l = this.lease

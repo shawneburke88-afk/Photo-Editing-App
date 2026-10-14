@@ -39,7 +39,8 @@ function makeWorker(): EncoderWorker {
 export class EncoderPool {
   private readonly pool: WorkerPool<EncoderWorker>
 
-  constructor(o: { budget?: CpuBudget; idleMs?: number } = {}) {
+  /** `hold`: take the CPU lease now and keep it until `dispose` (Export's whole run is foreground work). */
+  constructor(o: { budget?: CpuBudget; idleMs?: number; hold?: boolean } = {}) {
     const budget = o.budget ?? cpuBudget
     this.pool = new WorkerPool<EncoderWorker>({
       create: makeWorker,
@@ -47,6 +48,7 @@ export class EncoderPool {
       priority: 'foreground',
       want: budget.total,
       idleMs: o.idleMs,
+      hold: o.hold,
       budget,
     })
   }

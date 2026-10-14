@@ -1,52 +1,57 @@
-// Remove's patch search split among workers (PHASE3.md, Part 22). Runs inside the fill workers (fill.worker.ts); the
+// Remove's completion split among workers (PHASE3.md, Part 22). Runs inside the fill workers (fill.worker.ts); the
 // pool on the page (fill-pool.ts) decides which worker leads a completion and which help it.
 //
-// A completion (completion.ts, `solve`) is a sequence of searches, each followed by a vote. In a search every target
-// patch looks for its own best source and writes only its own match (`searchRange`), so the patches can be searched
-// in any split, in any order, by any number of workers, and the matches are exactly the serial ones. Everything
-// between the searches stays on the leading worker, in the serial order: building the levels, the starts, the votes,
-// the weights and the final score.
+// Three steps of a completion (completion.ts) are made of independent pieces, and only those are split:
+//   - the patch vectors (`patchVectorRows`): each row's vectors depend only on the image around it;
+//   - each search (`searchRange`): every target patch looks for its own best source and writes only its own match;
+//   - each vote, in two halves (`voteSums`, `voteWrite`): each pixel's sums run over the matches in their order, whoever
+//     makes them, and the means are written only once every sum is made.
+// So the pieces can be done in any split, in any order, by any number of workers, and the results are exactly the
+// serial ones. Everything else stays on the leading worker, in the serial order (see `solve`).
 //
-// How the workers meet: the levels' arrays live in SharedArrayBuffers (the estimate `e`, the valid sources, the
-// target patches, their matches and distances); a small control array says which search runs now. For each search
-// the leader writes its parameters, opens a new generation and wakes the helpers; everyone takes blocks of BLOCK
-// patches from a shared counter until none are left; the leader then closes the generation and waits until no
-// helper is still searching, and only then votes. A helper that arrives after the generation closed does nothing.
-// So a slow or missing helper never changes the result or blocks the leader (the leader searches whatever is left).
+// How the workers meet: the arrays live in SharedArrayBuffers (the image, the patch vectors, the levels' estimates,
+// valid sources, target patches, matches, distances, weights and vote sums); a small control array says which step
+// runs now. For each step the leader writes its parameters, opens a new generation and wakes the helpers; everyone
+// takes blocks of pieces from a shared counter until none are left; the leader then closes the generation and waits
+// until no helper is still working, and only then goes on. A helper that arrives after the generation closed does
+// nothing. So a slow or missing helper never changes the result or blocks the leader (the leader does whatever is
+// left itself).
 
-import { complete, nothingToCopy, prepare, searchRange, solve, type Alloc, type Completion, type CompletionInput, type Level, type Solved, type Start } from './completion'
+import {
+  complete, nothingToCopy, patchVectorRows, prepare, searchRange, solve, voteSums, voteWrite,
+  type Alloc, type Completion, type CompletionInput, type Level, type Solved, type Start,
+} from './completion'
 
 /** Slots of the control array. */
-export const CTRL = {
-  /** Bumped for every search and at the end. */
-  GEN: 0,
-  /** The generation helpers may join (-1: none). */
-  OPEN: 1,
-  /** Helpers searching now. */
-  ACTIVE: 2,
-  /** The next unclaimed target patch. */
-  NEXT: 3,
-  /** 1: the completion is finished, helpers leave. */
-  CMD: 4,
-  LEVEL: 5,
-  /** The search's reach (−1: the full search). */
-  AROUND: 6,
-  HAS_IL: 7,
-  ILX: 8,
-  ILY: 9,
-  N: 10,
-  SIZE: 11,
-} as const
+const GEN = 0 // bumped for every step and at the end
+const OPEN = 1 // the generation helpers may join (−1: none)
+const ACTIVE = 2 // helpers working now
+const NEXT = 3 // the next unclaimed piece
+const CMD = 4 // 1: finished, helpers leave
+const OP = 5
+const N = 6 // pieces in this step
+const BLOCK = 7 // pieces claimed at a time
+const LEVEL = 8
+const AROUND = 9 // the search's reach (−1: the full search)
+const HAS_IL = 10
+const ILX = 11
+const ILY = 12
+const SIZE = 13
 
 const FINISH = 1
+const OP_VECTORS = 1
+const OP_SEARCH = 2
+const OP_SUMS = 3
+const OP_MEANS = 4
 
 /** Target patches claimed at a time: enough to keep the counter cheap, few enough to balance uneven patches. */
-export const BLOCK = 32
+export const PATCHES_PER_CLAIM = 32
+/** Rows claimed at a time by the patch vectors and the vote. */
+const ROWS_PER_CLAIM = 4
 
-/** A control array, ready for a completion. */
-export function newControl(): Int32Array {
-  const ctrl = new Int32Array(new SharedArrayBuffer(CTRL.SIZE * 4))
-  ctrl[CTRL.OPEN] = -1
+function newControl(): Int32Array {
+  const ctrl = new Int32Array(new SharedArrayBuffer(SIZE * 4))
+  ctrl[OPEN] = -1
   return ctrl
 }
 
@@ -55,106 +60,145 @@ export const canShare = () => typeof SharedArrayBuffer === 'function' && (global
 
 const sharedAlloc: Alloc = {
   f32: (n) => new Float32Array(new SharedArrayBuffer(n * 4)),
+  f64: (n) => new Float64Array(new SharedArrayBuffer(n * 8)),
   i32: (n) => new Int32Array(new SharedArrayBuffer(n * 4)),
   u8: (n) => new Uint8Array(new SharedArrayBuffer(n)),
 }
 
-/** What a helper needs of a level (all of it shared memory). */
-export interface SharedLevel {
-  w: number
-  h: number
-  e: Float32Array
-  valid: Uint8Array
-  validList: Int32Array
-  centres: Int32Array
-  count: Uint8Array
-  src: Int32Array
-  dist: Float32Array
-}
+/** What helpers get: the patch-vector step's arrays, or the levels' (all of them shared memory). */
+export type Shared =
+  | { kind: 'vectors'; w: number; h: number; image: Float32Array; hole: Uint8Array; e: Float32Array }
+  | { kind: 'levels'; r: number; levels: SharedLevel[] }
 
-/** Takes blocks of the current search's patches until none are left. Returns the patches searched. */
-function claim(ctrl: Int32Array, L: Level, r: number, il: [number, number] | null, around: number, n: number): number {
-  let done = 0
+export type SharedLevel = Pick<Level, 'w' | 'h' | 'e' | 'hole' | 'valid' | 'validList' | 'centres' | 'count' | 'src' | 'dist' | 'weight' | 'box' | 'acc' | 'ws'>
+
+/** Takes blocks of the current step's pieces until none are left. */
+function claim(ctrl: Int32Array, n: number, block: number, work: (i0: number, i1: number) => void) {
   for (;;) {
-    const j0 = Atomics.add(ctrl, CTRL.NEXT, BLOCK)
-    if (j0 >= n) return done
-    const j1 = Math.min(n, j0 + BLOCK)
-    searchRange(L, r, il, around, j0, j1)
-    done += j1 - j0
+    const i0 = Atomics.add(ctrl, NEXT, block)
+    if (i0 >= n) return
+    work(i0, Math.min(n, i0 + block))
   }
 }
 
+/** The leader runs a step with whoever helps: parameters, open, its own share, close, wait for the helpers. */
+function step(ctrl: Int32Array, op: number, n: number, block: number, params: [number, number][], work: (i0: number, i1: number) => void) {
+  for (const [k, v] of params) Atomics.store(ctrl, k, v)
+  Atomics.store(ctrl, OP, op)
+  Atomics.store(ctrl, N, n)
+  Atomics.store(ctrl, BLOCK, block)
+  Atomics.store(ctrl, NEXT, 0)
+  const g = Atomics.load(ctrl, GEN) + 1
+  Atomics.store(ctrl, OPEN, g)
+  Atomics.store(ctrl, GEN, g)
+  Atomics.notify(ctrl, GEN)
+  claim(ctrl, n, block, work)
+  // Every piece is taken: close the generation, then wait for the helpers still working on theirs.
+  Atomics.store(ctrl, OPEN, -1)
+  for (;;) {
+    const a = Atomics.load(ctrl, ACTIVE)
+    if (!a) break
+    Atomics.wait(ctrl, ACTIVE, a, 100)
+  }
+}
+
+function finish(ctrl: Int32Array) {
+  Atomics.store(ctrl, CMD, FINISH)
+  Atomics.add(ctrl, GEN, 1)
+  Atomics.notify(ctrl, GEN)
+}
+
 /**
- * The leader: one completion (`solve`), with its searches shared with whoever helps. `share` is called once the levels
- * exist, with what the helpers need; nothing is shared when there is nothing to copy from. Null in that case.
+ * The leader: one completion (`solve`), sharing the patch vectors, the searches and the votes with whoever helps.
+ * `share` is called with what helpers need, once for the patch vectors and once for the levels (not when there is
+ * nothing to copy from). Null in that case.
  */
-export function solveShared(input: CompletionInput, start: Start, ctrl: Int32Array, share: (levels: SharedLevel[], r: number) => void, onProgress: (f: number) => void): Solved | null {
-  const prep = prepare(input)
+export function solveShared(input: CompletionInput, start: Start, share: (ctrl: Int32Array, s: Shared) => void, onProgress: (f: number) => void): Solved | null {
+  const { width: w, height: h } = input
+  // The patch vectors, by rows.
+  const vectors = newControl()
+  const image = sharedAlloc.f32(input.image.length)
+  image.set(input.image)
+  const hole = sharedAlloc.u8(input.hole.length)
+  hole.set(input.hole)
+  const e0 = sharedAlloc.f32(w * h * 5)
   try {
-    const pyr = prep.pyramid(sharedAlloc)
-    if (nothingToCopy(pyr)) return null
-    share(pyr.map(({ w, h, e, valid, validList, centres, count, src, dist }) => ({ w, h, e, valid, validList, centres, count, src, dist })), prep.r)
+    share(vectors, { kind: 'vectors', w, h, image, hole, e: e0 })
+    step(vectors, OP_VECTORS, h, ROWS_PER_CLAIM, [], (y0, y1) => patchVectorRows(w, h, image, hole, y0, y1, e0))
+  } finally {
+    finish(vectors)
+  }
+  const prep = prepare(input, e0)
+  const pyr = prep.pyramid(sharedAlloc)
+  if (nothingToCopy(pyr)) return null
+  const ctrl = newControl()
+  try {
+    share(ctrl, { kind: 'levels', r: prep.r, levels: pyr.map(({ w, h, e, hole, valid, validList, centres, count, src, dist, weight, box, acc, ws }) => ({ w, h, e, hole, valid, validList, centres, count, src, dist, weight, box, acc, ws })) })
     const index = new Map(pyr.map((L, i) => [L, i]))
-    return solve(pyr, prep.r, prep.init, start, onProgress, (L, r, il, around) => {
-      const n = L.centres.length
-      Atomics.store(ctrl, CTRL.LEVEL, index.get(L)!)
-      Atomics.store(ctrl, CTRL.AROUND, around === Infinity ? -1 : around)
-      Atomics.store(ctrl, CTRL.HAS_IL, il ? 1 : 0)
-      Atomics.store(ctrl, CTRL.ILX, il ? il[0] : 0)
-      Atomics.store(ctrl, CTRL.ILY, il ? il[1] : 0)
-      Atomics.store(ctrl, CTRL.N, n)
-      Atomics.store(ctrl, CTRL.NEXT, 0)
-      const g = Atomics.load(ctrl, CTRL.GEN) + 1
-      Atomics.store(ctrl, CTRL.OPEN, g)
-      Atomics.store(ctrl, CTRL.GEN, g)
-      Atomics.notify(ctrl, CTRL.GEN)
-      claim(ctrl, L, r, il, around, n)
-      // Every patch is taken: close the generation, then wait for the helpers still searching theirs.
-      Atomics.store(ctrl, CTRL.OPEN, -1)
-      for (;;) {
-        const a = Atomics.load(ctrl, CTRL.ACTIVE)
-        if (!a) break
-        Atomics.wait(ctrl, CTRL.ACTIVE, a, 100)
-      }
+    return solve(pyr, prep.r, prep.init, start, onProgress, {
+      search: (L, r, il, around) =>
+        step(ctrl, OP_SEARCH, L.centres.length, PATCHES_PER_CLAIM, [[LEVEL, index.get(L)!], [AROUND, around === Infinity ? -1 : around], [HAS_IL, il ? 1 : 0], [ILX, il ? il[0] : 0], [ILY, il ? il[1] : 0]], (j0, j1) =>
+          searchRange(L, r, il, around, j0, j1),
+        ),
+      vote: (L, r) => {
+        const rows = L.box[3] - L.box[1]
+        step(ctrl, OP_SUMS, rows, ROWS_PER_CLAIM, [[LEVEL, index.get(L)!]], (k0, k1) => voteSums(L, r, k0, k1))
+        step(ctrl, OP_MEANS, rows, ROWS_PER_CLAIM, [[LEVEL, index.get(L)!]], (k0, k1) => voteWrite(L, k0, k1))
+      },
     })
   } finally {
-    Atomics.store(ctrl, CTRL.CMD, FINISH)
-    Atomics.add(ctrl, CTRL.GEN, 1)
-    Atomics.notify(ctrl, CTRL.GEN)
+    finish(ctrl)
   }
 }
 
 /**
- * A helper: searches its share of every search of a completion until the leader finishes (or has not been heard of
- * for `patienceMs`, e.g. because it was stopped). Returns the patches it searched.
+ * A helper: does its share of every step until the leader finishes (or has not been heard of for `patienceMs`, e.g.
+ * because it was stopped). Returns the pieces it did.
  */
-export function help(ctrl: Int32Array, shared: SharedLevel[], r: number, patienceMs = 20000): number {
-  const levels = shared.map((s) => ({ ...s, hole: new Uint8Array(0), at: new Int32Array(0), weight: new Float32Array(0), box: [0, 0, 0, 0] }) as Level)
+export function help(ctrl: Int32Array, shared: Shared, patienceMs = 20000): number {
+  const levels = shared.kind === 'levels' ? shared.levels.map((s) => ({ ...s, at: new Int32Array(0) }) as Level) : []
   let seen = -1
-  let searched = 0
+  let done = 0
   let heard = performance.now()
   for (;;) {
-    if (Atomics.load(ctrl, CTRL.CMD) === FINISH) return searched
-    const g = Atomics.load(ctrl, CTRL.GEN)
+    if (Atomics.load(ctrl, CMD) === FINISH) return done
+    const g = Atomics.load(ctrl, GEN)
     if (g !== seen) {
       seen = g
       heard = performance.now()
-      Atomics.add(ctrl, CTRL.ACTIVE, 1)
+      Atomics.add(ctrl, ACTIVE, 1)
       try {
         // Joined in time: the leader waits for us before it changes anything.
-        if (Atomics.load(ctrl, CTRL.OPEN) === g) {
-          const L = levels[Atomics.load(ctrl, CTRL.LEVEL)]
-          const a = Atomics.load(ctrl, CTRL.AROUND)
-          const il: [number, number] | null = Atomics.load(ctrl, CTRL.HAS_IL) ? [Atomics.load(ctrl, CTRL.ILX), Atomics.load(ctrl, CTRL.ILY)] : null
-          searched += claim(ctrl, L, r, il, a < 0 ? Infinity : a, Atomics.load(ctrl, CTRL.N))
+        if (Atomics.load(ctrl, OPEN) === g) {
+          const op = Atomics.load(ctrl, OP)
+          const n = Atomics.load(ctrl, N)
+          const block = Atomics.load(ctrl, BLOCK)
+          let work: (i0: number, i1: number) => void
+          if (shared.kind === 'vectors') {
+            const { w, h, image, hole, e } = shared
+            work = (y0, y1) => patchVectorRows(w, h, image, hole, y0, y1, e)
+          } else {
+            const L = levels[Atomics.load(ctrl, LEVEL)]
+            const r = shared.r
+            if (op === OP_SEARCH) {
+              const a = Atomics.load(ctrl, AROUND)
+              const il: [number, number] | null = Atomics.load(ctrl, HAS_IL) ? [Atomics.load(ctrl, ILX), Atomics.load(ctrl, ILY)] : null
+              work = (j0, j1) => searchRange(L, r, il, a < 0 ? Infinity : a, j0, j1)
+            } else if (op === OP_SUMS) work = (k0, k1) => voteSums(L, r, k0, k1)
+            else work = (k0, k1) => voteWrite(L, k0, k1)
+          }
+          claim(ctrl, n, block, (i0, i1) => {
+            work(i0, i1)
+            done += i1 - i0
+          })
         }
       } finally {
-        Atomics.sub(ctrl, CTRL.ACTIVE, 1)
-        Atomics.notify(ctrl, CTRL.ACTIVE)
+        Atomics.sub(ctrl, ACTIVE, 1)
+        Atomics.notify(ctrl, ACTIVE)
       }
       continue
     }
-    if (Atomics.wait(ctrl, CTRL.GEN, seen, 1000) === 'timed-out' && performance.now() - heard > patienceMs) return searched
+    if (Atomics.wait(ctrl, GEN, seen, 1000) === 'timed-out' && performance.now() - heard > patienceMs) return done
   }
 }
 
@@ -180,14 +224,15 @@ export const emptyCompletion = (input: CompletionInput): Completion => ({
 
 export type FillRequest =
   | { kind: 'complete'; id: number; input: CompletionInput }
-  | { kind: 'solve'; id: number; input: CompletionInput; start: Start; ctrl: Int32Array | null }
-  | { kind: 'help'; id: number; ctrl: Int32Array; levels: SharedLevel[]; r: number }
+  /** `helpers`: share the work (the leader then sends `share`s for its helpers). */
+  | { kind: 'solve'; id: number; input: CompletionInput; start: Start; helpers: boolean }
+  | { kind: 'help'; id: number; ctrl: Int32Array; shared: Shared }
 
 export type FillReply =
   | { kind: 'progress'; id: number; f: number }
-  | { kind: 'share'; id: number; levels: SharedLevel[]; r: number }
+  | { kind: 'share'; id: number; ctrl: Int32Array; shared: Shared }
   | { kind: 'done'; id: number; completion: Completion; energy: number }
-  | { kind: 'helped'; id: number; patches: number }
+  | { kind: 'helped'; id: number; pieces: number }
   | { kind: 'error'; id: number; message: string }
 
 const transfers = (c: Completion): Transferable[] => [c.centres.buffer as ArrayBuffer, c.sources.buffer as ArrayBuffer, c.weights.buffer as ArrayBuffer]
@@ -207,7 +252,7 @@ export function handleFillRequest(m: FillRequest, post: (r: FillReply, transfer?
   }
   try {
     if (m.kind === 'help') {
-      post({ id: m.id, kind: 'helped', patches: help(m.ctrl, m.levels, m.r) })
+      post({ id: m.id, kind: 'helped', pieces: help(m.ctrl, m.shared) })
       return
     }
     if (m.kind === 'complete') {
@@ -215,8 +260,8 @@ export function handleFillRequest(m: FillRequest, post: (r: FillReply, transfer?
       post({ id: m.id, kind: 'done', completion, energy: 0 }, transfers(completion))
       return
     }
-    const solved = m.ctrl
-      ? solveShared(m.input, m.start, m.ctrl, (levels, r) => post({ id: m.id, kind: 'share', levels, r }), onProgress)
+    const solved = m.helpers
+      ? solveShared(m.input, m.start, (ctrl, shared) => post({ id: m.id, kind: 'share', ctrl, shared }), onProgress)
       : solveAlone(m.input, m.start, onProgress)
     const completion = solved ? unshare(solved.completion) : emptyCompletion(m.input)
     post({ id: m.id, kind: 'done', completion, energy: solved ? solved.energy : 0 }, transfers(completion))

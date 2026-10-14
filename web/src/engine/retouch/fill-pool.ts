@@ -7,17 +7,18 @@
 //     computed from the canonical scene and the spots' shapes alone.
 //   - Each fill with a source (every Remove spot has one) is two completions, one starting from the source and one
 //     smooth, of which `complete` keeps the better (completion.ts, `pick`); they don't depend on each other either.
-//   - Within a completion, each search's target patches are split among the completion's helpers (fill-split.ts),
-//     when the page can share memory with its workers (cross-origin isolated, as LightBench's pages are).
+//   - Within a completion, the patch vectors' rows, each search's target patches and each vote's rows are split among
+//     the completion's helpers (fill-split.ts), when the page can share memory with its workers (cross-origin
+//     isolated, as LightBench's pages are).
 // What stays sequential, inside each completion: the pyramid's levels (coarse to fine), the iterations of a level, the
-// votes, the weights, the Gauss-Seidel starts and the final score (see `solve`).
+// weights, the Gauss-Seidel starts and the final score (see `solve`).
 //
 // With one slot (one or two logical cores) a fill is computed by one worker with `complete` itself, as before.
 // Workers are made when first needed and terminated after a minute without work.
 
 import { cpuBudget, type CpuBudget } from '../cpu-budget'
 import { pick, type Completion, type CompletionInput, type Solved, type Start } from './completion'
-import { canShare, newControl, type FillReply, type FillRequest } from './fill-split'
+import { canShare, type FillReply, type FillRequest } from './fill-split'
 
 export interface FillTask {
   job: number
@@ -61,8 +62,8 @@ export interface FillWorkerLike {
 
 interface Slot {
   worker: FillWorkerLike
-  handler: ((m: FillReply) => void) | null
-  fail: ((e: Error) => void) | null
+  /** The requests sent and not answered yet (a helper can be sent the next before it answers the last). */
+  calls: Map<number, { on: (m: FillReply) => void; resolve: (m: FillReply) => void; reject: (e: Error) => void }>
   dead: boolean
   timer: ReturnType<typeof setTimeout> | null
 }
@@ -89,19 +90,31 @@ export class FillWorkers {
       s.timer = null
       return s
     }
-    const slot: Slot = { worker: this.make(), handler: null, fail: null, dead: false, timer: null }
-    slot.worker.onmessage = (e) => slot.handler?.(e.data)
+    const slot: Slot = { worker: this.make(), calls: new Map(), dead: false, timer: null }
+    slot.worker.onmessage = (e) => {
+      const m = e.data
+      const c = slot.calls.get(m.id)
+      if (!c) return
+      if (m.kind === 'done' || m.kind === 'helped') {
+        slot.calls.delete(m.id)
+        c.resolve(m)
+      } else if (m.kind === 'error') {
+        slot.calls.delete(m.id)
+        c.reject(new Error(m.message))
+      } else c.on(m)
+    }
     slot.worker.onerror = (e) => {
       slot.dead = true
-      slot.fail?.(new Error(e.message || 'A Remove fill worker failed'))
+      const err = new Error(e.message || 'A Remove fill worker failed')
+      for (const c of slot.calls.values()) c.reject(err)
+      slot.calls.clear()
     }
     this.live++
     return slot
   }
 
   give(s: Slot) {
-    s.handler = null
-    s.fail = null
+    s.calls.clear()
     if (s.dead) {
       s.worker.terminate()
       this.live--
@@ -119,15 +132,9 @@ export class FillWorkers {
   /** One request on one worker; `on` hears progress and shares until the answer. */
   call(s: Slot, req: FillRequest, on: (m: FillReply) => void = () => {}): Promise<FillReply> {
     return new Promise((resolve, reject) => {
-      s.handler = (m) => {
-        if (m.id !== req.id) return
-        if (m.kind === 'done' || m.kind === 'helped') resolve(m)
-        else if (m.kind === 'error') reject(new Error(m.message))
-        else on(m)
-      }
-      s.fail = reject
-      if (s.dead) reject(new Error('A Remove fill worker failed'))
-      else s.worker.postMessage(req)
+      if (s.dead) return reject(new Error('A Remove fill worker failed'))
+      s.calls.set(req.id, { on, resolve, reject })
+      s.worker.postMessage(req)
     })
   }
 }
@@ -184,15 +191,14 @@ export async function computeFills(inputs: CompletionInput[], onProgress?: (job:
         const t = plan.tasks[ti]
         const leader = pool.take()
         const helpers = Array.from({ length: t.helpers }, () => pool.take())
-        const ctrl = helpers.length ? newControl() : null
         const helping: Promise<unknown>[] = []
         try {
-          const r = await pool.call(leader, { kind: 'solve', id: seq++, input: strip(inputs[t.job]), start: t.start, ctrl }, (m) => {
+          const r = await pool.call(leader, { kind: 'solve', id: seq++, input: strip(inputs[t.job]), start: t.start, helpers: helpers.length > 0 }, (m) => {
             if (m.kind === 'progress') {
               fractions[ti] = m.f
               report(t.job)
-            } else if (m.kind === 'share' && ctrl) {
-              for (const h of helpers) helping.push(pool.call(h, { kind: 'help', id: seq++, ctrl, levels: m.levels, r: m.r }))
+            } else if (m.kind === 'share') {
+              for (const h of helpers) helping.push(pool.call(h, { kind: 'help', id: seq++, ctrl: m.ctrl, shared: m.shared }))
             }
           })
           const d = r as Extract<FillReply, { kind: 'done' }>

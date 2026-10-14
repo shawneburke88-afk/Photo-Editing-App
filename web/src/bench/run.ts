@@ -24,6 +24,7 @@ import { DEFAULT_ADVANCED } from '../engine/develop/colour-mixer'
 import { CURRENT_PROCESS } from '../engine/develop/process'
 import { defaultsFor, displayUniforms, normalizeSettings, type DevelopSettings } from '../engine/develop/settings'
 import { DevelopEngine, GpuWorkError, retryableGpuError, type OutputImage, type ViewState } from '../engine/gpu/develop-engine'
+import { cpuBudget } from '../engine/cpu-budget'
 import { gpuGate } from '../engine/gpu/gate'
 import { presentChoice } from '../engine/gpu/present'
 import type { DecodeResult } from '../engine/raw/types'
@@ -320,7 +321,7 @@ export const STAGES: Record<StageId, StageDef> = {
       const t = edit(c.kind, { ...plain(s), spots: [{ id: `b${k}`, mode: 'remove', points: [[x, y]], size: 0.01, feather: 0.5, opacity: 1, offset: [0.05, 0], seed: 1 }] })
       return c.engine.renderStats(displayUniforms(t), wbOf(c, t), 64)
     },
-    note: 'a round spot of radius 1 % of the short side, at a new place each run; wall includes a 64 px measurement',
+    note: () => `a round spot of radius 1 % of the short side, at a new place each run; the fill on up to ${cpuBudget.total} worker threads (PHASE3.md Part 22); wall includes a 64 px measurement`,
   },
   export: {
     label: 'Export render, full size, 8-bit sRGB (develop + read back)',

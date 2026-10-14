@@ -181,7 +181,8 @@ export async function runExport(
     engine.destroy()
     engine = await DevelopEngine.create('readback')
   }
-  const encoders = new EncoderPool()
+  // Export is foreground work for its whole run: background passes (culling analysis) leave it the CPU budget.
+  const encoders = new EncoderPool({ hold: true })
   const space = OUTPUT_SPACES[s.space]
   const icc = buildIcc(space.profile)
   const budget = inFlightBudget((navigator as Navigator & { deviceMemory?: number }).deviceMemory)
