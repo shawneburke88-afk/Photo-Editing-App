@@ -83,7 +83,8 @@ export function SnapshotPanel(p: Props) {
                 className="snap-name"
                 disabled={p.disabled}
                 onMouseEnter={() => p.onHover(s)}
-                onFocus={() => p.onHover(s)}
+                // Keyboard focus previews it too; focus given back by a closing menu, or by a click, doesn't.
+                onFocus={(e) => e.currentTarget.matches(':focus-visible') && p.onHover(s)}
                 onBlur={() => p.onHover(null)}
                 onClick={() => p.onApply(s)}
                 onContextMenu={(e) => {
