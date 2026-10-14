@@ -456,3 +456,13 @@ export const PROOF_GUIDE = {
   order: 'Edit first, then proof. To adjust the photo for one output, Create Proof Copy and edit the copy, so the original stays as it is.',
   pitfalls: 'Browsers don’t tell web pages the monitor’s own profile, so the screen warning tests sRGB or Display P3 (whichever LightBench draws in), not your monitor. Relative Colorimetric clips colours the destination can’t reach; Perceptual squeezes them in (printer profiles only: matrix profiles such as sRGB have no perceptual tables, so both look alike). Simulate Paper & Ink shows the paper’s white and the ink’s black.',
 }
+
+/** Tone Curve Auto (PHASE3.md Part 21): tooltips of its buttons, its Amount and its suggestions. */
+export const CURVE_AUTO_HELP = {
+  contrast:
+    'Auto contrast: a gentle S-curve on the RGB point curve, fitted to this photo’s tones after Basic (the histogram behind the graph). The middle tone stays where it is; the darkest and brightest tones are never pushed further towards black or white, so nothing clips that the current curve didn’t. A photo already spread across the range gets a straight line. The points stay editable. One history step.',
+  colour:
+    'Auto colour: small Red, Green and Blue curve moves that make the three channels agree in the midtones (fully) and in the shadows and highlights (half-way), at most 4 % of the range. It removes an even colour cast; white balance isn’t touched. A photo dominated by one colour (a blue sky) is nudged too, within the limit. One history step.',
+  amount: 'How much of the last Auto or suggestion is applied, from the curve before it (0 %) to the full result (100 %). Changes that history step; adds none. Double-click for 100 %.',
+  suggestions: 'The curve presets and the two Auto results, drawn on this photo. Hover to preview on the photo; click to apply (one history step).',
+}

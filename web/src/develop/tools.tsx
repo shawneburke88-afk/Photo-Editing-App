@@ -70,3 +70,11 @@ export const GROUP_ICONS: Record<'crop' | 'remove' | 'basic' | 'curve' | 'colour
   ),
 }
 
+/** The on/off eye of the tool groups (ToolStack) and their sections (SectionEye), 15 px. */
+export const eyeIcon = (off: boolean) => (
+  <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+    <path fill="none" stroke="currentColor" strokeWidth="1.4" d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8z" />
+    <circle cx="8" cy="8" r="2.2" fill="currentColor" />
+    {off && <path stroke="currentColor" strokeWidth="1.6" d="M2.5 14 13.5 2" />}
+  </svg>
+)

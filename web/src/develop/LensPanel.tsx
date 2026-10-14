@@ -9,6 +9,7 @@ import { cameraName, lensName, mlText, type DbLens, type LensfunDb } from '../en
 import type { LensMeta } from '../engine/lens/meta'
 import { HELP } from './help'
 import { Slider } from './Slider'
+import { SectionEye } from './SectionEye'
 
 interface Props {
   lens: LensSettings
@@ -79,7 +80,7 @@ export function LensPanel({ lens, status, meta, db, disabled, showHint, onLoadDb
   return (
     <div className="dpanel lens-panel">
       <section>
-        <h3>Lens</h3>
+        <div className="section-head"><h3>Lens</h3><SectionEye id="crop.lens" /></div>
         <label className="lens-check" title="Corrects the lens’s distortion, chromatic aberration and dark corners with a profile of the lens">
           <input type="checkbox" checked={lens.enabled} disabled={disabled || !meta} onChange={(e) => set(e.target.checked ? 'Lens corrections on' : 'Lens corrections off', { enabled: e.target.checked })} />
           Lens corrections

@@ -8,7 +8,7 @@
 // diagonal. Regions: drag on the graph to move the region under the pointer, or use the sliders; the split points
 // are the handles under the graph.
 
-import { useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { ImageStats } from '../engine/gpu/develop-engine'
 import {
   CURVE_NORMS,
@@ -36,6 +36,7 @@ import {
 import { CURVE_GUIDE, HELP } from './help'
 import { Slider } from './Slider'
 import { withKey } from '../settings/shortcuts'
+import { SectionEyeRow } from './SectionEye'
 
 export type CurveMode = 'regions' | 'point'
 export interface CurveView {
@@ -65,6 +66,8 @@ interface Props {
   onDragClip: (on: boolean) => void
   clipWhileDragging: boolean
   onClipWhileDragging: (on: boolean) => void
+  /** The Auto row (PHASE3.md Part 21), under the presets. */
+  auto?: ReactNode
 }
 
 const VIEWS: { id: string; label: string; view: CurveView; title: string; colour?: string }[] = [
@@ -542,6 +545,7 @@ export function ToneCurvePanel(p: Props) {
             </svg>
           </button>
         </div>
+        <SectionEyeRow ids={['curve.regions', 'curve.rgb', 'curve.red', 'curve.green', 'curve.blue']} label="Tone curve section eyes" />
         <div className={`curve-graph ${view.mode}`}>
           <svg
             ref={svg}
@@ -701,6 +705,7 @@ export function ToneCurvePanel(p: Props) {
             </div>
           </div>
         )}
+        {p.auto}
 
         <Slider
           label="Refine Saturation"

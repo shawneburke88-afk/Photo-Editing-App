@@ -63,6 +63,10 @@ import { boostedGrading, withColourGrading, type ColourGradingSettings } from '.
 import { DEFAULT_MIXER_UI, type MixerUi } from './mixerUi'
 import { MixerTatLayer, PointPickLayer } from './MixerTatLayer'
 import { CHANNEL_NAMES, BAND_NAMES, MAX_POINTS, newPoint, withColourMixer, withPoints, type ColourMixerSettings, type MixerChannel } from '../engine/develop/colour-mixer'
+import { applyEyes, eyeShown, hiddenNames, NO_GROUP_EYES, wbHidden, type SectionGroup, type SectionId } from './sectionEyes'
+import { SectionEyeContext, type SectionEyes } from './sectionEyeContext'
+import { CurveAuto } from './CurveAuto'
+import { useCurveAuto } from './useCurveAuto'
 import { useProof } from './useProof'
 import { ProofBar } from './ProofBar'
 import { currentDisplaySpace, displaySpaceNote } from '../engine/gpu/display-space'
@@ -102,12 +106,6 @@ interface AutoOptionsState {
 const DEFAULT_AUTO_OPTIONS: AutoOptionsState = { strength: 1, sliders: AUTO_SLIDERS.map((x) => x.key) }
 
 type PasteMode = { mode: 'copy' | 'sync' | 'paste' | 'preset'; clip: Clipboard }
-
-/** The Basic group's settings at their defaults (its on/off eye): white balance, tone and presence. */
-function withoutBasic(s: DevelopSettings, d: DevelopSettings): DevelopSettings {
-  const { whiteBalance, exposure, contrast, highlights, shadows, whites, blacks, vibrance, saturation } = d
-  return { ...s, whiteBalance, exposure, contrast, highlights, shadows, whites, blacks, vibrance, saturation }
-}
 
 /** What a crop session changed, as the history step's name. */
 function cropLabel(before: GeometrySettings, after: GeometrySettings): string {
@@ -230,7 +228,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
    */
   const detection = useRef<{ id: number; lens: string; job: Promise<Detection> } | null>(null)
   /** Groups switched off with their eye (a view only). */
-  const [bypass, setBypass] = useState<Bypass>({ crop: false, remove: false, basic: false, curve: false, colour: false, grading: false, detail: false })
+  const [bypass, setBypass] = useState<Bypass>(NO_GROUP_EYES)
+  /** Sections switched off with their eye (a view only; PHASE3.md Part 21). */
+  const [sectionsOff, setSectionsOff] = useState<ReadonlySet<SectionId>>(() => new Set())
+  /** Bumped after GPU work on the photo's real white balance, so the RAW stage is built for the view again. */
+  const [stageGen, setStageGen] = useState(0)
   /**
    * The Tone Curve (PHASE3.md Part 12): the graph shown, its targeted adjustment tool and the tone under the pointer,
    * the curve shown while a drag is in progress (one history step when it ends), clipping shown during a drag, and the
@@ -344,6 +346,25 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   historyRef.current = history
   const infoRef = useRef(info)
   infoRef.current = info
+  /** White balance hidden by an eye: the RAW stage is then built with As Shot, as for a reset photo (sectionEyes.ts). */
+  const hideWb = wbHidden(bypass, sectionsOff)
+  const hideWbRef = useRef(hideWb)
+  hideWbRef.current = hideWb
+  /**
+   * GPU work on the photo's real settings (its thumbnail, Auto) while an eye hides the white balance: the RAW stage is
+   * built for the settings first, and for the view again afterwards (PHASE3.md Part 21). Otherwise the work just runs.
+   */
+  const onRealStage = useCallback(async <T,>(engine: DevelopEngine, s: DevelopSettings, inf: SensorInfo, work: () => Promise<T>): Promise<T> => {
+    const want = stageOptions(s, inf)
+    if (!hideWbRef.current || sameStage(builtStage.current, want)) return work()
+    await gpuGate.foreground(() => engine.process(want))
+    builtStage.current = want
+    try {
+      return await work()
+    } finally {
+      setStageGen((g) => g + 1)
+    }
+  }, [])
   /** The geometry shown in the Crop group: the crop being edited, else the photo's. */
   const geometry = draft ?? settings.geometry
   const frameOf = (g: GeometrySettings) => (engineRef.current && info ? engineRef.current.geometry(g, true).frame : null)
@@ -527,7 +548,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   // ---- re-run the raw stage when white balance / highlights / demosaic change (debounced)
   useEffect(() => {
     if (status.kind !== 'ready' || !info || !history) return
-    const opts = stageOptions(settings, info)
+    // An eye hiding the white balance shows the photo exactly as with As Shot: the stage is built so (PHASE3.md Part 21).
+    const opts = stageOptions(hideWb ? { ...settings, whiteBalance: defaultsFor(info.kind, info.iso).whiteBalance } : settings, info)
     if (sameStage(builtStage.current, opts)) return
     const t = setTimeout(() => {
       const engine = engineRef.current
@@ -545,7 +567,13 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     }, 300)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, info, status.kind])
+  }, [settings, info, status.kind, hideWb, stageGen])
+
+  // Another photo: every eye on again (groups and sections).
+  useEffect(() => {
+    setBypass(NO_GROUP_EYES)
+    setSectionsOff(new Set())
+  }, [id])
 
   // ---- drawing (coalesced so dragging never queues up frames)
   const indicators: Indicators = useMemo(
@@ -553,8 +581,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     () => ({ clip: clipSettings, showClip: overlay || (curveDragClip && clipWhileDragging === 1), raw: rawClipSettings, showRaw: rawOverlay, ...(proof.draw ? { proof: proof.draw } : {}) }),
     [clipSettings, overlay, rawClipSettings, rawOverlay, curveDragClip, clipWhileDragging, proof.draw],
   )
-  const latest = useRef({ settings, info, view, before, beforeSettings, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost })
-  latest.current = { settings, info, view, before, beforeSettings, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost }
+  const latest = useRef({ settings, info, view, before, beforeSettings, indicators, hover, draft, bypass, sectionsOff, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost })
+  latest.current = { settings, info, view, before, beforeSettings, indicators, hover, draft, bypass, sectionsOff, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost }
   /** The settings drawn: Before shows the defaults (or the snapshot set as Before); a preset or snapshot hovered, the crop being edited and switched-off groups apply on top. */
   const shownOf = (x: typeof latest.current, inf: SensorInfo): DevelopSettings => {
     // Before is the snapshot set as Before, exactly as it was saved (its process version too), …
@@ -566,14 +594,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     if (x.mixerDraft && !x.hover) s = withColourMixer(s, x.mixerDraft.m)
     if (x.gradingDraft && !x.hover) s = withColourGrading(s, x.gradingDraft.g)
     if (x.gradingBoost && !x.hover) s = withColourGrading(s, boostedGrading(s.colourGrading))
-    if (x.bypass.basic) s = withoutBasic(s, defaultsFor(inf.kind, inf.iso))
-    if (x.bypass.curve) s = withToneCurve(s, undefined)
-    if (x.bypass.colour) s = withColourMixer(s, undefined)
-    if (x.bypass.grading) s = withColourGrading(s, undefined)
-    if (x.bypass.remove) s = withoutSpots(s)
-    if (x.bypass.detail && s.detail) s = { ...s, detail: undefined }
-    if (x.draft) return { ...s, geometry: x.draft }
-    return x.bypass.crop ? { ...s, geometry: DEFAULT_GEOMETRY, lens: LEGACY_LENS } : s
+    // The eyes (PHASE3.md Parts 1 and 21): hidden sections at their defaults, then hidden groups (a group's eye overrides
+    // its sections'). While cropping, the crop being edited is shown, without Crop & Lens's eyes.
+    const hidden = x.draft ? new Set([...x.sectionsOff].filter((k) => !k.startsWith('crop.'))) : x.sectionsOff
+    s = applyEyes(s, x.draft ? { ...x.bypass, crop: false } : x.bypass, hidden, { defaults: defaultsFor(inf.kind, inf.iso), lensApplied: true })
+    return x.draft ? { ...s, geometry: x.draft } : s
   }
 
   // Histogram: measured on a small rendering of the (cropped) result shortly after each redraw (throttled, one at
@@ -669,7 +694,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   useEffect(() => {
     if (status.kind === 'ready') requestRender()
-  }, [status.kind, settings, view, before, beforeSettings, indicators, hover, draft, bypass, guiding, removing, requestRender, lensDb, curveDraft, maskPreview, noiseDb, mixerDraft, mixerVis, gradingDraft, gradingBoost])
+  }, [status.kind, settings, view, before, beforeSettings, indicators, hover, draft, bypass, sectionsOff, guiding, removing, requestRender, lensDb, curveDraft, maskPreview, noiseDb, mixerDraft, mixerVis, gradingDraft, gradingBoost])
   // Another curve graph shown: its histogram is measured again.
   useEffect(() => {
     if (status.kind === 'ready') scheduleStats()
@@ -712,7 +737,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       sidecars.schedule([photoId])
       try {
         if (engine) {
-          await saveThumb(photoId, await renderThumbnail(engine, s, inf))
+          await saveThumb(photoId, await onRealStage(engine, s, inf, () => renderThumbnail(engine, s, inf)))
           forgetThumbUrl(photoId)
         }
       } catch {
@@ -720,7 +745,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       }
       onEdited()
     },
-    [catalog, onEdited],
+    [catalog, onEdited, onRealStage],
   )
 
   useEffect(() => {
@@ -780,6 +805,26 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     },
     [change],
   )
+  /** Tone Curve Auto (PHASE3.md Part 21): Auto contrast, Auto colour, their Amount and the suggestions. */
+  const curveAuto = useCurveAuto({
+    engine: () => engineRef.current,
+    info,
+    history,
+    settings,
+    ready: status.kind === 'ready',
+    photoId: id,
+    setHistory,
+    markDirty: () => {
+      dirty.current = true
+    },
+    onRealStage: (work) => {
+      const e = engineRef.current
+      const inf = infoRef.current
+      const h = historyRef.current
+      return e && inf && h ? onRealStage(e, current(h), inf, work) : work()
+    },
+    preview: (tc) => setCurveDraft(tc === null ? null : { tc }),
+  })
   const toggleCurveTarget = () => {
     if (status.kind !== 'ready') return
     if (draft) endCrop(true)
@@ -908,12 +953,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       try {
         // Like Lightroom's Auto, this leaves white balance alone (owner's decision, 2026-10-11).
         const start = current(history)
-        const r = await solveAuto(
-          start,
-          target,
-          async (s) => metricsFromStats(await engine.renderStats(displayUniforms(s), multipliers(s, info), 256)),
-          12,
-          options,
+        const r = await onRealStage(engine, start, info, () =>
+          solveAuto(start, target, async (s) => metricsFromStats(await engine.renderStats(displayUniforms(s), multipliers(s, info), 256)), 12, options),
         )
         change(`Auto: ${target.name}`, r.settings, true)
       } catch (e) {
@@ -922,7 +963,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         setAutoBusy(false)
       }
     },
-    [info, history, change, autoOptions],
+    [info, history, change, autoOptions, onRealStage],
   )
 
   // Changing Auto's strength or sliders re-runs it on a photo whose tone came from Auto (after a short pause).
@@ -1087,6 +1128,33 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const updateProcess = () => change(`Update to process ${CURRENT_PROCESS}`, { ...settings, process: CURRENT_PROCESS })
   // What the Lens section shows: resolved by the engine with the database as it is now (lensDb re-renders this).
   const lensStatus: LensStatus = status.kind === 'ready' && engineRef.current ? engineRef.current.lensNow(settings.lens).status : { state: info?.lens ? 'loading' : 'not-raw', exifLens: '' }
+  // The section eyes (PHASE3.md Part 21): their state for the groups' panels, and the "Hidden: …" badge's names.
+  const sectionCtx = { defaults, lensApplied: lensStatus.state === 'applied' }
+  const sectionEyes: SectionEyes = {
+    hidden: sectionsOff,
+    shown: (k) => eyeShown(k, settings, sectionCtx, sectionsOff),
+    groupOff: (g: SectionGroup) => bypass[g],
+    toggle: (k) =>
+      setSectionsOff((h) => {
+        const n = new Set(h)
+        if (n.has(k)) n.delete(k)
+        else n.add(k)
+        return n
+      }),
+    disabled: status.kind !== 'ready',
+  }
+  const hiddenBadge = hiddenNames(
+    [
+      { id: 'crop', name: 'Crop & Lens', off: bypass.crop },
+      { id: 'remove', name: 'Remove', off: bypass.remove },
+      { id: 'basic', name: 'Basic', off: bypass.basic },
+      { id: 'curve', name: 'Tone Curve', off: bypass.curve },
+      { id: 'colour', name: 'Colour Mixer', off: bypass.colour },
+      { id: 'grading', name: 'Colour Grading', off: bypass.grading },
+      { id: 'detail', name: 'Detail', off: bypass.detail && detailOn(settings.detail) },
+    ],
+    sectionsOff,
+  )
 
   // ---- Transform and Upright (engine/develop/upright.ts; uprightRun.ts runs it on the photo shown)
   /** The lines of the photo shown, detected once per lens correction (after it, before the perspective). */
@@ -2208,8 +2276,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           {before && <div className="dbadge">{beforeSnap ? `Before: snapshot “${beforeSnap.name}”` : 'Before'}</div>}
           {!before && hoverSnap && !draft && <div className="dbadge">Preview: snapshot “{hoverSnap.name}”</div>}
           {!before && hoverPreset && !hoverSnap && !draft && <div className="dbadge">Preview: {hoverPreset.name}</div>}
-          {!before && !draft && (bypass.crop || bypass.remove || bypass.basic || bypass.curve || bypass.colour || bypass.grading || (bypass.detail && detailOn(settings.detail))) && (
-            <div className="dbadge">Hidden: {[bypass.crop && 'Crop & Lens', bypass.remove && 'Remove', bypass.basic && 'Basic', bypass.curve && 'Tone Curve', bypass.colour && 'Colour Mixer', bypass.grading && 'Colour Grading', bypass.detail && detailOn(settings.detail) && 'Detail'].filter(Boolean).join(', ')}</div>
+          {!before && !draft && hiddenBadge.length > 0 && (
+            <div className="dbadge">Hidden: {hiddenBadge.join(', ')}</div>
           )}
           {mixerTarget && !draft && !guiding && !before && (
             <div className="dbadge pick curve-hint">
@@ -2259,6 +2327,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
       <ResizeHandle axis="x" value={rightW} min={240} max={520} direction={-1} onChange={setRightW} label="Resize right panel" />
       <aside className="dright">
+        <SectionEyeContext.Provider value={sectionEyes}>
         <ToolStack
           reveal={reveal}
           header={
@@ -2444,6 +2513,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   onDragClip={setCurveDragClip}
                   clipWhileDragging={clipWhileDragging === 1}
                   onClipWhileDragging={(on) => setClipWhileDragging(on ? 1 : 2)}
+                  auto={<CurveAuto {...curveAuto} />}
                 />
               ),
             },
@@ -2522,6 +2592,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             },
           ]}
         />
+        </SectionEyeContext.Provider>
       </aside>
       {pasting && (
         <PasteDialog

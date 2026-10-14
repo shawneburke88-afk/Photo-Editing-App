@@ -8,6 +8,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useStoredJson } from '../lib/useStoredJson'
+import { eyeIcon } from './tools'
 
 export type GroupId = 'crop' | 'remove' | 'basic' | 'curve' | 'colour' | 'grading' | 'detail' | 'effects'
 
@@ -25,14 +26,6 @@ export interface ToolGroup {
    */
   bypass?: { off: boolean; onToggle: () => void; title: string }
 }
-
-const EYE = (off: boolean) => (
-  <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
-    <path fill="none" stroke="currentColor" strokeWidth="1.4" d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8z" />
-    <circle cx="8" cy="8" r="2.2" fill="currentColor" />
-    {off && <path stroke="currentColor" strokeWidth="1.6" d="M2.5 14 13.5 2" />}
-  </svg>
-)
 
 interface Props {
   groups: ToolGroup[]
@@ -151,7 +144,7 @@ export function ToolStack({ groups, header, footer, reveal }: Props) {
                   title={g.bypass.title}
                   aria-label={g.bypass.title}
                 >
-                  {EYE(g.bypass.off)}
+                  {eyeIcon(g.bypass.off)}
                 </button>
               )}
             </header>
