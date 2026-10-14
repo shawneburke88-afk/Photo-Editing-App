@@ -8,6 +8,7 @@ import { HELP } from './help'
 import { Slider } from './Slider'
 
 import { CROP_OVERLAYS, type CropOverlayKind } from './tools'
+import { SectionEye } from './SectionEye'
 
 export type GeometryEdit =
   | { kind: 'angle'; angle: number }
@@ -118,6 +119,7 @@ export function CropPanel({ geometry: g, frame, cropSize, cropping, leveling, ov
             Reset
           </button>
           {cropSize && <span className="muted small crop-size" title="Size of the crop in pixels, as exported at 100 %">{cropSize[0]} × {cropSize[1]}</span>}
+          <SectionEye id="crop.crop" />
         </div>
 
         <div className="crop-row">

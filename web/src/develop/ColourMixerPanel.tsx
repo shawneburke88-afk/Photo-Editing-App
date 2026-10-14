@@ -30,6 +30,7 @@ import { HELP, MIXER_GUIDE } from './help'
 import { Slider } from './Slider'
 import { withKey } from '../settings/shortcuts'
 import type { MixerUi, MixerView } from './mixerUi'
+import { SectionEyeRow } from './SectionEye'
 
 
 interface Props {
@@ -391,6 +392,7 @@ export function ColourMixerPanel(p: Props) {
             Point Color{points.length > 0 && <span className="curve-edited" aria-label="(changed)">•</span>}
           </button>
         </div>
+        <SectionEyeRow ids={['colour.mixer', 'colour.points']} label="Colour Mixer section eyes" />
         {ui.tab === 'mixer' ? mixerTab : pointTab}
       </section>
     </div>

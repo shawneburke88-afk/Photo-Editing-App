@@ -27,6 +27,7 @@ import {
 import { GRADING_GUIDE, HELP } from './help'
 import { Slider } from './Slider'
 import type { GradingView } from './gradingUi'
+import { SectionEyeRow } from './SectionEye'
 
 interface Props {
   /** The grade shown (a drag in progress included); undefined = untouched. */
@@ -338,6 +339,7 @@ export function ColourGradingPanel(p: Props) {
             )
           })}
         </div>
+        <SectionEyeRow ids={['grading.shadows', 'grading.midtones', 'grading.highlights', 'grading.global']} label="Colour Grading wheel eyes" />
         {p.view === '3way' ? (
           <div className="grade-3way">
             <div className="grade-row">{wheelBlock('midtones', 112, false)}</div>

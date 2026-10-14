@@ -5,6 +5,7 @@ import type { SensorLayout } from '../engine/raw/types'
 import { AutoControls, type AutoProps } from './AutoControls'
 import { HELP } from './help'
 import { Slider } from './Slider'
+import { SectionEye } from './SectionEye'
 
 interface Props {
   settings: DevelopSettings
@@ -56,6 +57,7 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, layo
       <section>
         <div className="dpanel-head">
           <h3>White balance</h3>
+          <SectionEye id="basic.wb" />
           <label className="hints-toggle" title="Show a short description next to each slider’s name when the panel is wide enough. Hover a slider’s name for full details.">
             <input type="checkbox" checked={hints} onChange={(e) => onHints(e.target.checked)} /> Hints
           </label>
@@ -114,7 +116,7 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, layo
       </section>
 
       <section>
-        <h3>Tone</h3>
+        <div className="section-head"><h3>Tone</h3><SectionEye id="basic.tone" /></div>
         <AutoControls {...auto} busy={auto.busy || disabled} />
         <Slider label="Exposure" {...guide('exposure')} value={s.exposure} min={-5} max={5} step={0.05} defaultValue={0} format={ev} disabled={disabled}
           onChange={(v) => set('Exposure', { exposure: v })} />
@@ -131,7 +133,7 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, layo
       </section>
 
       <section>
-        <h3>Presence</h3>
+        <div className="section-head"><h3>Presence</h3><SectionEye id="basic.presence" /></div>
         <Slider label="Vibrance" {...guide('vibrance')} value={s.vibrance} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
           onChange={(v) => set('Vibrance', { vibrance: v })} />
         <Slider label="Saturation" {...guide('saturation')} value={s.saturation} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
