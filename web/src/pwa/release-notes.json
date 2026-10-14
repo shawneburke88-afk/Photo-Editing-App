@@ -1,5 +1,30 @@
 [
   {
+    "version": "0.6.4",
+    "date": "2026-10-14",
+    "newFeatures": [
+      "Remove uses several processor cores to fill a spot, instead of one. The fills are exactly the same as before, so your edits don't change.",
+      "Exporting several photos is pipelined: while one photo is being saved as a JPEG, PNG or TIFF, the graphics card already develops the next, and several photos are encoded at once. The files are exactly the same as before.",
+      "LightBench's heavy background work shares half of your processor's cores. Work you're waiting for (Remove, Export, opening a folder) goes first; the culling measurements pause while an export runs and continue afterwards.",
+      "Export's Stop button now reads \"Stop after the photos in progress\": photos already developed are still saved."
+    ],
+    "bugFixes": []
+  },
+  {
+    "version": "0.6.3",
+    "date": "2026-10-14",
+    "newFeatures": [
+      "Eyes for each section in Develop: besides each group's eye, you can now hide just one section to compare: Crop, Transform and Lens; White balance, Tone and Presence; the Tone Curve's Regions, RGB, Red, Green and Blue curves; Mixer and Point Color; each Colour Grading wheel; Sharpening and Noise reduction. Nothing is changed or saved, and the badge on the photo lists what is hidden.",
+      "Auto in the Tone Curve: Auto contrast fits a gentle S-curve to the photo without clipping more than before, and Auto colour makes small Red, Green and Blue curve corrections to remove a colour cast (white balance isn't touched). Both are ordinary curve points you can edit.",
+      "Curve suggestions: the curve presets and both Auto results are shown as small previews of your own photo. Hover to preview on the photo, click to apply.",
+      "Each Auto or suggestion is one step you can undo, with an Amount slider to dial it back."
+    ],
+    "bugFixes": [
+      "Hiding Basic now shows the photo exactly as shot, including white balance on RAW files (it used to be a close approximation).",
+      "The eyes now reset when you move to another photo in Develop."
+    ]
+  },
+  {
     "version": "0.6.2",
     "date": "2026-10-14",
     "newFeatures": [

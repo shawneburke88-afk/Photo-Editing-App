@@ -6,6 +6,7 @@ import { lightroomNote } from '../sidecar/lightroom'
 import { withKey } from '../settings/shortcuts'
 import { HELP } from './help'
 import { Slider } from './Slider'
+import { SectionEye } from './SectionEye'
 
 export type TransformSlider = 'vertical' | 'horizontal' | 'rotate' | 'aspect' | 'scale' | 'offsetX' | 'offsetY'
 
@@ -44,7 +45,7 @@ export function TransformPanel({ transform, focal, busy, message, summary, guidi
   return (
     <div className="dpanel transform-panel">
       <section>
-        <h3>Transform</h3>
+        <div className="section-head"><h3>Transform</h3><SectionEye id="crop.transform" /></div>
         <div className="upright-modes" role="group" aria-label="Upright">
           {UPRIGHT_MODES.map((m) => (
             <button

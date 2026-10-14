@@ -10,6 +10,7 @@ import type { NoiseProfileData, ProfileChoice } from '../engine/detail/noiseprof
 import type { SourceKind } from '../engine/develop/settings'
 import { HELP } from './help'
 import { Slider } from './Slider'
+import { SectionEye } from './SectionEye'
 
 interface Props {
   detail: DetailSettings | undefined
@@ -122,6 +123,7 @@ export function DetailPanel({ detail, kind, defaults, disabled, showHint, profil
       <section>
         <div className="dpanel-head">
           <h3>Sharpening</h3>
+          <SectionEye id="detail.sharpen" />
           <button className="button small" disabled={disabled || JSON.stringify(d.sharpen) === JSON.stringify(base.sharpen)} onClick={() => onChange('Reset Sharpening', { ...d, sharpen: base.sharpen })} title={kind === 'raw' ? `Sharpening back to this RAW photo's default: Amount ${base.sharpen.amount} (40, or 25 above ISO ${HIGH_ISO}), Radius 1.0 (the photo's own radius), Detail 25, Masking 0` : 'Sharpening back to off (JPEGs are already sharpened by the camera)'}>
             Reset
           </button>
@@ -160,6 +162,7 @@ export function DetailPanel({ detail, kind, defaults, disabled, showHint, profil
       <section>
         <div className="dpanel-head">
           <h3>Noise reduction</h3>
+          <SectionEye id="detail.noise" />
           <button className="button small" disabled={disabled || JSON.stringify(d.noise) === JSON.stringify(DEFAULT_DETAIL.noise)} onClick={() => onChange('Reset Noise reduction', { ...d, noise: DEFAULT_DETAIL.noise })} title="Noise reduction back to off, with Lightroom's default Detail, Contrast and Smoothness">
             Reset
           </button>
