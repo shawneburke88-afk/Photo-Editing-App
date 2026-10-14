@@ -693,6 +693,22 @@ snippets and are **[unconfirmed]**. Claims were not read.
 
 **Owner's decision (2026-10-13), question 1:** masks are anchored to the photo: option 1 above. Control points are stored in sensor coordinates, as the Remove spots are, so masks follow the content when the angle, Upright or lens settings change. Shapes are drawn in the straightened frame.
 
+**Owner's decisions (2026-10-14), questions 2–14** (asked as cards; the recommendation was listed first each time):
+
+2. **v1 scope:** the planned set **plus an AI Depth range mask now**, pulling that part of Phase 4 forward. The depth model is Depth Anything V2 Small (Apache-2.0; training data named, so it passes the 2026-10-14 rule in [PHASE4_MODELS.md](PHASE4_MODELS.md)). Built as two builds: core masking first, then Depth with the model download (opt-in, with fp32 files for adapters without `shader-f16`).
+3. **Combine maths:** darktable's (intersect = min, add = max, subtract = a·(1 − c)) and darktable's falloffs. Described as LightBench's own maths, not "Lightroom-compatible" (Adobe doesn't document its maths).
+4. **Range masks measure** after global white balance and exposure, before tone and colour edits. (JzCzhz or OkLab for colour range was not asked: the builder chooses and documents it.)
+5. **Local Contrast:** scene-referred, as color balance rgb's contrast before the sigmoid, matching the global Contrast slider.
+6. **Panel:** a docked Masks group in the tool stack; red overlay by default with a colour-blind-safe alternative; Lightroom's six overlay modes.
+7. **Copy/Paste:** Masks unticked by default; pasted masks are **added** to the target's; never in Auto Sync; presets may hold gradients and range masks, not brush strokes.
+8. **Lightroom:** read `crs:` masks best-effort, labelled experimental; warn when a `.acr` sidecar exists (its masks can't be read); never write `crs:` masks.
+9. **Caps:** 64 masks, 32 components per mask, 10,000 dabs per mask.
+10. **AI rasters (the depth map):** stored **inside the .xmp**, compressed (LightCraft's way): portable and identical on every machine. The build measures and documents the size it adds.
+11. **Spatial local sliders** (Texture, Clarity, Dehaze, Sharpness, Noise, Moiré, Defringe): each joins masks when its global tool lands.
+12. **Patents: design around.** Range masks apply to the whole photo and shapes work alone: **no range ∩ shape intersect** (US 11,223,744, active until 2037-12-02) and **no automatic colour-aware brush** (US 8,837,849, active until 2031-10-04) for now. Depth ∩ shape is held back too until any advice says otherwise. Separate masks can still be stacked. Not a legal opinion.
+13. **Pen pressure:** yes (pressure → size/flow), off by default.
+14. **darktable XMP export of masks:** later, not in the first build.
+
 1. **Coordinate frame.** Store mask control points in **sensor coordinates** (like the Remove spots and darktable;
    masks follow the content when the angle, Upright or lens settings change) and draw shapes in the straightened frame
    (recommended), or in the **straightened frame** as the crop and Part 1's note say (masks drift if geometry changes
