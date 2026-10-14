@@ -44,7 +44,8 @@ export function SettingsDialog({ section: initial = 'keyboard', onClose }: { sec
         </div>
         <p className="settings-foot muted small">
           Settings are remembered in this browser (not in the library or your photo folders). LightBench is free software (GPL-3.0):{' '}
-          <a href={SOURCE_URL} target="_blank" rel="noreferrer">source code</a>.
+          <a href={SOURCE_URL} target="_blank" rel="noreferrer">source code</a>. This product includes DNG technology
+          under license by Adobe.
         </p>
       </div>
     </div>

@@ -129,7 +129,7 @@ const wrap = (a: number) => a - 2 * Math.PI * Math.floor((a + Math.PI) / (2 * Ma
 let hsvCentres: number[] | null = null
 
 /** sRGB colour at an HSV hue (degrees), saturation s, value 1, linear. */
-function hsvLinear(h: number, s: number): Vec3 {
+export function hsvLinear(h: number, s: number): Vec3 {
   const c = s
   const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
   const m = 1 - c

@@ -5,9 +5,9 @@ describe('benchmark plan', () => {
   it('Quick: the 24 MP Bayer image through every stage, the sRGB image in part; 1 warm-up and 3 runs', () => {
     const p = benchPlan('quick')
     expect(p.datasets.map((d) => [d.id, d.width, d.height])).toEqual([['bayer24', 6000, 4000], ['srgb24', 6000, 4000]])
-    expect(p.datasets[0].stages).toEqual(['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'remove', 'export', 'exportAll', 'jpeg', 'thumb'])
+    expect(p.datasets[0].stages).toEqual(['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'grading', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'remove', 'export', 'exportAll', 'jpeg', 'thumb'])
     expect([p.warmup, p.runs, p.scaledTo]).toEqual([1, 3, null])
-    expect(plannedRuns(p)).toBe((16 + 3) * 4)
+    expect(plannedRuns(p)).toBe((17 + 3) * 4)
   })
 
   it('Full: 45 MP and X-Trans too, Markesteijn 3-pass, 2 warm-ups and 5 runs', () => {
@@ -32,6 +32,19 @@ describe('benchmark plan', () => {
     expect(gpuOff('display')).toBe(true)
     expect(gpuOff('mixerInput')).toBe(false)
     expect(STAGES.mixer.subs!('bayer').map((x) => x.id)).toEqual(['input', 'filters', 'display'])
+  })
+
+  it('Colour Grading row: the display pass at fit with a grade on, after the mixer rows', async () => {
+    const { defaultsFor, displayUniforms } = await import('../engine/develop/settings')
+    const s = STAGES.grading.settings(defaultsFor('raw', 400), 'bayer')
+    expect(s.colourGrading?.shadows.sat).toBe(30)
+    expect(displayUniforms(s).colourGrading).not.toBeNull()
+    expect(STAGES.grading.label).toBe('Colour Grading on: display pass, fit')
+    const gpu = STAGES.grading.gpu as (l: string) => boolean
+    expect(gpu('display')).toBe(true)
+    expect(gpu('mixerInput')).toBe(false)
+    const stages = benchPlan('quick').datasets[0].stages
+    expect(stages.indexOf('grading')).toBe(stages.indexOf('mixerNoGuide') + 1)
   })
 
   it('every planned stage exists; scaled images and a library photo are added as asked', () => {

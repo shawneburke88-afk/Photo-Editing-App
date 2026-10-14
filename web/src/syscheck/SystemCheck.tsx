@@ -24,7 +24,8 @@ export function SystemCheck() {
           </p>
           <p className="muted small">
             LightBench is free software (GPL-3.0; parts AGPL-3.0, see THIRD_PARTY_NOTICES.md in the source):{' '}
-            <a href={SOURCE_URL} target="_blank" rel="noreferrer">source code on GitHub</a>.
+            <a href={SOURCE_URL} target="_blank" rel="noreferrer">source code on GitHub</a>. This product includes DNG
+            technology under license by Adobe.
           </p>
         </div>
         <EnvironmentCheck />

@@ -826,6 +826,31 @@ button.kbd:hover { border-color: var(--muted); }
 .point-ranges { font-size: 0.85rem; margin: 4px 0 2px; }
 .point-pick-layer { cursor: crosshair; }
 
+/* Colour Grading (PHASE3.md Part 17) */
+.grade-views { display: flex; width: 100%; box-sizing: border-box; margin-bottom: 8px; }
+.grade-views button { flex: 1 1 auto; justify-content: center; padding: 4px 2px; font-size: 0.76rem; }
+.grade-3way { display: flex; flex-direction: column; gap: 6px; }
+.grade-row { display: flex; justify-content: center; gap: 10px; }
+.grade-row .grade-block { flex: 0 1 50%; min-width: 0; }
+.grade-single { display: flex; justify-content: center; }
+.grade-single .grade-block { width: 100%; }
+.grade-block { display: flex; flex-direction: column; align-items: center; }
+.grade-block .dslider { width: 100%; }
+.grade-block-head { font-size: 0.8rem; color: var(--muted); margin-bottom: 3px; display: flex; gap: 3px; }
+.curve-edited-inline { color: var(--accent); font-weight: 700; }
+.grade-wheel { position: relative; border-radius: 50%; touch-action: none; user-select: none; cursor: crosshair; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.45); flex-shrink: 0; }
+.grade-wheel.disabled { opacity: 0.55; cursor: default; }
+.grade-rings { position: absolute; inset: 0; pointer-events: none; }
+.grade-rings circle { fill: none; stroke: rgba(255, 255, 255, 0.22); stroke-width: 1; }
+.grade-centre { position: absolute; width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px; border-radius: 50%; background: rgba(255, 255, 255, 0.55); pointer-events: none; }
+.grade-point { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; border: 2px solid #f2f2f2; box-shadow: 0 0 0 1px #000; cursor: grab; }
+.grade-wheel.big .grade-point { width: 14px; height: 14px; margin: -7px 0 0 -7px; }
+.grade-point:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent); }
+.grade-numbers { display: flex; gap: 6px; margin: 5px 0 2px; }
+.grade-numbers label { display: flex; align-items: center; gap: 3px; font-size: 0.78rem; color: var(--muted); }
+.grade-numbers input { width: 46px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; font: inherit; font-size: 0.82rem; }
+.grade-wheel-hint { margin: 4px 0 2px; }
+.grade-advanced p { margin: 4px 0 6px; }
 /* Culling helpers (docs/PHASE3.md Part 18): badges apart from flags, the Culling menu, Suggest rejects. */
 .cull-badges { display: inline-flex; flex-wrap: wrap; gap: 3px; }
 .cull-badges.in-cell { position: absolute; left: 6px; bottom: 6px; right: 46px; }

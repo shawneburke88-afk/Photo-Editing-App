@@ -1826,6 +1826,7 @@ Quick runs the 24 MP Bayer image through every stage below and the sRGB image th
 | **Geometry warp: lens correction + straighten** | `renderStats(…, 64)` with lens correction on and a 0.5° angle: the full-size bicubic warp through the combined map (`warp.wgsl` + `lens.wgsl`) and its mip chain; GPU = the `warp` and `mip` passes. No Detail. | the angle, by 0.001° |
 | **Tone equalizer mask pre-pass** | `renderStats(…, 64)` with process version 2 and Shadows +40: the full-size guided-filter statistics; GPU = `moments`, `reduce`, `blurX`, `blurY` | the red white-balance multiplier, by 0.01 % (the mask is keyed on it) |
 | **Colour Mixer**, guided filter on and off (Part 15) | `render(…, fit)` with a mixer on (Green Hue +15, Orange Luminance +20, Blue Saturation +40 and Luminance −20), one redraw as in the display rows. Guided filter on: the mixer's input drawn around each 1024 px tile (`mixerInput`), darktable's two guided filters (`prefilterStats`, `prefilterApply`, `guideStats`, `guideApply`) and the display pass with their corrections, each with a ↳ row; GPU = all of them. Off (Advanced → guided filter off): the display pass alone, the bands read from the tables per pixel. The filter isn't cached, so every redraw pays for it; compare with "Display pass, fit, without Tone Curve". Quick: the Bayer image; Full: the sRGB image too. | Exposure, by 0.01 EV |
+| **Colour Grading on: display pass, fit** (Part 17) | `render(…, fit)` with a grade on (all four wheels tinted, two with luminance), one redraw: the display pass alone, which runs darktable's color balance rgb twice per pixel (the grade and the neutral run it subtracts); GPU = the display pass. Compare with "Display pass, fit, without Tone Curve". Quick: the Bayer image; Full: the sRGB image too. | Exposure, by 0.01 EV |
 | **Detail: denoise (profiled, wavelets)** | `render(…, 100 %)` with Luminance 30, Color 25 and no sharpening: the full-size wavelet denoise (7 scales) and its mip chain, then one redraw; GPU = the denoise passes and mips | Luminance 30 → 31 → 32 |
 | **Detail: capture sharpening, Amount 40** | the same with sharpening only (8 Richardson–Lucy iterations): masks, iterations, result; GPU = the `cs*` passes and mips. **Only the shipped separable kernel is measured: the 9 × 9 kernel it replaced (Part 13) is no longer in the code.** | Detail 25 → 26 → 27 |
 | **Display pass**, fit and 100 %, without and with a Tone Curve | `render(…)` on the benchmark's canvas (full width of the section, `min(50vh, 420px)` high; its size in device pixels is in the results) after an Exposure change of 0.01 EV, with everything upstream cached: one slider redraw; GPU = the display pass. In compatibility (read-back) mode the wall time includes copying the frame back and drawing it on a 2D canvas. | Exposure |
@@ -1835,7 +1836,7 @@ Quick runs the 24 MP Bayer image through every stage below and the sRGB image th
 | **JPEG encode** | `encodeJpeg` (jpegli, WebAssembly in a worker) of the last export render at quality 90 and 4:4:4 (Export's defaults), without metadata. CPU only. | — |
 | **Thumbnail** | `renderThumbnail` (a 512 px render and the browser's JPEG encoder), as the background developer refreshes one; Detail at the thumbnail's level is cached after the warm-up | Exposure |
 
-The **Colour Mixer** rows (Part 15) sit after the tone mask, where `STAGES` in `bench/run.ts` (in pipeline order) kept a place for them.
+The **Colour Mixer** rows (Part 15) sit after the tone mask, where `STAGES` in `bench/run.ts` (in pipeline order) kept a place for them, and the **Colour Grading** row (Part 17) after them.
 
 The columns:
 - **Median / Min**: wall-clock time of the engine call, from just before it until `queue.onSubmittedWorkDone()` resolves after it (`performance.now()`): what a person waits for, CPU work and read-backs included.
@@ -1905,6 +1906,163 @@ A SwiftShader sample (Quick, test images at 0.3 MP, the canvas 938 × 420; **it 
 - The display pass is measured on the benchmark's canvas, not Develop's; at another canvas size the fitted view's cost changes.
 - Remove's fill search runs on the CPU, so its row measures the CPU as much as the GPU; the JPEG row is CPU only.
 - No release gate yet (PLAN, "Every release"): the numbers are for the owner to read and paste, not checked against budgets.
+
+
+## Part 17: Colour Grading
+
+**What it does.** A **Colour Grading** group after the Colour Mixer and before Detail (jump bar: three small wheels, "Grading") with Lightroom's Color Grading controls:
+- four wheels, **Shadows**, **Midtones**, **Highlights** and **Global**, each with its hue and saturation as a point on the wheel, a **Luminance** slider and Hue/Saturation number fields;
+- **Blending** and **Balance** under the wheels in every view;
+- views **3-Way** (Midtones on top, Shadows and Highlights below) and one large wheel each for **Shadows · Midtones · Highlights · Global**;
+- darktable's settings under **Advanced**.
+
+The engine is darktable's **color balance rgb** (`src/iop/colorbalancergb.c`, commit `6271f53`, GPL-3.0-or-later) translated to WGSL, per pixel, before the sigmoid and after the Colour Mixer. It is off by default and skipped when it changes nothing: an edit without it is exactly an edit from before this part and renders byte for byte as before (below). A new tool that is off by default needs no new process version, so the current version stays 2.
+
+This part is numbered 17: Part 18 is the culling helpers' build.
+
+Owner's decisions (2026-10-14, after the research in [research/COLOUR_GRADING.md](research/COLOUR_GRADING.md)):
+1. **Engine:** Lightroom's Color Grading on darktable's color balance rgb in WGSL, before the sigmoid, after the Colour Mixer. Shadows → lift, Midtones → power, Highlights → gain, each with hue, saturation (chroma) and luminance. Blending → the masks' fall-off; Balance → the middle-grey fulcrum. The rest of darktable's module under Advanced.
+2. **Global = an even tint over all tones** (darktable's offset style), tuned to look like Lightroom's Global.
+3. **Basic's Vibrance and Saturation stay as they are:** no move, no new process version.
+4. **Defaults:** slider scales the closest match, tuned by eye on test photos; Blending 50 and Balance 0 by default; Blending 100 for old Split Toning sidecars; the stage skipped entirely when neutral, and its gamut mapping not applied when every wheel is at zero, so old edits are byte-identical.
+5. **UI:** three wheels plus Global in Lightroom's layout (3-up and single-wheel views), a point per wheel, a Luminance slider, number fields; full keyboard and screen-reader semantics, double-click to reset, Alt-drag fine control; Blending and Balance; help and guidance; a jump-bar entry; after the Colour Mixer.
+6. **Storage:** `colourGrading` in the develop settings, absent at defaults; no process version.
+7. **Paste/Sync** item in the Colour group, ticked by default; presets with Amount.
+8. **Lightroom sidecars:** the hybrid Split Toning / ColorGrade fields read and written under Part 7's rules, closest match, unverified ranges marked.
+9. **GPU robustness** (Part 14) for every new resource, and a benchmark row (Part 16).
+
+### What Adobe says about Lightroom's Color Grading
+
+Checked by Cowork at Adobe's own pages on 2026-10-13/14 (report `scratchpad/cowork-b2/verify-2026-10-13b/C_COLOUR_GRADING.md`, quotes with URLs). LightBench follows these; the rest of Lightroom's behaviour isn't public.
+
+| Fact | Source |
+|---|---|
+| Released in Lightroom Classic 10.0 and Camera Raw 13.0, October 2020. | [LrC October 2020 feature summary](https://helpx.adobe.com/lightroom-classic/help/whats-new/2021.html); [ACR 13.0](https://helpx.adobe.com/camera-raw/using/whats-new/2021.html); [Adobe blog, 2020-10-20](https://blog.adobe.com/en/publish/2020/10/20/introducing-color-grading) |
+| Blending's default is 50; each wheel's Luminance slider runs −100 to 100; the handle at the wheel's edge is saturation 100. | Adobe blog (Max Wendt) |
+| Balance is signed around 0: "Values greater than 0 will increase the effect of highlights", below 0 the shadows'. Its numeric range isn't stated. | ACR 13.0 help |
+| Hue: examples use values such as 240 and 120, but no range or unit is stated. | Adobe blog |
+| Gestures: Shift = saturation only, Ctrl/⌘ = hue only, Alt/Option = Fine Adjust; double-clicking a handle resets that control; Alt-drag on Blending boosts the saturation to 100 for a preview; Adobe uses a soft "spoke" constraint that Fine Adjust skips. | Adobe blog; LrC help; jkost.com (secondary, an Adobe evangelist's blog) |
+| Global: "a color tint plus luminance adjustment to the entire image, across all the ranges"; "Blending and Balance have no effect on the toning applied by the Global wheel"; luminance works without a tint. | Adobe blog |
+| Split Toning "always used what we now call Blending = 100"; existing Split Toning images "look exactly the same". | Adobe blog; LrC help |
+| XMP: Shadows/Highlights hue and saturation and Balance stay in `crs:SplitToning*` ("also used for newer ColorGrade settings"); the rest is `crs:ColorGrade*`; there is no `ColorGradeShadowHue` or `ColorGradeHighlightHue`. | ExifTool 3.79 `XMP.pm` and its tag table |
+| **Not public:** the maths of the wheels, Global and Luminance; the hue scale of the XMP fields; Balance's range; what an absent `ColorGradeBlending` means. | — |
+
+### Where it acts
+
+| Behaviour | Detail | Source |
+|---|---|---|
+| Position | In the display shader (`develop-display.wgsl` `developBeforeCurve`): exposure → tone equalizer → Vibrance/Saturation → Colour Mixer → Point Color → **Colour Grading** → sigmoid → Tone Curve → output profile, on scene-referred linear Rec.2020. | Owner's decision 1; darktable's v5.0 order (`src/common/iop_order.c` lines 380-388: colorequal 41.2, colorbalancergb 41.5, sigmoid 45.3) |
+| Off | With no wheel's saturation or luminance moved and darktable's Advanced sliders at 0, `colourGradingGpu` returns null, the Grade uniform is all zero and the shader skips the stage. Blending, Balance, a hue with saturation 0, the fall-offs or the fulcrums alone change nothing, so they don't turn it on. | Owner's decision 4 |
+| Not over the mixer's Visualize | While the Colour Mixer's Visualize view is on, the grade isn't drawn (it would tint the greyed colours). | LightBench |
+| Everywhere | The uniform travels in `displayUniforms` (`colourGrading`): Develop at fit and 100 %, the histogram and Auto, the Tone Curve's input histogram (the grade is before the curve), the white balance loupe, thumbnails, culling previews, the background developer and Export. | Part 1's rule |
+
+### darktable's color balance rgb, as translated (`engine/develop/colour-grading.ts`, `engine/gpu/colour-grading.wgsl`)
+
+| Step | Detail | Source |
+|---|---|---|
+| Spaces | Rec.2020 → XYZ D65 → CIE 2006 LMS (Kirk's matrix) → Filmlight Yrg → Ych; the grading RGB of Filmlight; darktable UCS 22 for perceptual saturation and brilliance and the gamut map. | `colorspaces_inline_conversions.h` 1082-1330; `colorbalancergb.c` `process` 668-948 |
+| Masks | darktable's `opacity_masks` on Y^0.41 (middle grey at 50 %): logistic shadows and highlights masks with steepness 2 + 2 × fall-off, a bell for the mid-tones. At the defaults: −4 EV 0.94/0.02/0.06, 0 EV 0.50/0.50/0.50, +2 EV 0.04/0.01/0.96 (shadows/mid-tones/highlights; the brief's table, unit test). Shadows + highlights = 1 when their fall-offs are equal; the three sum to 1.5 at middle grey (darktable's design: the mid-tone mask weighs only chroma, saturation and brilliance). | `opacity_masks` 550-577 |
+| Order per pixel | Hue shift → linear chroma and vibrance (with the masks) → `gamut_check_Yrg` → to grading RGB → **global offset** → **lift and gain** under the masks, `RGB × ((1 − β)(1 − α + α·shadows) + β·highlights)` → **power** `(|RGB|/white)^midtones × white` (unmasked) → Y power (Midtones luminance) → contrast around its fulcrum → perceptual saturation and brilliance (darktable UCS) with darktable's soft limit → gamut map (saturation soft-clipped between 80 % and 100 % of Rec.2020's boundary, from darktable's gamut table) → Rec.2020. | `process`, darktable UCS formula (darktable's default) |
+| **Only what the grade adds** (LightBench's change) | The output is the pixel plus (graded − the same steps with neutral settings). darktable's module changes colours merely by being enabled (its manual says so): it clips negative values, its saturation step soft-limits very saturated colours and its gamut map is always on. Subtracting the neutral run applies those only as much as the grade adds: a neutral grade is exactly no change, a tiny change a tiny difference, and a colour the grade doesn't push out of gamut keeps its own saturation. Cost: the steps run twice per pixel. | Owner's decision 4 ("avoid that") |
+| Matrices (LightBench's) | Rec.2020 → XYZ is LightBench's D65 matrix (darktable: its profile's D50 matrix and CAT16), as the Colour Mixer. The Yrg white point is computed from it: (0.219020, 0.543668) against darktable's constants (0.21902143, 0.54371398), which come from sRGB's D50-adapted white; so a grey is exactly neutral in Yrg. The LMS → XYZ and LMS → grading RGB matrices are computed as exact inverses of darktable's forward ones (darktable writes both directions to 6-8 digits). | LightBench |
+| Not offered | darktable's JzAzBz saturation formula (darktable UCS, its default since 2022, is used), its checkerboard mask previews and its "pick the opposite colour" picker. | LightBench |
+
+### The wheels → darktable's parameters (LightBench's closest match)
+
+| Control | darktable | Detail |
+|---|---|---|
+| Hue (0–359) | the wheel's colour T | Lightroom-style: the hue of an sRGB colour (0 red, 120 green, 240 blue). It becomes a Yrg angle through the sRGB colour at that hue (HSV saturation 50 %, as the Colour Mixer's band centres). darktable's own hue convention (red near 0, Yrg angle + 30°) is shown nowhere; the Advanced hue shift is darktable's. **Lightroom's hue scale is unverified** (Adobe gives none; darktable's importer divides by 255, not copied). |
+| Saturation (0–100) | Yrg chroma of T | ×0.10 (Shadows), ×0.08 (Midtones), ×0.12 (Highlights), ×0.08 (Global) at 100: darktable's chroma slider reaches 1.0, far stronger. Tuned by eye (below). |
+| Shadows, Highlights | lift and gain slopes | darktable: 1 + (T − white) + luminance. **LightBench: T / white + luminance**, per channel. Grading RGB's white isn't (1, 1, 1), so darktable's absolute tint turned a grey towards another hue, by a strength that depended on the hue: in a probe (chroma 0.25 at saturation 100) on a deep-shadow grey, an orange wheel (hue 30) gave sRGB hue 15–17, and a teal wheel at saturation 50 was already fully saturated where orange at 100 was not. With T / white a grey in the shadows becomes exactly T (unit test: every 15° of hue, within 3°). |
+| Midtones | power | darktable: exponents 1 / (1 + T − white). **LightBench: exponents chosen so middle grey becomes T** (p = ln(T·x₀) / ln(white·x₀), x₀ = 0.1845 over the white fulcrum); the power stays darktable's (unmasked, normalised by the white fulcrum, so Blending and Balance don't shape it). |
+| Global | offset | darktable's global offset (T − white + white × luminance), **added in proportion to each pixel's own luminance** (LightBench's change, owner's decision 2): every tone gets the same tint, and Global luminance becomes a gain. A plain offset tints the shadows far more than the highlights. Unmasked, so Blending and Balance don't touch it (as Adobe says of Lightroom's Global; unit test). |
+| Luminance (−100…100) | darktable's luminance | ×0.5 (Shadows, Highlights: slopes 0.5…1.5), ×0.25 (Midtones: the Y exponent 1 / (1 ± 0.25)), ×0.4 (Global: a gain 0.6…1.4). On a grey: Shadows −100 → ×0.55 at −5 EV; Highlights +100 → ×1.40 at +1 EV; Midtones +100 → ×1.40 at 0 EV, Midtones −100 → ×0.57 at 0 EV and much darker in the deepest shadows (a power). |
+| Blending (0–100, default 50) | both masks' fall-off | 50 = darktable's 1.0 (its default), 100 = 0 (softest), 0 = 3 (steepest), linear between. Advanced can set the two fall-offs apart. |
+| Balance (−100…100, default 0) | the masks' middle-grey fulcrum | Positive favours the highlights' tint (Adobe's direction): the fulcrum moves from 18.45 % down by 2 EV at +100, up by 2 EV at −100. |
+
+The scales were tuned by eye on 420 px renders of the D700, the ILCE-7M2 and the JPEG landscape (`looks-grading.mjs`): a first round (Shadows 0.25, Highlights 0.20, Midtones 0.12, Global 0.12) put full-strength teal into the dark ILCE-7M2 frame at Saturation 50, so they were lowered. The final scales give a clear but moderate tint at 30–50 and a strong one at 100. **Not compared with Lightroom.**
+
+### The Colour Grading group (`develop/ColourGradingPanel.tsx`)
+
+| Behaviour | Detail | Source |
+|---|---|---|
+| Views | **3-Way · Shadows · Midtones · Highlights · Global**, remembered in this browser; a dot marks a view whose wheel moved. 3-Way: 112 px wheels; single views: a 196 px wheel with 25/50/75 % rings. | Lightroom's views (the brief) |
+| The wheel | A hue ring painted with sRGB HSL colours (hue 0 at the right, rising anticlockwise: LightBench's layout, Lightroom's not checked), greying towards the marked centre; the point shows the colour it applies. | LightBench |
+| Dragging | Press anywhere on the wheel: the point jumps there and follows. **Shift**: saturation only (along the current spoke); **Ctrl/⌘**: hue only; **Alt**: fine, a quarter of the pointer's movement from where it started. One history step per drag ("Colour grading: Shadows"). Adobe's soft spoke constraint isn't copied: Shift is a hard constraint. | Adobe's gestures |
+| Double-click | Resets that wheel's hue and saturation (one step, "Colour grading: reset Shadows colour"). Double-clicking a slider resets it, as everywhere. | Adobe; LightBench's sliders |
+| Keyboard and screen readers | The point is a focusable `role="slider"` named "Shadows colour", with `aria-valuetext` "hue 200°, saturation 40". **← →** turn the hue by 1° (wrapping through 0/360), **↑ ↓** change the saturation by 1, **Shift** ×10, **Home** resets the colour. Each wheel block is a group named "Shadows wheel"; changes are announced in a live region; keys merge into one step like a slider's. | Owner's decision 5; Part 12's rules |
+| Number fields | Hue (0–359) and Saturation (0–100) under every wheel ("H"/"S" in 3-Way). | Owner's decision 5 |
+| Blending's Alt-drag | Holding Alt while dragging Blending shows Shadows', Midtones' and Highlights' tints at saturation 100 (Global left alone) until release; nothing is saved. | Adobe (via jkost.com) |
+| Advanced | Hue shift, Vibrance, Contrast; Linear chroma, Perceptual saturation and Perceptual brilliance for Global, Shadows, Mid-tones and Highlights; Shadows and Highlights fall-off (following Blending until set), White fulcrum, Contrast fulcrum; Reset Advanced. Each with darktable's name in its help. darktable's vibrance and contrast here are its own, not Basic's. | darktable's module parameters (`colorbalancergb.c` 60-106) |
+| Reset, eye, history | **Reset** (wheels, Blending, Balance; Advanced stays), **Reset Shadows** etc. in single views; the group's eye hides the grade ("Hidden: Colour Grading"). | Parts 1, 12, 15 |
+| Guidance | Under the title: "Colour by tone: cool shadows, warm highlights. Basic first; grade last." Its tooltip says what grading does, to set white balance, Basic and the mixer first, and the pitfalls (small saturations go a long way; greys take the tint; Blending and Balance shape only Shadows and Highlights). `help.ts`: `gradeWheel`, `gradeLuminance`, `gradeBlending`, `gradeBalance`. | Owner's rule (USABILITY.md) |
+
+### Copy, paste, presets and the stored edit
+
+| Behaviour | Detail |
+|---|---|
+| Stored | `colourGrading` in the develop settings and `lightbench:Develop`: `shadows`, `midtones`, `highlights`, `global` (`hue` 0–359, `sat` 0–100, `lum` −100…100, integers), `blending`, `balance`, and `advanced` only when darktable's settings differ from their defaults. **Absent when untouched or reset**: `normalizeSettings` and `withColourGrading` drop a grade at its defaults, so such an edit's JSON is exactly an old edit's. A hue picked with saturation 0, or Blending or Balance alone, are kept (they render nothing). |
+| Copy, Sync, Paste, New preset | One item, **Colour Grading**, in the Colour group after Point Color, ticked by default (as the mixer's). A photo without a grade copies "none". Auto Sync sends it only when it changed. A Paste choice remembered from before this part doesn't include it (as for the mixer's items). |
+| Presets and Amount | Each wheel's hue and saturation move as a colour vector (saturation × the hue's direction, LightCraft's way) from the photo's towards the preset's, so hue 350 and hue 10 blend through 0; luminance, Blending, Balance and darktable's sliders linearly; the fall-off overrides follow the preset above 0 % (`blendColourGrading`). |
+| Process version | None: a new tool, off by default, skipped when neutral; no existing rendering changes (byte-identical, below). A later change to its maths, mapping or scales needs a new version. |
+
+### Lightroom's Color Grading in sidecars (`sidecar/lightroom.ts`)
+
+| Behaviour | Detail | Source |
+|---|---|---|
+| Fields | `crs:SplitToningShadowHue/Saturation`, `ColorGradeShadowLum`, `ColorGradeMidtoneHue/Sat/Lum`, `SplitToningHighlightHue/Saturation`, `ColorGradeHighlightLum`, `ColorGradeGlobalHue/Sat/Lum`, `ColorGradeBlending`, `SplitToningBalance` (`LR_GRADE_FIELDS`). | ExifTool 3.79 |
+| Mapping | Number for number: the wheels have Lightroom's names and ranges. The look is only approximately Lightroom's (closest match; Lightroom's maths isn't public). Hue as degrees and Balance as ±100 are **assumptions**. Absent fields read 0; Blending absent reads **100 when any Split Toning field is present** (an edit from before Color Grading; Adobe documents the behaviour, the field rule is **inferred**), otherwise 50. Reading keeps the photo's Advanced settings. | Owner's decision 8; Cowork's check |
+| Nothing to grade | A sidecar's grade with every saturation and luminance at 0 (many sidecars carry Split Toning fields at 0) counts as no grade: no "Lightroom settings" step, no key. A hue only counts with its saturation; Blending and Balance only when a wheel grades. | LightBench |
+| Reading and writing | Part 7's rules, as the Detail and HSL fields: read when a photo is added and by **Read changes**; written only into a sidecar that already has `crs:ProcessVersion` and isn't already applied, only the fields LightBench changed since the file was last written (a changed saturation writes its hue too), each in place; integers, Luminance and Balance with a sign ("+5"), as the HSL fields. A sidecar with Split Toning and no `ColorGradeBlending` gets `ColorGradeBlending` written with the first change, so it still reads as LightBench read it. The numbers are part of the `lightbench:LightroomGeometry` marker; markers and change records from before this part have none and never count as a difference. | Part 7; **not checked against a sidecar Lightroom wrote** |
+| Advanced | darktable's settings aren't exchanged with Lightroom. | — |
+
+### Engine (`engine/gpu/develop-engine.ts`, `colour-grading.wgsl`)
+
+| Step | Detail |
+|---|---|
+| Per pixel | `gradeApply` in the display shader: `gradeSteps` twice (the grade and the neutral run), no texture reads besides the photo. The colour-mixer.wgsl helpers that don't read the Mixer uniform are shared. |
+| Binding | One uniform at **binding 11**, `Grade` (2480 bytes): the matrices, the resolved parameters, a flag and Rec.2020's 512-entry gamut table (darktable's `dt_UCS_22_build_gamut_LUT`, the mixer's table) as 128 × vec4. `View` (512 bytes) and bindings 0-10 are unchanged. |
+| CPU twin | `gradeSteps` / `gradePixel` / `gradeImage` repeat the shader line for line in double precision; `engine.gradingImages` reads the grade's input and output (linear Rec.2020 before the sigmoid; a new display-shader mode 5, "after the mixer and the grade") for the comparison. |
+| GPU robustness (Part 14) | The uniform buffer is the engine's (like the View uniform), made with the engine, so a new engine after a lost device has its own; it is written only when the grade changes (`gradeKey`), and **`unload()` zeroes it** so the next photo starts with the stage off. No texture, no pipeline and no per-drawing resource is added: the stage is part of the display pipeline, which Export, the background developer and the 100 % view already run inside `guarded()` and after the foreground gate. |
+| Benchmark (Part 16) | One row after the Colour Mixer rows: **Colour Grading on: display pass, fit** (all four wheels tinted; GPU = the `display` pass). |
+
+### Verified
+
+Headless Chromium with software WebGPU (SwiftShader), the app loaded with `?gpu=readback`, one test at a time. Scripts in `scratchpad/cg/` (copies of Part 15's `cm/` scripts, adapted; the originals unchanged). Test files: Nikon D700 `philadelphia.nef`, Nikon D80 `glarus.nef`, Sony ILCE-6300 and ILCE-7M2 ARWs, `test-srgb.jpg`.
+
+- **Old edits are byte-identical to main** (`7b8b0f0`, 0.5.7; `identity.mjs`, main served from its own copy of the tree, each run alone). Fifteen edits rendered on main and on this branch, hashed (SHA-256) in six outputs each: the full-size 8-bit export, a 1024 px export, the 512 px thumbnail, the histogram and clipping statistics, and the Develop canvas (890 × 662, read back) at fit and at 100 %. **All 90 hashes were identical.** The edits: Part 15's twelve (D700 process 1 with crop, turn and angle; process 2 with angle; D700 defaults with the RAW sharpening; D80 custom white balance; the JPEG unedited, process 1 and process 2; ILCE-6300 with angle; D700 with three Remove/Heal/Clone spots, crop, angle and custom white balance; D700 with spots, a tone curve and sharpening; the JPEG with spots, a tone curve and Detail; the JPEG process 2 edit with a `colourMixer` at its defaults), their full-size hashes the same as in Part 15's table, plus three new ones: the JPEG with a **Colour Mixer** (bands, guided filter: `d585b523c61b9337…`), the D700 with **a mixer and Point Color, spots, a tone curve and Detail** (`ab06f5dde373ab47…`), and the D80 with a `colourGrading` at its defaults (`f34d827d0e1ed7bc…`: dropped on the branch, ignored on main). The branch run took 2494 s against main's 1418 s because another session's identity run shared the machine for part of it; the hashes don't depend on that.
+- **GPU = CPU** (`e2e-gpucpu-grading.mjs`). The engine's own grading input and output (`engine.gradingImages`: linear Rec.2020 before the sigmoid, the new mode 5) against the CPU twin (`gradeImage`) run on the GPU's input, for six grades on the JPEG and the D80: teal shadows and orange highlights; all four wheels with luminance, Blending 80, Balance −30; Global alone (tint and luminance); luminance only; darktable's Advanced settings (hue shift, vibrance, contrast, chroma, saturation, brilliance, white fulcrum) with wheels; and a grade after a Colour Mixer with its guided filter.
+  - At 300 px: largest relative difference 1.3·10⁻⁴, 99.9th percentile ≤ 1.2·10⁻⁴, mean 0.9–4.7·10⁻⁵, no pixel over 1 %.
+  - At 1600 px (the JPEG at full size; the mixer case drawn in 2 × 2 tiles): largest 1.9·10⁻⁴, 99.9th percentile ≤ 1.3·10⁻⁴, mean 0.9–4.6·10⁻⁵, no pixel over 1 %. **24 of 24** checks at each size.
+- **In Develop** (`e2e-grading.mjs`, the JPEG; **34 of 34** on the final code; a first run passed 30 of 33, the 3 failures the test's own: its Alt-drag on Blending also moves the slider, so the fixed Blending and undo expectations after it were wrong; the script now reads the values and undoes before the Alt-drag):
+  - The jump bar reads Crop & Lens, Remove, Basic, Tone Curve, Colour Mixer, **Colour Grading**, Detail. 3-Way shows Midtones above Shadows and Highlights.
+  - Dragging the Shadows point from the centre to hue 200 / saturation 60 gave exactly 200 / 60 as one step "Colour grading: Shadows"; the dark pixels' blue − red rose from 0.9 to 18.6; `C.xmp` held `colourGrading`.
+  - Shift-drag changed only the saturation (200/60 → 200/23); Ctrl-drag only the hue (→ 260/23); Alt-drag of 40 px moved the point 20.1 of the 80 units a plain drag would (a quarter).
+  - Keys on the Highlights point (`role="slider"`, "Highlights colour"): Home, Shift+↑ ×3, Shift+→ ×4, → ← ← gave hue 39, saturation 30 in one merged step, announced "Highlights: hue 39°, saturation 30"; ← ×41 wrapped to 358, Shift+→ ×4 back to 38.
+  - Double-click reset the Shadows colour (one step "Colour grading: reset Shadows colour").
+  - The Highlights view: one large wheel with three rings; Luminance +20 by keys. The number fields set Midtones 120/15 and Global 30/10.
+  - Blending 80 and Balance −20 by keys; Ctrl+Z undid the Balance step, Ctrl+Y redid it. Alt-drag on Blending raised the canvas's mean colourfulness from 24.2 to 56.5 while held and back to 24.2 on release.
+  - The eye hid the grade ("Hidden: Colour Grading"; colourfulness 27.42 against 27.33 before any grade).
+  - Copy listed Colour Grading, ticked: "Shadows hue 200°, saturation 40; Midtones hue 120°, saturation 15; Highlights hue 38°, saturation 30, luminance +20; Global hue 30°, saturation 10; Blending 83; Balance -20"; pasting onto D gave the identical `colourGrading`; Reset left none in D's settings; a preset of Colour Grading at Amount 50 % gave Shadows 200/20, Blending 67 (preset 83), Balance −10.
+  - **Lightroom:** LR.JPG with a Color Grading sidecar (written for the test, as Lightroom lays sidecars out) got the step "Lightroom settings": Shadows 210/25 and Highlights 40/30 from the Split Toning fields, Blending 60, Balance +20, Shadows Luminance −10; its fields stayed exactly as written while LightBench saved its own settings; Shadows saturation +1 in LightBench wrote `crs:SplitToningShadowSaturation="26"` and left the other 13 fields as written. SP.JPG with an old Split Toning sidecar read Shadows 220/20, Highlights 45/35, **Blending 100**, Balance −10, Midtones 0.
+  - Screenshots checked by eye: the 3-Way, Highlights and Global views, the copy dialog.
+- **Develop after a lost device, with a grade on** (`recover/e2e-recover-grading.mjs`, a copy of Part 15's mixer script adapted; the JPEG with Shadows 200/50 and Highlights 40/40): **14 of 14**. The device was destroyed twice; each time the notice showed and the photo was drawn again on a new engine with exactly the same mean and colourfulness (129.56 and 22.74; without the grade 131.02 and 27.36), no error, one canvas, one live device. Afterwards a grading change showed (colourfulness 18.17) and the eye gave the photo without the grade exactly (131.02, 27.36).
+- **Benchmark** (Part 16's Quick e2e, `bench/e2e-bench-grading.mjs`, a copy of Part 15's adapted; `?benchmp=0.3`): **38 of 38**: 20 stage rows (the Colour Grading row right after the two Colour Mixer rows and before denoise) and 9 ↳ rows, none failed. SwiftShader at 0.3 MP (**says nothing about a real GPU**): grading 1964 ms median (GPU 1956 ms, peak 16 MB), "Display pass, fit, without Tone Curve" 2472 ms in the same run (noise larger than the difference). After each image's `unload()` 36,936 bytes stayed allocated (Part 15: 34 kB): the 2480-byte Grade uniform, which belongs to the engine.
+- **Tuning by eye** (`looks-grading.mjs`, 420 px contact sheets of the D700, the ILCE-7M2 and the JPEG: each wheel's tint at 50 and 100, teal/orange at Blending 50 and 100 and Balance +60, each wheel's Luminance at ±100): the first scales were too strong on the dark ILCE-7M2 frame and were lowered (above); with the final ones teal shadows at 50 are a moderate tint and at 100 a strong one, orange highlights at 50 warm the sky without turning the white water orange.
+- **Unit tests** (`npx vitest run`: **817 tests in 85 files**; main `7b8b0f0` 787 in 82, so 30 new):
+  - `engine/develop/colour-grading.test.ts` (16): a grade at its defaults, or with only a hue, Blending, Balance, fall-offs or fulcrums, is not run (`colourGradingGpu` null); **neutral is the identity** (darktable's steps with neutral settings give back in-gamut colours to 10⁻⁹, a neutral grade changes nothing); darktable's gamut map, negative clipping and saturation limit cancel out and a tiny change makes a tiny difference; **greys stay neutral when only luminance changes** (every wheel, Blending 20, Balance 35, −8…+3 EV); a grey in each wheel's range takes the wheel's hue (every 15°); **hue wrap** (360 → 0, −10 → 350, 725 → 5, 359 and 1 next to each other) and the Yrg white within 5·10⁻⁵ of darktable's; Global unaffected by Blending and Balance, and an even tint; **masks**: the brief's table at the defaults (to 0.011), shadows + highlights = 1, the three summing to 1.5 at middle grey, Blending widening and narrowing, Balance moving the split by 2 EV, Advanced fall-offs overriding Blending; **storage absent at defaults** (an old edit's JSON unchanged, reset removes the key, an unchanged grade gives back the same object); clamping and rounding; preset Amount as colour vectors (350° and 10° blend to 0°); the Alt-drag boost; the paste description; the Grade uniform's layout against the WGSL struct (2480 bytes); the image twin per pixel.
+  - `sidecar/lightroom-grade.test.ts` (9): the 14 field names; reading a Color Grading sidecar number for number; **an old Split Toning sidecar read with Blending 100**, ColorGrade fields without Blending read 50; no fields = unknown, Split Toning at 0 = no grade; taking Lightroom's grade keeps Advanced; old markers equal, a hue without saturation not a difference; writing only changed fields, signed, in place, a raised saturation writing its hue, never into a sidecar without the fields or without Camera Raw settings; `ColorGradeBlending` written into an old Split Toning sidecar with the first change, which then reads back as the same grade; Lightroom's change noticed.
+  - `engine/gpu/colour-grading-gpu.test.ts` (2): `unload` zeroes the 2480-byte uniform once; the uniform travels in `displayUniforms` with a key that changes with the grade.
+  - `develop/mixer-paste.test.ts` (+2, and the Colour group's test now expects three items), `bench/plan.test.ts` (+1: the grading row and its place).
+- From a clean `npm ci`: `npx tsc -b`, `npx oxlint` (the two existing warnings), `npx vitest run` and `npm run build` passed. The main chunk is 1,091.62 kB (348.59 kB gzipped).
+
+### Limitations and unverified
+
+- **Lightroom.** Nothing was checked in Lightroom. Its wheel, Global and Luminance maths aren't public: the mapping and the scales are LightBench's closest match, tuned by eye on three photos, so the same numbers look only roughly like Lightroom's. Unverified: the hue scale of the XMP hue fields (degrees assumed), Balance's numeric range (±100 assumed), the rule that an absent `ColorGradeBlending` means 100 (Adobe documents the behaviour, not the field), the sign formatting of written values, and Lightroom's wheel orientation (LightBench puts red at the right). The sidecars were written for the tests; no sidecar written by Lightroom was available.
+- **darktable differences (all LightBench's choices, above):** the wheel → slope/exponent mapping (T / white; mid-grey-calibrated exponents), Global's offset in proportion to luminance, Lightroom-style hues, the neutral run subtracted, LightBench's D65 matrix and the Yrg white computed from it, exact matrix inverses. Not compared with darktable's own output.
+- **Masks:** darktable's; the three don't sum to 1, and the Midtones power is unmasked, so Blending and Balance shape only Shadows and Highlights (and the Advanced per-range sliders).
+- **Speed:** the steps run twice per pixel when a grade is on; SwiftShader's timings are noisy and say nothing about a real GPU.
+- Not offered: darktable's JzAzBz formula, mask previews and colour picker; a hover readout of the range masks (the brief's idea).
 
 ## Part 18: Culling helpers
 

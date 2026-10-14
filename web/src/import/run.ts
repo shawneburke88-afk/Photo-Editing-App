@@ -12,6 +12,7 @@ import type { ScannedFile } from './scan'
 import { fullSidecarName, sidecarCandidates, stemOwners, stemSidecarName } from '../sidecar/naming'
 import { readXmp, type SidecarRead } from '../sidecar/xmp'
 import { detailOf, geometryOf, lrDiffers, lrFrame, lrKey, lrState, mixerOf, parseLrKey, sameState } from '../sidecar/lightroom'
+import { gradingOf } from '../engine/develop/colour-grading'
 import { batch, lightroomStep } from '../develop/batch'
 import { lrToneDiffers, lrToneKey, lrToneState, parseLrToneKey, sameLrTone, toneCurveOf } from '../sidecar/lightroomCurve'
 import { defaultsFor, normalizeSettings } from '../engine/develop/settings'
@@ -155,7 +156,7 @@ async function readLightroomSettings(catalog: Catalog, id: number, r: SidecarRea
     // Lightroom's Detail fields are part of this state. A photo without a LightBench edit has the defaults for its
     // kind and ISO (RAWs are sharpened by default).
     const detail = r.develop ? detailOf(r.develop) : defaultsFor(kind, p.iso).detail
-    if ((!r.develop || (marker && !sameState(marker, state))) && lrDiffers(geometryOf(r.develop), state, frame, detail, mixerOf(r.develop))) geometry = lrKey(state)
+    if ((!r.develop || (marker && !sameState(marker, state))) && lrDiffers(geometryOf(r.develop), state, frame, detail, mixerOf(r.develop), gradingOf(r.develop))) geometry = lrKey(state)
   }
   let tone: string | null = null
   if (hasTone) {

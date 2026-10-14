@@ -57,6 +57,9 @@ import { CurveTatLayer } from './CurveTatLayer'
 import { ToneCurvePanel, type CurveView } from './ToneCurvePanel'
 import { withToneCurve, type ToneCurveSettings } from '../engine/develop/tone-curve'
 import { ColourMixerPanel } from './ColourMixerPanel'
+import { ColourGradingPanel } from './ColourGradingPanel'
+import { DEFAULT_GRADING_VIEW, type GradingView } from './gradingUi'
+import { boostedGrading, withColourGrading, type ColourGradingSettings } from '../engine/develop/colour-grading'
 import { DEFAULT_MIXER_UI, type MixerUi } from './mixerUi'
 import { MixerTatLayer, PointPickLayer } from './MixerTatLayer'
 import { CHANNEL_NAMES, BAND_NAMES, MAX_POINTS, newPoint, withColourMixer, withPoints, type ColourMixerSettings, type MixerChannel } from '../engine/develop/colour-mixer'
@@ -113,6 +116,7 @@ interface Bypass {
   basic: boolean
   curve: boolean
   colour: boolean
+  grading: boolean
   detail: boolean
 }
 
@@ -216,7 +220,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
    */
   const detection = useRef<{ id: number; lens: string; job: Promise<Detection> } | null>(null)
   /** Groups switched off with their eye (a view only). */
-  const [bypass, setBypass] = useState<Bypass>({ crop: false, remove: false, basic: false, curve: false, colour: false, detail: false })
+  const [bypass, setBypass] = useState<Bypass>({ crop: false, remove: false, basic: false, curve: false, colour: false, grading: false, detail: false })
   /**
    * The Tone Curve (PHASE3.md Part 12): the graph shown, its targeted adjustment tool and the tone under the pointer,
    * the curve shown while a drag is in progress (one history step when it ends), clipping shown during a drag, and the
@@ -242,6 +246,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [mixerVis, setMixerVis] = useState(0)
   const [pointPick, setPointPick] = useState(false)
   const [selectedPoint, setSelectedPoint] = useState<number | null>(0)
+  /** Colour Grading (PHASE3.md Part 17): its view, the grade shown while a wheel is dragged, and Blending's Alt-drag preview. */
+  const [gradingViewStored, setGradingView] = useStoredJson<{ view: GradingView }>('lightbench.grading.view', DEFAULT_GRADING_VIEW)
+  const [gradingDraft, setGradingDraft] = useState<{ g: ColourGradingSettings | undefined } | null>(null)
+  const [gradingBoost, setGradingBoost] = useState(false)
   /** The Remove brush on the photo (Q), its settings, the selected spot and whether all pins show. */
   const [removing, setRemoving] = useState(false)
   const [brushStored, setBrush] = useStoredJson<BrushSettings>('lightbench.remove.brush', DEFAULT_BRUSH)
@@ -517,8 +525,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     () => ({ clip: clipSettings, showClip: overlay || (curveDragClip && clipWhileDragging === 1), raw: rawClipSettings, showRaw: rawOverlay }),
     [clipSettings, overlay, rawClipSettings, rawOverlay, curveDragClip, clipWhileDragging],
   )
-  const latest = useRef({ settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis })
-  latest.current = { settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis }
+  const latest = useRef({ settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost })
+  latest.current = { settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost }
   /** The settings drawn: Before shows the defaults; a preset hovered, the crop being edited and switched-off groups apply on top. */
   const shownOf = (x: typeof latest.current, inf: SensorInfo): DevelopSettings => {
     // Before is the photo as shot: the defaults without lens corrections or sharpening.
@@ -526,9 +534,12 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     let s = x.hover ?? x.settings
     if (x.curveDraft && !x.hover) s = withToneCurve(s, x.curveDraft.tc)
     if (x.mixerDraft && !x.hover) s = withColourMixer(s, x.mixerDraft.m)
+    if (x.gradingDraft && !x.hover) s = withColourGrading(s, x.gradingDraft.g)
+    if (x.gradingBoost && !x.hover) s = withColourGrading(s, boostedGrading(s.colourGrading))
     if (x.bypass.basic) s = withoutBasic(s, defaultsFor(inf.kind, inf.iso))
     if (x.bypass.curve) s = withToneCurve(s, undefined)
     if (x.bypass.colour) s = withColourMixer(s, undefined)
+    if (x.bypass.grading) s = withColourGrading(s, undefined)
     if (x.bypass.remove) s = withoutSpots(s)
     if (x.bypass.detail && s.detail) s = { ...s, detail: undefined }
     if (x.draft) return { ...s, geometry: x.draft }
@@ -628,7 +639,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   useEffect(() => {
     if (status.kind === 'ready') requestRender()
-  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, guiding, removing, requestRender, lensDb, curveDraft, maskPreview, noiseDb, mixerDraft, mixerVis])
+  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, guiding, removing, requestRender, lensDb, curveDraft, maskPreview, noiseDb, mixerDraft, mixerVis, gradingDraft, gradingBoost])
   // Another curve graph shown: its histogram is measured again.
   useEffect(() => {
     if (status.kind === 'ready') scheduleStats()
@@ -763,6 +774,16 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     },
     [change],
   )
+  /** A Colour Grading change (`separate`: the end of a drag or a reset, one history step of its own). */
+  const changeGrading = useCallback(
+    (label: string, g: ColourGradingSettings | undefined, separate = false) => {
+      const h = historyRef.current
+      if (!h) return
+      change(label, withColourGrading(current(h), g), false, separate)
+    },
+    [change],
+  )
+  const onGradingDraft = useCallback((g: ColourGradingSettings | undefined | null) => setGradingDraft(g === null ? null : { g }), [])
   /** The Colour Mixer's targeted adjustment tool for a channel (null ends it); the other on-photo tools end. */
   const startMixerTarget = (ch: MixerChannel | null) => {
     if (status.kind !== 'ready') return
@@ -1995,8 +2016,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           )}
           {before && <div className="dbadge">Before</div>}
           {!before && hoverPreset && !draft && <div className="dbadge">Preview: {hoverPreset.name}</div>}
-          {!before && !draft && (bypass.crop || bypass.remove || bypass.basic || bypass.curve || bypass.colour || (bypass.detail && detailOn(settings.detail))) && (
-            <div className="dbadge">Hidden: {[bypass.crop && 'Crop & Lens', bypass.remove && 'Remove', bypass.basic && 'Basic', bypass.curve && 'Tone Curve', bypass.colour && 'Colour Mixer', bypass.detail && detailOn(settings.detail) && 'Detail'].filter(Boolean).join(', ')}</div>
+          {!before && !draft && (bypass.crop || bypass.remove || bypass.basic || bypass.curve || bypass.colour || bypass.grading || (bypass.detail && detailOn(settings.detail))) && (
+            <div className="dbadge">Hidden: {[bypass.crop && 'Crop & Lens', bypass.remove && 'Remove', bypass.basic && 'Basic', bypass.curve && 'Tone Curve', bypass.colour && 'Colour Mixer', bypass.grading && 'Colour Grading', bypass.detail && detailOn(settings.detail) && 'Detail'].filter(Boolean).join(', ')}</div>
           )}
           {mixerTarget && !draft && !guiding && !before && (
             <div className="dbadge pick curve-hint">
@@ -2253,6 +2274,27 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   onPick={startPointPick}
                   selectedPoint={selectedPoint}
                   onSelectPoint={setSelectedPoint}
+                />
+              ),
+            },
+            {
+              id: 'grading',
+              label: 'Grading',
+              title: 'Colour Grading',
+              icon: GROUP_ICONS.grading,
+              bypass: settings.colourGrading || bypass.grading
+                ? { off: bypass.grading, onToggle: () => setBypass((b) => ({ ...b, grading: !b.grading })), title: bypass.grading ? 'Show the colour grading again' : 'Show the photo without the colour grading (nothing is changed)' }
+                : undefined,
+              content: (
+                <ColourGradingPanel
+                  grading={gradingDraft ? gradingDraft.g : settings.colourGrading}
+                  view={gradingViewStored.view}
+                  onView={(v) => setGradingView({ view: v })}
+                  disabled={status.kind !== 'ready'}
+                  showHint={hintsPref === 1}
+                  onChange={changeGrading}
+                  onDraft={onGradingDraft}
+                  onBoost={setGradingBoost}
                 />
               ),
             },

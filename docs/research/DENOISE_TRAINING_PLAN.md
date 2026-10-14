@@ -12,6 +12,8 @@ was trained, no dataset was downloaded, and no file in the repository was change
 > calculated, not measured), fit to LightBench's pipeline, and the owner's own cameras. The licence gain is small,
 > because LightBench is GPL-3.0. This plan and `training/denoise/` stay on the shelf until then.
 
+> **Independent check (Cowork batch 2, 2026-10-14):** SIDD is MIT (data and code), so it is usable. RAISE is non-commercial, so it is excluded. The Zurich RAW-to-RGB data has no licence found, so it is excluded. raw.pixls.us must be filtered by its per-file licence column, not taken from the rsync mirror. PyTorch: use the cu130 (or cu126) index; there are no native sm_89 kernels, and Ada runs the sm_86 path. The RTX 4000 Ada laptop has 12 GB and 60–175 W, and NVIDIA publishes no FP16/BF16 tensor figure. Details: [cowork-2026-10-13b/G_DENOISE_TRAINING_DATA.md](cowork-2026-10-13b/G_DENOISE_TRAINING_DATA.md).
+
 **Builds on:** `docs/research/IMPROVEMENTS.md` §2 (row A1 and the compute basis in §2.0),
 `docs/research/PHASE4_MODELS.md` §5 (and the owner's decision accepting RawNIND under GPL-3.0),
 `docs/research/PHASE4_GROUNDWORK.md` (hosting, consent download, runtime), `docs/research/DETAIL_DENOISE_SHARPEN.md`

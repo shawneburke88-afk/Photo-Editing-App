@@ -16,6 +16,8 @@
 // Colour Mixer (PHASE3.md Part 15; only when the edit has one): per pixel in Stage B, before the sigmoid. With its
 //   guided filter on, every drawing is made in tiles: the mixer's input around each tile is drawn into a tile texture,
 //   darktable's filters run on it (colour-mixer-filter.wgsl) and Stage B draws the tile with their corrections.
+// Colour Grading (PHASE3.md Part 17; only when the edit has one): per pixel in Stage B, after the mixer, before the
+//   sigmoid (colour-grading.wgsl), from one uniform (binding 11) that holds its parameters and the gamut table.
 
 import { apply, invert, mul, REC2020_TO_XYZ, SRGB_TO_REC2020, type Mat3, type Vec3 } from '../color/matrix'
 import { clipUniforms, DEFAULT_CLIP, DEFAULT_RAW_CLIP, RAW_COLOURS, rawModeCode, rawThresholds, type Indicators } from '../develop/indicators'
@@ -53,6 +55,8 @@ import { RetouchStage, type RetouchProgress } from './retouch-stage'
 import colourMixerWgsl from './colour-mixer.wgsl?raw'
 import colourMixerFilterWgsl from './colour-mixer-filter.wgsl?raw'
 import { EPS_HUE, EPS_PARAM, filterPlan, MIXER_UNIFORM_SIZE, mixerUniform, neutralMixerLut } from '../develop/colour-mixer'
+import colourGradingWgsl from './colour-grading.wgsl?raw'
+import { GRADING_UNIFORM_SIZE } from '../develop/colour-grading'
 import { displayToSensorAt, sensorToDisplayAt, type ShownMap } from '../develop/shown-map'
 import { presentMode, type PresentMode } from './present'
 
@@ -371,6 +375,12 @@ export class DevelopEngine {
   private boundMixer: { scale: number; maxBrightness: number } | null = null
   private mixInPipe: GPURenderPipeline | null = null
   private mixFilterPipes: Record<'prefilterStats' | 'prefilterApply' | 'guideStats' | 'guideApply', GPUComputePipeline> | null = null
+  /**
+   * Colour Grading (Part 17): its uniform (bound always; all zero = off, the stage skipped) and the key of what it holds
+   * (null: zeros). The engine's, like the View uniform; `unload` zeroes it.
+   */
+  private readonly gradeBuf: GPUBuffer
+  private gradeKey: string | null = null
   private readonly displayModule: GPUShaderModule
   private readonly texIds = new WeakMap<GPUTexture, number>()
   private nextTexId = 1
@@ -431,7 +441,7 @@ export class DevelopEngine {
     })
 
     this.rawModule = device.createShaderModule({ code: rawWgsl })
-    const displayModule = (this.displayModule = device.createShaderModule({ code: displayWgsl + lensWgsl + colourMixerWgsl }))
+    const displayModule = (this.displayModule = device.createShaderModule({ code: displayWgsl + lensWgsl + colourMixerWgsl + colourGradingWgsl }))
     // Labels name the passes in the System Check's GPU benchmark (bench/profiler.ts); they change no pixels.
     const renderPipe = (format: GPUTextureFormat, label: string) =>
       device.createRenderPipeline({
@@ -456,6 +466,8 @@ export class DevelopEngine {
     // Zero-initialised: the mixer off, and an ordinary drawing (mode 0).
     this.mixBuf = device.createBuffer({ size: MIXER_UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.mixTileBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM })
+    // Zero-initialised: Colour Grading off.
+    this.gradeBuf = device.createBuffer({ size: GRADING_UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.statsModule = device.createShaderModule({ code: statsWgsl })
     this.retouch = new RetouchStage({
       device,
@@ -525,8 +537,8 @@ export class DevelopEngine {
 
   /**
    * Frees the photo's GPU memory: the scene, its warped and lens-corrected copies, the retouched copy, the tone
-   * masks, the Detail stage's results and their warps, the Tone Curve's table, the Colour Mixer's hue tables and the
-   * uploaded sensor data or pixels. (The mixer's pre-pass textures and buffers belong to each drawing and are freed
+   * masks, the Detail stage's results and their warps, the Tone Curve's table, the Colour Mixer's hue tables, Colour
+   * Grading's parameters (zeroed) and the uploaded sensor data or pixels. (The mixer's pre-pass textures and buffers belong to each drawing and are freed
    * when it is submitted, or when encoding it fails.) The engine keeps its pipelines; load a photo again before using
    * it. Background engines call this after each photo (PHASE3.md, Parts 14 and 15).
    */
@@ -558,6 +570,9 @@ export class DevelopEngine {
     this.boundMixer = null
     if (this.mixActive) this.device.queue.writeBuffer(this.mixBuf, 0, new ArrayBuffer(MIXER_UNIFORM_SIZE))
     this.mixActive = false
+    // Colour Grading's parameters (Part 17): zeroed, so the next photo's drawings start with the stage off.
+    if (this.gradeKey !== null) this.device.queue.writeBuffer(this.gradeBuf, 0, new ArrayBuffer(GRADING_UNIFORM_SIZE))
+    this.gradeKey = null
     this.rawBuf?.destroy()
     this.rawBuf = null
     this.rgbInput?.texture.destroy()
@@ -1686,6 +1701,13 @@ export class DevelopEngine {
       this.boundMixLut = null
       this.boundMixer = null
     }
+    // Colour Grading: written when it changes (all zero = off).
+    const cg = u.colourGrading
+    const gk = cg ? cg.key : null
+    if (gk !== this.gradeKey) {
+      this.device.queue.writeBuffer(this.gradeBuf, 0, cg ? cg.uniform : new ArrayBuffer(GRADING_UNIFORM_SIZE))
+      this.gradeKey = gk
+    }
     this.device.queue.writeBuffer(this.viewBuf, 0, v)
     // The sensor-clipping overlay reads the sensor through the same lens function as the warp (rawMap ends in the
     // lens-corrected frame). Only the overlay uses it; the picture itself is unchanged.
@@ -2176,6 +2198,17 @@ export class DevelopEngine {
    * the Colour Mixer (tests: the GPU against its CPU twin, PHASE3.md Part 15). `scale`: target pixels per photo pixel.
    */
   async mixerImages(u: DisplayUniforms, wb: Vec3, maxSize: number): Promise<{ before: Float32Array; after: Float32Array; width: number; height: number; scale: number }> {
+    return this.linearImages(u, wb, maxSize, 3, 4)
+  }
+
+  /**
+   * The same before and after Colour Grading (after the mixer): tests of the GPU against its CPU twin (PHASE3.md Part 17).
+   */
+  async gradingImages(u: DisplayUniforms, wb: Vec3, maxSize: number): Promise<{ before: Float32Array; after: Float32Array; width: number; height: number; scale: number }> {
+    return this.linearImages(u, wb, maxSize, 4, 5)
+  }
+
+  private async linearImages(u: DisplayUniforms, wb: Vec3, maxSize: number, beforeMode: 3 | 4, afterMode: 4 | 5): Promise<{ before: Float32Array; after: Float32Array; width: number; height: number; scale: number }> {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
     const [gw, gh] = this.geometry(u.geometry).size
@@ -2186,7 +2219,7 @@ export class DevelopEngine {
     const w = Math.max(1, Math.round(src.w * scale))
     const h = Math.max(1, Math.round(src.h * scale))
     const out: Float32Array[] = []
-    for (const mode of [3, 4] as const) {
+    for (const mode of [beforeMode, afterMode]) {
       this.writeView(u, wb, src, { x: 0, y: 0, w, h }, Math.max(0, Math.log2(1 / scale)), NO_INDICATORS, 0, 'srgb', maskSrc)
       out.push(await this.readMixer(src.tex, w, h, mode))
     }
@@ -2195,8 +2228,8 @@ export class DevelopEngine {
     return { before: out[0], after: out[1], width: w, height: h, scale: w / src.w }
   }
 
-  /** Draws the prepared view in mode 3 or 4 (before / after the mixer) into rgba32float and reads it back. */
-  private async readMixer(tex: GPUTexture, w: number, h: number, mode: 3 | 4): Promise<Float32Array> {
+  /** Draws the prepared view in mode 3, 4 or 5 (before / after the mixer, after Colour Grading) into rgba32float and reads it back. */
+  private async readMixer(tex: GPUTexture, w: number, h: number, mode: 3 | 4 | 5): Promise<Float32Array> {
     const { device } = this
     const target = device.createTexture({ size: [w, h], format: 'rgba32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
     const enc = device.createCommandEncoder()
@@ -2275,6 +2308,7 @@ export class DevelopEngine {
         { binding: 8, resource: { buffer: tile } },
         { binding: 9, resource: { buffer: this.mixBuf } },
         { binding: 10, resource: (this.boundMixLut ?? this.emptyCurve()).createView() },
+        { binding: 11, resource: { buffer: this.gradeBuf } },
       ],
     })
   }
@@ -2285,10 +2319,10 @@ export class DevelopEngine {
   /**
    * Encodes Stage B of the drawing prepared by `writeView` into `view` (w × h): one render pass, or, with the Colour
    * Mixer's guided filter, tile by tile (its input around the tile → darktable's filters → the tile drawn with their
-   * corrections). `mode` 3 or 4 draws linear Rec.2020 before or after the mixer instead (before the sigmoid; `view` must be
+   * corrections). `mode` 3 or 4 draws linear Rec.2020 before or after the mixer instead, 5 after Colour Grading too (before the sigmoid; `view` must be
    * rgba32float, `pipe` the mixer's own pipeline). Returns the temporary resources, to destroy once the work is submitted.
    */
-  private encodeDisplay(enc: GPUCommandEncoder, pipe: GPURenderPipeline, view: GPUTextureView, tex: GPUTexture, w: number, h: number, mode: 0 | 3 | 4 = 0): (GPUTexture | GPUBuffer)[] {
+  private encodeDisplay(enc: GPUCommandEncoder, pipe: GPURenderPipeline, view: GPUTextureView, tex: GPUTexture, w: number, h: number, mode: 0 | 3 | 4 | 5 = 0): (GPUTexture | GPUBuffer)[] {
     const temps: (GPUTexture | GPUBuffer)[] = []
     try {
       return this.encodeDisplayInto(enc, pipe, view, tex, w, h, mode, temps)
@@ -2298,7 +2332,7 @@ export class DevelopEngine {
     }
   }
 
-  private encodeDisplayInto(enc: GPUCommandEncoder, pipe: GPURenderPipeline, view: GPUTextureView, tex: GPUTexture, w: number, h: number, mode: 0 | 3 | 4, temps: (GPUTexture | GPUBuffer)[]): (GPUTexture | GPUBuffer)[] {
+  private encodeDisplayInto(enc: GPUCommandEncoder, pipe: GPURenderPipeline, view: GPUTextureView, tex: GPUTexture, w: number, h: number, mode: 0 | 3 | 4 | 5, temps: (GPUTexture | GPUBuffer)[]): (GPUTexture | GPUBuffer)[] {
     const { device } = this
     const tileBuf = (origin: [number, number], m: number) => {
       const b = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM, mappedAtCreation: true })
