@@ -181,6 +181,20 @@ Every group follows the same rules:
 | What does 100 % show? | Always the photo rendered from the original file (true pixels), even though it takes a few seconds. |
 | What surrounds the photo? | Filmstrip, info line (I toggles) and key hints. |
 
+### Snapshots (owner, 2026-10-14)
+
+After [research/SNAPSHOTS_PROOFING_SEARCH.md](research/SNAPSHOTS_PROOFING_SEARCH.md) Part A (built: [PHASE3.md, Part 19](PHASE3.md#part-19-snapshots)). They answer round 2's "snapshots, before/after and virtual copies are basics" (lesson 9 above).
+
+| Question | Owner's answer |
+|---|---|
+| What is a snapshot? | A named copy of the photo's full develop settings, process version included, plus when it was made. The default name is a date/time stamp (Lightroom's is one too, per a secondary source); it can be renamed. |
+| Where? | A Snapshots panel in Develop's left side, near History (built between Presets and History, Lightroom's order). |
+| What do they do? | Click applies one as one undoable history step ("Snapshot: name"); hover previews it; Update with current settings, Rename, Delete (undoable); **Set as Before** makes Before / after (`\`) compare against it until cleared or another photo is shown. A History step's menu has "Create snapshot from this step". |
+| Keys | **Ctrl+Alt+N** everywhere; **Ctrl+N** as well in the installed app window (`display-mode: standalone`), where Chromium doesn't keep it. Both in the shortcut registry, so they can be changed. |
+| Storage | The catalog (a new table, schema 15) **and** the photo's sidecar (`lightbench:Snapshots`), read back on Open folder, Import and Read changes. Lightroom's own snapshot field is undocumented, so it is neither read nor written. |
+| Virtual copies, Copy/Paste, presets | Each virtual copy has its own snapshots (Lightroom shares them). Copy/Paste and Sync don't carry snapshots; presets don't include them. |
+| Old edits | Rendering never changes. An older snapshot applied keeps its process version: the photo as it was. |
+
 ### AI features requested by the owner (2026-10-11)
 
 | Request | Plan |
