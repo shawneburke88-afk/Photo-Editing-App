@@ -30,8 +30,8 @@ export function CullingSettings() {
     <section className="settings-section" aria-label="Culling">
       <h3 className="panel-title">Culling helpers</h3>
       <p className="muted small">
-        LightBench measures each photo's camera preview (a JPEG's own pixels) on this computer when the photo is added, and older photos in the
-        background: <strong>sharpness</strong> in tiles (on the camera's AF point when the file records it, else the sharpest area),{' '}
+        LightBench measures each photo's camera preview (a JPEG's own pixels) on this computer, in the background once Open folder or Import has
+        added it (so adding photos is as fast as before): <strong>sharpness</strong> in tiles (on the camera's AF point when the file records it, else the sharpest area),{' '}
         <strong>shake</strong> (detail smeared one way across the frame), <strong>exposure</strong> (clipping, very dark or bright) and a small{' '}
         <strong>fingerprint</strong> for look-alikes. No faces or eyes are looked at, nothing is sent anywhere, and nothing goes into .xmp files.
       </p>

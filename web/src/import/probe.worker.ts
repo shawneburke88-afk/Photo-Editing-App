@@ -2,10 +2,7 @@
 // Reads a photo's metadata and makes an upright thumbnail, for the import window and the library grid.
 import { LibRaw } from '@colorhythm/libraw-wasm'
 import wasmUrl from '@colorhythm/libraw-wasm/libraw.wasm?url'
-import type { PhotoAnalysis } from '../catalog/analysis'
 import type { PhotoMeta, PhotoMetadata } from '../catalog/types'
-import { analysisSize, analyzePixels, ANALYSIS_ALGO } from '../engine/analysis/analyze'
-import { NO_EXTRAS, readCaptureExtras, uprightBox, type CaptureExtras } from '../engine/meta/capture'
 import { readJpegExif } from '../engine/meta/exif'
 import { gpsFromLibRaw, type GpsPosition } from '../engine/meta/gps'
 import { readJpegIptc } from '../engine/meta/iptc'
@@ -31,11 +28,6 @@ export interface ProbeResult {
    * preview, or a JPEG with InteropIndex R03), so it differs from one made before LightBench knew (library/refresh.ts).
    */
   thumbAdobeRgb?: boolean
-  /**
-   * The culling analysis of the camera preview (or the JPEG): sharpness, motion, exposure, hashes, sub-second time,
-   * frame counter and focus point (docs/PHASE3.md Part 18). Undefined when the preview couldn't be measured.
-   */
-  analysis?: PhotoAnalysis
 }
 
 const THUMB_SIZE = 512
@@ -85,38 +77,6 @@ async function makeThumb(bmp: ImageBitmap, rotate: 0 | 90 | 180 | 270): Promise<
   return new Uint8Array(await blob.arrayBuffer())
 }
 
-/**
- * Measures an upright view of a decoded preview (turned by `rotate` degrees clockwise), scaled to the analysis size.
- * Never throws: a preview that can't be measured gives undefined.
- */
-function analyse(bmp: ImageBitmap, rotate: 0 | 90 | 180 | 270, extras: CaptureExtras, flip: number): PhotoAnalysis | undefined {
-  try {
-    const sideways = rotate === 90 || rotate === 270
-    const srcW = sideways ? bmp.height : bmp.width
-    const srcH = sideways ? bmp.width : bmp.height
-    const { w, h } = analysisSize(srcW, srcH)
-    const canvas = new OffscreenCanvas(w, h)
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })!
-    ctx.imageSmoothingQuality = 'high'
-    ctx.translate(w / 2, h / 2)
-    ctx.rotate((rotate * Math.PI) / 180)
-    ctx.drawImage(bmp, -(sideways ? h : w) / 2, -(sideways ? w : h) / 2, sideways ? h : w, sideways ? w : h)
-    const px = ctx.getImageData(0, 0, w, h).data
-    const af = extras.focus ? { ...uprightBox(extras.focus, flip), from: extras.focus.from === 'subjectarea' ? ('subjectarea' as const) : ('af' as const) } : null
-    return { ...analyzePixels(px, w, h, { w: srcW, h: srcH }, af), algo: ANALYSIS_ALGO, subSecMs: extras.subSecMs, sequence: extras.sequence, sequenceFrom: extras.sequenceFrom }
-  } catch {
-    return undefined
-  }
-}
-
-/** Olympus's AF area from LibRaw (AFPointSelected: left, top, right, bottom, normalised), when it is plausible. */
-function olympusFocus(v: readonly number[] | undefined): CaptureExtras['focus'] {
-  if (!v || v.length < 4) return null
-  const [x0, y0, x1, y1] = v
-  if (![x0, y0, x1, y1].every((x) => Number.isFinite(x) && x >= 0 && x <= 1) || !(x1 > x0 && y1 > y0)) return null
-  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, from: 'olympus' }
-}
-
 /** The catalog's GPS fields (null when the file records no position). */
 const gpsColumns = (g: GpsPosition | null) => ({ gpsLat: g?.lat ?? null, gpsLon: g?.lon ?? null, gpsAlt: g?.alt ?? null })
 
@@ -155,21 +115,6 @@ async function probeRaw(file: File): Promise<ProbeResult> {
     }
     let thumb: Uint8Array<ArrayBuffer> | null = null
     let thumbAdobeRgb = false
-    let analysis: PhotoAnalysis | undefined
-    // Sub-second time, the camera's frame counter and its focus point (engine/meta/capture.ts), with LibRaw's shot
-    // order and Olympus AF area as fallbacks.
-    const extras = readCaptureExtras(new Uint8Array(buffer), { w: meta.width, h: meta.height })
-    if (extras.sequence === null && other.shot_order > 0) {
-      extras.sequence = other.shot_order
-      extras.sequenceFrom = 'libraw-shot-order'
-    }
-    if (!extras.focus && /olympus|om digital/i.test(meta.cameraMake)) {
-      try {
-        extras.focus = olympusFocus(lr.getMakernotes().olympus.AFPointSelected)
-      } catch {
-        // Not readable in this build: no focus point.
-      }
-    }
     try {
       lr.unpackThumb()
       const img = lr.dcrawMakeMemThumb()
@@ -193,14 +138,13 @@ async function probeRaw(file: File): Promise<ProbeResult> {
         let rotate = FLIP_TO_ROTATION[flip] ?? 0
         // Some cameras store an already-rotated preview; only turn it if it is still landscape.
         if ((rotate === 90 || rotate === 270) && bmp.height > bmp.width) rotate = 0
-        analysis = analyse(bmp, rotate, extras, flip)
         thumb = await makeThumb(bmp, rotate)
       }
     } catch {
       // No usable embedded preview: the photo still imports, with a placeholder thumbnail.
     }
     // LibRaw reads Artist and ImageDescription (not Copyright) into imgother.
-    return { meta, thumb, camera: cameraText({ creator: other.artist ?? '', caption: other.desc ?? '' }), thumbAdobeRgb: !!thumb && thumbAdobeRgb, analysis }
+    return { meta, thumb, camera: cameraText({ creator: other.artist ?? '', caption: other.desc ?? '' }), thumbAdobeRgb: !!thumb && thumbAdobeRgb }
   } finally {
     lr.dispose()
   }
@@ -230,9 +174,6 @@ async function probeJpeg(file: File): Promise<ProbeResult> {
     orientation: exif?.orientation ?? 0,
     ...gpsColumns(exif?.gps ?? null),
   }
-  // The browser turned the JPEG upright while decoding; the focus point is turned to match.
-  const extras = exif ? readCaptureExtras(head, { w: exif.width || bmp.width, h: exif.height || bmp.height }) : NO_EXTRAS
-  const analysis = analyse(bmp, 0, extras, exif?.orientation ?? 0)
   const iptc = readJpegIptc(head)
   const fromExif = exif ? cameraText({ creator: exif.artist, copyright: exif.copyright, caption: exif.description }) : undefined
   // IPTC over EXIF for the fields both have (Adobe XMP Toolkit, ReconcileTIFF.cpp Import3WayItems).
@@ -244,7 +185,6 @@ async function probeJpeg(file: File): Promise<ProbeResult> {
     camera: camera && Object.keys(camera).length ? camera : undefined,
     iptcKeywords: iptc?.keywords.length ? iptc.keywords : undefined,
     thumbAdobeRgb: blob !== file,
-    analysis,
   }
 }
 

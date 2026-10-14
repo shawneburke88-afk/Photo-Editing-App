@@ -179,8 +179,6 @@ class FolderIndexer {
           // JPEG's IPTC comes before them, and its keywords count when the XMP has none (import/run.ts applyEmbedded).
           await applyEmbedded(catalog, id, read, result.camera, result.iptcKeywords)
         }
-        // The culling analysis made while reading (docs/PHASE3.md Part 18): stored, never written to sidecars.
-        await catalog.saveAnalyses(ids.flatMap((id, i) => (id === null ? [] : [{ id, a: items[i].result.analysis ?? null }])))
         // RAW+JPEG pairs become stacks with the RAW on top (darktable-style).
         const newIds = ids.filter((id): id is number => id !== null)
         if (newIds.length) sidecars.schedule(await catalog.stackRawJpegPairs(newIds))

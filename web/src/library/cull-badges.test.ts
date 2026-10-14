@@ -12,9 +12,9 @@ const info = (p: Partial<CullInfo> = {}): CullInfo => ({
 })
 
 describe('badge preferences', () => {
-  it('default to soft, shake, clipped, look-alike, best and suggested on; dark or bright off', () => {
+  it('default to soft, shake, clipped, look-alike, best, suggested and not-yet-analysed on; dark or bright off', () => {
     expect(cleanPrefs(null)).toEqual({ badges: DEFAULT_BADGES, suggest: DEFAULT_SUGGEST })
-    expect(DEFAULT_BADGES).toEqual({ soft: true, shake: true, clipped: true, exposure: false, dup: true, best: true, suggested: true })
+    expect(DEFAULT_BADGES).toEqual({ soft: true, shake: true, clipped: true, exposure: false, dup: true, best: true, suggested: true, pending: true })
   })
   it('keep stored booleans and ignore anything else', () => {
     const p = cleanPrefs({ badges: { soft: false, shake: 'yes', bogus: true }, suggest: { soft: true } })
@@ -30,6 +30,11 @@ describe('badges for a photo', () => {
     const row = { flag: 0, cull: info({ shake: 'Shaken.', clipped: 'Clipped.', exposure: 'Very dark: …' }) }
     expect(badgesFor(row, prefs).map((b) => b.kind)).toEqual(['suggested', 'shake', 'clipped'])
     expect(badgesFor(row, { ...prefs, badges: { ...prefs.badges, suggested: false, exposure: true } }).map((b) => b.text)).toEqual(['Shake', 'Clipped', 'Dark'])
+  })
+  it('marks photos not analysed yet with “…” and says so; nothing for one that couldn’t be measured', () => {
+    expect(badgesFor({ flag: 0, cull: null, analysisState: 'pending' }, prefs)).toEqual([{ kind: 'pending', text: '…', reason: expect.stringMatching(/^Not analysed yet: .*left out of suggestions/) }])
+    expect(badgesFor({ flag: 0, cull: null, analysisState: 'pending' }, { ...prefs, badges: { ...prefs.badges, pending: false } })).toEqual([])
+    expect(badgesFor({ flag: 0, cull: null, analysisState: 'failed' }, prefs)).toEqual([])
   })
   it('carries the reasons, and never suggests a picked photo', () => {
     const row = { flag: 1, cull: info({ softInGroup: '40 % less sharp than A.NEF.', dupOf: { id: 1, name: 'A.NEF', reason: 'Looks like A.NEF.' } }) }

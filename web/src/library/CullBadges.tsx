@@ -5,7 +5,7 @@ import { badgesFor, useCullPrefs } from './cull-badges'
  * The culling helpers' badges for one photo (docs/PHASE3.md Part 18): kept apart from its flag, rating and labels.
  * Each says why in its tooltip (and to screen readers).
  */
-export function CullBadges({ row, className = '' }: { row: { flag: number; cull?: CullInfo | null }; className?: string }) {
+export function CullBadges({ row, className = '' }: { row: { flag: number; cull?: CullInfo | null; analysisState?: 'pending' | 'failed' }; className?: string }) {
   const prefs = useCullPrefs()
   const badges = badgesFor(row, prefs)
   if (!badges.length) return null

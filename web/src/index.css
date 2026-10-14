@@ -835,6 +835,7 @@ button.kbd:hover { border-color: var(--muted); }
 .cull-badge.cb-soft, .cull-badge.cb-shake { color: #f0c27a; }
 .cull-badge.cb-clipped, .cull-badge.cb-exposure { color: #9fc6ff; }
 .cull-badge.cb-dup { color: #c9b6ff; }
+.cull-badge.cb-pending { color: var(--muted, #999); }
 .cull-info .cull-badges { margin-left: 4px; }
 .cull-pane-tags .cull-badges { margin-left: 6px; }
 .culling-menu .menu { right: auto; left: 0; min-width: 250px; }

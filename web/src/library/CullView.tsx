@@ -18,12 +18,12 @@ import { activeAfterDrop, guessAspect, surveyGrid } from './survey'
 import { SurveyTile } from './SurveyTile'
 import { Thumb } from './Thumb'
 import { CullBadges } from './CullBadges'
-import { focusPoint } from './cull-badges'
+import { focusPoint, NOT_ANALYSED } from './cull-badges'
 
 /** The analysis in words, for the info line (I). */
 function measuresText(row: PhotoRow): string {
   const c = row.cull
-  if (!c) return ''
+  if (!c) return row.analysisState === 'pending' ? 'Not analysed yet' : row.analysisState === 'failed' ? 'Couldn’t be analysed (no usable preview)' : ''
   const parts: string[] = []
   if (c.rel !== null) parts.push(`detail ${c.rel.toFixed(2)}× usual for the camera`)
   if (c.group) parts.push(c.group.best ? `sharpest of ${c.group.size}` : `${c.group.rank} of ${c.group.size} by sharpness`)
@@ -455,7 +455,7 @@ export function CullView({ rows, startId, layout: openAs = 'one', candidateId, o
             {target.quick && <span className="muted" title={withKey('In the Quick Collection', 'photo.quick')}>● Quick</span>}
             {target.color > 0 && <span className="label-text"><span className={`label label-${target.color}`} /> {COLOR_NAMES[target.color]}</span>}
             <CullBadges row={target} />
-            {target.cull && <span className="muted cull-measures" title="Culling helpers: measured on the camera preview">{measuresText(target)}</span>}
+            {measuresText(target) && <span className="muted cull-measures" title={target.cull ? 'Culling helpers: measured on the camera preview' : NOT_ANALYSED}>{measuresText(target)}</span>}
             {d && (
               <span className="muted">
                 {[exposureText(d) === 'Not recorded' ? '' : exposureText(d), d.lens, d.capturedAt ? captureText(d.capturedAt) : ''].filter(Boolean).join(' · ')}

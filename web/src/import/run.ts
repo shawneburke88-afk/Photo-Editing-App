@@ -4,7 +4,6 @@
 import type { Catalog } from '../catalog/client'
 import { photosAdded } from '../library/added'
 import { loadThumb, saveThumb } from '../catalog/thumbs'
-import type { PhotoAnalysis } from '../catalog/analysis'
 import type { PhotoMeta, PhotoMetadata } from '../catalog/types'
 import { getDirAt, resolveRoot } from '../platform/roots'
 import { copyVerified } from './copy'
@@ -28,8 +27,6 @@ export interface ImportItem {
   camera?: Partial<PhotoMetadata>
   /** Keywords from the file's IPTC, used when the sidecar has none. */
   iptcKeywords?: string[]
-  /** The culling analysis made while reading it (docs/PHASE3.md Part 18). */
-  analysis?: PhotoAnalysis
 }
 
 export interface ImportOptions {
@@ -252,7 +249,6 @@ export async function runImport(
         progress.imported++
         ;(JPEG_EXTENSIONS.includes(extensionOf(item.file.name)) ? jpegs : raws).set(pairKey(item.file), id)
         if (item.thumb) await saveThumb(id, item.thumb)
-        await catalog.saveAnalyses([{ id, a: item.analysis ?? null }])
         const xmpText = sidecar?.text ?? item.xmp
         const read = xmpText ? await applySidecar(catalog, id, xmpText, !!sidecar?.borrowed) : null
         await applyEmbedded(catalog, id, read, item.camera, item.iptcKeywords)

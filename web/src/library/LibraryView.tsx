@@ -152,7 +152,8 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   useEffect(() => {
     if (status === 'ready' && !indexing.active) extrasRefresh.start()
   }, [status, indexing.active, disconnectedKey])
-  // The culling analysis of photos already in the library (analysis-pass.ts): the same moments, after the refresh.
+  // The culling analysis (analysis-pass.ts), after Open folder has added its photos (never while it reads, so adding is
+  // as fast as without it), and of photos already in the library: the same moments as the refresh.
   useEffect(() => {
     if (status === 'ready' && !indexing.active) analysisPass.start()
   }, [status, indexing.active, disconnectedKey])
@@ -1121,8 +1122,13 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           onClose={() => {
             setImporting(false)
             refresh()
+            analysisPass.start()
           }}
-          onImported={refresh}
+          onImported={() => {
+            refresh()
+            // The culling analysis of the imported photos, in the background (analysis-pass.ts).
+            analysisPass.start()
+          }}
         />
       )}
     </div>

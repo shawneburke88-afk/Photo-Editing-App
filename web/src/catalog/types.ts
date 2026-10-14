@@ -74,6 +74,8 @@ export interface PhotoRow {
   stackExpanded: boolean
   /** Culling helpers (docs/PHASE3.md Part 18): what the analysis says; null or absent when not analysed yet. */
   cull?: import('./analysis').CullInfo | null
+  /** Not measured yet (the background pass will), or its preview couldn't be measured; absent once measured. */
+  analysisState?: 'pending' | 'failed'
 }
 
 export interface PhotoDetail extends PhotoMeta {

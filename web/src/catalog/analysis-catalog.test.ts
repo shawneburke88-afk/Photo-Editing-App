@@ -171,9 +171,15 @@ describe('queries with the culling helpers', () => {
     expect(q({ cull: 'soft', sort: 'name' })).toEqual(['F_0002.JPG', 'F_0003.JPG'])
     expect(q({ cull: 'notSoft', sort: 'name' })).toEqual(['F_0001.JPG', 'F_0004.JPG'])
     expect(q({ cull: 'duplicates', sort: 'name' })).toEqual(['F_0001.JPG', 'F_0002.JPG', 'F_0003.JPG'])
-    const [late] = api.addPhotos([photo('LATE.JPG', root, 5000)])
-    expect(q({ cull: 'unanalysed' })).toEqual(['LATE.JPG'])
-    expect(api.queryPhotos({ ids: [late!] })[0].cull).toBeNull()
+    const [late, bad] = api.addPhotos([photo('LATE.JPG', root, 5000), photo('BAD.JPG', root, 6000)])
+    api.saveAnalyses([{ id: bad!, a: null }])
+    expect(q({ cull: 'unanalysed' })).toEqual(['BAD.JPG', 'LATE.JPG'])
+    // Not analysed yet: no verdicts, marked pending, never suggested; one that couldn't be measured is marked failed.
+    expect(api.queryPhotos({ ids: [late!] })[0]).toMatchObject({ cull: null, analysisState: 'pending' })
+    expect(api.queryPhotos({ ids: [bad!] })[0]).toMatchObject({ cull: null, analysisState: 'failed' })
+    expect(api.queryPhotos({ ids: [ids[3]] })[0].analysisState).toBeUndefined()
+    expect(q({ cull: 'suggested' })).not.toContain('LATE.JPG')
+    api.removePhotos([bad!])
     // Unanalysed photos sort last both ways.
     expect(q({ sort: 'sharpAsc' }).at(-1)).toBe('LATE.JPG')
   })

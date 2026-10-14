@@ -7,7 +7,7 @@ import { useSyncExternalStore } from 'react'
 import type { PhotoRow } from '../catalog/types'
 import { DEFAULT_SUGGEST, suggestReasons, type CullInfo, type SuggestOptions } from '../catalog/analysis'
 
-export type BadgeKind = 'soft' | 'shake' | 'clipped' | 'exposure' | 'dup' | 'best' | 'suggested'
+export type BadgeKind = 'soft' | 'shake' | 'clipped' | 'exposure' | 'dup' | 'best' | 'suggested' | 'pending'
 
 export const BADGES: { kind: BadgeKind; name: string; about: string }[] = [
   { kind: 'soft', name: 'Possibly soft', about: 'Less fine detail than usual for the camera and ISO, or clearly softer than the sharpest shot of its stack or look-alikes.' },
@@ -17,10 +17,11 @@ export const BADGES: { kind: BadgeKind; name: string; about: string }[] = [
   { kind: 'dup', name: 'Look-alike', about: 'Looks like a sharper photo taken just before or after it (“duplicate of…”).' },
   { kind: 'best', name: 'Best in stack', about: 'The sharpest of its stack or group of look-alikes, weighted by exposure.' },
   { kind: 'suggested', name: 'Suggested reject', about: 'A suggestion only: nothing is flagged until you choose Apply in “Suggest rejects…”.' },
+  { kind: 'pending', name: 'Not analysed yet', about: 'A small “…” until the background analysis has measured the photo (it is left out of suggestions, sorts last by sharpness).' },
 ]
 
 export type BadgePrefs = Record<BadgeKind, boolean>
-export const DEFAULT_BADGES: BadgePrefs = { soft: true, shake: true, clipped: true, exposure: false, dup: true, best: true, suggested: true }
+export const DEFAULT_BADGES: BadgePrefs = { soft: true, shake: true, clipped: true, exposure: false, dup: true, best: true, suggested: true, pending: true }
 
 export interface CullPrefs {
   badges: BadgePrefs
@@ -73,6 +74,8 @@ export const cullPrefs = {
 
 export const useCullPrefs = () => useSyncExternalStore(cullPrefs.subscribe, cullPrefs.get)
 
+export const NOT_ANALYSED = 'Not analysed yet: sharpness, shake, exposure and look-alikes are measured in the background. Until then the photo is left out of suggestions and sorts last by sharpness.'
+
 export interface Badge {
   kind: BadgeKind
   /** Short text on the badge. */
@@ -82,9 +85,9 @@ export interface Badge {
 }
 
 /** The badges to show for a photo, in a fixed order. */
-export function badgesFor(row: { flag: number; cull?: CullInfo | null }, prefs: CullPrefs): Badge[] {
+export function badgesFor(row: { flag: number; cull?: CullInfo | null; analysisState?: 'pending' | 'failed' }, prefs: CullPrefs): Badge[] {
   const c = row.cull
-  if (!c) return []
+  if (!c) return row.analysisState === 'pending' && prefs.badges.pending ? [{ kind: 'pending', text: '…', reason: NOT_ANALYSED }] : []
   const on = prefs.badges
   const out: Badge[] = []
   if (on.suggested) {

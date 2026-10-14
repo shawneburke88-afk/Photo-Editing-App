@@ -1,17 +1,23 @@
-// The culling analysis for photos already in the library (docs/PHASE3.md Part 18). Photos added from now on are
-// measured while Open folder or Import reads them (import/probe.worker.ts); this measures the others once, in the
-// background, with the same probe workers, as the one-time refresh does (refresh.ts):
+// The culling analysis (docs/PHASE3.md Part 18), in the background after photos are added: Open folder and Import add
+// photos exactly as before (no analysis while indexing, owner's decision of 2026-10-14), and this pass measures them
+// afterwards, as it measures photos already in the library, with its own workers (analysis.worker.ts), as the one-time
+// refresh does (refresh.ts):
 // - which photos: originals with no row in `photo_analysis`, or one made by an older ANALYSIS_ALGO (virtual copies use
 //   their original's), so the pass resumes where it stopped and runs again only when the measures change;
 // - folders whose read permission isn't granted are skipped without asking (the browser asks only after a click);
 //   their photos wait until the folder can be read (Reconnect, Open folder, or a later visit where it still can);
-// - two workers, a yield between files, and it waits while Open folder or the one-time refresh is reading;
+// - two workers, a yield between files; it waits while Open folder or the one-time refresh is reading, and while
+//   Develop is drawing (the foreground gate, engine/gpu/gate.ts: the pass itself uses no GPU, but leaves the CPU to
+//   Develop; it waits at most 2 s each time, so it can't be starved);
 // - Pause stops after the files being read; Resume (or the next visit) goes on.
 // It writes only `photo_analysis` rows: no thumbnail, rating, flag, edit or sidecar is touched, and nothing is written
 // to sidecars.
 
+import type { PhotoAnalysis } from '../catalog/analysis'
 import { getCatalog } from '../catalog/client'
-import { ProbePool } from '../import/probe'
+import { gpuGate } from '../engine/gpu/gate'
+import { createRpcClient, type RpcClient } from '../lib/rpc'
+import type { AnalysisApi } from './analysis.worker'
 import { getDirAt, getRootHandle } from '../platform/roots'
 import { indexer } from './indexer'
 import { extrasRefresh } from './refresh'
@@ -35,6 +41,51 @@ export interface AnalysisFile {
   fileName: string
 }
 
+/** A few analysis workers; queued files can be dropped (Pause). */
+class AnalysisPool {
+  private workers: { worker: Worker; api: RpcClient<AnalysisApi>; busy: boolean }[] = []
+  private queue: { file: File; resolve: (r: PhotoAnalysis | null) => void; reject: (e: Error) => void }[] = []
+
+  constructor(size: number) {
+    for (let i = 0; i < size; i++) {
+      const worker = new Worker(new URL('./analysis.worker.ts', import.meta.url), { type: 'module' })
+      this.workers.push({ worker, api: createRpcClient<AnalysisApi>(worker), busy: false })
+    }
+  }
+
+  analyse(file: File): Promise<PhotoAnalysis | null> {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ file, resolve, reject })
+      this.pump()
+    })
+  }
+
+  clear() {
+    for (const job of this.queue.splice(0)) job.reject(new Error('cancelled'))
+  }
+
+  private pump() {
+    for (const w of this.workers) {
+      if (w.busy) continue
+      const job = this.queue.shift()
+      if (!job) return
+      w.busy = true
+      w.api
+        .analyse(job.file)
+        .then(job.resolve, job.reject)
+        .finally(() => {
+          w.busy = false
+          this.pump()
+        })
+    }
+  }
+
+  dispose() {
+    this.clear()
+    for (const w of this.workers) w.worker.terminate()
+  }
+}
+
 /** Two workers, fewer than Open folder uses, so the pass stays in the background. */
 const WORKERS = 2
 /** Results are stored in batches of this many. */
@@ -52,7 +103,7 @@ class AnalysisPass {
   private running = false
   private again = false
   private pausedNow = false
-  private pool: ProbePool | null = null
+  private pool: AnalysisPool | null = null
   private measured = 0
   private listeners = new Set<() => void>()
 
@@ -124,9 +175,9 @@ class AnalysisPass {
     const progress = () => this.set({ active: { total: todo.length, done } })
     progress()
     const dirs = new Map<string, Promise<FileSystemDirectoryHandle>>()
-    const pool = new ProbePool(WORKERS)
+    const pool = new AnalysisPool(WORKERS)
     this.pool = pool
-    let pending: { id: number; a: Awaited<ReturnType<ProbePool['probe']>>['analysis'] | null }[] = []
+    let pending: { id: number; a: PhotoAnalysis | null }[] = []
     const store = async () => {
       const batch = pending
       pending = []
@@ -139,6 +190,8 @@ class AnalysisPass {
         // Open folder and the one-time refresh come first: wait while they read.
         while ((indexer.status.active || extrasRefresh.status.active) && !this.pausedNow) await sleep(1000)
         if (this.pausedNow) break
+        // Develop first: wait while it draws (at most 2 s).
+        await gpuGate.background()
         await Promise.all(
           todo.slice(i, i + WORKERS).map(async (f) => {
             const r = await this.measure(f, roots.get(f.rootId)!, dirs, pool)
@@ -181,7 +234,7 @@ class AnalysisPass {
    * Reads one file and measures its preview. Null when the file can't be reached now (it waits for later); a file the
    * probe can't read gives { a: null } and is marked as not measurable, as Open folder would also fail on it.
    */
-  private async measure(f: AnalysisFile, root: FileSystemDirectoryHandle, dirs: Map<string, Promise<FileSystemDirectoryHandle>>, pool: ProbePool) {
+  private async measure(f: AnalysisFile, root: FileSystemDirectoryHandle, dirs: Map<string, Promise<FileSystemDirectoryHandle>>, pool: AnalysisPool) {
     let file: File
     try {
       let dir = dirs.get(`${f.rootId}/${f.folderPath}`)
@@ -191,7 +244,7 @@ class AnalysisPass {
       return null
     }
     try {
-      return { a: (await pool.probe(file)).analysis ?? null }
+      return { a: await pool.analyse(file) }
     } catch (e) {
       if (e instanceof Error && e.message === 'cancelled') return null
       return { a: null }

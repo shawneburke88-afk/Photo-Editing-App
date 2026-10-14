@@ -516,6 +516,7 @@ type QueryRow = Omit<PhotoRow, 'edited' | 'quick' | 'stackTop' | 'stackExpanded'
   folderId: number
   camera: string
   iso: number
+  analysisState: 'pending' | 'failed' | null
 } & AnalysisColumns
 
 const ROW_SELECT = `SELECT p.id, p.file_name AS fileName, p.captured_at AS capturedAt, p.rating, p.flag,
@@ -525,7 +526,10 @@ const ROW_SELECT = `SELECT p.id, p.file_name AS fileName, p.captured_at AS captu
       p.version, p.version_name AS versionName,
       p.stack_id AS stackId, COALESCE(s.top_id = p.id, 0) AS stackTop, COALESCE(s.expanded, 0) AS stackExpanded,
       (SELECT COUNT(*) FROM photos m WHERE m.stack_id = p.stack_id) AS stackSize,
-      p.folder_id AS folderId, p.camera_model AS camera, p.iso, ${ANALYSIS_SELECT}
+      p.folder_id AS folderId, p.camera_model AS camera, p.iso, ${ANALYSIS_SELECT},
+      CASE WHEN a.photo_id IS NOT NULL THEN NULL
+        WHEN EXISTS (SELECT 1 FROM photo_analysis x WHERE x.photo_id = o.id AND x.failed = 1 AND x.algo >= ${ANALYSIS_ALGO}) THEN 'failed'
+        ELSE 'pending' END AS analysisState
     FROM photos p LEFT JOIN stacks s ON s.id = p.stack_id ${ANALYSIS_JOIN}`
 
 /** Library-wide sharpness of analysed photos per camera and ISO band, kept until analysis changes. */
@@ -632,6 +636,7 @@ function queryPhotos(q: PhotoQuery): PhotoRow[] {
       edited: !!r.edited, quick: !!r.quick, version: r.version, versionName: r.versionName,
       stackId: r.stackId, stackSize: r.stackId === null ? 0 : r.stackSize, stackTop: !!r.stackTop, stackExpanded: !!r.stackExpanded,
       cull: infos.get(r.id) ?? null,
+      ...(r.analysisState ? { analysisState: r.analysisState } : {}),
     }
     // A stack being rebuilt from sidecars can briefly hold one photo: show it as an ordinary photo.
     return row.stackId !== null && row.stackSize < 2 ? { ...row, stackId: null, stackSize: 0, stackTop: false, stackExpanded: false } : row
