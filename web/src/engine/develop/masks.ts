@@ -447,7 +447,8 @@ export function appendMasks(own: LocalMask[] | undefined, pasted: LocalMask[] | 
   const room = Math.max(0, MAX_MASKS - base.length)
   const added = pasted.slice(0, room).map((m) => ({
     ...JSON.parse(JSON.stringify(m)) as LocalMask,
-    id: newMaskId(),
+    // Masks read from Lightroom keep their "lr" mark (the panel says they are experimental).
+    id: `${m.id.startsWith('lr') ? 'lr' : ''}${newMaskId()}`,
     components: m.components.map((c) => ({ ...JSON.parse(JSON.stringify(c)) as MaskComponent, id: newComponentId() })),
   }))
   const out = [...base, ...added]
