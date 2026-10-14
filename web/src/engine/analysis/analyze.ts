@@ -3,7 +3,7 @@
 // the probe worker, on the upright preview scaled to ANALYSIS_EDGE pixels on its long side. Pure: no DOM, no GPU.
 
 import { metricsFromStats, statsFromPixels } from '../develop/auto'
-import { grayFromRgba } from './gray'
+import { grayFromRgba, half } from './gray'
 import { dHash, pHash } from './hash'
 import { measureSharpness, type Box } from './sharpness'
 
@@ -55,7 +55,10 @@ export function analyzePixels(
 ): ImageAnalysis {
   const g = grayFromRgba(rgba, w, h)
   const s = measureSharpness(g, af)
-  const m = metricsFromStats(statsFromPixels(rgba))
+  // Exposure on every other pixel of every other row (the histogram's shape and clipped shares hardly change, at a
+  // quarter of the time); the hashes from a quarter-size image (area averaging again, so the same hashes in practice).
+  const m = metricsFromStats(statsFromPixels(subsample(rgba, w, h)))
+  const q = half(half(g))
   const r = (v: number, d = 4) => Math.round(v * 10 ** d) / 10 ** d
   return {
     srcW: src.w,
@@ -79,9 +82,25 @@ export function analyzePixels(
     median: r(m.median),
     p005: r(m.p005),
     p995: r(m.p995),
-    dhash: dHash(g),
-    phash: pHash(g),
+    dhash: dHash(q),
+    phash: pHash(q),
   }
+}
+
+/** Every other pixel of every other row. */
+function subsample(rgba: Uint8ClampedArray | Uint8Array, w: number, h: number): Uint8Array {
+  const out = new Uint8Array(Math.ceil(w / 2) * Math.ceil(h / 2) * 4)
+  let o = 0
+  for (let y = 0; y < h; y += 2) {
+    for (let x = 0; x < w; x += 2) {
+      const i = 4 * (y * w + x)
+      out[o++] = rgba[i]
+      out[o++] = rgba[i + 1]
+      out[o++] = rgba[i + 2]
+      out[o++] = 255
+    }
+  }
+  return out
 }
 
 /** The size to measure a w × h preview at. */

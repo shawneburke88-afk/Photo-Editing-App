@@ -4,13 +4,16 @@ import { keyText } from '../settings/shortcuts'
 import { analysisPass } from './analysis-pass'
 import { BADGES, cullPrefs, useCullPrefs } from './cull-badges'
 
+const subscribe = (fn: () => void) => analysisPass.subscribe(fn)
+const snapshot = () => analysisPass.status
+
 /**
  * Settings › Culling (docs/PHASE3.md Part 18): what the culling helpers measure and how far to trust them, which badges
  * show, and the background analysis (pause, or measure everything again).
  */
 export function CullingSettings() {
   const prefs = useCullPrefs()
-  const status = useSyncExternalStore(analysisPass.subscribe.bind(analysisPass), () => analysisPass.status)
+  const status = useSyncExternalStore(subscribe, snapshot)
   const [counts, setCounts] = useState<{ done: number; total: number; failed: number } | null>(null)
   const [cleared, setCleared] = useState(0)
   useEffect(() => {

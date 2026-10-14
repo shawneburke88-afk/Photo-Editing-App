@@ -41,7 +41,7 @@ export function SuggestRejectsDialog({ rows, onApply, onClose }: Props) {
   const undo = keyText('library.undoSuggested')
   return (
     <div className="dialog-backdrop">
-      <div className="dialog suggest-dialog" role="dialog" aria-label="Suggest rejects">
+      <div className="dialog collection-dialog suggest-dialog" role="dialog" aria-label="Suggest rejects">
         <h2>Suggest rejects</h2>
         <p className="muted small">
           Photos the analysis finds soft or shaken, among the {total.toLocaleString()} in this view ({analysed.toLocaleString()} analysed). Measured on each

@@ -127,6 +127,7 @@ export function measureSharpness(g: Gray, af?: Box | null): Sharpness {
       let jxx = 0
       let jyy = 0
       let jxy = 0
+      let lap = 0
       let n = 0
       for (let y = Math.max(1, y0); y < Math.min(h - 1, y1); y++) {
         const r = y * w
@@ -135,6 +136,8 @@ export function measureSharpness(g: Gray, af?: Box | null): Sharpness {
           const v = data[i]
           sum += v
           sum2 += v * v
+          const l = 4 * v - data[i - 1] - data[i + 1] - data[i - w] - data[i + w]
+          lap += l * l
           // Sobel.
           const gx = data[i - w + 1] + 2 * data[i + 1] + data[i + w + 1] - data[i - w - 1] - 2 * data[i - 1] - data[i + w - 1]
           const gy = data[i + w - 1] + 2 * data[i + w] + data[i + w + 1] - data[i - w - 1] - 2 * data[i - w] - data[i - w + 1]
@@ -149,7 +152,7 @@ export function measureSharpness(g: Gray, af?: Box | null): Sharpness {
         x: tx,
         y: ty,
         std: n ? Math.sqrt(Math.max(0, sum2 / n - mean * mean)) : 0,
-        e1: laplacianEnergy(g, x0, y0, x1, y1),
+        e1: n ? lap / n : 0,
         e2: laplacianEnergy(g2, x0 >> 1, y0 >> 1, x1 >> 1, y1 >> 1),
         jxx,
         jyy,
