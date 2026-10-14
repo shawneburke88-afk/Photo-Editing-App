@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.6.0",
+    "date": "2026-10-14",
+    "newFeatures": [
+      "Culling helpers in the Library: after a folder opens, LightBench measures each photo in the background (sharpness, camera shake, clipped exposure, look-alikes) and shows badges with the reason in their tooltips. Opening folders is as fast as before.",
+      "Sort and filter by sharpness, and \"Select the best of each stack\". Auto-stack can now group only photos that look alike, with a Strictness slider, and put the sharpest on top. Burst frames taken within the same second are now in the right order.",
+      "\"Suggest rejects…\" lists photos that are clearly softer than the best of their group, or shaken, with the reasons. Nothing is flagged until you press Apply, Undo puts the flags back, and no file is ever deleted.",
+      "In the culling view, Z zooms to the point the camera focused on (Sony and Fujifilm files so far), or to the sharpest area.",
+      "Settings › Culling has the badge switches, progress with Pause/Resume, and \"Measure all photos again\". Everything is measured on your computer and nothing is written to your photos or their .xmp files."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.5.9",
     "date": "2026-10-14",
     "newFeatures": [

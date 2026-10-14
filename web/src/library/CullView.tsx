@@ -17,6 +17,19 @@ import { Stars } from './Stars'
 import { activeAfterDrop, guessAspect, surveyGrid } from './survey'
 import { SurveyTile } from './SurveyTile'
 import { Thumb } from './Thumb'
+import { CullBadges } from './CullBadges'
+import { focusPoint, NOT_ANALYSED } from './cull-badges'
+
+/** The analysis in words, for the info line (I). */
+function measuresText(row: PhotoRow): string {
+  const c = row.cull
+  if (!c) return row.analysisState === 'pending' ? 'Not analysed yet' : row.analysisState === 'failed' ? 'Couldn’t be analysed (no usable preview)' : ''
+  const parts: string[] = []
+  if (c.rel !== null) parts.push(`detail ${c.rel.toFixed(2)}× usual for the camera`)
+  if (c.group) parts.push(c.group.best ? `sharpest of ${c.group.size}` : `${c.group.rank} of ${c.group.size} by sharpness`)
+  if (c.focus) parts.push(`Z: ${c.focus.from === 'af' ? 'camera AF point' : c.focus.from === 'subjectarea' ? 'EXIF subject area' : 'sharpest area'}`)
+  return parts.join(' · ')
+}
 
 export type CullField = 'rating' | 'flag' | 'color'
 export type CullLayout = 'one' | 'compare' | 'survey'
@@ -350,7 +363,8 @@ export function CullView({ rows, startId, layout: openAs = 'one', candidateId, o
       case 'compare.makeSelect': promote(); break
       case 'compare.swap': swap(); break
       case 'compare.switch': setActive((a) => (a ? 0 : 1)); break
-      case 'cull.zoom': setZoom((z) => (z ? null : { u: 0.5, v: 0.5 })); break
+      // Z: 100 % at the measured focus point (a click zooms where it is clicked).
+      case 'cull.zoom': setZoom((z) => (z ? null : focusPoint(target))); break
       case 'cull.compare':
         if (layout === 'compare') toOne()
         else showCompare(layout === 'survey' ? tile : index)
@@ -409,7 +423,8 @@ export function CullView({ rows, startId, layout: openAs = 'one', candidateId, o
             [keyText('compare.makeSelect'), 'Make Select'],
             [keyText('compare.swap'), 'Swap'],
             [keyText('compare.switch'), 'switch photo'],
-            [[keyText('cull.zoom'), 'click'].filter(Boolean).join(' or ') + ':', '100 %'],
+            [keyText('cull.zoom'), '100 % at the focus point'],
+            ['click:', '100 % there'],
             [keyText('cull.compare'), '1-up'],
             [keyText('cull.advance'), 'auto-advance'],
             [keyText('cull.info'), 'info'],
@@ -419,7 +434,8 @@ export function CullView({ rows, startId, layout: openAs = 'one', candidateId, o
         : hintLine('', [
             ...flagKeys,
             [moveKeys('one.next', 'one.prev'), 'move'],
-            [[keyText('cull.zoom'), 'click'].filter(Boolean).join(' or ') + ':', '100 %'],
+            [keyText('cull.zoom'), '100 % at the focus point'],
+            ['click:', '100 % there'],
             [keyText('cull.compare'), 'compare'],
             [keyText('cull.advance'), 'auto-advance'],
             [keyText('cull.info'), 'info'],
@@ -438,6 +454,8 @@ export function CullView({ rows, startId, layout: openAs = 'one', candidateId, o
             {target.flag === -1 && <span className="flag-text reject">✕ Rejected</span>}
             {target.quick && <span className="muted" title={withKey('In the Quick Collection', 'photo.quick')}>● Quick</span>}
             {target.color > 0 && <span className="label-text"><span className={`label label-${target.color}`} /> {COLOR_NAMES[target.color]}</span>}
+            <CullBadges row={target} />
+            {measuresText(target) && <span className="muted cull-measures" title={target.cull ? 'Culling helpers: measured on the camera preview' : NOT_ANALYSED}>{measuresText(target)}</span>}
             {d && (
               <span className="muted">
                 {[exposureText(d) === 'Not recorded' ? '' : exposureText(d), d.lens, d.capturedAt ? captureText(d.capturedAt) : ''].filter(Boolean).join(' · ')}

@@ -5,6 +5,8 @@ import { exposeRpc } from '../lib/rpc'
 import { isStorageFailure, NEWER_CATALOG_MESSAGE } from './errors'
 import { compileSmart, type SmartRules } from './smart'
 import { burstGroups, collapseStacks } from './stacks'
+import { assess, burstCompare, DEFAULT_SUGGEST, peerStats, rankGroup, sharpnessKey, similarGroups, STRICTNESS_BITS, suggestReasons, type AssessItem, type CullInfo, type PeerStats, type PhotoAnalysis } from './analysis'
+import { ANALYSIS_ALGO } from '../engine/analysis/analyze'
 import type { SidecarState } from '../sidecar/changes'
 import { ownsStem, stemOwners } from '../sidecar/naming'
 import { checkCatalogImage, discardStaged, exportCatalog, removeLeftovers, stageCatalog } from './backup-db'
@@ -326,6 +328,14 @@ export function migrate(d: Database) {
       // library restored from a backup made before the refresh has 0s again, so the refresh runs again for it.
       d.exec('ALTER TABLE photos ADD COLUMN extras_read INTEGER NOT NULL DEFAULT 0')
     }
+    if (version < 14) {
+      // Culling helpers (docs/PHASE3.md Part 18): each photo's measures from its camera preview, made when it is added
+      // or by the background pass (library/analysis-pass.ts) for photos already there. One row per original (virtual
+      // copies use their original's), deleted with it. Derived data only: never written to sidecars or exports, and
+      // made again when `algo` is older than the code's. `failed` = the preview couldn't be measured (not retried
+      // until `algo` changes). A new table only, so nothing else in the catalog changes.
+      d.exec(ANALYSIS_TABLE)
+    }
     d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     d.exec('COMMIT')
   } catch (err) {
@@ -335,6 +345,23 @@ export function migrate(d: Database) {
     d.exec('PRAGMA foreign_keys = ON')
   }
 }
+
+/** The photo_analysis table (schema 14). */
+export const ANALYSIS_TABLE = `
+  CREATE TABLE photo_analysis (
+    photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+    algo INTEGER NOT NULL,
+    analyzed_at INTEGER NOT NULL,
+    failed INTEGER NOT NULL DEFAULT 0,
+    src_w INTEGER, src_h INTEGER, meas_w INTEGER, meas_h INTEGER,
+    sharp_peak REAL, sharp_subject REAL, acuity REAL, noise_floor REAL,
+    motion REAL, motion_subject REAL, motion_angle REAL, textured REAL,
+    subject_src TEXT, subject_box TEXT, focus_u REAL, focus_v REAL,
+    clip_hi REAL, clip_lo REAL, median REAL, p005 REAL, p995 REAL,
+    dhash TEXT, phash TEXT,
+    sub_sec INTEGER, seq INTEGER, seq_src TEXT
+  );
+`
 
 function addRoot(name: string): number {
   conn().exec({ sql: 'INSERT INTO roots(name) VALUES (?)', bind: [name] })
@@ -446,6 +473,79 @@ function addPhotos(photos: NewPhoto[]): (number | null)[] {
   return ids
 }
 
+/** The analysis columns of `a` (photo_analysis of the photo's original), for queries. */
+const ANALYSIS_SELECT = `a.algo AS a_algo, a.src_w AS a_src_w, a.src_h AS a_src_h, a.meas_w AS a_meas_w, a.meas_h AS a_meas_h,
+  a.sharp_peak AS a_sharp_peak, a.sharp_subject AS a_sharp_subject, a.acuity AS a_acuity, a.noise_floor AS a_noise_floor,
+  a.motion AS a_motion, a.motion_subject AS a_motion_subject, a.motion_angle AS a_motion_angle, a.textured AS a_textured,
+  a.subject_src AS a_subject_src, a.subject_box AS a_subject_box, a.focus_u AS a_focus_u, a.focus_v AS a_focus_v,
+  a.clip_hi AS a_clip_hi, a.clip_lo AS a_clip_lo, a.median AS a_median, a.p005 AS a_p005, a.p995 AS a_p995,
+  a.dhash AS a_dhash, a.phash AS a_phash, a.sub_sec AS a_sub_sec, a.seq AS a_seq, a.seq_src AS a_seq_src`
+
+/** Joins a photo's original (itself for an original) and the original's analysis, when measured. */
+const ANALYSIS_JOIN = `LEFT JOIN photos o ON o.folder_id = p.folder_id AND o.file_name = p.file_name AND o.version = 0
+  LEFT JOIN photo_analysis a ON a.photo_id = o.id AND a.failed = 0`
+
+type AnalysisColumns = Record<`a_${string}`, unknown>
+
+function analysisFromRow(r: AnalysisColumns): PhotoAnalysis | null {
+  if (r.a_algo === null || r.a_algo === undefined) return null
+  const n = (k: string) => Number(r[`a_${k}`] ?? 0)
+  let box: PhotoAnalysis['subjectBox'] = null
+  try {
+    box = r.a_subject_box ? JSON.parse(String(r.a_subject_box)) : null
+  } catch {
+    box = null
+  }
+  return {
+    algo: n('algo'), srcW: n('src_w'), srcH: n('src_h'), w: n('meas_w'), h: n('meas_h'),
+    sharpPeak: n('sharp_peak'), sharpSubject: n('sharp_subject'), acuity: n('acuity'), noiseFloor: n('noise_floor'),
+    motion: n('motion'), motionSubject: n('motion_subject'), motionAngle: n('motion_angle'), textured: n('textured'),
+    subjectFrom: (r.a_subject_src as PhotoAnalysis['subjectFrom']) ?? 'peak', subjectBox: box, focusU: n('focus_u'), focusV: n('focus_v'),
+    clipHi: n('clip_hi'), clipLo: n('clip_lo'), median: n('median'), p005: n('p005'), p995: n('p995'),
+    dhash: String(r.a_dhash ?? ''), phash: String(r.a_phash ?? ''),
+    subSecMs: r.a_sub_sec === null ? null : n('sub_sec'), sequence: r.a_seq === null ? null : n('seq'),
+    sequenceFrom: (r.a_seq_src as PhotoAnalysis['sequenceFrom']) ?? '',
+  }
+}
+
+type QueryRow = Omit<PhotoRow, 'edited' | 'quick' | 'stackTop' | 'stackExpanded' | 'cull'> & {
+  edited: number
+  quick: number
+  stackTop: number
+  stackExpanded: number
+  folderId: number
+  camera: string
+  iso: number
+  analysisState: 'pending' | 'failed' | null
+} & AnalysisColumns
+
+const ROW_SELECT = `SELECT p.id, p.file_name AS fileName, p.captured_at AS capturedAt, p.rating, p.flag,
+      p.color_label AS color, p.orientation, EXISTS (SELECT 1 FROM edits e WHERE e.photo_id = p.id) AS edited,
+      EXISTS (SELECT 1 FROM collection_photos cp JOIN collections c ON c.id = cp.collection_id
+              WHERE cp.photo_id = p.id AND c.kind = 'quick') AS quick,
+      p.version, p.version_name AS versionName,
+      p.stack_id AS stackId, COALESCE(s.top_id = p.id, 0) AS stackTop, COALESCE(s.expanded, 0) AS stackExpanded,
+      (SELECT COUNT(*) FROM photos m WHERE m.stack_id = p.stack_id) AS stackSize,
+      p.folder_id AS folderId, p.camera_model AS camera, p.iso, ${ANALYSIS_SELECT},
+      CASE WHEN a.photo_id IS NOT NULL THEN NULL
+        WHEN EXISTS (SELECT 1 FROM photo_analysis x WHERE x.photo_id = o.id AND x.failed = 1 AND x.algo >= ${ANALYSIS_ALGO}) THEN 'failed'
+        ELSE 'pending' END AS analysisState
+    FROM photos p LEFT JOIN stacks s ON s.id = p.stack_id ${ANALYSIS_JOIN}`
+
+/** Library-wide sharpness of analysed photos per camera and ISO band, kept until analysis changes. */
+let peersCache: { peers: Map<string, PeerStats>; median: number } | null = null
+
+function peers() {
+  if (!peersCache) {
+    const rows = conn().selectObjects(
+      `SELECT p.camera_model AS camera, p.iso, a.acuity FROM photo_analysis a JOIN photos p ON p.id = a.photo_id WHERE a.failed = 0`,
+    ) as unknown as { camera: string; iso: number; acuity: number }[]
+    const all = rows.map((r) => r.acuity).sort((a, b) => a - b)
+    peersCache = { peers: peerStats(rows), median: all.length ? all[all.length >> 1] : 0 }
+  }
+  return peersCache
+}
+
 function queryPhotos(q: PhotoQuery): PhotoRow[] {
   const where: string[] = []
   const bind: (string | number)[] = []
@@ -498,30 +598,138 @@ function queryPhotos(q: PhotoQuery): PhotoRow[] {
     const like = `%${q.text.trim()}%`
     bind.push(like, like, like, like, like, like, like)
   }
+  // Within one second, the camera's sub-second time and frame counter order a burst's frames (Part 18).
   const order =
-    q.sort === 'name' ? 'p.file_name COLLATE NOCASE, p.version' : q.sort === 'captureAsc' ? 'p.captured_at, p.file_name, p.version' : 'p.captured_at DESC, p.file_name DESC, p.version'
-  const sql = `SELECT p.id, p.file_name AS fileName, p.captured_at AS capturedAt, p.rating, p.flag,
-      p.color_label AS color, p.orientation, EXISTS (SELECT 1 FROM edits e WHERE e.photo_id = p.id) AS edited,
-      EXISTS (SELECT 1 FROM collection_photos cp JOIN collections c ON c.id = cp.collection_id
-              WHERE cp.photo_id = p.id AND c.kind = 'quick') AS quick,
-      p.version, p.version_name AS versionName,
-      p.stack_id AS stackId, COALESCE(s.top_id = p.id, 0) AS stackTop, COALESCE(s.expanded, 0) AS stackExpanded,
-      (SELECT COUNT(*) FROM photos m WHERE m.stack_id = p.stack_id) AS stackSize
-    FROM photos p LEFT JOIN stacks s ON s.id = p.stack_id
-    ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order}`
-  type Row = Omit<PhotoRow, 'edited' | 'quick' | 'stackTop' | 'stackExpanded'> & { edited: number; quick: number; stackTop: number; stackExpanded: number }
-  const rows = (conn().selectObjects(sql, bind) as unknown as Row[]).map((r) => ({
-    ...r,
-    edited: !!r.edited,
-    quick: !!r.quick,
-    stackTop: !!r.stackTop,
-    stackExpanded: !!r.stackExpanded,
-    stackSize: r.stackId === null ? 0 : r.stackSize,
-  })).map((r) =>
+    q.sort === 'name'
+      ? 'p.file_name COLLATE NOCASE, p.version'
+      : q.sort === 'captureAsc'
+        ? 'p.captured_at, COALESCE(a.sub_sec, 0), COALESCE(a.seq, 0), p.file_name, p.version'
+        : 'p.captured_at DESC, COALESCE(a.sub_sec, 0) DESC, COALESCE(a.seq, 0) DESC, p.file_name DESC, p.version'
+  const raw = conn().selectObjects(`${ROW_SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order}`, bind) as unknown as QueryRow[]
+
+  // Culling helpers: the stacks' other members count for "best in stack" even when a filter hides them.
+  const analysed = raw.some((r) => r.a_algo !== null)
+  let infos = new Map<number, CullInfo>()
+  const items: AssessItem[] = []
+  const toItem = (r: QueryRow): AssessItem => {
+    const a = analysisFromRow(r)
+    return {
+      id: r.id, fileName: r.fileName, capturedAt: r.capturedAt, subSecMs: a?.subSecMs ?? null, sequence: a?.sequence ?? null,
+      version: r.version, folderId: r.folderId, camera: r.camera, iso: r.iso, stackId: r.stackId, a,
+    }
+  }
+  if (analysed) {
+    for (const r of raw) items.push(toItem(r))
+    const shown = new Set(raw.map((r) => r.id))
+    const stackIds = [...new Set(raw.map((r) => r.stackId).filter((x): x is number => x !== null))]
+    for (let i = 0; i < stackIds.length; i += 500) {
+      const chunk = stackIds.slice(i, i + 500)
+      const more = conn().selectObjects(`${ROW_SELECT} WHERE p.stack_id IN (${chunk.map(() => '?').join(',')})`, chunk) as unknown as QueryRow[]
+      for (const r of more) if (!shown.has(r.id)) items.push(toItem(r))
+    }
+    infos = assess(items, peers().peers)
+  }
+
+  let rows: PhotoRow[] = raw.map((r) => {
+    const row: PhotoRow = {
+      id: r.id, fileName: r.fileName, capturedAt: r.capturedAt, rating: r.rating, flag: r.flag, color: r.color, orientation: r.orientation,
+      edited: !!r.edited, quick: !!r.quick, version: r.version, versionName: r.versionName,
+      stackId: r.stackId, stackSize: r.stackId === null ? 0 : r.stackSize, stackTop: !!r.stackTop, stackExpanded: !!r.stackExpanded,
+      cull: infos.get(r.id) ?? null,
+      ...(r.analysisState ? { analysisState: r.analysisState } : {}),
+    }
     // A stack being rebuilt from sidecars can briefly hold one photo: show it as an ordinary photo.
-    r.stackId !== null && r.stackSize < 2 ? { ...r, stackId: null, stackSize: 0, stackTop: false, stackExpanded: false } : r,
-  )
+    return row.stackId !== null && row.stackSize < 2 ? { ...row, stackId: null, stackSize: 0, stackTop: false, stackExpanded: false } : row
+  })
+
+  if (q.cull) {
+    const soft = (c: CullInfo | null | undefined) => !!c && !!(c.soft || c.shake || c.softInGroup)
+    const keep: Record<NonNullable<PhotoQuery['cull']>, (r: PhotoRow) => boolean> = {
+      soft: (r) => soft(r.cull),
+      notSoft: (r) => !!r.cull && !soft(r.cull),
+      suggested: (r) => suggestReasons(r, q.suggest ?? DEFAULT_SUGGEST) !== null,
+      duplicates: (r) => !!r.cull?.dupOf,
+      unanalysed: (r) => !r.cull,
+    }
+    rows = rows.filter(keep[q.cull])
+  }
+  if (q.sort === 'sharpDesc' || q.sort === 'sharpAsc') {
+    const byId = new Map(items.map((i) => [i.id, i]))
+    const median = analysed ? peers().median : 0
+    const key = new Map(rows.map((r) => [r.id, sharpnessKey(byId.get(r.id)?.a ?? null, r.cull ?? undefined, median)]))
+    const dir = q.sort === 'sharpDesc' ? -1 : 1
+    // Stable: photos with the same key (or none, last) keep capture order.
+    rows = rows
+      .map((r, i) => ({ r, i, k: key.get(r.id) ?? null }))
+      .sort((x, y) => (x.k === null ? (y.k === null ? x.i - y.i : 1) : y.k === null ? -1 : dir * (x.k - y.k) || x.i - y.i))
+      .map((x) => x.r)
+  }
   return q.ungrouped ? rows : collapseStacks(rows)
+}
+
+// ---- culling analysis (Part 18)
+
+/** Stores photos' analysis (null: the preview couldn't be measured). Nothing else about the photos changes. */
+function saveAnalyses(entries: { id: number; a: PhotoAnalysis | null }[]) {
+  if (!entries.length) return
+  inTransaction(() => {
+    const stmt = conn().prepare(`INSERT OR REPLACE INTO photo_analysis (photo_id, algo, analyzed_at, failed, src_w, src_h, meas_w, meas_h,
+        sharp_peak, sharp_subject, acuity, noise_floor, motion, motion_subject, motion_angle, textured,
+        subject_src, subject_box, focus_u, focus_v, clip_hi, clip_lo, median, p005, p995, dhash, phash, sub_sec, seq, seq_src)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    const now = Math.floor(Date.now() / 1000)
+    for (const { id, a } of entries) {
+      // Only for photos still in the catalog (one removed meanwhile is skipped).
+      if (conn().selectValue('SELECT 1 FROM photos WHERE id = ?', [id]) === undefined) continue
+      if (!a) {
+        stmt.bind([id, ANALYSIS_ALGO, now, 1, ...Array<null>(26).fill(null)]).stepReset()
+        continue
+      }
+      stmt.bind([
+        id, a.algo, now, 0, a.srcW, a.srcH, a.w, a.h,
+        a.sharpPeak, a.sharpSubject, a.acuity, a.noiseFloor, a.motion, a.motionSubject, a.motionAngle, a.textured,
+        a.subjectFrom, a.subjectBox ? JSON.stringify(a.subjectBox) : null, a.focusU, a.focusV,
+        a.clipHi, a.clipLo, a.median, a.p005, a.p995, a.dhash, a.phash, a.subSecMs, a.sequence, a.sequenceFrom || null,
+      ]).stepReset()
+    }
+    stmt.finalize()
+  })
+  peersCache = null
+}
+
+/**
+ * Originals still to analyse (none yet, or made by an older `algo`), in reading order: library folder, folder, file.
+ * Virtual copies use their original's analysis.
+ */
+function analysisPending(): { id: number; rootId: number; folderPath: string; fileName: string }[] {
+  return conn().selectObjects(
+    `SELECT p.id, f.root_id AS rootId, f.path AS folderPath, p.file_name AS fileName
+     FROM photos p JOIN folders f ON f.id = p.folder_id LEFT JOIN photo_analysis a ON a.photo_id = p.id
+     WHERE p.version = 0 AND (a.photo_id IS NULL OR a.algo < ?) ORDER BY f.root_id, f.path, p.file_name`,
+    [ANALYSIS_ALGO],
+  ) as unknown as { id: number; rootId: number; folderPath: string; fileName: string }[]
+}
+
+/** How many originals have an up-to-date analysis (measured, or found unmeasurable), of all. */
+function analysisCounts(): { done: number; total: number; failed: number } {
+  return conn().selectObject(
+    `SELECT COUNT(*) AS total, COUNT(a.photo_id) AS done, COALESCE(SUM(a.failed), 0) AS failed
+     FROM photos p LEFT JOIN photo_analysis a ON a.photo_id = p.id AND a.algo >= ? WHERE p.version = 0`,
+    [ANALYSIS_ALGO],
+  ) as unknown as { done: number; total: number; failed: number }
+}
+
+/** The stored analysis of photos (a virtual copy's is its original's); null where there is none. */
+function analysisOf(ids: number[]): { id: number; a: PhotoAnalysis | null }[] {
+  if (!ids.length) return []
+  const rows = conn().selectObjects(`SELECT p.id, ${ANALYSIS_SELECT} FROM photos p ${ANALYSIS_JOIN} WHERE p.id IN (${ids.map(() => '?').join(',')})`, ids) as unknown as ({ id: number } & AnalysisColumns)[]
+  return rows.map((r) => ({ id: r.id, a: analysisFromRow(r) }))
+}
+
+/** "Clear analysis data": every photo is measured again by the background pass. */
+function clearAnalysis() {
+  conn().exec('DELETE FROM photo_analysis')
+  peersCache = null
 }
 
 // ---- keywords
@@ -954,16 +1162,48 @@ function setStackExpanded(id: number | null, expanded: boolean) {
   else conn().exec({ sql: 'UPDATE stacks SET expanded = ? WHERE id = (SELECT stack_id FROM photos WHERE id = ?)', bind: [expanded ? 1 : 0, id] })
 }
 
-/** Auto-stack by capture time over `ids`. Returns touched ids (for sidecars) and how many stacks were made. */
-function autoStack(ids: number[], gapSeconds: number): { touched: number[]; stacks: number } {
-  if (!ids.length) return { touched: [], stacks: 0 }
-  const photos = conn().selectObjects(
-    `SELECT id, captured_at AS capturedAt, stack_id IS NOT NULL AS stacked FROM photos WHERE id IN (${ids.map(() => '?').join(',')})`, ids,
-  ) as unknown as { id: number; capturedAt: number; stacked: number }[]
-  const groups = burstGroups(photos.map((p) => ({ ...p, stacked: !!p.stacked })), gapSeconds)
+/**
+ * Auto-stack by capture time over `ids`. Returns touched ids (for sidecars) and how many stacks were made.
+ * `similar` (Part 18): only photos that also look alike, at strictness 1 (loose) to 5 (strict), linked when taken at
+ * most `gapSeconds` apart; photos not yet analysed are left alone (`skipped`). `sharpestTop`: the sharpest photo of
+ * each new stack goes on top (else the first taken).
+ */
+function autoStack(ids: number[], gapSeconds: number, opts: { similar?: number; sharpestTop?: boolean } = {}): { touched: number[]; stacks: number; skipped: number } {
+  if (!ids.length) return { touched: [], stacks: 0, skipped: 0 }
+  const list = ids.map(() => '?').join(',')
+  if (!opts.similar && !opts.sharpestTop) {
+    const photos = conn().selectObjects(
+      `SELECT id, captured_at AS capturedAt, stack_id IS NOT NULL AS stacked FROM photos WHERE id IN (${list})`, ids,
+    ) as unknown as { id: number; capturedAt: number; stacked: number }[]
+    const groups = burstGroups(photos.map((p) => ({ ...p, stacked: !!p.stacked })), gapSeconds)
+    const touched: number[] = []
+    for (const g of groups) touched.push(...createStack(g, g[0]))
+    return { touched, stacks: groups.length, skipped: 0 }
+  }
+  const rows = conn().selectObjects(`${ROW_SELECT} WHERE p.id IN (${list}) AND p.stack_id IS NULL`, ids) as unknown as QueryRow[]
+  const items = rows.map((r) => {
+    const a = analysisFromRow(r)
+    return { id: r.id, fileName: r.fileName, capturedAt: r.capturedAt, version: r.version, subSecMs: a?.subSecMs ?? null, sequence: a?.sequence ?? null, a }
+  })
+  const byId = new Map(items.map((i) => [i.id, i]))
+  let groups: number[][]
+  let skipped = 0
+  if (opts.similar) {
+    const usable = items.filter((i) => i.a && i.version === 0)
+    skipped = items.length - usable.length
+    const bits = STRICTNESS_BITS[Math.min(5, Math.max(1, Math.round(opts.similar)))]
+    groups = similarGroups(usable.map((i) => ({ ...i, dhash: i.a!.dhash, phash: i.a!.phash })), bits, gapSeconds)
+  } else {
+    groups = burstGroups(items.map((i) => ({ id: i.id, capturedAt: i.capturedAt, stacked: false })), gapSeconds)
+  }
   const touched: number[] = []
-  for (const g of groups) touched.push(...createStack(g, g[0]))
-  return { touched, stacks: groups.length }
+  for (const g of groups) {
+    const ordered = [...g].sort((x, y) => burstCompare(byId.get(x)!, byId.get(y)!))
+    const measured = ordered.map((id) => byId.get(id)!).filter((m) => m.a)
+    const top = opts.sharpestTop && measured.length ? rankGroup(measured.map((m) => ({ ...m.a!, id: m.id })))[0].item.id : ordered[0]
+    touched.push(...createStack(ordered, top))
+  }
+  return { touched, stacks: groups.length, skipped }
 }
 
 /**
@@ -1258,6 +1498,8 @@ function removePhotos(given: number[]): number[] {
   d.exec(`DELETE FROM folders WHERE id NOT IN (SELECT DISTINCT folder_id FROM photos)`)
   d.exec(`DELETE FROM roots WHERE id NOT IN (SELECT DISTINCT root_id FROM folders)`)
   d.exec('COMMIT')
+  // Their analysis went with them (ON DELETE CASCADE).
+  peersCache = null
   return originals
 }
 
@@ -1413,6 +1655,11 @@ export const handlers = {
   isEdited,
   extrasPending,
   saveExtras,
+  saveAnalyses,
+  analysisPending,
+  analysisCounts,
+  analysisOf,
+  clearAnalysis,
   listTargets,
   saveTarget,
   deleteTarget,

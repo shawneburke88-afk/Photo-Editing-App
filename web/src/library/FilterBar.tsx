@@ -3,8 +3,9 @@ import { COLOR_NAMES } from './format'
 import { showKeyword } from './keywords'
 import { useState } from 'react'
 import { withKey } from '../settings/shortcuts'
+import { BADGES, cullPrefs, useCullPrefs } from './cull-badges'
 
-type Filters = Pick<PhotoQuery, 'text' | 'minRating' | 'flag' | 'color' | 'sort' | 'keyword'>
+type Filters = Pick<PhotoQuery, 'text' | 'minRating' | 'flag' | 'color' | 'sort' | 'keyword' | 'cull'>
 
 interface Props {
   value: Filters
@@ -18,6 +19,8 @@ interface Props {
   onSurvey: () => void
   /** Stack commands, for the Stacks menu. */
   stacks: { stack: () => void; unstack: () => void; auto: () => void; expandAll: () => void; collapseAll: () => void; canStack: boolean }
+  /** Culling helpers (docs/PHASE3.md Part 18), for the Culling menu. */
+  culling: { suggest: () => void; selectBest: () => void; analysed: { done: number; total: number } | null }
   cellSize: number
   onCellSize: (n: number) => void
   shown: number
@@ -26,7 +29,7 @@ interface Props {
   onSubfolders: (on: boolean) => void
 }
 
-export function FilterBar({ value, onChange, view, onView, onCull, onCompare, onSurvey, stacks, cellSize, onCellSize, shown, subfolders, onSubfolders }: Props) {
+export function FilterBar({ value, onChange, view, onView, onCull, onCompare, onSurvey, stacks, culling, cellSize, onCellSize, shown, subfolders, onSubfolders }: Props) {
   const set = (patch: Partial<Filters>) => onChange({ ...value, ...patch })
   return (
     <div className="filterbar">
@@ -60,10 +63,25 @@ export function FilterBar({ value, onChange, view, onView, onCull, onCompare, on
         <option value={0}>Any label</option>
         {[1, 2, 3, 4, 5].map((c) => <option key={c} value={c}>{COLOR_NAMES[c]}</option>)}
       </select>
+      <select
+        value={value.cull ?? ''}
+        onChange={(e) => set({ cull: (e.target.value || undefined) as Filters['cull'] })}
+        aria-label="Sharpness"
+        title="Culling helpers: photos the analysis finds possibly soft, suggested rejects, look-alikes… Measured on each photo's camera preview."
+      >
+        <option value="">Any sharpness</option>
+        <option value="soft">Possibly soft or shake</option>
+        <option value="notSoft">Not soft</option>
+        <option value="suggested">Suggested rejects</option>
+        <option value="duplicates">Look-alikes of a sharper photo</option>
+        <option value="unanalysed">Not analysed yet</option>
+      </select>
       <select value={value.sort ?? 'captureDesc'} onChange={(e) => set({ sort: e.target.value as Filters['sort'] })} aria-label="Sort">
         <option value="captureDesc">Newest first</option>
         <option value="captureAsc">Oldest first</option>
         <option value="name">File name</option>
+        <option value="sharpDesc">Sharpest first</option>
+        <option value="sharpAsc">Least sharp first</option>
       </select>
       {subfolders !== undefined && (
         <label className="check small" title="Show photos in this folder's subfolders too">
@@ -78,6 +96,7 @@ export function FilterBar({ value, onChange, view, onView, onCull, onCompare, on
         </span>
       )}
       <StacksMenu {...stacks} />
+      <CullingMenu {...culling} />
       <span className="muted small grow">{shown.toLocaleString()} photos</span>
       {view === 'grid' && (
         <label className="size small">
@@ -109,6 +128,51 @@ function StacksMenu({ stack, unstack, auto, expandAll, collapseAll, canStack }: 
           {item('Auto-stack by capture time…', '', auto)}
           {item('Expand all stacks', '', expandAll)}
           {item('Collapse all stacks', '', collapseAll)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Culling helpers: suggested rejects, the best of each stack, and which badges show. */
+function CullingMenu({ suggest, selectBest, analysed }: Props['culling']) {
+  const [open, setOpen] = useState(false)
+  const prefs = useCullPrefs()
+  return (
+    <div className="coll-menu culling-menu">
+      <button
+        className="button small"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        title="Culling helpers: sharpness, shake, exposure and look-alikes, measured on each photo's camera preview. Suggestions only: nothing is flagged until you Apply."
+      >
+        Culling ▾
+      </button>
+      {open && (
+        <div className="menu" role="menu" onMouseLeave={() => setOpen(false)} onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}>
+          <button role="menuitem" onClick={() => { setOpen(false); suggest() }} title={withKey('Shows soft and shaken photos as suggested rejects; you choose which to reject, and Apply can be undone', 'library.suggestRejects')}>
+            <span>Suggest rejects…</span>
+          </button>
+          <button role="menuitem" onClick={() => { setOpen(false); selectBest() }} title={withKey('Selects (does not flag) the sharpest photo of each stack shown, so P picks them all', 'library.selectBest')}>
+            <span>Select the best of each stack</span>
+          </button>
+          <div className="menu-sep" role="separator" />
+          <span className="menu-label muted small">Badges</span>
+          {BADGES.map((b) => (
+            <label key={b.kind} className="check small menu-check" title={b.about}>
+              <input
+                type="checkbox"
+                checked={prefs.badges[b.kind]}
+                onChange={(e) => cullPrefs.update((p) => ({ ...p, badges: { ...p.badges, [b.kind]: e.target.checked } }))}
+              />
+              {b.name}
+            </label>
+          ))}
+          {analysed && analysed.total > 0 && (
+            <span className="menu-label muted small" role="status">
+              {analysed.done >= analysed.total ? `All ${analysed.total.toLocaleString()} photos analysed` : `${analysed.done.toLocaleString()} of ${analysed.total.toLocaleString()} photos analysed`}
+            </span>
+          )}
         </div>
       )}
     </div>

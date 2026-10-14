@@ -25,10 +25,11 @@ const GPS_COLUMNS = ['gps_lat', 'gps_lon', 'gps_alt']
 const REFRESH_COLUMNS = ['extras_read']
 const columns = (d: Database) => (d.selectObjects('PRAGMA table_info(photos)') as { name: string; dflt_value: string | null; notnull: number }[])
 
-/** A schema-10 catalog: today's schema without the version-11, 12 and 13 columns, holding one photo. */
+/** A schema-10 catalog: today's schema without the version-11, 12 and 13 columns and the version-14 table, holding one photo. */
 function v10(): Database {
   const d = new sqlite3.oo1.DB(':memory:', 'c')
   migrate(d)
+  d.exec('DROP TABLE photo_analysis')
   for (const c of [...NEW_COLUMNS, ...GPS_COLUMNS, ...REFRESH_COLUMNS]) d.exec(`ALTER TABLE photos DROP COLUMN ${c}`)
   d.exec(`
     INSERT INTO roots (id, name) VALUES (1, 'Photos');
@@ -45,7 +46,7 @@ describe('catalog schema 11', () => {
     const d = new sqlite3.oo1.DB(':memory:', 'c')
     migrate(d)
     expect(d.selectValue('PRAGMA user_version')).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(13)
+    expect(SCHEMA_VERSION).toBe(14)
     expect(columns(d).map((c) => c.name)).toEqual(expect.arrayContaining([...NEW_COLUMNS, ...GPS_COLUMNS, ...REFRESH_COLUMNS]))
   })
 
@@ -70,6 +71,7 @@ describe('catalog schema 11', () => {
   it('upgrades a version-11 catalog to 12: GPS columns, empty for photos already there', () => {
     const d = v10()
     migrate(d)
+    d.exec('DROP TABLE photo_analysis')
     for (const c of [...GPS_COLUMNS, ...REFRESH_COLUMNS]) d.exec(`ALTER TABLE photos DROP COLUMN ${c}`)
     d.exec('PRAGMA user_version = 11')
     migrate(d)
@@ -82,10 +84,11 @@ describe('catalog schema 11', () => {
     migrate(d)
     d.exec('UPDATE photos SET gps_lat = 1.5, gps_lon = 2.5')
     const before = d.selectObject('SELECT * FROM photos')!
+    d.exec('DROP TABLE photo_analysis')
     d.exec('ALTER TABLE photos DROP COLUMN extras_read')
     d.exec('PRAGMA user_version = 12')
     migrate(d)
-    expect(d.selectValue('PRAGMA user_version')).toBe(13)
+    expect(d.selectValue('PRAGMA user_version')).toBe(SCHEMA_VERSION)
     expect(d.selectObject('SELECT * FROM photos')).toEqual({ ...before, extras_read: 0 })
   })
 
