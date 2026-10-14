@@ -37,7 +37,7 @@ export type BenchMode = 'quick' | 'full'
 
 /** The stages, in pipeline order (the table's order). */
 export type StageId =
-  | 'stageA' | 'stageA3' | 'warp' | 'toneMask' | 'mixer' | 'mixerNoGuide' | 'denoise' | 'sharpen'
+  | 'stageA' | 'stageA3' | 'warp' | 'toneMask' | 'mixer' | 'mixerNoGuide' | 'grading' | 'denoise' | 'sharpen'
   | 'displayFit' | 'display100' | 'displayFitCurve' | 'display100Curve'
   | 'remove' | 'export' | 'exportAll' | 'jpeg' | 'thumb'
 
@@ -63,7 +63,7 @@ export interface BenchPlan {
   datasets: DatasetPlan[]
 }
 
-const ALL_RAW: StageId[] = ['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'remove', 'export', 'exportAll', 'jpeg', 'thumb']
+const ALL_RAW: StageId[] = ['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'grading', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'remove', 'export', 'exportAll', 'jpeg', 'thumb']
 const STAGES_FOR: Record<BenchMode, Record<Kind, StageId[]>> = {
   quick: {
     bayer: ALL_RAW,
@@ -73,7 +73,7 @@ const STAGES_FOR: Record<BenchMode, Record<Kind, StageId[]>> = {
   full: {
     bayer: ALL_RAW,
     xtrans: ['stageA', 'stageA3', 'displayFit', 'display100', 'export', 'exportAll'],
-    srgb: ['stageA', 'mixer', 'mixerNoGuide', 'displayFit', 'display100', 'displayFitCurve', 'export', 'jpeg', 'thumb'],
+    srgb: ['stageA', 'mixer', 'mixerNoGuide', 'grading', 'displayFit', 'display100', 'displayFitCurve', 'export', 'jpeg', 'thumb'],
   },
 }
 
@@ -194,6 +194,19 @@ const COLOUR_MIXER = (guided: boolean) => ({
   luminance: [0, 20, 0, 0, 0, -20, 0, 0],
   advanced: { ...DEFAULT_ADVANCED, guided },
 })
+/**
+ * A representative Colour Grading (PHASE3.md Part 17): all four wheels tinted, two with luminance. Its cost doesn't depend
+ * on the values: once on, every pixel runs darktable's color balance rgb twice (the grade, and the same steps with neutral
+ * settings that are subtracted).
+ */
+const COLOUR_GRADING = {
+  shadows: { hue: 200, sat: 30, lum: -10 },
+  midtones: { hue: 40, sat: 15, lum: 0 },
+  highlights: { hue: 45, sat: 25, lum: 10 },
+  global: { hue: 30, sat: 10, lum: 0 },
+  blending: 50,
+  balance: 0,
+}
 const MIXER_PREPASS = one('mixerInput', 'prefilterStats', 'prefilterApply', 'guideStats', 'guideApply')
 
 /** Where the k-th Remove spot goes: spread over the frame, away from the edges and the highlight. */
@@ -266,6 +279,14 @@ export const STAGES: Record<StageId, StageDef> = {
     run: (c, s, k) => c.engine.render(displayUniforms(nudged(s, k)), wbOf(c, s), FIT),
     gpu: one('display'),
     note: 'the same mixer with Advanced → guided filter off: the bands from the tables per pixel, no pre-pass',
+  },
+  // Colour Grading (Part 17): per pixel in the display pass, after the mixer; no pre-pass and no texture.
+  grading: {
+    label: 'Colour Grading on: display pass, fit',
+    settings: (b, kind) => edit(kind, { ...b, colourGrading: COLOUR_GRADING }),
+    run: (c, s, k) => c.engine.render(displayUniforms(nudged(s, k)), wbOf(c, s), FIT),
+    gpu: one('display'),
+    note: 'one redraw after an Exposure move with all four wheels tinted; compare with "Display pass, fit, without Tone Curve"; wall includes the read-back copy in compatibility mode',
   },
   denoise: {
     label: 'Detail: denoise (profiled, wavelets), full size',

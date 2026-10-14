@@ -13,7 +13,7 @@ export const CROP_OVERLAYS: { id: CropOverlayKind; label: string }[] = [
 ]
 
 /** Icons for the groups, 16 px, drawn with the text colour. */
-export const GROUP_ICONS: Record<'crop' | 'remove' | 'basic' | 'curve' | 'colour' | 'detail', ReactNode> = {
+export const GROUP_ICONS: Record<'crop' | 'remove' | 'basic' | 'curve' | 'colour' | 'grading' | 'detail', ReactNode> = {
   crop: (
     <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
       <path fill="none" stroke="currentColor" strokeWidth="1.6" d="M4 1v10.5h10.5M1 4.5h10.5V15" />
@@ -47,6 +47,17 @@ export const GROUP_ICONS: Record<'crop' | 'remove' | 'basic' | 'curve' | 'colour
       <circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" strokeWidth="1.5" />
       <path stroke="currentColor" strokeWidth="1.3" d="M8 8V1.7M8 8l5.45 3.15M8 8l-5.45 3.15" />
       <circle cx="8" cy="8" r="1.6" fill="currentColor" />
+    </svg>
+  ),
+  // Three small wheels (Colour Grading's 3-Way view): one on top, two below.
+  grading: (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="4.3" r="3.3" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="4.2" cy="11.3" r="3.3" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="11.8" cy="11.3" r="3.3" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="9.2" cy="3.4" r="1.1" fill="currentColor" />
+      <circle cx="3.2" cy="12.3" r="1.1" fill="currentColor" />
+      <circle cx="12.9" cy="10.4" r="1.1" fill="currentColor" />
     </svg>
   ),
   // A magnifier over a fine grid: detail (sharpening and noise).

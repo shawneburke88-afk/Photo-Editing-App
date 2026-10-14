@@ -9,6 +9,7 @@ import { DEFAULT_DETAIL, DETAIL_RANGES, withDetail, type DetailSettings } from '
 import type { Clipboard, PasteKey } from './paste'
 import { blendToneCurve, withToneCurve } from '../engine/develop/tone-curve'
 import { blendColourMixer, withColourMixer } from '../engine/develop/colour-mixer'
+import { blendColourGrading, withColourGrading } from '../engine/develop/colour-grading'
 
 /** What is saved for a preset (in the catalog's `presets` table, as JSON). */
 export interface PresetData {
@@ -126,6 +127,8 @@ export function blendSettings(before: DevelopSettings, after: DevelopSettings, a
   if (before.toneCurve !== after.toneCurve) out = withToneCurve(out, blendToneCurve(before.toneCurve, after.toneCurve, t))
   // The Colour Mixer: each band from the photo's value towards the preset's, Point Color's shifts the same way.
   if (before.colourMixer !== after.colourMixer) out = withColourMixer(out, blendColourMixer(before.colourMixer, after.colourMixer, t))
+  // Colour Grading: each wheel's colour as a vector, its luminance, Blending and Balance from the photo's towards the preset's.
+  if (before.colourGrading !== after.colourGrading) out = withColourGrading(out, blendColourGrading(before.colourGrading, after.colourGrading, t))
   if (before.detail || after.detail) out = withDetail(out, blendDetail(before.detail ?? DEFAULT_DETAIL, after.detail ?? DEFAULT_DETAIL, t))
   // Keep the sliders' own precision.
   for (const k of ['contrast', 'highlights', 'shadows', 'whites', 'blacks', 'vibrance', 'saturation'] as const) out[k] = Math.round(out[k])

@@ -15,6 +15,7 @@ import { normalizeDetail, RAW_DETAIL, rawDetailFor, type DetailSettings } from '
 import { normalizeToneCurve, toneCurveGpu, type ToneCurveGpu, type ToneCurveSettings } from './tone-curve'
 import { normalizeSpots, type Spot } from './spots'
 import { colourMixerGpu, normalizeColourMixer, type ColourMixerGpu, type ColourMixerSettings } from './colour-mixer'
+import { colourGradingGpu, normalizeColourGrading, type ColourGradingGpu, type ColourGradingSettings } from './colour-grading'
 
 /**
  * The demosaic method (Develop › Advanced). The stored value names the method for the photo's sensor as darktable
@@ -92,6 +93,12 @@ export interface DevelopSettings {
    * reset, so such an edit is exactly one made before the mixer existed (and renders as one).
    */
   colourMixer?: ColourMixerSettings
+  /**
+   * Colour Grading (colour-grading.ts; PHASE3.md Part 17): the Shadows, Midtones, Highlights and Global wheels, Blending
+   * and Balance, on darktable's color balance rgb before the sigmoid, after the Colour Mixer. Absent when untouched or
+   * reset, so such an edit is exactly one made before Colour Grading existed (and renders as one).
+   */
+  colourGrading?: ColourGradingSettings
   /**
    * Remove, Heal and Clone spots (spots.ts), in the order they were made. Optional: edits without spots have no
    * such field at all, so they stay exactly as they were (and render byte-identically).
@@ -185,6 +192,10 @@ export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined
   const cm = normalizeColourMixer(s?.colourMixer)
   if (cm) out.colourMixer = cm
   else delete out.colourMixer
+  // And for Colour Grading.
+  const cg = normalizeColourGrading(s?.colourGrading)
+  if (cg) out.colourGrading = cg
+  else delete out.colourGrading
   const spots = normalizeSpots(s?.spots)
   if (spots) out.spots = spots
   else delete out.spots
@@ -237,6 +248,8 @@ export interface DisplayUniforms {
    * Point Color sample's range.
    */
   mixerVisualize?: number
+  /** Colour Grading's parameters, or null when it changes nothing (the shader skips it). */
+  colourGrading: ColourGradingGpu | null
   /** Remove, Heal and Clone spots; absent when there are none. */
   spots?: Spot[]
 
@@ -263,6 +276,7 @@ export function displayUniforms(s: DevelopSettings): DisplayUniforms {
     ...(s.detail ? { detail: s.detail } : {}),
     toneCurve: toneCurveGpu(s.toneCurve),
     colourMixer: colourMixerGpu(s.colourMixer),
+    colourGrading: colourGradingGpu(s.colourGrading),
     ...(s.spots?.length ? { spots: s.spots } : {}),
   }
 }

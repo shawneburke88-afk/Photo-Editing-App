@@ -27,6 +27,7 @@ function bareEngine(device: unknown) {
   f.boundCurve = null
   f.rawBuf = null
   f.rgbInput = null
+  f.gradeKey = null
   return { engine, f }
 }
 

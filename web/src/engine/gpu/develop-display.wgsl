@@ -7,7 +7,8 @@
 // filter, version 2 with darktable's defaults, the Euclidean norm refined by the exposure-independent guided
 // filter (src/common/eigf.h; its blurred statistics come from tone-mask.wgsl).
 // The Tone Curve (engine/develop/tone-curve.ts) comes after the sigmoid, on the tones shown (its CPU twin is there).
-// The Colour Mixer and Point Color (colour-mixer.wgsl, appended to this file) come before the sigmoid, after presence.
+// The Colour Mixer and Point Color (colour-mixer.wgsl, appended to this file) come before the sigmoid, after presence;
+// Colour Grading (colour-grading.wgsl, appended after it) after them, still before the sigmoid.
 // The clipping indicators are translated from darktable's src/iop/overexposed.c (display clipping:
 // any RGB / luminance / saturation / full gamut) and src/iop/rawoverexposed.c (sensor clipping).
 
@@ -89,12 +90,14 @@ struct View {
 @group(0) @binding(8) var<uniform> MT: MixTile;
 @group(0) @binding(9) var<uniform> MX: Mixer;
 @group(0) @binding(10) var mixLut: texture_2d<f32>;
+// Colour Grading (PHASE3.md Part 17; colour-grading.wgsl): its parameters and Rec.2020's gamut table; all zero = off.
+@group(0) @binding(11) var<uniform> CG: Grade;
 
 struct MixTile {
   origin: vec2f,  // the target pixel of the tile texture's texel (0, 0)
   mode: u32,      // 0: drawing as usual; 1: the mixer's input for its filter (U*′, V*′, RGB saturation, L*);
                   // 2: drawing a tile with the filter's corrections; 3, 4: linear Rec.2020 before / after the mixer
-                  // (before the sigmoid; tests and the mixer's pickers)
+                  // (before the sigmoid; tests and the mixer's pickers); 5: after the mixer and Colour Grading (tests)
   pad: u32,
 }
 
@@ -342,6 +345,8 @@ fn developRec2020(scene: vec3f, uv: vec2f) -> vec3f {
 fn developBeforeCurve(scene: vec3f, uv: vec2f) -> vec3f {
   var c = developPreSigmoid(scene, uv);
   if (MX.flags != 0u || MX.visualize != 0u) { c = mixerApply(c); }
+  // Colour Grading after the mixer (darktable: colorequal 41.2, colorbalancergb 41.5); not over the mixer's Visualize view.
+  if (CG.flags != 0u && MX.visualize == 0u) { c = gradeApply(c); }
   return sigmoid(c);
 }
 
@@ -395,8 +400,10 @@ fn mixerPass(p: vec2f) -> vec4f {
     let luv = ucsLuv(c);
     return vec4f(luv.y, luv.z, mixRgbSat(c), luv.x);
   }
-  if (MT.mode == 4u && (MX.flags != 0u || MX.visualize != 0u)) { return vec4f(mixerApply(c), 1.0); }
-  return vec4f(c, 1.0);
+  var o = c;
+  if (MT.mode >= 4u && (MX.flags != 0u || MX.visualize != 0u)) { o = mixerApply(o); }
+  if (MT.mode == 5u && CG.flags != 0u && MX.visualize == 0u) { o = gradeApply(o); }
+  return vec4f(o, 1.0);
 }
 
 // ---- clipping indicators

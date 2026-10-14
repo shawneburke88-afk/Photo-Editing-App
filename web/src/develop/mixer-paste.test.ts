@@ -11,9 +11,10 @@ const mixed = (m: Partial<ColourMixerSettings>): DevelopSettings => ({ ...DEFAUL
 const clip = (settings: DevelopSettings, keys = DEFAULT_PASTE_KEYS): Clipboard => ({ settings, keys, rerunAuto: false, sourceKind: 'raw', sourceName: 'x' })
 
 describe('Colour in Copy / Paste and presets', () => {
-  it('is a Colour group of two items, Colour Mixer and Point Color, ticked by default like the Tone Curve', () => {
+  it('is a Colour group of three items, Colour Mixer, Point Color and Colour Grading, ticked by default like the Tone Curve', () => {
     const items = PASTE_ITEMS.filter((i) => i.group === 'Colour').map((i) => i.key)
-    expect(items).toEqual(['colourMixer', 'pointColor'])
+    expect(items).toEqual(['colourMixer', 'pointColor', 'colourGrading'])
+    expect(DEFAULT_PASTE_KEYS).toContain('colourGrading')
     expect(DEFAULT_PASTE_KEYS).toContain('colourMixer')
     expect(DEFAULT_PASTE_KEYS).toContain('pointColor')
     // After the Tone Curve, before Detail, as the tool stack.
@@ -76,5 +77,21 @@ describe('Colour Mixer targeted adjustment', () => {
     expect(mainBand(Z)).toBe(-1)
     // A band with less than 5 % of the main one's weight stays.
     expect(tatBands([0.97, 0.03, 0, 0, 0, 0, 0, 0])).toEqual([{ index: 0, k: 1 }])
+  })
+})
+
+describe('Colour Grading in Copy / Paste and presets', () => {
+  const graded = (sat: number): DevelopSettings => ({ ...DEFAULT_SETTINGS, colourGrading: { shadows: { hue: 200, sat, lum: -10 }, midtones: { hue: 0, sat: 0, lum: 0 }, highlights: { hue: 40, sat: 20, lum: 0 }, global: { hue: 0, sat: 0, lum: 0 }, blending: 70, balance: 0 } })
+  it('copies the whole grade as one item; a photo without one copies “none”, leaving no key', () => {
+    const out = applyPaste(DEFAULT_SETTINGS, clip(graded(30), ['colourGrading']), 'raw')
+    expect(out.colourGrading).toEqual(graded(30).colourGrading)
+    expect(describePaste(clip(graded(30), ['colourGrading']), 'raw')).toEqual(['Colour Grading: Shadows hue 200°, saturation 30, luminance -10; Highlights hue 40°, saturation 20; Blending 70'])
+    const none = applyPaste(graded(30), clip(DEFAULT_SETTINGS), 'raw')
+    expect('colourGrading' in none).toBe(false)
+    expect(changedKeys(DEFAULT_SETTINGS, graded(5))).toEqual(['colourGrading'])
+  })
+  it('scales with a preset’s Amount', () => {
+    expect(blendSettings(DEFAULT_SETTINGS, graded(40), 0.5).colourGrading?.shadows).toEqual({ hue: 200, sat: 20, lum: -5 })
+    expect(blendSettings(DEFAULT_SETTINGS, graded(40), 0).colourGrading).toBeUndefined()
   })
 })
