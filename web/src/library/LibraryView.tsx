@@ -311,21 +311,22 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   }, [catalog, status, version])
 
   /** The query of the photos shown: folder or collection, and the filters. */
-  function query(): PhotoQuery {
-    return {
+  const shownQuery = useMemo<PhotoQuery>(
+    () => ({
       ...filters,
       collection,
       folder: folder ? { ...folder, recursive: subfolders } : undefined,
       ids: only?.ids,
       suggest: filters.cull === 'suggested' ? cullPrefsNow.suggest : undefined,
-    }
-  }
+    }),
+    [filters, collection, folder, subfolders, only, cullPrefsNow.suggest],
+  )
 
   // Photos for the current folder + filters.
   useEffect(() => {
     if (status !== 'ready') return
     let live = true
-    void catalog.queryPhotos({ ...query(), ungrouped: only ? true : undefined }).then((r) => {
+    void catalog.queryPhotos({ ...shownQuery, ungrouped: only ? true : undefined }).then((r) => {
       if (!live) return
       setRows(r)
       setSelected((s) => new Set([...s].filter((id) => r.some((x) => x.id === id))))
@@ -334,8 +335,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     return () => {
       live = false
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- query() reads these
-  }, [catalog, status, folder, collection, filters, subfolders, version, externalVersion, only, cullPrefsNow.suggest])
+  }, [catalog, status, shownQuery, only, version, externalVersion])
 
   // Details of the focused photo.
   useEffect(() => {
@@ -552,7 +552,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   /** Suggest rejects: every photo of the view, stacks' hidden members included. */
   async function openSuggest() {
     setSuggesting(null)
-    setSuggesting(await catalog.queryPhotos({ ...query(), cull: undefined, ungrouped: true }))
+    setSuggesting(await catalog.queryPhotos({ ...shownQuery, cull: undefined, ungrouped: true }))
   }
 
   /** Apply: the suggested photos get the reject flag, in one step that Undo reverses. */

@@ -1905,3 +1905,132 @@ A SwiftShader sample (Quick, test images at 0.3 MP, the canvas 938 × 420; **it 
 - The display pass is measured on the benchmark's canvas, not Develop's; at another canvas size the fitted view's cost changes.
 - Remove's fill search runs on the CPU, so its row measures the CPU as much as the GPU; the JPEG row is CPU only.
 - No release gate yet (PLAN, "Every release"): the numbers are for the owner to read and paste, not checked against budgets.
+
+## Part 18: Culling helpers
+
+**What it does.** LightBench measures every photo's camera preview (a JPEG's own pixels) and helps cull with what it finds, without AI and without downloading anything:
+- **Badges** in the grid and the culling view, apart from the flag, stars and label: **Soft** (possibly soft), **Shake**, **Clipped**, **Look-alike** (“duplicate of…”), **☆ Best** (the sharpest of its stack or of a group of look-alikes) and a dashed **Reject?** (a suggested reject). Each badge's tooltip says why, in a sentence. Which badges show is a choice (Culling menu, Settings › Culling).
+- **Sort** by sharpness (Sharpest first, Least sharp first) and a **Sharpness filter** (Possibly soft or shake, Not soft, Suggested rejects, Look-alikes of a sharper photo, Not analysed yet).
+- **Auto-stack** can require the photos to look alike, with a **strictness** slider, and put the sharpest on top; frames of a fast burst are ordered by the camera's sub-second time and frame counter.
+- **Select the best of each stack** (selects, doesn't flag; P then picks them).
+- **Suggest rejects…** lists the photos it would reject and why; only **Apply** sets their reject flags, in one step that **Undo** (or Ctrl+Z in the Library) takes back. Files are never deleted.
+- In culling, **Z** zooms to 100 % at the **measured focus point**: the camera's AF point when the file records it, else the sharpest area. A click still zooms where it is clicked.
+
+New photos are measured while Open folder or Import reads them; photos already in the library are measured once in the background, with a quiet note and Pause. This part is numbered 18: Part 17 is Colour Grading, on its own branch. Nothing is written to sidecars, exports or the photos, and no face data exists: faces and blinks wait for the Phase 4 runtime (owner).
+
+Owner's decisions (2026-10-13, after [research/CULLING_HELPERS.md](research/CULLING_HELPERS.md)):
+1. **v1 is non-AI**: tiled Laplacian/gradient sharpness on the camera preview, weighted by the AF point where the file gives it, else the sharpest tiles; relative within one camera + ISO and within a stack or burst, and only “possibly soft” across a library. Motion blur/shake. Exposure problems with the existing histogram code. Near-duplicates and bursts from 64-bit dHash/pHash plus capture time, sub-second time and frame counters, in the Auto-stack dialog with a strictness slider. Best of each stack by sharpness and exposure.
+2. **No faces or blinks** until the Phase 4 runtime (then BlazeFace only).
+3. **Suggested rejects always need the owner's Apply**: shown apart from real flags, applied as reject flags (catalog and `lightbench:Flag`) in one undoable step, never automatically; never a deletion.
+4. **Background analysis**: in the probe worker for new photos; a pausable, resumable pass like `refresh.ts` for existing libraries, skipping folders without permission; results in a new `photo_analysis` table (schema 14), deleted with the photo, never in sidecars.
+5. **UX**: badges on by default for possibly soft, shake, clipped and duplicate (switchable); sort and filter by sharpness; select best of each stack; Z to the measured focus point; tooltips, help text, keyboard access; a 1,000+ photo folder stays responsive.
+
+### What is measured (`engine/analysis/`)
+
+All on the CPU in the probe worker (`import/probe.worker.ts`), on the upright preview scaled to **1,536 px** on its long side (smaller previews as they are; the size measured is stored). No GPU, so the foreground gate (Part 14) isn't involved.
+
+| Measure | How | Source |
+|---|---|---|
+| Sharpness | Luma split into 64 px tiles (24 × 16 at 3:2). Per tile: Laplacian energy (variance of the 4-neighbour Laplacian) at full and half size, standard deviation, and the Sobel structure tensor. **Noise floor** = median Laplacian energy of the flattest fifth of the tiles, taken off every tile. `sharpPeak` = 90th percentile of √(energy − floor) over textured tiles (σ ≥ 4 levels); `sharpSubject` = its mean over the subject's tiles; **acuity** = √(fine − floor) / √(coarse − floor) on the subject's tiles (median): lower is softer, nearly independent of the scene's contrast. | Pech-Pacheco et al.'s variance of the Laplacian and Crete et al.'s re-blur idea (research §2.1, not re-read); digiKam's imgqsort approach (GPL-2.0+) for flat tiles and the AF region; LightBench's code |
+| Subject | Tiles under the AF box expanded 2× about its centre (digiKam's choice), else the sharpest tenth (at least 4). | research §2.1 |
+| Where Z goes | The AF box's centre, else the centre of the tile whose 3 × 3 neighbourhood is sharpest. Normalised and upright. | LightBench |
+| Shake | Each textured tile's gradient direction (doubled angle) weighted by its coherence, averaged over the frame: 0 when directions are random, near 1 when the whole frame is smeared one way. Also the smear's direction. Horizontal and vertical edges cancel (doubled angles 0° and 180°), so buildings don't read as shake. | Structure tensor, standard; LightBench's use |
+| Exposure | `statsFromPixels` / `metricsFromStats` from Auto (`engine/develop/auto.ts`), as they are, on every other pixel of every other row: clipped highlights (a channel at 255), clipped shadows (all at 0), median, 0.5th and 99.5th percentiles. | Owner's decision 1 |
+| Look | dHash (9 × 8) and pHash (32 × 32 DCT, 8 × 8 low frequencies against their median), 64 bits each, from a quarter-size grey image; written here (`hash.ts`), as the `imagehash` package defines them (BSD-2-Clause, not copied). | research §2.3 |
+| Burst order | SubSecTimeOriginal (else SubSecTime); the camera's frame counter; LibRaw's `shot_order` when set. | Below |
+| AF point | EXIF SubjectArea (point, circle or rectangle); Sony FocusLocation; Fujifilm FocusPixel; Olympus AF area through LibRaw. | Below |
+
+`ANALYSIS_ALGO` (1) is stored with each result; raising it makes the background pass measure everything again.
+
+### Focus points and frame counters: what the files and LibRaw give
+
+LibRaw's binding exposes maker-note fields, but on the test files they were **not usable** [measured]: `shot_order` was 0 on all seven test RAWs; Sony's `Sony0x9400_SequenceImageNumber` read 0xFFFFFFFF and `FocusLocation` zeros on both Sony files; the Fujifilm block read implausible values (sequence 1207959576), which looks like a structure-layout mismatch in this build. So LightBench reads the tags itself with its TIFF reader (`engine/meta/capture.ts`) and keeps LibRaw's `shot_order` (when non-zero) and Olympus `AFPointSelected` (when it is four plausible 0–1 values) as fallbacks.
+
+| Source | Tag | Test files [measured] |
+|---|---|---|
+| EXIF | SubSecTimeOriginal 0x9291 / SubSecTime 0x9290; SubjectArea 0x9214 in PixelX/YDimension | D700 “060” (60 ms), D80 “00”; no test file has SubjectArea (unit-tested only) |
+| Nikon maker note (“Nikon\0”, TIFF at +10) | ShutterCount 0x00a7 | D700 49277, D80 33318 |
+| Sony maker note (with or without the “SONY DSC ” header; offsets from the file's TIFF header) | FocusLocation 0x2027 = width, height, x, y; SequenceNumber 0xb04a | ILCE-6300: 6000 × 4000, (3525, 1241), on the tower's roof (checked by eye at 100 %); sequence 1. ILCE-7M2: no FocusLocation, sequence 0 |
+| Fujifilm maker note (RAF's embedded JPEG) | FocusPixel 0x1023; SequenceNumber 0x1101 | X100V: the frame's centre; sequence 1 (its preview is black, so nothing else is measured) |
+| Olympus | LibRaw `AFPointSelected` | No test file (unverified) |
+| Pentax, Canon, Nikon AF | AF point indices need per-camera layouts | Not read (the sharpest tiles are used) |
+
+The box is turned upright with the photo's orientation, as the previews are.
+
+### What the Library shows (`catalog/analysis.ts`, used by the catalog worker and the page)
+
+| Behaviour | Detail |
+|---|---|
+| Possibly soft | Acuity below **0.6 ×** the median of photos from the same camera at a similar ISO (one-stop bands), when there are at least **8** of them; or below **0.22** on its own (very soft on any scale; acuity depends on how much the preview is scaled down: a sharp Sony 1,616 px preview measured 0.42, a sharp D700 one 0.92). Tooltip: “Possibly soft: 47 % of the usual fine detail for … at ISO 141–283 (compared with 10 photos). Measured on the camera preview; check at 100 %.” |
+| Shake | Direction agreement ≥ **0.3** over textured tiles (sharp test files measured up to 0.23; synthetic shake 0.44–0.60). “Possible camera shake or motion blur: detail is smeared in one direction (about 0° from horizontal) across 60 % of the textured areas.” |
+| Clipped | Highlights in ≥ 2 % of the frame or shadows in ≥ 5 %; for RAWs “The RAW may hold more.” |
+| Very dark / very bright (off by default) | Median < 12 % with the 99.5th percentile < 60 %, or median > 85 % (often intended). |
+| Groups | **Stacks** (their hidden members count, also when a filter hides them), and **look-alikes** among unstacked originals: photos taken at most 30 s apart whose dHash and pHash differ by at most 10 of 64 bits on average (Medium). RAW+JPEG twins count once (the RAW); virtual copies show their original's measures but aren't ranked. |
+| Ranking | Subject sharpness × an exposure factor (1, less up to 0.5 for clipped highlights above 1 %, up to 0.3 for clipped shadows above 5 %, 0.2 when the median is below 8 % or above 92 %). The first is **☆ Best**; others below **0.6 ×** the best's score are “clearly softer” (“93 % less sharp than BURST_0001.JPG, the sharpest of the 6 in this stack.”); unstacked ones get **Look-alike** (“Looks like BURST_0001.JPG, taken 0.2 s apart (1 of 64 bits differ); that one is sharper.”). |
+| Suggested rejects | By default: clearly softer than the best of its group, and shake. Optional: possibly soft against the library, badly exposed (≥ 15 % clipped, or nearly black or white). Never a picked or rejected photo, never the best of a group. The badge is dashed red “Reject?”, kept apart from the ✕ flag. |
+| Sort | Sharpest / least sharp first, by acuity relative to the photo's peers (or to the library's median when there are too few); not yet analysed photos last; stable. Capture-time sorts now order frames within one second by sub-second time and frame counter. |
+| Filter | The Sharpness menu (above), applied in the catalog worker after the stacks' members are ranked. |
+| Auto-stack | “…and only photos that look alike” (on when ≥ 90 % of the photos shown are analysed), **Strictness** Loose, Fairly loose, Medium, Fairly strict, Strict = at most 18, 14, 10, 6, 3 bits; linked when taken at most the gap's seconds apart (union of pairs, so a burst that drifts stays one stack). “Put the sharpest photo on top”. Unticked, it is exactly the old Auto-stack. Photos not yet analysed are left out (said in the dialog). |
+| Select the best of each stack | Culling menu: selects the best of every stack shown, expanding stacks whose best is hidden, and says “P picks them”. |
+| Suggest rejects… | Culling menu (or command search): the list with reasons and a count (“Apply rejects 6 of 17 photos … Files are never deleted”), reason check boxes (remembered), **Apply: reject n**. A banner then offers **Undo**; Ctrl+Z in the Library does the same. Undo restores each photo's flag from before, except on photos whose flag was changed since. |
+| Culling view | Badges and a line of measures in the info line (I), badges in Compare's panes; “Z 100 % at the focus point · click: 100 % there” in the hints. |
+| Settings › Culling | What is measured and how far to trust it, the badge switches, the analysis's progress, Pause/Resume, and “Measure all photos again…”. |
+| Keys | `library.suggestRejects` and `library.selectBest` (no key; in command search and the menu), `library.undoSuggested` Ctrl+Z (Library only; Develop's Ctrl+Z is unchanged), `cull.zoom` Z now “Zoom to 100 % at the measured focus point, and back”. No conflicts in either shortcut set (unit test). |
+
+All thresholds are **starting points [estimate]**, set on synthetic blur and the test files, not tuned on a labelled set of the owner's photos (research §8 asks for one).
+
+### Catalog: schema 14
+
+| Behaviour | Detail |
+|---|---|
+| Table | `photo_analysis (photo_id PRIMARY KEY REFERENCES photos ON DELETE CASCADE, algo, analyzed_at, failed, src_w, src_h, meas_w, meas_h, sharp_peak, sharp_subject, acuity, noise_floor, motion, motion_subject, motion_angle, textured, subject_src, subject_box, focus_u, focus_v, clip_hi, clip_lo, median, p005, p995, dhash, phash, sub_sec, seq, seq_src)`. One row per original; virtual copies use their original's. `failed` = the preview couldn't be measured (not retried until `algo` changes). No face columns. |
+| Upgrade | Adds the table only: every other table and row is unchanged (unit test compares the whole catalog). Dropping the table and setting `user_version` 13 gives the version-13 catalog exactly; an older LightBench refuses the version-14 catalog without changing it (its existing check). |
+| Deletion | Removing a photo deletes its row (ON DELETE CASCADE; also for copies removed with their original). |
+| Sidecars, exports | Nothing is written: derived data only. Backups include the table; a library restored from an older backup has no rows and is measured again. |
+
+### Background pass (`library/analysis-pass.ts`, `AnalysisProgress.tsx`)
+
+Like Part 6's refresh: originals with no row or an older `algo`; two probe workers; a yield between files; waits while Open folder or the refresh reads; folders without read permission are skipped without asking and wait; Pause stops after the files being read (“Culling analysis is paused: 15 left.” with Resume); the rest is done on Resume or the next visit. “Analysing photos for culling: 4 of 19” with Pause, then “Culling analysis done: 19 photos measured for sharpness, exposure and look-alikes.” with OK. It writes only `photo_analysis` rows.
+
+### Verified
+
+Headless Chromium 141 with SwiftShader WebGPU and `?gpu=readback`, Vite dev servers of this branch and of main `7b8b0f0` (and their production builds for the timings), 4 CPU cores. Scratch scripts in the scratchpad's `ch/` folder. Test files: copies of the D700 and D80 NEFs, the Sony ILCE-6300 and ILCE-7M2 ARWs, the Fujifilm X100V RAF, the Ricoh GR III DNG and two JPEGs; and synthetic folders made by `make_folders.py` from copies of the D700, D80, ILCE-6300 and ILCE-7M2 camera previews (Gaussian “defocus”, line “shake”, shifted and zoomed frames, with EXIF capture time, SubSecTimeOriginal, make, model and ISO).
+
+- **Unit tests** (`npx vitest run`: 88 files, 841 tests; main `7b8b0f0` has 82 and 787, so 54 new; the schema-11/12/13 upgrade tests' fixtures now drop the new table first):
+  - `engine/analysis/analyze.test.ts` (8): sharpness, peak and acuity fall strictly with Gaussian σ 0.7, 1, 1.5, 2, 3 on two synthetic scenes; defocus never reads as shake; line blurs of 9, 15 and 12 px at 0°, 90° and 30° read as shake with the smear's direction within 10°; a burst of sharp, σ 0.8, 1.6, 3 frames with noise ranks in that order; noise raises the floor more than 3× without being taken for detail; the AF point picks a defocused half when it is there, else the sharpest tiles, and Z's point is the box's centre; clipping and median; the analysis size.
+  - `engine/analysis/hash.test.ts` (6): Hamming distance against bit-by-bit counting (200 random pairs), malformed hashes; hashes stable under blur, a 4 px shift, noise, +10 % brightness (within Medium's 10 bits) and a half-size copy (within Fairly strict's 6); six different scenes all further apart than Loose's 18 bits.
+  - `engine/meta/capture.test.ts` (8): SubSecTimeOriginal / SubSecTime, SubjectArea as point, circle and rectangle, Sony's header-less maker note (FocusLocation, SequenceNumber), Nikon ShutterCount, Fujifilm FocusPixel and SequenceNumber, junk, boxes turned upright for each orientation.
+  - `catalog/analysis.test.ts` (16): burst order by sub-second time over file names, then frame counter (over a rolled-over file counter), file number, name; look-alike groups at each strictness and time window, chains, different scenes and missing hashes; ranking with the exposure factor; stacks (best, clearly softer), unstacked look-alikes (“taken 0.5 s apart”), RAW+JPEG twins and virtual copies; “possibly soft” only with 8 peers of one camera and ISO band; shake, clipping and darkness reasons; suggestions never for picked, rejected, unanalysed photos or the best of a group, and only for the reasons chosen.
+  - `catalog/analysis-catalog.test.ts` (9): the 13 → 14 upgrade leaves every other table and row identical and passes the integrity and foreign-key checks; dropping the table gives the version-13 catalog exactly; an older version refuses 14 without changing it; rows go with their photo; storing changes no photo row or sidecar record, copies read their original's, failed and older-`algo` rows, a photo removed meanwhile; sorting and filtering by sharpness, capture order within a second, the stack's hidden members in the ranking; Auto-stack by time (unchanged) and by look-alikes with the sharpest on top; **Apply and Undo** of suggested rejects (one call, sidecars scheduled, ratings untouched, a flag changed since is kept).
+  - `library/cull-badges.test.ts` (7): defaults and stored choices, which badges a photo gets and their reasons, Z's point, the pass skipping folders without permission, and the keys (Ctrl+Z in the Library, Z in culling, no conflicts in either set).
+- **A fresh folder** (`e2e-cull.mjs`, 17 synthetic photos, **42 of 42**): every photo analysed when added, no background note; the burst ordered by SubSecTimeOriginal (`BURST_0003, 0001, 0006, 0002, 0004, 0005`, unlike their names); Shake, Soft + Reject?, ☆ Best, Clipped and Look-alike badges where expected and not on the dark frame (off by default), tooltips with reasons (“93 % less sharp than BURST_0001.JPG …”, “Looks like BURST_0001.JPG, taken 0.2 s apart (1 of 64 bits differ)”); switching Shake off and Very dark on in the Culling menu; Esc closes it; Sharpest first / Least sharp first; the filters Possibly soft or shake (exactly the four soft or shaken burst frames and two of the second burst) and Not soft; Auto-stack by time with a 1 h gap made one stack of everything, with look-alikes 4 stacks (the two bursts apart from the singles); **strictness**: the three zoomed frames of one scene were one stack only at Loose (Strict 3 stacks, Medium 4, Loose 4); with a 2 s gap and the sharpest on top, each burst became one stack with its sharpest frame on top; Select the best of each stack selected exactly one photo per stack with “P picks them”; Suggest rejects listed the four soft or shaken burst frames and two of the second burst, the library-relative reason added more, nothing was flagged before Apply; **Apply** rejected exactly those 6 (ratings and labels unchanged), the banner offered Undo, the rejected photo's sidecar had `lightbench:Flag="-1"`, no file was deleted; **Ctrl+Z** put every flag back and the sidecar to `Flag="0"`; in culling the info line showed the badges and “Z: sharpest area”, **Z** zoomed to the stored focus point and the hint line says so.
+- **Real files** (`e2e-real.mjs`, **9 of 9**): all 8 readable files analysed (the Canon EOS 6D DNG isn't one LibRaw opens, as on main); the ILCE-6300's FocusLocation and the X100V's FocusPixel used as the subject; the D700's shutter count 49277 and 60 ms; no shake on any real file (highest 0.23, the GR III); the D80's clipped sky flagged; **Z on the ILCE-6300 zoomed to (0.5875, 0.3102)** and the 100 % RAW render showed the tower's roof there (screenshot checked by eye).
+- **An existing library** (`build-v13.mjs` then `existing.mjs`, **12 of 12**): a library made with main `7b8b0f0` (schema 13: 21 photos in Photos and Other, ratings, a pick, a label, keywords, an edit, a stack, 21 sidecars; reopening it with main changed nothing), opened with this branch on the same origin with Other's permission refused: upgraded to 14; “Analysing photos for culling: 0 of 19” with Pause; paused at 15 left, nothing measured in 4 s; Resume finished “Culling analysis done: 19 photos measured …”; Other waited; **every catalog row, edit, keyword and thumbnail, and every sidecar's bytes and date unchanged**, no sidecar added; badges on the 19; reloaded with permission, Other was measured, still nothing else changed; a further visit showed no note.
+- **Settings and keys** (`e2e-settings.mjs`, **7 of 7**): Settings › Culling's help text and “17 of 17 photos analysed”; a badge switched there is switched everywhere; “Measure all photos again…” measured all 17 again in the background with the same verdicts and nothing else changed; command search finds and runs the new actions.
+- **Old edits render the same** (`identity.mjs`, 12 cases on the NEFs, the ARW and the JPEG, with crops, angles, spots, Tone Curve, Detail and the Colour Mixer at defaults): full-size and 1024 px export SHA-256, 512 px thumbnail, histogram statistics and the Develop canvas at fit and 100 %, **12 of 12 identical** to main `7b8b0f0`. **Open folder's thumbnails** (`thumbs.mjs`, the 8 real files and 17 synthetic ones opened afresh on both): **25 of 25 thumbnails byte-identical**, and every catalog field identical except the file date of the test copies.
+- **Speed and responsiveness** (`e2e-big.mjs`, 1,000 synthetic 1,024 × 683 JPEGs in bursts of 3–8; production builds; one run each, other work on the machine, so differences of a few seconds aren't meaningful):
+
+  | | Main 7b8b0f0 | This branch |
+  |---|---|---|
+  | Open folder, 1,000 photos | 49.2 s | 82.3 s |
+  | First photos in the grid | 1.1 s | 1.6 s |
+  | Long tasks (> 50 ms) on the page while indexing | 0 | 0 |
+  | Event-loop lag while indexing (a 50 ms timer): median / 95th / 99th / worst | 0 / 5 / 17 / 122 ms | 0 / 6 / 22 / 259 ms |
+  | Sort Sharpest first, to the grid redrawn | — | 89 ms |
+  | Filter Suggested rejects (290 of 1,000) | — | 45 ms |
+  | Suggest rejects… listed | — | 1.2 s |
+  | Long tasks after indexing (sort, filter, dialog) | — | 0 |
+
+  On the dev build (unoptimised React): the catalog worker's query with the culling assessment took 61–87 ms for the 1,000 photos (sort, filters, ungrouped alike); Auto-stack with look-alikes of all 1,000 made 185 stacks in 6.0–7.4 s (in the worker; mostly creating stacks one by one, as Auto-stack by time does). The analysis itself, timed in the page on the D700 preview: drawing at 1,536 px 4.9 ms, reading the pixels 28.8 ms, measuring 73.1 ms; at 1,024 px 2.1, 11.4 and 23.8 ms (medians of 10). So on small JPEGs it adds about two thirds to Open folder's time; for RAW files, whose reading takes far longer (the 8 real files took about 30 s to add), its share is smaller (estimated, not timed on a RAW folder). A main-thread profile while indexing 300 photos showed the same work on both builds (14.0 s busy on main, 15.4 s on the branch, mostly React's development build), so the extra time is in the probe workers.
+- `npm ci`, `npx tsc -b`, `npx oxlint` (the existing warnings only), `npx vitest run` and `npm run build` from clean all passed (oxlint: the two existing warnings, `syscheck/report.tsx` and `LibraryView.tsx`'s focused-photo effect).
+
+### Limitations and unverified
+
+- **Not tuned on real culls.** The thresholds come from synthetic Gaussian and line blurs of real previews and seven real RAWs; no labelled set of the owner's photos (sharp / soft / motion, bursts with the owner's pick) was available, so precision and recall are **unknown**. Real bursts from a camera (rather than synthetic ones) weren't available either.
+- Sharpness is judged on the **camera preview**: in-camera sharpening and the preview's size matter, which is why verdicts are relative. Small previews (some cameras embed 640 px or less) measure differently; the size is stored but not yet used to adjust.
+- AF points: only Sony FocusLocation (ILCE-6300) and Fujifilm FocusPixel (X100V) were seen in real files; EXIF SubjectArea is unit-tested only; Olympus through LibRaw is untested; Canon, Nikon and Pentax AF points aren't read. Sony models whose maker note is enciphered (0x9400 and others) give no sequence number here.
+- Intentional shallow depth of field or panning can read as “possibly soft” or “shake” when no AF point is known.
+- Look-alikes are hashes of the whole frame: re-framed or zoomed shots of one scene only group at Loose strictness, rotated ones not at all (embeddings are for Phase 4).
+- With a crop in the edit, Z's point (on the uncropped preview) is applied to the 100 % render of the cropped photo, as clicking already was.
+- Undo of an Apply lasts until the next Apply or a reload (the Library has no other undo).
+- A smart-collection rule for these measures (research §5) wasn't added.
