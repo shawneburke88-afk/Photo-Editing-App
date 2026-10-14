@@ -28,6 +28,16 @@ Test photos used during development come from
 [immich-app/test-assets](https://github.com/immich-app/test-assets) (public domain) and are not included
 in this repository.
 
+## Adobe DNG
+
+This product includes DNG technology under license by Adobe.
+
+LightBench reads DNG files (through LibRaw and its own DNG colour, opcode and metadata code). Adobe's royalty-free
+DNG Specification Patent License asks products that read or write DNG files to carry the notice above
+(https://helpx.adobe.com/camera-raw/digital-negative.html; the licence text was quoted by an independent check on
+2026-10-13, `docs/research/cowork-2026-10-13b/D_PROFILES.md`). Whether the licence also covers stand-alone `.dcp`
+camera profiles is not settled; LightBench doesn't read them.
+
 ## LightCraft licence (MIT)
 
 `web/src/engine/develop/crop.ts` (and its tests in `crop.test.ts`) is a translation of LightCraft's crop model,
