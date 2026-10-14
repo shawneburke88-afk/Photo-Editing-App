@@ -2389,6 +2389,7 @@ export class DevelopEngine {
   /** The display shader drawing into rgba32float: the mixer's input for its filter, and its test and picker readings. */
   private mixPipe(): GPURenderPipeline {
     return (this.mixInPipe ??= this.device.createRenderPipeline({
+      label: 'mixerInput',
       layout: 'auto',
       vertex: { module: this.displayModule, entryPoint: 'vs' },
       fragment: { module: this.displayModule, entryPoint: 'fs', targets: [{ format: 'rgba32float' }] },
