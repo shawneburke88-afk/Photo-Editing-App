@@ -165,14 +165,16 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
       refresh()
     })
   }, [refresh])
+  // How many photos are analysed (the Culling menu): not while Open folder reads, so it adds no work to it.
+  const reading = !!indexing.active
   useEffect(() => {
-    if (status !== 'ready') return
+    if (status !== 'ready' || reading) return
     let live = true
     void catalog.analysisCounts().then((c) => live && setAnalysedCount(c))
     return () => {
       live = false
     }
-  }, [catalog, status, version])
+  }, [catalog, status, version, reading])
   useEffect(() => {
     let changes = extrasRefresh.status.changes
     return extrasRefresh.subscribe(() => {
