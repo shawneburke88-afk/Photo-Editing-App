@@ -1898,7 +1898,7 @@ A SwiftShader sample (Quick, test images at 0.3 MP, the canvas 938 × 420; **it 
 
 ### Limitations and unverified
 
-- **Not run on a real GPU** here: no NVIDIA, AMD, Intel or Apple numbers yet; that is what the owner's run is for. Which GPU Chrome or Edge uses on the owner's laptop is unconfirmed (step 2 above).
+- **Not run on a real GPU** here. The owner's first runs (one NVIDIA laptop GPU) are under "Owner's results" below; there are no AMD, Intel or Apple numbers yet.
 - **Timestamp queries** are what the browser reports: Chrome rounds them to 0.1 ms by default, and some drivers report overlapping or reordered passes oddly. The wall-clock times are the reference; the GPU times split them up.
 - The test images are synthetic: speeds that depend on content (highlight reconstruction's clipped area, Remove's search) can differ on real photos. The library photo option covers that; C20a's fixed set of real photos (D700, A6300, X100F, 1D Mark III at ISO 6400) isn't bundled.
 - **"Use a photo from my library" wasn't tested end to end** (the test library is empty); it reads the photo as Export does (`getPhoto`, `openPhotoFile`, the decoder).
@@ -1907,6 +1907,51 @@ A SwiftShader sample (Quick, test images at 0.3 MP, the canvas 938 × 420; **it 
 - Remove's fill search runs on the CPU, so its row measures the CPU as much as the GPU; the JPEG row is CPU only.
 - No release gate yet (PLAN, "Every release"): the numbers are for the owner to read and paste, not checked against budgets.
 
+
+### Owner's results (2026-10-14)
+
+Two Full runs (2 warm-ups, 5 measured runs per stage) pasted by the owner from System Check › GPU benchmark, app 0.6.0 (`5307029`), Edge 155 on Windows x64. Adapter: nvidia · lovelace (the owner's RTX 4000 Ada Laptop GPU, 12 GB; not a fallback adapter), `timestamp-query` and `shader-f16` available; `maxTextureDimension2D` 16384, `maxBufferSize` 2 GiB, `maxStorageBufferBindingSize` 2147483644. Canvas mode: canvas (probe-ok), DPR 1. The test images are the synthetic ones above. The GPU times step in multiples of about 0.066 ms, so sub-0.1 ms GPU figures only say "very small".
+
+Run 1 (wall-clock median / GPU median / peak memory):
+
+| Stage | Image | Wall | GPU | Peak memory |
+|---|---|---:|---:|---:|
+| Stage A: RAW → scene | Bayer 24 MP | 75.6 ms | 14.2 ms | 1.21 GB |
+| ↳ demosaic (RCD) | Bayer 24 MP | — | 10.2 ms | — |
+| Geometry warp (lens + straighten), full size | Bayer 24 MP | 19.6 ms | 4.52 ms | 766 MB |
+| Tone equalizer mask pre-pass | Bayer 24 MP | 8.58 ms | 1.38 ms | 543 MB |
+| Colour Mixer, guided filter on (pre-pass + display, fit) | Bayer 24 MP | 21.9 ms | 1.84 ms | 590 MB |
+| Colour Mixer, guided filter off | Bayer 24 MP | 4.36 ms | ≈0 | 558 MB |
+| Colour Grading on (display, fit) | Bayer 24 MP | 4.90 ms | 0.066 ms | 558 MB |
+| Detail: denoise (profiled), full size | Bayer 24 MP | 85.4 ms | 40.8 ms | 1.56 GB |
+| Detail: capture sharpening, Amount 40, full size | Bayer 24 MP | 103 ms | 41.9 ms | 1.56 GB |
+| Display pass, fit / 100 %, with or without Tone Curve | Bayer 24 MP | 2.8–5.8 ms | ≈0 | 0.8–1.0 GB |
+| Remove: one spot (CPU fill search) | Bayer 24 MP | 577 ms | 0.655 ms | 1.50 GB |
+| Export render, full size | Bayer 24 MP | 73.1 ms | 10.0 ms | 1.62 GB |
+| Export end to end (Stage A + Detail + warp + render; no encoding) | Bayer 24 MP | 342 ms | 66.7 ms | 2.19 GB |
+| JPEG encode (jpegli q90, CPU worker) | Bayer 24 MP | 908 ms | — | 1022 MB |
+| Thumbnail 512 px | Bayer 24 MP | 13.1 ms | ≈0 | 1.05 GB |
+| Stage A | Bayer 45 MP | 125 ms | 27.2 ms | 2.30 GB |
+| Detail denoise / sharpening, full size | Bayer 45 MP | 151 / 162 ms | 79.4 / 83.1 ms | 2.95 GB |
+| Remove: one spot | Bayer 45 MP | 1020 ms | 2.10 ms | 2.84 GB |
+| Export end to end | Bayer 45 MP | 626 ms | 125 ms | 4.15 GB |
+| JPEG encode | Bayer 45 MP | 1822 ms | — | 1.89 GB |
+| Stage A, Markesteijn 1-pass | X-Trans 26 MP | 116 ms | 73.5 ms | 1012 MB |
+| Stage A, Markesteijn 3-pass | X-Trans 26 MP | 345 ms | 262 ms | 1.04 GB |
+| Export end to end | X-Trans 26 MP | 277 ms | 118 ms | 1.26 GB |
+| Stage A (JPEG input) | sRGB 24 MP | 13.2 ms | 1.18 ms | 626 MB |
+| JPEG encode | sRGB 24 MP | 803 ms | — | 382 MB |
+
+Peak memory per test image over the whole run: Bayer 24 MP 2.19 GB, Bayer 45 MP 4.15 GB, X-Trans 26 MP 1.26 GB, sRGB 24 MP 748 MB; 0 MB after `unload()` in every case.
+
+Run 2 was close to run 1 on most rows (for example Stage A, Bayer 24 MP: 83.6 ms wall, 21.7 ms GPU; Remove one spot: 572 ms; export end to end: 311 ms; JPEG encode: 911 ms). The exception is X-Trans Markesteijn 3-pass, 266 ms wall and 185 ms GPU (demosaic 181 ms) against 345 / 262 ms (255 ms) in run 1; the cause of that difference is not known.
+
+What the numbers say:
+- **The GPU stages are fast** on this adapter: a 24 MP RAW develops in about 76 ms, the Colour Mixer's guided filter costs about 1.8 ms of GPU time (so it stays on), and every display pass is under 6 ms.
+- **The slow steps run on the CPU**: JPEG encoding (about 0.9 s per 24 MP photo, 1.8 s per 45 MP) takes longer than the whole GPU export (0.34 s), and Remove's fill search takes about 0.58 s per spot at 24 MP (1 s at 45 MP) while the GPU part is under 1 ms. These are the targets of the performance build (Remove on several workers, batch export overlap, a shared CPU budget).
+- **Memory**: a 45 MP export peaks at 4.15 GB of the engine's own allocations, inside this 12 GB GPU; smaller GPUs have not been measured.
+
+Limits of these results: one GPU, one browser, two runs, synthetic images.
 
 ## Part 17: Colour Grading
 
