@@ -22,11 +22,11 @@ beforeAll(async () => {
   await api.open({ inMemory: true })
 })
 
-/** Everything in a catalog except photo_analysis: schema and rows, to compare before and after. */
+/** Everything in a catalog except photo_analysis (and schema 15's snapshots): schema and rows, to compare before and after. */
 function dump(d: Database, skipAnalysis = true) {
-  const tables = (d.selectValues("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name") as string[]).filter((t) => !skipAnalysis || t !== 'photo_analysis')
+  const tables = (d.selectValues("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name") as string[]).filter((t) => !skipAnalysis || (t !== 'photo_analysis' && t !== 'snapshots'))
   return {
-    schema: d.selectObjects(`SELECT type, name, tbl_name, sql FROM sqlite_schema ${skipAnalysis ? "WHERE tbl_name <> 'photo_analysis'" : ''} ORDER BY name`),
+    schema: d.selectObjects(`SELECT type, name, tbl_name, sql FROM sqlite_schema ${skipAnalysis ? "WHERE tbl_name NOT IN ('photo_analysis', 'snapshots')" : ''} ORDER BY name`),
     rows: Object.fromEntries(tables.map((t) => [t, d.selectObjects(`SELECT * FROM ${t} ORDER BY rowid`)])),
   }
 }
@@ -35,7 +35,7 @@ function dump(d: Database, skipAnalysis = true) {
 function v13(): Database {
   const d = new sqlite3.oo1.DB(':memory:', 'c')
   migrate(d)
-  d.exec('DROP TABLE photo_analysis')
+  d.exec('DROP TABLE photo_analysis; DROP TABLE snapshots')
   d.exec(`
     INSERT INTO roots (id, name) VALUES (1, 'Photos');
     INSERT INTO folders (id, root_id, path) VALUES (1, 1, 'day1');
@@ -52,11 +52,11 @@ function v13(): Database {
 
 describe('schema 14', () => {
   it('upgrades a version-13 catalog by adding photo_analysis only, empty', () => {
-    expect(SCHEMA_VERSION).toBe(14)
+    expect(SCHEMA_VERSION).toBe(15)
     const d = v13()
     const before = dump(d)
     migrate(d)
-    expect(d.selectValue('PRAGMA user_version')).toBe(14)
+    expect(d.selectValue('PRAGMA user_version')).toBe(SCHEMA_VERSION)
     expect(dump(d)).toEqual(before)
     expect(d.selectValue('SELECT COUNT(*) FROM photo_analysis')).toBe(0)
     expect(d.selectValue('PRAGMA foreign_key_check')).toBeUndefined()
@@ -68,7 +68,7 @@ describe('schema 14', () => {
     const before = dump(d, false)
     migrate(d)
     d.exec(`INSERT INTO photo_analysis (photo_id, algo, analyzed_at) VALUES (7, ${ANALYSIS_ALGO}, 1)`)
-    d.exec('DROP TABLE photo_analysis; PRAGMA user_version = 13')
+    d.exec('DROP TABLE photo_analysis; DROP TABLE snapshots; PRAGMA user_version = 13')
     expect(dump(d, false)).toEqual(before)
     // And up again.
     migrate(d)

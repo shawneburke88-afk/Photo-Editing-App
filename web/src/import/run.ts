@@ -11,6 +11,7 @@ import { baseNameOf, dateFolder, extensionOf, JPEG_EXTENSIONS, joinPath, renamed
 import type { ScannedFile } from './scan'
 import { fullSidecarName, sidecarCandidates, stemOwners, stemSidecarName } from '../sidecar/naming'
 import { readXmp, type SidecarRead } from '../sidecar/xmp'
+import { fromSidecar } from '../develop/snapshots'
 import { detailOf, geometryOf, lrDiffers, lrFrame, lrKey, lrState, mixerOf, parseLrKey, sameState } from '../sidecar/lightroom'
 import { gradingOf } from '../engine/develop/colour-grading'
 import { batch, lightroomStep } from '../develop/batch'
@@ -105,7 +106,7 @@ export async function findSidecar(dir: FileSystemDirectoryHandle, photoName: str
 
 /**
  * Applies what a sidecar says (ratings, flag, label, keywords, metadata, collections, stack, virtual copies,
- * LightBench edits) to a newly imported photo. A `borrowed` sidecar (the RAW twin's) gives only stars, flag, label,
+ * LightBench edits and snapshots) to a newly imported photo. A `borrowed` sidecar (the RAW twin's) gives only stars, flag, label,
  * keywords and metadata: its edits, virtual copies, stack and collections are the RAW's.
  */
 export async function applySidecar(catalog: Catalog, id: number, text: string, borrowed = false): Promise<SidecarRead> {
@@ -128,6 +129,8 @@ export async function applySidecar(catalog: Catalog, id: number, text: string, b
     const history = JSON.stringify({ steps: [{ label: 'From sidecar', settings: JSON.parse(r.develop) }], index: 0 })
     await catalog.saveEdit(id, r.develop, history)
   }
+  // LightBench's snapshots (docs/PHASE3.md Part 19): read defensively, a damaged list was already left out by readXmp.
+  if (r.snapshots?.length) await catalog.saveSnapshots(id, fromSidecar(r.snapshots))
   await readLightroomSettings(catalog, id, r)
   return r
 }

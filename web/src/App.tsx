@@ -150,7 +150,7 @@ export default function App() {
             ids={developing.ids}
             id={developing.id}
             selected={developing.selected}
-            onNavigate={(id) => setDeveloping((d) => (d ? { ...d, id } : d))}
+            onNavigate={(id, ids) => setDeveloping((d) => (d ? { ...d, id, ids: ids ?? d.ids } : d))}
             onEdited={onEdited}
             onExport={setExporting}
             onLibrary={() => go('library')}

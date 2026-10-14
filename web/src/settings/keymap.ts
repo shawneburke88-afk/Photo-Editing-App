@@ -93,11 +93,13 @@ export function cleanKeyboard(v: unknown): KeyboardSettings {
 
 /**
  * The action a key press runs in the given contexts, or null. The chords from `eventChords` are tried in
- * order, so an exact match (Shift+S) wins over the same key without Shift (S).
+ * order, so an exact match (Shift+S) wins over the same key without Shift (S). Actions only for the installed app
+ * window (`standalone`) match only when `standalone` is true.
  */
-export function matchAction(map: Keymap, e: KeyLike, contexts: Context[]): string | null {
+export function matchAction(map: Keymap, e: KeyLike, contexts: Context[], standalone = false): string | null {
   for (const chord of eventChords(e)) {
     for (const a of ACTIONS) {
+      if (a.standalone && !standalone) continue
       if (a.contexts.some((c) => contexts.includes(c)) && (map.get(a.id) ?? []).includes(chord)) return a.id
     }
   }

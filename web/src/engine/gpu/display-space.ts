@@ -18,9 +18,39 @@ const QUERY = '(color-gamut: p3)'
 
 const media = () => (typeof matchMedia === 'function' ? matchMedia(QUERY) : null)
 
-/** Display P3 when the screen the page is on can show it (CSS Media Queries 4 `color-gamut`), else sRGB. */
+/**
+ * True when a 2D canvas can hold Display P3 (the `colorSpace` context option, HTML's PredefinedColorSpace). MDN's
+ * compatibility data lists it for Chrome 92 and Safari 15.2 but not Firefox (Cowork verification, 2026-10-13), where the
+ * option is ignored and Display P3 values would be shown as sRGB (too dull). Asked of the browser, not of its name:
+ * the context says which colour space it got (`getContextAttributes`), or its pixels do (`ImageData.colorSpace`).
+ * Unknown (no DOM, as in unit tests): true.
+ */
+export function canvasP3Supported(): boolean {
+  if (typeof document === 'undefined') return true
+  try {
+    const ctx = document.createElement('canvas').getContext('2d', { colorSpace: 'display-p3' })
+    if (!ctx) return false
+    const attrs = ctx.getContextAttributes?.() as { colorSpace?: string } | undefined
+    if (attrs?.colorSpace === 'display-p3') return true
+    return (ctx.getImageData(0, 0, 1, 1) as ImageData & { colorSpace?: string }).colorSpace === 'display-p3'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Display P3 when the screen the page is on can show it (CSS Media Queries 4 `color-gamut`) and the browser's canvases
+ * can hold it (`canvasP3Supported`), else sRGB.
+ */
 export function currentDisplaySpace(): DisplaySpace {
-  return media()?.matches ? 'display-p3' : 'srgb'
+  return media()?.matches && canvasP3Supported() ? 'display-p3' : 'srgb'
+}
+
+/** Why Develop shows sRGB on a wide-gamut screen, or null when it doesn't. */
+export function displaySpaceNote(): string | null {
+  return media()?.matches && !canvasP3Supported()
+    ? 'This screen can show Display P3, but this browser’s canvases can’t hold it (no canvas colour space support, e.g. Firefox), so LightBench shows sRGB.'
+    : null
 }
 
 /**
@@ -30,7 +60,7 @@ export function currentDisplaySpace(): DisplaySpace {
 export function watchDisplaySpace(onChange: (space: DisplaySpace) => void): () => void {
   const m = media()
   if (!m) return () => {}
-  const listener = () => onChange(m.matches ? 'display-p3' : 'srgb')
+  const listener = () => onChange(m.matches && canvasP3Supported() ? 'display-p3' : 'srgb')
   m.addEventListener('change', listener)
   return () => m.removeEventListener('change', listener)
 }

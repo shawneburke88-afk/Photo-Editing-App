@@ -1898,7 +1898,7 @@ A SwiftShader sample (Quick, test images at 0.3 MP, the canvas 938 × 420; **it 
 
 ### Limitations and unverified
 
-- **Not run on a real GPU** here: no NVIDIA, AMD, Intel or Apple numbers yet; that is what the owner's run is for. Which GPU Chrome or Edge uses on the owner's laptop is unconfirmed (step 2 above).
+- **Not run on a real GPU** here. The owner's first runs (one NVIDIA laptop GPU) are under "Owner's results" below; there are no AMD, Intel or Apple numbers yet.
 - **Timestamp queries** are what the browser reports: Chrome rounds them to 0.1 ms by default, and some drivers report overlapping or reordered passes oddly. The wall-clock times are the reference; the GPU times split them up.
 - The test images are synthetic: speeds that depend on content (highlight reconstruction's clipped area, Remove's search) can differ on real photos. The library photo option covers that; C20a's fixed set of real photos (D700, A6300, X100F, 1D Mark III at ISO 6400) isn't bundled.
 - **"Use a photo from my library" wasn't tested end to end** (the test library is empty); it reads the photo as Export does (`getPhoto`, `openPhotoFile`, the decoder).
@@ -1907,6 +1907,51 @@ A SwiftShader sample (Quick, test images at 0.3 MP, the canvas 938 × 420; **it 
 - Remove's fill search runs on the CPU, so its row measures the CPU as much as the GPU; the JPEG row is CPU only.
 - No release gate yet (PLAN, "Every release"): the numbers are for the owner to read and paste, not checked against budgets.
 
+
+### Owner's results (2026-10-14)
+
+Two Full runs (2 warm-ups, 5 measured runs per stage) pasted by the owner from System Check › GPU benchmark, app 0.6.0 (`5307029`), Edge 155 on Windows x64. Adapter: nvidia · lovelace (the owner's RTX 4000 Ada Laptop GPU, 12 GB; not a fallback adapter), `timestamp-query` and `shader-f16` available; `maxTextureDimension2D` 16384, `maxBufferSize` 2 GiB, `maxStorageBufferBindingSize` 2147483644. Canvas mode: canvas (probe-ok), DPR 1. The test images are the synthetic ones above. The GPU times step in multiples of about 0.066 ms, so sub-0.1 ms GPU figures only say "very small".
+
+Run 1 (wall-clock median / GPU median / peak memory):
+
+| Stage | Image | Wall | GPU | Peak memory |
+|---|---|---:|---:|---:|
+| Stage A: RAW → scene | Bayer 24 MP | 75.6 ms | 14.2 ms | 1.21 GB |
+| ↳ demosaic (RCD) | Bayer 24 MP | — | 10.2 ms | — |
+| Geometry warp (lens + straighten), full size | Bayer 24 MP | 19.6 ms | 4.52 ms | 766 MB |
+| Tone equalizer mask pre-pass | Bayer 24 MP | 8.58 ms | 1.38 ms | 543 MB |
+| Colour Mixer, guided filter on (pre-pass + display, fit) | Bayer 24 MP | 21.9 ms | 1.84 ms | 590 MB |
+| Colour Mixer, guided filter off | Bayer 24 MP | 4.36 ms | ≈0 | 558 MB |
+| Colour Grading on (display, fit) | Bayer 24 MP | 4.90 ms | 0.066 ms | 558 MB |
+| Detail: denoise (profiled), full size | Bayer 24 MP | 85.4 ms | 40.8 ms | 1.56 GB |
+| Detail: capture sharpening, Amount 40, full size | Bayer 24 MP | 103 ms | 41.9 ms | 1.56 GB |
+| Display pass, fit / 100 %, with or without Tone Curve | Bayer 24 MP | 2.8–5.8 ms | ≈0 | 0.8–1.0 GB |
+| Remove: one spot (CPU fill search) | Bayer 24 MP | 577 ms | 0.655 ms | 1.50 GB |
+| Export render, full size | Bayer 24 MP | 73.1 ms | 10.0 ms | 1.62 GB |
+| Export end to end (Stage A + Detail + warp + render; no encoding) | Bayer 24 MP | 342 ms | 66.7 ms | 2.19 GB |
+| JPEG encode (jpegli q90, CPU worker) | Bayer 24 MP | 908 ms | — | 1022 MB |
+| Thumbnail 512 px | Bayer 24 MP | 13.1 ms | ≈0 | 1.05 GB |
+| Stage A | Bayer 45 MP | 125 ms | 27.2 ms | 2.30 GB |
+| Detail denoise / sharpening, full size | Bayer 45 MP | 151 / 162 ms | 79.4 / 83.1 ms | 2.95 GB |
+| Remove: one spot | Bayer 45 MP | 1020 ms | 2.10 ms | 2.84 GB |
+| Export end to end | Bayer 45 MP | 626 ms | 125 ms | 4.15 GB |
+| JPEG encode | Bayer 45 MP | 1822 ms | — | 1.89 GB |
+| Stage A, Markesteijn 1-pass | X-Trans 26 MP | 116 ms | 73.5 ms | 1012 MB |
+| Stage A, Markesteijn 3-pass | X-Trans 26 MP | 345 ms | 262 ms | 1.04 GB |
+| Export end to end | X-Trans 26 MP | 277 ms | 118 ms | 1.26 GB |
+| Stage A (JPEG input) | sRGB 24 MP | 13.2 ms | 1.18 ms | 626 MB |
+| JPEG encode | sRGB 24 MP | 803 ms | — | 382 MB |
+
+Peak memory per test image over the whole run: Bayer 24 MP 2.19 GB, Bayer 45 MP 4.15 GB, X-Trans 26 MP 1.26 GB, sRGB 24 MP 748 MB; 0 MB after `unload()` in every case.
+
+Run 2 was close to run 1 on most rows (for example Stage A, Bayer 24 MP: 83.6 ms wall, 21.7 ms GPU; Remove one spot: 572 ms; export end to end: 311 ms; JPEG encode: 911 ms). The exception is X-Trans Markesteijn 3-pass, 266 ms wall and 185 ms GPU (demosaic 181 ms) against 345 / 262 ms (255 ms) in run 1; the cause of that difference is not known.
+
+What the numbers say:
+- **The GPU stages are fast** on this adapter: a 24 MP RAW develops in about 76 ms, the Colour Mixer's guided filter costs about 1.8 ms of GPU time (so it stays on), and every display pass is under 6 ms.
+- **The slow steps run on the CPU**: JPEG encoding (about 0.9 s per 24 MP photo, 1.8 s per 45 MP) takes longer than the whole GPU export (0.34 s), and Remove's fill search takes about 0.58 s per spot at 24 MP (1 s at 45 MP) while the GPU part is under 1 ms. These are the targets of the performance build (Remove on several workers, batch export overlap, a shared CPU budget).
+- **Memory**: a 45 MP export peaks at 4.15 GB of the engine's own allocations, inside this 12 GB GPU; smaller GPUs have not been measured.
+
+Limits of these results: one GPU, one browser, two runs, synthetic images.
 
 ## Part 17: Colour Grading
 
@@ -2196,6 +2241,274 @@ Headless Chromium 141 with SwiftShader WebGPU and `?gpu=readback`, Vite dev serv
 - With a crop in the edit, Z's point (on the uncropped preview) is applied to the 100 % render of the cropped photo, as clicking already was.
 - Undo of an Apply lasts until the next Apply or a reload (the Library has no other undo).
 - A smart-collection rule for these measures (research §5) wasn't added.
+
+## Part 19: Snapshots
+
+**What it does.** A **snapshot** is a named copy of a photo's full develop settings, process version included, with the time it was made. Snapshots are listed in a **Snapshots** panel in Develop's left side, between Presets and History (Lightroom's order). Clicking one applies it as one history step; hovering previews it on the photo; its menu updates, renames, deletes or **sets it as Before**, so `\` compares the photo with it. A History step's menu makes a snapshot of that step. They are kept in the catalog and in the photo's `.xmp` sidecar, so a library rebuilt from the folders gets them back. Nothing renders differently, so there is no new process version. This part is numbered 19; soft proofing is Part 20.
+
+Owner's decisions (2026-10-14, after [research/SNAPSHOTS_PROOFING_SEARCH.md](research/SNAPSHOTS_PROOFING_SEARCH.md) Part A and Cowork's check of it, [research/cowork-2026-10-13b/E_SNAPSHOTS_PROOFING_SEARCH.md](research/cowork-2026-10-13b/E_SNAPSHOTS_PROOFING_SEARCH.md)):
+1. **A snapshot** = a named copy of the full develop settings (process version included) plus its creation time. The default name is a date/time stamp, as Lightroom's is (secondary source); it can be renamed. Listed in Develop's left side near History. Click applies it as **one** undoable history step "Snapshot: name"; hover previews it; **Update with current settings**, **Rename**, **Delete** (undoable) and **Set as Before**. A History step's menu has "Create snapshot from this step".
+2. **Keys:** **Ctrl+Alt+N** everywhere; **Ctrl+N** as well when LightBench runs as an installed app window (`display-mode: standalone`), where Chromium reserves no keys. Both in the shortcut registry, without conflicts.
+3. **Storage:** a new catalog table (schema 15, safe for existing catalogs, rows deleted with the photo) **and** the photo's sidecar in LightBench's own namespace (`lightbench:Snapshots`), written by the existing sidecar rules, read back on Open folder, Import and Read changes with change detection. Lightroom's own snapshot field is undocumented: no `crs:` snapshot field is read or written.
+4. **Virtual copies** have their own snapshots. Copy/Paste and Sync don't carry snapshots; presets don't include them.
+5. **Old edits:** rendering never changes. An older snapshot applied keeps its process version (the photo as it was).
+
+### What Lightroom and others do (facts used, and what isn't known)
+
+| Fact | Source | Used for |
+|---|---|---|
+| Lightroom Classic's "Create a new snapshot" is Ctrl+N / Cmd+N | Adobe's LrC keyboard shortcut table (updated 2025-10-29), quoted by Cowork | Ctrl+N in the installed app |
+| Snapshots are named with a date/time stamp by default and can be renamed when made; they travel with the file when metadata is saved; a snapshot is made available in all virtual copies | Julieanne Kost's blog (Adobe evangelist; secondary), quoted by Cowork | Default name; storing them in the sidecar. LightBench gives each virtual copy its own (owner's decision 4), unlike Lightroom |
+| In a Chromium tab Ctrl+N (`IDC_NEW_WINDOW`) is reserved; "In Apps mode, no keys are reserved" | Chromium `browser_command_controller.cc` `IsReservedCommandOrKey`, quoted by Cowork. The Ctrl+N → IDC_NEW_WINDOW accelerator mapping and Edge were not checked | Ctrl+N only with `display-mode: standalone` |
+| ExifTool 3.79 has no snapshot tag in its `crs` table | Research and Cowork | No `crs:` snapshot field |
+| darktable's snapshots are session-only (at most 10), a rendered view plus a history position | darktable `src/libs/snapshots.c` (research) | Not followed: LightBench's are kept |
+| ART keeps snapshots in its `.arp` sidecar (author's forum statement); RawTherapee doesn't keep them in `.pp3` | Cowork | Precedent for sidecar storage |
+| **Not known:** Lightroom's XMP structure for snapshots; whether clicking a snapshot adds a history step in Lightroom; the exact default name format; whether Lightroom's Ctrl+N dialog asks for the name | Not found by research or Cowork | LightBench's own choices, below |
+
+### The panel
+
+| Behaviour | Detail | Source |
+|---|---|---|
+| Place | Develop's left panel: Histogram, Presets, **Snapshots**, History. The heading's tooltip says what snapshots are and where they are kept. | Owner's decision 1; Lightroom's order (research) |
+| List | Newest first, like History. Each row shows the name; its tooltip gives when it was made and its process version. The one set as Before has a "Before" mark. An empty list says "None yet. “+ New” or Ctrl+Alt+N saves this photo's settings by name." | LightBench |
+| New | **+ New**, **Ctrl+Alt+N**, or **Ctrl+N** in the installed app window. The snapshot is made at once with the date and time as its name ("2026-10-14 13:05:22", local time; "(2)" added if that name is taken), and its name opens for editing with the text selected: type a name and press Enter, or Enter / Esc / click elsewhere to keep the date and time. Names are unique per photo (case-insensitive), at most 120 characters. | Owner's decision 1 (date/time default, renamable); naming while making, as Lightroom allows (secondary); format LightBench's |
+| Apply | Click: the photo takes the snapshot's settings as **one** history step "Snapshot: name" (a step of its own even right after the same one), so Ctrl+Z goes back. The settings are applied whole, exactly as saved: an older process version stays, and the "Update to current process" offer appears for it (Part 1). A crop being edited is dropped first. | Owner's decisions 1 and 5 |
+| Hover | Moving over a row (or focusing it) shows the photo with the snapshot on the main view and a "Preview: snapshot “name”" badge, as presets already do (Phase 2, Part 8); no history step. | Owner's decision 1 (the main view rather than a navigator, which LightBench doesn't have) |
+| Menu | Right-click a row (or the Menu key / Shift+F10, or its ⋯ button): **Update with current settings**, **Rename…**, **Set as Before** / **Clear Before**, **Delete**. ↑ ↓ Home End move, Enter chooses, Esc or Tab closes. | Owner's decision 1 |
+| Update | Replaces the snapshot's settings with the photo's current ones; its name, time and id stay. | Owner's decision 1 |
+| Undo | Creating, renaming, updating and deleting show a line under the list ("Deleted “Warm”." with **Undo**). Undo (or **Ctrl+Z** while that line shows) puts the list back as it was. The line goes when the photo's history next changes (any edit), and then Ctrl+Z is the history's again. Snapshot changes are not history steps: they don't change the photo. | Owner's decision 1 (delete undoable); LightBench's design |
+| Set as Before | Before / after (`\`, or the toolbar button) then shows the snapshot instead of the defaults, with the badge "Before: snapshot “name”" and the button's tooltip saying so, until **Clear Before**, deleting that snapshot, or another photo (or a reload). | Owner's decision 1; Lightroom's "Copy Snapshot Settings to Before" (research, search summary) |
+| History step | Right-click a History step: **Create snapshot from this step** makes a snapshot of that step's settings (the photo doesn't change); its name opens for editing as for New. Each step's tooltip mentions it. | Owner's decision 1 ("if simple"); Lightroom's History "Create Snapshot" is from research [unconfirmed] |
+| Keyboard and screen readers | Rows and menu items are buttons; the menu is `role="menu"` with `menuitem`s and returns the focus when it closes; the name field has an accessible name; the undo line is `role="status"`. | LightBench |
+
+### Keys
+
+| Action | Where | Both shortcut sets |
+|---|---|---|
+| New snapshot | Develop, and with the Tone Curve's, Colour Mixer's or Remove brush's on-photo tool open | **Ctrl+Alt+N** |
+| New snapshot (installed app window only) | the same | **Ctrl+N**, only while `matchMedia('(display-mode: standalone)')` matches (the manifest's display mode). In a tab LightBench doesn't take it, so the browser's own Ctrl+N (a new window) is untouched. |
+
+- The registry has a new flag for actions that work only in the installed app (`standalone` in `settings/actions.ts`). `matchAction` skips them unless the page runs standalone (`settings/standalone.ts`, asked at each key press); command search lists them only there. Settings → Keyboard lists both, so either can be changed.
+- Not while cropping or drawing Guided Upright lines (the crop isn't applied yet). Ctrl+Alt+Shift+N (end the colour mixer tool) is a different chord and still works.
+- The keymap test checks both keys in all four contexts, that Ctrl+N does nothing in a tab and nothing outside Develop, and that both sets have no conflicts.
+- Whether `preventDefault()` on Ctrl+N stops an installed Chrome or Edge window from also opening a new window was **not tested** (no installed app in the test browser; Cowork's unresolved item 3). The source says the page gets the key first.
+
+### What is stored
+
+| Behaviour | Detail | Source |
+|---|---|---|
+| A snapshot | `{ id, name, created, settings }`: a random id (kept by rename and update, so lists can be merged), the name, when it was made (ms), and the full `DevelopSettings` (process version, geometry, spots, curves… everything the edit holds). | Owner's decision 1 |
+| Catalog: schema 15 | `snapshots (photo_id REFERENCES photos ON DELETE CASCADE, uid, name, settings, created_at, PRIMARY KEY (photo_id, uid))`. A new table only: every other table and row is unchanged by the upgrade (unit test). Dropping it and setting `user_version` 14 gives the version-14 catalog exactly; 0.6.0 refuses the version-15 catalog without changing it (its existing check; e2e below). Rows go with their photo, and a copy's with the copy. Backups include the table. | Owner's decision 3 |
+| Sidecar | `lightbench:Snapshots` on the photo's `rdf:Description`: a JSON list (oldest first) of `{ "id", "name", "created" (ISO 8601 UTC), "settings" }`, in LightBench's namespace as `lightbench:Develop` and `lightbench:Versions` are. Removed when the last snapshot is deleted. Written by the existing rules: whenever the photo's sidecar is written (after a change, with folder permission, held when another app changed the file). Other apps' fields are kept. **No `crs:` snapshot field** is read or written. | Owner's decision 3 |
+| Virtual copies | Each copy has its own list (a new copy starts with none). In the original's sidecar each copy's list is `snapshots` inside its entry in `lightbench:Versions`, present only when it has some, so copies without snapshots are written as before. | Owner's decision 4 |
+| Not carried | Snapshots are not part of `DevelopSettings`, so Copy/Paste, Sync, Auto Sync, presets, exports' embedded XMP and new virtual copies never carry them. | Owner's decision 4 |
+
+### Reading them back
+
+| Behaviour | Detail |
+|---|---|
+| Open folder / Import | A new photo's sidecar brings its snapshots with it (`applySidecar`), and its virtual copies come back with theirs (`restoreVersions`). A RAW twin's borrowed sidecar gives a JPEG none. |
+| Damaged data | A list that isn't valid JSON or isn't a list is ignored (nothing read; the rest of the sidecar reads as before) and left in the file until the photo has snapshots of its own. Entries without a name or settings are left out; a missing id is made from the time and name (the same file always gives the same id); a bad time reads as 1970; a repeated id keeps the first. A copy's damaged list is dropped. |
+| Changed by another app | Snapshots join the fields compared to notice another app's change (Phase 2, "Sidecars changed by other apps"). Another LightBench adding, renaming, updating or deleting one raises the usual notice; **Read changes** merges by snapshot: what the other app added, changed or deleted is taken, LightBench's own new or changed ones that it didn't touch stay (both changed one: the other app's wins, as for every field). The Develop panel shows the result at once. |
+| Apps that drop LightBench's namespace | A file without `lightbench:Snapshots` and without `lightbench:Develop` says nothing about snapshots, so they are kept (as edits are). A file with LightBench's settings but no list means "none". |
+| Records from before this part | A record made before schema 15 doesn't know snapshots, so the catalog's own list is the base: snapshots in a file that the catalog doesn't have (written by another, newer LightBench) count as a change to read. And before a sidecar whose record doesn't know snapshots is rewritten, any snapshots in it that the catalog lacks are taken into the library first, so writing never drops them. |
+
+### Old edits
+
+Nothing in the engine changed: rendering, exports, thumbnails and histograms of every existing edit are byte-identical (below). An existing library opens unchanged: no catalog row, edit, history, thumbnail or sidecar changes until a snapshot is made. A snapshot of an older process version applied later keeps that version, so the photo looks as it did when the snapshot was taken.
+
+### Also changed
+
+| Behaviour | Detail |
+|---|---|
+| History steps | Each step's tooltip now reads "Click to go back to this step · right-click to make a snapshot of it". |
+| Develop's left panel | History keeps at least about three steps visible; when the panel is too short for the histogram, presets, snapshots and History together, the panel scrolls instead of squeezing History to nothing (seen on a 900 px window while testing). |
+| "Changed by another app" notice | Now says Read changes also takes "another LightBench's edits and snapshots". |
+
+### Verified
+
+Headless Chromium with SwiftShader WebGPU and `?gpu=readback`, Vite dev servers of this branch and of main `5307029` (0.6.0, served from its own copy of the tree), one test at a time; another session's tests shared the machine for part of the time. Scratch scripts in the scratchpad's `sn/` folder (copied from `cg/` and `ch/`). Test photos: copies of `test-srgb.jpg` (1600 × 1072) and `test-adobe.jpg`; for the identity check the D700, D80 and ILCE-6300 RAWs and the JPEG.
+
+- **Unit tests** (`npx vitest run`: **905 tests in 95 files**; main `5307029` has 872 in 91, so 33 new; the schema-11 to 14 upgrade tests' fixtures now also drop the new table, and their schema-version expectations say 15):
+  - `catalog/snapshots-catalog.test.ts` (7): the 14 → 15 upgrade adds an empty `snapshots` table and leaves every other table and row identical, with the integrity and foreign-key checks passing, and opening again changes nothing; **taking it back** (dropping the table, `user_version` 14) gives the version-14 catalog exactly, and it upgrades again; a version that doesn't know 15 refuses it without changing it; rows go with their photo and a copy's with the copy; saving and listing (newest first; a row that can't be read is left out); **virtual copies**: a new copy starts with none, the original's sidecar source holds the original's list and each copy's inside its version entry (none when a copy has no snapshots), a fresh library's restored copy gets its own back, a copy's damaged list is ignored; removing a photo removes its and its copies' snapshots.
+  - `develop/snapshots.test.ts` (13): the date/time name; unique names (case-insensitive, "(2)", a rename to its own name is not a clash), trimming and the 120-character limit; a new snapshot holds a **copy** of the settings; newest first; **round trip** sidecar form → JSON → read → snapshots (Unicode, quotes, `<` and `&` in names; milliseconds kept), the change-detection key independent of order; **damaged data ignored**: not JSON, not a list, an empty string, entries without a name or settings, a blank name, settings that aren't an object, a repeated id, a missing id (made from time and name, the same every time) and a bad time (1970); the Read changes merge (their additions, changes and deletions; LightBench's own new and changed ones kept; one LightBench deleted stays deleted; both changed: theirs); **applying** a process-1 snapshot on a process-2 photo gives one step (twice: two steps), keeps process 1 and its rendering parameters, and two undos give back the current version; **Set as Before** shows the snapshot's settings (crop and process version included), not the defaults; snapshots aren't a paste item or a settings key.
+  - `sidecar/snapshots-sidecar.test.ts` (11): `lightbench:Snapshots` written and read back exactly, no `crs:` snapshot field; an empty list removes the field, undefined leaves it, an unchanged list rewrites nothing; Lightroom's fields kept when adding it; a damaged list read as nothing and flagged, the rest of the file read; mixed good and bad entries; a copy's list in `lightbench:Versions` and a copy's damaged list dropped; **change detection**: a written file matches its catalog; another LightBench's rename, addition and deletion is a change, and the merge keeps LightBench's new one; an app that drops the namespace deletes nothing; a record from before schema 15 treats unknown snapshots in the file as a change and an ordinary change as only that; no record and an older file: taken silently without claiming its snapshots; a damaged list is no change.
+  - `settings/keymap.test.ts` (+1): Ctrl+Alt+N makes a snapshot in Develop and the Tone Curve, Colour Mixer and Remove contexts, in a tab and in the app; **Ctrl+N only with standalone**; neither while cropping, drawing Guided Upright lines, in the Library, culling, Compare or Survey; Ctrl+Alt+Shift+N still ends the mixer tool; **no conflicts in either shortcut set**. `settings/standalone.test.ts` (1): `display-mode: standalone` recognised, anything else (another query, an exception, no `matchMedia`) is not.
+- **In Develop** (`e2e-snapshots.mjs`, **42 of 42** on the final code; earlier runs found the test's own problems, a stale locator after relaunching the browser and checks run before D was ready, and one real one, fixed: after choosing from a snapshot's menu the focus went back to its row and started a preview, so `\` then showed the snapshot instead of the photo; now only keyboard focus previews):
+  - The panel sits between Presets and History; empty, it says how to make one. **+ New** opened the name field with "2026-10-14 15:39:…" selected; typing "Warm" + Enter kept it, and the catalog held the full settings (Exposure +1.50, process 2).
+  - **Ctrl+Alt+N** made one named with the date and time. **Ctrl+N** in the tab made none; with `display-mode: standalone` emulated (a `matchMedia` override) it made "App". Listed newest first.
+  - **Hover** showed "Preview: snapshot “Warm”" and the photo as in the snapshot (canvas mean 172.93 against 172.91 when Warm was the photo's state), with no history step; leaving gave the photo back (87.58 = 87.58).
+  - **Click** added exactly one step "Snapshot: Warm" (Exposure +1.50, mean as Warm); Ctrl+Z went back in one step (−1.50), Ctrl+Y forward.
+  - **Set as Before** marked the row; `\` showed "Before: snapshot “Warm”" and the snapshot's pixels (172.93) while the photo was at −1.50 EV; `\` again showed the photo (87.58); after **Clear Before**, `\` showed the defaults (130.86).
+  - **Rename…** to "Cool"; Esc while renaming kept the name. **Update with current settings** changed Cool from −1.50 to −0.50 EV, said so, and its **Undo** put −1.50 back.
+  - **Delete** removed Warm (and its Before); **Ctrl+Z** right after brought it back with the same id and no history change; Delete then the **Undo** button brought Cool back.
+  - A History step's menu (the first step, "Import") made "Original" with Exposure 0 and no history step.
+  - `C.xmp` held `lightbench:Snapshots` with the four (ids, times, settings with process version), and no `crs:` snapshot field.
+  - **Copy/Paste** from C to D pasted the settings ("Paste settings") and gave D no snapshots; `D.xmp` has no Snapshots field.
+  - **After a reload** the list was the same; Before wasn't kept.
+  - **A virtual copy** (Ctrl+') started with none; "Copy look" made on it stayed the copy's; `C.xmp` held it inside the copy's `lightbench:Versions` entry, the original's four unchanged.
+  - **A fresh library** (a new browser profile, the same JPEGs and the two sidecars, Open folder): C's four snapshots came back with their names, settings and ids, the copy came back with "Copy look", D with none; applying Warm there gave "Snapshot: Warm" at +1.50 EV.
+  - **Another LightBench's change:** the script renamed Cool, added "From elsewhere" and deleted "Original" in `C.xmp`, while LightBench made "Mine meanwhile"; the notice "1 photo was changed by another app" appeared; **Read changes** gave exactly Cool (renamed elsewhere), From elsewhere, Mine meanwhile, Warm and the date/time one, in the catalog and the panel at once, and the file was then rewritten with that list.
+  - Screenshots checked by eye: the panel, the Before badge with the toolbar's "Showing before", the History with three steps visible under the snapshots.
+- **An existing library** (`build-v14.mjs` with main `5307029`, then `existing-v15.mjs` and `refuse-v14.mjs` with this branch, one persistent profile on the same origin; 3 JPEGs with ratings, a pick, a label, keywords, an edit with a three-step history, a virtual copy and three sidecars; reopening it with main changed nothing): **8 of 8** then **3 of 3**: it opened without an error and was upgraded (the snapshots table answers, empty); **every catalog row, edit, history, keyword and thumbnail and every sidecar's bytes and date unchanged**, no sidecar added; the edited photo opened in Develop with its history (Contrast, Exposure, Import) and an empty Snapshots panel; Ctrl+Alt+N stored a snapshot (Contrast +20) and `E1.xmp` gained `lightbench:Snapshots` with every other field's name and value as main wrote them (only `xmp:MetadataDate` changed, and the order of the start tag's attributes: the namespace declarations came first after the rewrite. This part doesn't change how files are serialised; whether main reorders them the same way when it rewrites a file it read wasn't checked). Main opened on the same origin then refused the library with its message "This library was saved by a newer version of LightBench…" and changed no sidecar; this branch opened it again with the snapshot there.
+- **Old edits render the same** (`identity.mjs` from `cg/`, unchanged: 15 edits on the D700, D80, ILCE-6300 and the JPEG, with crops, angles, spots, Tone Curve, Detail, the Colour Mixer with Point Color, and a Colour Grading at its defaults; for each the full-size and 1024 px export SHA-256, the 512 px thumbnail, histogram statistics and the Develop canvas at fit and 100 %): **all 90 hashes identical to main `5307029`**. In both full runs the fifteenth edit (D80 with a Colour Grading at defaults) failed the same way on both servers (`NotFoundError` reading B.NEF from the test page's own OPFS folder after about 40 minutes; the cause wasn't found); run again alone on each server, its six hashes were identical too (full size `f34d827d0e1ed7bc…`, as in Part 17). Rendering code is untouched by this part (no engine or shader file changed).
+- From a clean `npm ci`: `npx tsc -b`, `npx oxlint` (only the two existing warnings, `syscheck/report.tsx` and `LibraryView.tsx`), `npx vitest run` (905 passed) and `npm run build` passed. The main chunk is 1,128.74 kB (360.12 kB gzipped).
+
+### Limitations and unverified
+
+- **Lightroom's snapshot XMP field is unknown** (not in ExifTool 3.79; Cowork found none), so Lightroom's snapshots aren't read and LightBench's aren't visible in Lightroom. Lightroom shares snapshots between a photo and its virtual copies (secondary source); LightBench keeps them per copy, by the owner's decision.
+- Whether Lightroom adds a history step when a snapshot is clicked, and its exact default name format, are not known; LightBench's behaviour here is its own.
+- **Ctrl+N in an installed app window** rests on Chromium's source as quoted by Cowork; it was tested here with `display-mode: standalone` emulated, not in a real installed Chrome or Edge window, and Edge wasn't checked. Whether Firefox delivers Ctrl+N to a page wasn't checked (LightBench doesn't take it in a tab anyway).
+- The hover preview and Set as Before show the snapshot's settings with the photo's current RAW stage (highlight reconstruction, demosaic): a snapshot that differs only there looks the same in the preview and in Before as now (Before and preset previews already work this way). Applying it does change the RAW stage.
+- Before / after is still full-frame only; a split or side-by-side comparison (darktable, Lightroom) is a later step (research Q A6).
+- No limit on the number or size of snapshots (research Q A4); each holds full settings, so many snapshots of a photo with many Remove spots make a larger sidecar.
+- Change detection compares the original's snapshots; a virtual copy's are read when the copy is made from the sidecar (a fresh library), as copies' other fields are, not merged later.
+- A photo with snapshots but no edit whose last snapshot another LightBench deletes leaves a file without LightBench's fields, which reads as "unknown" rather than "none", so that deletion isn't picked up (the snapshot stays).
+
+## Part 20: Soft proofing
+
+**What it does.** Develop can show a photo as a printer and paper, or another colour space, will reproduce it: Lightroom Classic's **soft proofing**.
+- **S** turns it on and off (also the **Soft proofing** checkbox in Develop's toolbar); **Shift+S** shows or hides the **destination gamut warning**.
+- A bar under the toolbar, while proofing: the destination **Profile** (built in, or loaded from disk), **Load profile…** and **Remove profile**, the rendering **Intent**, **Black point compensation**, **Simulate Paper & Ink**, **Screen warning (sRGB)** or **(Display P3)**, **Destination warning** and **Create Proof Copy**; a status line ("Proofing doesn't change exports; the histogram shows …").
+- A badge at the bottom right of the photo, "Proof preview: <profile> · <intent>", and the surround drawn in the proof's paper white.
+- The **histogram follows the proof**: for RGB (and grey) profiles it shows the destination's own values, for CMYK the proofed colours in sRGB.
+
+It is a way of viewing, never part of the edit: proofing changes no setting, no history step, no sidecar, no export and no thumbnail. With it off, every drawing is made exactly as before (byte-identical, below).
+
+This part is numbered 20: Part 19 is the snapshots build.
+
+Owner's decisions (2026-10-14, after [research/SNAPSHOTS_PROOFING_SEARCH.md](research/SNAPSHOTS_PROOFING_SEARCH.md) Part B and its Cowork check, [research/cowork-2026-10-13b/E_SNAPSHOTS_PROOFING_SEARCH.md](research/cowork-2026-10-13b/E_SNAPSHOTS_PROOFING_SEARCH.md)):
+1. **Soft proofing like Lightroom's:** S and Shift+S; a proof bar with profile, intent, Simulate Paper & Ink, a screen gamut warning labelled honestly (sRGB or Display P3: browsers expose no monitor profile), a destination gamut warning, and Create Proof Copy naming the copy after the profile; the histogram follows the proof.
+2. **Colour management:** lcms-wasm (npm, MIT, 1.0.5) in a worker, baking a 3D table for working space → destination (with the paper if simulated) → display; the display shader samples it only while proofing; the warning colour drawn by LightBench's shader; the table cached per profile, intent and options.
+3. **Profiles:** sRGB, an Adobe RGB (1998)-compatible profile and Display P3 built in, from licence-clean sources; printer and paper ICC files loaded from disk, kept locally (OPFS), removable; LUT-based (CMYK, printer) profiles through Little CMS; RGB destinations as Lightroom, CMYK optional.
+4. **Intent:** Relative Colorimetric with black point compensation by default; Perceptual, Saturation and Absolute selectable (Absolute without it).
+5. **Firefox:** no 2D canvas colour space; detected, sRGB with a note.
+6. **Export:** unchanged by proofing; "Export with this profile" only if trivial, otherwise later.
+7. **Storage:** a view state, remembered per browser, not in sidecars.
+
+### What Lightroom does (as far as checked)
+
+| Fact | Source |
+|---|---|
+| **S** "Expand / collapse soft proofing"; **Shift+S** "Hide / unhide Gamut destination warning in Soft Proofing". | Adobe's Lightroom Classic shortcut table (updated 2025-10-29), quoted by Cowork |
+| The histogram while proofing "is based on the icc profile". | Adobe Community expert, 2023 (secondary) |
+| Create Proof Copy puts the proof profile in the virtual copy's Copy Name field. | Adobe Community, 2018, marked correct (secondary) |
+| Lightroom Classic proofs to RGB profiles; CMYK soft proofing was in 6.0 and removed in 6.3. | Adobe Community idea thread (secondary) |
+| Monitor (blue) and destination (red) gamut warnings; Perceptual and Relative intents; Simulate Paper & Ink. | Search summaries of tutorials only (research brief, "[search]") |
+| **Not found:** Adobe's soft-proofing help page (blocked), the official profile list, whether proofing changes Export, the warning colours' exact use, what Simulate Paper & Ink computes. | — |
+
+### How it works
+
+| Step | Detail | Source |
+|---|---|---|
+| Where | In the display shader (`develop-display.wgsl` `fs`), after the develop transform (… sigmoid → Tone Curve) and before the output profile: the pixel's display-referred linear Rec.2020, clamped to 0…1 and encoded with the sRGB curve, is looked up in the proof table (trilinear, eight `textureLoad`s, f32) and replaced by the proofed colour. The rest of the path is unchanged: the Display P3 or sRGB encoding, the clipping indicators (J, which now judge the proofed colours), then the warnings. | Owner's decision 2; the research brief's design |
+| When | Only when `Indicators.proof` is set: Develop passes it for its canvas (pass 0) and its histogram (pass 1). Export, thumbnails, Auto, the background developer, the culling and 100 % renderers, the Tone Curve's and the mixer's own passes never pass it, so they never see the proof. With proofing off the Proof uniform (binding 13) is all zero and a 1×1×1 texture is bound at 12; the shader skips the stage. | Owner's decisions 2 and 6 |
+| The table | `engine/proof/lut.ts`. 65 × 65 × 65 grid points over the encoded working space, as an N × N × 2N `rgba32float` 3D texture (8.8 MB): slices 0…N−1 the proofed colour (encoded linear Rec.2020, sign kept) with the gamut test's ΔE in alpha; slices N…2N−1 the destination's device values (RGB and grey destinations). | LightBench; LightCraft also uses a table (33³) |
+| Proofed colour | Little CMS, float transforms: working space → destination with the chosen intent and black point compensation; the device values clamped to the device's range (a float transform doesn't clamp at a matrix profile's gamut, so without this an sRGB proof would show nothing); destination → linear Rec.2020 with **Relative Colorimetric and black point compensation** (paper white and ink black shown as the screen's), or with **Simulate Paper & Ink**, **Absolute Colorimetric without it** (the paper's white from its media white tag, the ink's black as the tables give it). | LightBench, following Little CMS's proofing transform; with Simulate Paper & Ink on the two agree to 0.00 8-bit levels (proof.test.ts) |
+| Destination gamut test | A colorimetric round trip: the colour → destination (Relative Colorimetric, black point compensation as set, clamped) → Lab, against the colour → Lab; CIE76 ΔE above **2** is outside (`GAMUT_DE`, LightBench's choice). It interpolates smoothly between grid points, unlike Little CMS's own in-or-out gamut check (`cmsFLAGS_GAMUTCHECK`, darktable's way), which it agrees with on 95.5 % of 3000 random colours for the test printer (proof.test.ts). | lcms's gamut check is also a round trip with a threshold; LightCraft's is a round-trip distance |
+| Warnings | Drawn by the display shader (lcms-wasm doesn't export `cmsSetAlarmCodes`): **destination** red, **screen** blue, **both** magenta (LightBench's colours; converted for a Display P3 canvas). The screen warning tests the proofed colour against the canvas's colour space, sRGB or Display P3, with 2/255 of slack for the table's interpolation, and its button says which. | Owner's decision 1; browsers expose only `color-gamut`, no monitor profile (Media Queries 4, via Cowork) |
+| Histogram | Pass 1 with the proof: the destination's device values for RGB and grey profiles (the same histogram and clipping counts as before, on those values), the proofed colour's sRGB for CMYK. | Owner's decision 1 |
+| Surround | The canvas's background shows the proof's paper: white without Simulate Paper & Ink, the paper's colour with it. | The research brief (LightCraft's "paper-white surround") |
+| Worker and cache | `proof.worker.ts` loads lcms-wasm (its `lcms.wasm` through Vite's `?url`) on first use; `client.ts` keeps the last three tables by key (profile hash, intent, black point compensation, Simulate Paper & Ink, size) and builds only on a change; a failed build isn't kept. The warnings aren't part of the key (the shader draws them from the same table). Develop keeps the last table on screen until the new one is ready ("Building the proof…"). | Owner's decision 2 |
+| GPU robustness (Part 14) | The table texture and the uniform belong to the engine: `unload()` frees the table and zeroes the uniform, `destroy()` frees both; a new engine after a lost device uploads the table again from the copy Develop keeps, on its first proofed drawing. The upload and the drawing run inside Develop's render loop, under the foreground gate. `guarded` isn't used on Develop's engine (Part 14's rule); the benchmark's proof rows run inside its `guarded` calls. Building the table is CPU work in the worker. | Part 14 |
+
+### Profiles
+
+| Profile | Source |
+|---|---|
+| **sRGB** | IEC 61966-2-1 primaries, D65 and the sRGB curve (`icc.ts` `SRGB_PROFILE`). |
+| **Adobe RGB (1998)-compatible** | The primaries, D65 and gamma 563/256 published in Adobe's "Adobe RGB (1998) Color Image Encoding" specification (`icc.ts` `ADOBE_RGB_PROFILE`). Named "compatible" and described "LightBench" so it isn't taken for Adobe's file. |
+| **Display P3** | DCI-P3 primaries, D65 and the sRGB curve (`icc.ts` `DISPLAY_P3_PROFILE`). |
+| Working space | Rec.2020 (ITU-R BT.2020 primaries, D65) with the sRGB curve (the table's input) and linear (its output). |
+
+All are written at run time by LightBench's own ICC writer (`icc.ts` `buildIcc`, which Export already uses to embed its profiles): ICC v2.1 matrix/TRC display profiles, colorants D50-adapted with Bradford, parametric curves as 1024-entry tables, copyright "No copyright, use freely". No profile file of anyone else's is shipped. lcms-wasm doesn't export `cmsCreateRGBProfile` or `cmsSaveProfileToMem`, so they couldn't be made with it; instead the built-in sRGB is checked against Little CMS's own `cmsCreate_sRGBProfile` (within 2·10⁻³) and all three against LightBench's matrices (within 2·10⁻³) in `proof.test.ts`.
+
+**Loaded profiles** (`engine/proof/store.ts`): **Load profile…** reads an `.icc`/`.icm` file from disk (never uploaded). The worker checks it (an ICC header; not a device link, abstract or named-colour profile; a colour space of RGB, CMYK, CMY or grey; Little CMS can make transforms to and from it) and reads its description. It is kept in the browser's private storage (OPFS, folder `proof-profiles`, one file per profile named by the first 16 hex digits of its SHA-256, plus `index.json`), listed under "Loaded in this browser" with its colour space, and selected. Loading the same file again keeps one copy. **Remove profile** (asks first) deletes the file and its entry; a removed profile falls back to sRGB. Over 32 MB is refused.
+
+**CMYK works**: Little CMS proofs to CMYK (and CMY) printer profiles as to RGB ones, through their tables (tested with a CMYK test printer, below). Their device values aren't shown in the histogram (it shows the proofed colours instead).
+
+### Settings (`engine/proof/settings.ts`)
+
+| Setting | Default | Note |
+|---|---|---|
+| On | off | S, or the toolbar checkbox |
+| Profile | sRGB | `builtin:<id>` or `user:<hash>` |
+| Intent | Relative Colorimetric | Perceptual, Saturation and Absolute Colorimetric too. Matrix profiles (sRGB, Adobe RGB-compatible, Display P3) have no perceptual or saturation tables, so all intents but Absolute look alike for them (Little CMS's fallback). |
+| Black point compensation | on | Disabled (and not used) with Absolute Colorimetric |
+| Simulate Paper & Ink | off | |
+| Screen warning, Destination warning | off | Shift+S toggles the destination warning, turning proofing on if it was off |
+
+Kept in this browser under `lightbench.proof` (localStorage), read back defensively (`cleanProof`). Not in the catalog's edits, the history, presets, Copy/Paste or sidecars.
+
+### Create Proof Copy
+
+Saves a change still waiting, makes a virtual copy of the photo (Phase 2, Part 6) named **"Proof: <profile name>"** (a second one gets " (2)", as copies do), copies the thumbnail, schedules its sidecar entry, and opens the copy in Develop next to the original in the filmstrip, so the photo can be adjusted for that output while the original stays as it is. Lightroom puts the profile's name in the copy's Copy Name field (secondary source); the "Proof: " prefix is LightBench's.
+
+### Firefox and the screen's colour space
+
+Develop draws in Display P3 on wide-gamut screens (Part 4). MDN's compatibility data lists no 2D canvas `colorSpace` option in Firefox (Cowork), so Display P3 values would be shown as sRGB there. `display-space.ts` now asks the browser itself, `canvasP3Supported()`: a 2D context made with `colorSpace: 'display-p3'` reports it (`getContextAttributes().colorSpace`) or its pixels do (`ImageData.colorSpace`). Where neither does, `currentDisplaySpace()` is sRGB everywhere it is used (Develop, the Library's loupe, culling and Survey canvases, the System Check renderer), and the screen warning's tooltip says why ("…this browser's canvases can't hold it…, so LightBench shows sRGB"). Chrome, Edge and Safari (which report it) are unchanged. Not tried in Firefox here (no Firefox in this environment).
+
+### Export
+
+Proofing never changes Export (nor thumbnails). Export already writes sRGB, Display P3 and Adobe RGB (Part 4's choices), so a built-in proof can be matched there by hand. Converting an export to a **loaded printer profile** would need Little CMS in the export pipeline (and the export's encoders to embed that profile): not trivial, so **left for later** (owner's decision 6), and said in the help.
+
+### Shortcuts added
+
+| Action | Where | Keys (both sets) |
+|---|---|---|
+| Soft proofing on or off | Develop | S |
+| Soft proofing: destination gamut warning | Develop | Shift+S |
+
+S and Shift+S were free in Develop; the Library's S and Shift+S (stacks) are in another view, Ctrl+Shift+S (Sync) and Ctrl+Alt+Shift+S (the mixer's Saturation target) are other chords, and the on-photo tools' contexts (crop, Guided Upright, the curve and mixer targets, the Remove brush) don't have them. `keymap.test.ts` checks this and both sets stay free of conflicts.
+
+### Verified
+
+Headless Chromium 141 with software WebGPU (SwiftShader), the app loaded with `?gpu=readback`, one test at a time. Scripts in `scratchpad/proof/e2e/` (Part 17's `identity.mjs`, Part 16's benchmark script and Part 15's recovery set-up copied and adapted; the originals unchanged). Test files: Nikon D700 `philadelphia.nef`, Nikon D80 `glarus.nef`, Sony ILCE-6300 ARW, `test-srgb.jpg`, and `patches.jpg` (twelve 220 × 193 patches: sRGB primaries and secondaries, skin, dark and light grey, dark green, mid blue, orange; made for this part). The printer profiles are **generated with Little CMS** (the system's liblcms2 2.14 through Python ctypes, `make_printer_icc.py`): a v4 output-class profile, RGB or CMYK, with A2B/B2A CLUTs for a printer-like gamut (smaller than sRGB's in greens and blues, gamma 1.8, ink black about L* 12.5, a paper white darker and warmer than D50). Not a real device.
+
+- **Proofing off is byte-identical to main** (`5307029`, 0.6.0; `identity.mjs`, main served from its own copy of the tree, each run alone). Fourteen edits rendered on main and on this branch, six SHA-256 hashes each (full-size 8-bit export, 1024 px export, 512 px thumbnail, histogram statistics, Develop canvas at fit and at 100 %): **84 of 84 identical**. The edits are Part 17's: D700 process 1 with crop, turn and angle; process 2 with angle; D700 defaults (sharpened); D80 custom white balance; the JPEG unedited, process 2 and process 1; ILCE-6300 with angle; D700 with Remove/Heal/Clone spots, crop, angle and custom white balance; D700 with spots, a tone curve and sharpening; the JPEG with spots, a tone curve and Detail; the JPEG with a `colourMixer` at its defaults; the JPEG with a Colour Mixer; the D700 with a mixer, Point Color, spots, a tone curve and Detail. Part 17's fifteenth edit (the D80 with a `colourGrading` at its defaults) failed in main's run with a storage error ("A requested file or directory could not be found", reading the file from the page's private storage; not investigated); on this branch its six hashes equal the ones Part 17 recorded for it on main `7b8b0f0` (`f34d827d0e1ed7bc…`). In Develop, turning proofing on and off again gave the canvas back to the level (below).
+- **GPU = CPU** (`gpucpu-proof.mjs`). Develop's canvas drawn with the proof table at 100 % (read back, 8-bit sRGB) against Little CMS run **per pixel** in the page (`ProofChain`, lcms-wasm) on the same developed pixels (the export pass's encoded Rec.2020, 16-bit), converted to 8-bit sRGB the same way; 65³ table. Three images (`patches.jpg` with Saturation +40, 960 × 640; `test-srgb.jpg` with Vibrance +20, 1600 × 1072; the D700 cropped to 1070 × 710, +0.3 EV) × sRGB, Display P3, the test printer RGB and CMYK × Relative, Perceptual and Simulate Paper & Ink (Display P3: Relative only): **mean difference 0.005–0.14 levels, at most 7 levels in one channel, under 0.9 % of channels over 1 level; mean ΔE76 0.006–0.20, max ΔE76 2.12** (the test printer CMYK, Perceptual, on the D700). The baseline without the table (the canvas against the same CPU conversion of the 16-bit export pixels) already differs by up to 1.54 ΔE76 (16-bit float in the export pass against 32-bit in the canvas), so most of the maximum isn't the table's. Stated tolerance: mean ≤ 0.5 levels and max ΔE76 ≤ 3, met by all 33 cases.
+
+  | Case (D700 crop) | mean |Δ| (levels) | max |Δ| | channels > 1 level | mean ΔE76 | max ΔE76 |
+  |---|---|---|---|---|---|
+  | proofing off (baseline) | 0.011 | 1 | 0 % | 0.019 | 1.54 |
+  | sRGB, Relative | 0.012 | 4 | 0.001 % | 0.021 | 1.51 |
+  | Display P3, Relative | 0.012 | 1 | 0 % | 0.021 | 1.57 |
+  | test printer RGB, Relative | 0.041 | 5 | 0.001 % | 0.064 | 1.55 |
+  | test printer RGB, Perceptual | 0.11 | 5 | 0.82 % | 0.147 | 1.82 |
+  | test printer RGB, Simulate Paper & Ink | 0.031 | 2 | 0 % | 0.049 | 1.48 |
+  | test printer CMYK, Relative | 0.052 | 5 | 0.01 % | 0.087 | 1.68 |
+  | test printer CMYK, Perceptual | 0.138 | 5 | 0.62 % | 0.201 | 2.11 |
+- **In Develop** (`e2e-proof.mjs`, `patches.jpg`; **29 of 29** on the final code; earlier runs failed only on the script's own waits and on comparing in 8-bit levels, see the sRGB item):
+  - **S** showed the bar and "Proof preview: sRGB · Relative Colorimetric", Relative with black point compensation on and both warnings off. The sRGB photo proofed to sRGB: every patch within **0.87 ΔE76** of the unproofed canvas (in 8-bit values, a near-zero channel of the pure primaries moved by up to 17 levels: the gamut edge's clamp inside grid cells, see Limitations). The surround was white (255, 255, 255).
+  - **Loading** the Little CMS-generated printer profile (the file input) selected it under "Loaded in this browser": saturated blue went from (0, 0, 254) to (9, 86, 236), the dark grey stayed (60, 60, 60); the histogram changed; the status said "Proofing doesn't change exports; the histogram shows LB Test Lustre (generated)'s own values".
+  - **Shift+S** marked red, green, blue, cyan, magenta, yellow, mid blue and orange in red, not the greys or skin; Shift+S again removed it exactly.
+  - **Perceptual** moved saturated blue (9, 86, 236 → 0, 86, 236). **Simulate Paper & Ink**: light grey 230 → (216, 221, 207), dark grey 60 → (64, 66, 61), surround (238, 244, 228).
+  - **Screen warning (sRGB)** with the Adobe RGB (1998)-compatible proof and Saturation +100: ten patches blue (all but the greys); with the destination warning too, magenta.
+  - **Create Proof Copy** made a virtual copy "Proof: LB Test Lustre (generated)" (version 1 of P.JPG in the catalog) and Develop showed it, selected, in the filmstrip.
+  - **Reload:** proofing on, the loaded profile and Relative remembered; blue drawn exactly as before (9, 86, 236). `lightbench.proof` in localStorage held the settings; no edit in the catalog mentions the proof.
+  - **Recovery:** with the destination warning on, Develop's device was destroyed; a new engine drew the proof and the warning again (the blue patch red, the greys unchanged), no error.
+  - **S** again: the canvas equalled the canvas before proofing to the level (max difference 0).
+  - **Remove profile** (confirmed) fell back to sRGB, emptied the list and deleted the `.icc` file from the browser's storage (only `index.json` left).
+  - Screenshots checked by eye: the bar, the destination warning, Simulate Paper & Ink with its paper-coloured surround, the screen warning, the recovered view.
+- **Benchmark** (Part 16's Quick e2e with the proof rows, `e2e-bench-proof.mjs`; `?benchmp=0.3`): **41 of 41**: 22 stage rows, the two soft-proofing rows after the display rows and before Remove, none failed. SwiftShader at 0.3 MP (**says nothing about a real GPU**): "Soft proofing on: display pass, fit (both gamut warnings)" 1557 ms median (GPU 1550 ms, peak 25 MB), against "Display pass, fit, without Tone Curve" 2507 ms in the same run (SwiftShader's noise is larger than the difference); "Soft proof table: build 65³ with Little CMS (worker)" **327 ms** median (318 ms min) for the Adobe RGB-compatible profile, in the worker. After each image's `unload()` 37,016 bytes stayed allocated (Part 17: 36,936): the 64-byte Proof uniform and the 16-byte empty table, which belong to the engine; the 8.8 MB table was freed.
+- **Table build and accuracy** (`proof.test.ts`, Node 22): 33³ in 53–84 ms, 65³ in 0.31–0.54 s, per profile and options (the sRGB profile and the test printer). Against Little CMS per pixel on 4000 random colours, in encoded units: 33³ mean 0.15–0.19, max 1.7–2.1 8-bit levels; 65³ mean 0.04–0.06, max 0.95–1.06.
+- **Unit tests** (`npx vitest run`: **902 tests in 94 files**; main `5307029`: 872 in 91, so 30 new):
+  - `engine/proof/proof.test.ts` (21): the built-in profiles are ICC display profiles Little CMS reads, named as LightBench's; built-in sRGB transforms like Little CMS's own sRGB within 2·10⁻³; the three built-ins agree with `icc.ts`'s matrices within 2·10⁻³; **identity** (the working space as destination: the table within 2·10⁻³ of the identity, nothing out of gamut, paper white 1); **sRGB → sRGB** (sRGB colours back within 0.84 levels, in gamut); **gamut test** on known colours (Rec.2020 primaries out of sRGB, saturated sRGB blue, green and cyan out of the test printer, greys and skin in; Display P3 holds sRGB green but not Rec.2020's); agreement with Little CMS's gamut check (95.5 %) and with its proofing transform with Simulate Paper & Ink (0.00 levels); clipping at an RGB destination's gamut; **intents** (Perceptual differs on saturated colours, not on greys; Saturation and Absolute build); **black point compensation** (shadow detail kept with it, dark greys collapsed into the ink black without); Simulate Paper & Ink (the paper darker and warmer, the ink's black lifted; off: white and black as the screen's); **CMYK** destinations (no device values; close to the same printer driven as RGB); RGB destinations' device values; refusing non-profiles and device links; the 33³/65³ accuracy above; settings defaults and cleaning; Absolute disables black point compensation; **cache keys** differ exactly when the tables would (profile, intent, BPC, paper, size; not the warnings); profile hashes; the grid order.
+  - `engine/proof/store.test.ts` (3): **load and remove** (kept, listed, read back, one copy for the same file, removed with its file, listeners told); refused files keep nothing; built-in profiles resolve without storage.
+  - `engine/gpu/proof-gpu.test.ts` (3): the table uploaded as an N × N × 2N 3D texture once per key, the old one retired; `unload` frees it and zeroes the uniform once; the WGSL Proof struct (64 bytes) at bindings 12 and 13, skipped when off.
+  - `settings/keymap.test.ts` (+1: S and Shift+S in Develop only, the Library's stack keys and Ctrl+Shift+S untouched, not in the on-photo tools' contexts), `engine/gpu/display-space.test.ts` (+1: sRGB and a note where canvases can't hold Display P3), `bench/plan.test.ts` (+1: the proof rows and their place).
+- From a clean `npm ci`: `npx tsc -b`, `npx oxlint` (the two existing warnings), `npx vitest run` and `npm run build` passed. `npm ci` now also prints a deprecation warning for `glob@7.2.3` (a dependency of `tape`, which lcms-wasm lists; not shipped), and the build notes lcms-wasm's Node branch (`import("module")`, `new URL("./", import.meta.url)`), which the browser never runs.
+- **Bundle:** the main chunk grew from 1,116.63 kB (356.25 kB gzipped) to 1,136.19 kB (362.85 kB gzipped): +19.6 kB (+6.6 kB gzipped) for the proof bar, its state, the profile store, the worker client, the shader and engine changes and the built-in profiles' definitions. Little CMS stays out of it: `proof.worker-*.js` 44.19 kB and `lcms-*.wasm` 315.91 kB (118.03 kB gzipped) load only when soft proofing is first used. The service worker precaches them with the rest of the app for offline use (30 files, was 27). `dist` 6,983,488 → 7,365,071 bytes.
+
+### Limitations and unverified
+
+- **Lightroom:** nothing was compared with Lightroom. Its proof maths, warning colours, Simulate Paper & Ink, profile list and Export behaviour aren't public or weren't reachable (Adobe's help page was blocked for Cowork). The "Proof: " prefix and the surround are LightBench's.
+- **Real printer profiles:** none was available; the tests use printer-like profiles generated with Little CMS (and LightBench's own test writer). How long a real printer profile's table takes to build was not measured.
+- **Monitor:** the screen warning tests sRGB or Display P3, not the monitor; the browser maps the canvas to the monitor itself. Not checked on a calibrated wide-gamut monitor or in Firefox (the fallback is unit-tested with a stand-in document).
+- **Interpolation:** the 65³ table differs from Little CMS per pixel by at most about one 8-bit level in the working space's encoding; in sRGB values, a channel near 0 of a colour on the sRGB boundary can move more (17 levels, 0.87 ΔE76, on pure sRGB primaries proofed to sRGB), because the clamp at the gamut's edge falls inside grid cells.
+- **Gamut test:** the 2 ΔE threshold is LightBench's. It agrees with Little CMS's own gamut check on 95.5 % of random colours for the test printer; the colours where they differ weren't examined.
+- **Speed:** the table build was timed in Node and on SwiftShader only; the display pass's extra cost on a real GPU isn't known.
+- Not built: offering a proof copy when an edit starts while proofing (Lightroom does, per search summaries only); before/after against the unproofed photo (Before is proofed too); a monitor profile (impossible in browsers); "Export with this profile" for loaded profiles.
 
 
 ## Part 21: Section eyes and Tone Curve Auto

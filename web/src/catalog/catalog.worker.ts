@@ -11,6 +11,7 @@ import type { SidecarState } from '../sidecar/changes'
 import { ownsStem, stemOwners } from '../sidecar/naming'
 import { checkCatalogImage, discardStaged, exportCatalog, removeLeftovers, stageCatalog } from './backup-db'
 import { SCHEMA_VERSION } from './schema'
+import { fromSidecar, readSidecarSnapshots, sortSnapshots, toSidecar, type SidecarSnapshot, type Snapshot } from '../develop/snapshots'
 import { activeSlot, type Slot } from './slot'
 import type { CollectionInfo, DuplicateKey, FolderNode, LibraryRoot, MetadataKey, NewPhoto, PhotoDetail, PhotoMetadata, PhotoQuery, PhotoRow } from './types'
 
@@ -336,6 +337,11 @@ export function migrate(d: Database) {
       // until `algo` changes). A new table only, so nothing else in the catalog changes.
       d.exec(ANALYSIS_TABLE)
     }
+    if (version < 15) {
+      // Snapshots (docs/PHASE3.md Part 19): named copies of a photo's develop settings, one row each, deleted with the
+      // photo (a virtual copy's with the copy). A new table only, so nothing else in the catalog changes.
+      d.exec(SNAPSHOTS_TABLE)
+    }
     d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     d.exec('COMMIT')
   } catch (err) {
@@ -360,6 +366,21 @@ export const ANALYSIS_TABLE = `
     clip_hi REAL, clip_lo REAL, median REAL, p005 REAL, p995 REAL,
     dhash TEXT, phash TEXT,
     sub_sec INTEGER, seq INTEGER, seq_src TEXT
+  );
+`
+
+/**
+ * The snapshots table (schema 15): `uid` is the snapshot's id (develop/snapshots.ts), `settings` the full develop
+ * settings as JSON (process version included), `created_at` when it was made (ms).
+ */
+export const SNAPSHOTS_TABLE = `
+  CREATE TABLE snapshots (
+    photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+    uid TEXT NOT NULL,
+    name TEXT NOT NULL,
+    settings TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (photo_id, uid)
   );
 `
 
@@ -1282,6 +1303,8 @@ export interface VersionData {
   collections: string[]
   /** The copy's metadata (fields that are set); undefined = as its original (sidecars written before metadata). */
   metadata?: Partial<PhotoMetadata>
+  /** The copy's own snapshots (docs/PHASE3.md Part 19); absent when it has none (and in older sidecars). */
+  snapshots?: SidecarSnapshot[]
 }
 
 const setFields = (m: PhotoMetadata): Partial<PhotoMetadata> => Object.fromEntries(Object.entries(m).filter(([, v]) => v !== '')) as Partial<PhotoMetadata>
@@ -1295,6 +1318,7 @@ function versionsOf(originalId: number): VersionData[] {
   const own = setFields(photoMetadata(originalId))
   return rows.map((r) => {
     const metadata = setFields(photoMetadata(r.id))
+    const snaps = listSnapshots(r.id)
     return {
       name: r.name,
       rating: r.rating,
@@ -1305,6 +1329,8 @@ function versionsOf(originalId: number): VersionData[] {
       collections: photoCollections(r.id),
       // Only when the copy or its original has some, so sidecars of photos without metadata don't change.
       ...(Object.keys(metadata).length || Object.keys(own).length ? { metadata } : {}),
+      // Only when it has some, so sidecars of copies without snapshots don't change.
+      ...(snaps.length ? { snapshots: toSidecar(snaps) } : {}),
     }
   })
 }
@@ -1391,9 +1417,42 @@ function restoreVersions(originalId: number, versions: VersionData[]): number[] 
       conn().exec({ sql: 'DELETE FROM photo_metadata WHERE photo_id = ?', bind: [id] })
       setMetadata([id], v.metadata)
     }
+    // Its own snapshots, read defensively (a damaged list is ignored).
+    const snaps = readSidecarSnapshots(v.snapshots)
+    if (snaps?.length) saveSnapshots(id, fromSidecar(snaps))
     made.push(id)
   }
   return made
+}
+
+// ---- snapshots (docs/PHASE3.md Part 19)
+
+/** A photo's snapshots (a virtual copy's own), newest first. Rows whose settings aren't valid JSON are left out. */
+function listSnapshots(photoId: number): Snapshot[] {
+  const rows = conn().selectObjects('SELECT uid, name, settings, created_at AS created FROM snapshots WHERE photo_id = ?', [photoId]) as unknown as { uid: string; name: string; settings: string; created: number }[]
+  return sortSnapshots(
+    rows.flatMap((r) => {
+      try {
+        const settings = JSON.parse(r.settings)
+        return settings && typeof settings === 'object' ? [{ id: r.uid, name: r.name, created: Number(r.created), settings }] : []
+      } catch {
+        return []
+      }
+    }),
+  )
+}
+
+/** Replaces a photo's snapshots with `list` (create, rename, update, delete and their undo all go through here). */
+function saveSnapshots(photoId: number, list: Snapshot[]) {
+  inTransaction(() => {
+    conn().exec({ sql: 'DELETE FROM snapshots WHERE photo_id = ?', bind: [photoId] })
+    const stmt = conn().prepare('INSERT OR REPLACE INTO snapshots (photo_id, uid, name, settings, created_at) VALUES (?, ?, ?, ?, ?)')
+    try {
+      for (const s of list) stmt.bind([photoId, s.id, s.name, JSON.stringify(s.settings), Math.round(s.created)]).stepReset()
+    } finally {
+      stmt.finalize()
+    }
+  })
 }
 
 function getEdit(photoId: number): { settings: string; history: string } | null {
@@ -1557,7 +1616,7 @@ function sidecarSource(requested: number) {
   return {
     photo: p, settings: edit?.settings ?? null, owner, keywords: photoKeywords(photoId), keywordsRead: read.k === 1, collections: photoCollections(photoId),
     stack: stackOf(photoId), versions: versionsOf(photoId), metadata: photoMetadata(photoId), metadataRead: read.m === 1,
-    sidecar: sidecarState(photoId),
+    snapshots: toSidecar(listSnapshots(photoId)), sidecar: sidecarState(photoId),
   }
 }
 
@@ -1581,7 +1640,7 @@ function sidecarState(photoId: number): SidecarState {
 function sidecarCompare(photoId: number) {
   const p = getPhoto(photoId)
   if (!p) return null
-  return { photo: p, settings: getEdit(photoId)?.settings ?? null, keywords: photoKeywords(photoId), metadata: photoMetadata(photoId), sidecar: sidecarState(photoId) }
+  return { photo: p, settings: getEdit(photoId)?.settings ?? null, keywords: photoKeywords(photoId), metadata: photoMetadata(photoId), snapshots: toSidecar(listSnapshots(photoId)), sidecar: sidecarState(photoId) }
 }
 
 /**
@@ -1651,6 +1710,8 @@ export const handlers = {
   removePhotos,
   getEdit,
   saveEdit,
+  listSnapshots,
+  saveSnapshots,
   deleteEdit,
   isEdited,
   extrasPending,

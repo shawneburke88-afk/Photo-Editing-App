@@ -449,6 +449,14 @@ export const MIXER_GUIDE = {
   pitfalls: 'Greys and nearly grey colours aren’t changed. Strong Luminance moves on saturated skies can show edges: the guided filter (on by default) keeps the change smooth within each area of colour.',
 }
 
+/** Soft proofing's guidance (PHASE3.md Part 20), shown on its bar. */
+export const PROOF_GUIDE = {
+  hint: 'Preview for print or another colour space',
+  what: 'Soft proofing (S) shows the photo as a printer and paper, or a colour space such as sRGB, will reproduce it, using the destination’s ICC profile (Little CMS, in this browser). It is only a view: the edit, Export and thumbnails don’t change. Export can already write sRGB, Display P3 and Adobe RGB (choose them in Export); converting to a loaded printer profile on export isn’t built yet.',
+  order: 'Edit first, then proof. To adjust the photo for one output, Create Proof Copy and edit the copy, so the original stays as it is.',
+  pitfalls: 'Browsers don’t tell web pages the monitor’s own profile, so the screen warning tests sRGB or Display P3 (whichever LightBench draws in), not your monitor. Relative Colorimetric clips colours the destination can’t reach; Perceptual squeezes them in (printer profiles only: matrix profiles such as sRGB have no perceptual tables, so both look alike). Simulate Paper & Ink shows the paper’s white and the ink’s black.',
+}
+
 /** Tone Curve Auto (PHASE3.md Part 21): tooltips of its buttons, its Amount and its suggestions. */
 export const CURVE_AUTO_HELP = {
   contrast:

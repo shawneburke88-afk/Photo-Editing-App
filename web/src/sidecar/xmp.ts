@@ -18,6 +18,7 @@ import type { MetadataKey, PhotoMetadata } from '../catalog/types'
 import { creatorList, joinCreators, METADATA_KEYS } from '../library/metadata'
 import { LR_DETAIL_FIELDS, LR_GRADE_FIELDS, LR_HSL_FIELDS, lrValues, NS_CRS, NS_TIFF, type LrFields, type LrRead, type LrWritePlan } from './lightroom'
 import { lrToneValues, parseLrPoints, type LrToneFields, type LrToneRead, type LrToneWritePlan } from './lightroomCurve'
+import { parseSidecarSnapshots, readSidecarSnapshots, type SidecarSnapshot } from '../develop/snapshots'
 
 export const NS = {
   x: 'adobe:ns:meta/',
@@ -70,6 +71,12 @@ export interface SidecarData {
   lightroom?: LrWritePlan
   /** Lightroom's tone curve fields to write (sidecar/lightroomCurve.ts `planToneWrite`); as `lightroom`. */
   lightroomTone?: LrToneWritePlan
+  /**
+   * The photo's snapshots (docs/PHASE3.md Part 19), in LightBench's own namespace as JSON (`lightbench:Snapshots`, like
+   * `lightbench:Develop`; Lightroom's own snapshot field is undocumented and never written). An empty list removes the
+   * field; undefined leaves it as it is.
+   */
+  snapshots?: SidecarSnapshot[]
 }
 
 /** One virtual copy as stored in its original's sidecar. */
@@ -83,6 +90,8 @@ export interface SidecarVersion {
   collections: string[]
   /** The copy's own title, caption… (only the fields that are set); absent in sidecars written before metadata. */
   metadata?: Partial<PhotoMetadata>
+  /** The copy's own snapshots (docs/PHASE3.md Part 19); absent when it has none. */
+  snapshots?: SidecarSnapshot[]
 }
 
 /**
@@ -341,9 +350,12 @@ function managedValues(d: SidecarData): [ns: string, prefix: string, local: stri
         ]
   const versions: [string, string, string, string | null][] =
     d.versions === undefined ? [] : [[NS.lightbench, 'lightbench', 'Versions', d.versions.length ? JSON.stringify(d.versions) : null]]
+  const snapshots: [string, string, string, string | null][] =
+    d.snapshots === undefined ? [] : [[NS.lightbench, 'lightbench', 'Snapshots', d.snapshots.length ? JSON.stringify(d.snapshots) : null]]
   return [
     ...stack,
     ...versions,
+    ...snapshots,
     [NS.xmp, 'xmp', 'Rating', String(d.flag === -1 ? -1 : Math.max(0, Math.min(5, Math.round(d.rating))))],
     [NS.xmp, 'xmp', 'Label', LABEL_NAMES[d.color] || null],
     [NS.lightbench, 'lightbench', 'Rating', String(Math.max(0, Math.min(5, Math.round(d.rating))))],
@@ -459,6 +471,10 @@ export interface SidecarRead {
   lightroom?: LrRead
   /** Lightroom's tone curve fields (sidecar/lightroomCurve.ts), when the file has any. */
   lightroomTone?: LrToneRead
+  /** LightBench's snapshots (`lightbench:Snapshots`), when the file has a readable list (damaged ones are ignored). */
+  snapshots?: SidecarSnapshot[]
+  /** The file has `lightbench:Snapshots` but it couldn't be read (left in the file until LightBench's own list changes). */
+  snapshotsDamaged?: true
 }
 
 /** Lightroom's tone curve fields, Camera Raw's process version and already-applied flag, and LightBench's marker. */
@@ -565,11 +581,25 @@ export function readXmp(text: string): SidecarRead {
   if (versions) {
     try {
       const list = JSON.parse(versions) as SidecarVersion[]
-      if (Array.isArray(list)) out.versions = list.filter((v) => v && typeof v.name === 'string')
+      if (Array.isArray(list)) {
+        out.versions = list
+          .filter((v) => v && typeof v.name === 'string')
+          .map((v) => {
+            // A copy's snapshots are read as the photo's are: a damaged list is dropped, damaged entries left out.
+            if (v.snapshots === undefined) return v
+            const { snapshots, ...rest } = v
+            const ok = readSidecarSnapshots(snapshots)
+            return ok?.length ? { ...rest, snapshots: ok } : rest
+          })
+      }
     } catch {
       // ignore damaged copies
     }
   }
+  const rawSnapshots = getProp(doc, NS.lightbench, 'Snapshots')
+  const snapshots = parseSidecarSnapshots(rawSnapshots)
+  if (snapshots) out.snapshots = snapshots
+  else if (rawSnapshots !== null && rawSnapshots.trim() !== '') out.snapshotsDamaged = true
   const stackUid = getProp(doc, NS.lightbench, 'Stack')
   if (stackUid) out.stack = { uid: stackUid, top: getProp(doc, NS.lightbench, 'StackTop')?.toLowerCase() === 'true' }
   const cols = getBag(doc, NS.lightbench, 'Collections')

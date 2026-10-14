@@ -27,7 +27,7 @@ export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(version) },
   worker: { format: 'es' },
   // These packages locate their .wasm files at runtime; pre-bundling breaks that.
-  optimizeDeps: { exclude: ['@sqlite.org/sqlite-wasm', '@colorhythm/libraw-wasm'] },
+  optimizeDeps: { exclude: ['@sqlite.org/sqlite-wasm', '@colorhythm/libraw-wasm', 'lcms-wasm'] },
   server: {
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
