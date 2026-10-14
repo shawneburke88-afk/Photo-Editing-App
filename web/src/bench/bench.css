@@ -1,0 +1,17 @@
+/* System Check: GPU benchmark (bench/Benchmark.tsx, loaded with it). */
+.bench-controls { align-items: flex-end; }
+.bench-photo { display: flex; flex-direction: column; gap: 4px; margin-left: auto; max-width: 100%; }
+.bench-photo select { max-width: 340px; }
+.bench-progress { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.bench-stage { margin-top: 12px; background: #0f1012; border-radius: 8px; overflow: hidden; }
+.bench-stage[hidden] { display: none; }
+.bench-stage .develop-canvas { display: block; width: 100%; height: min(50vh, 420px); }
+.bench-table-wrap { margin-top: 14px; overflow-x: auto; }
+.bench-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.bench-table th, .bench-table td { padding: 5px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+.bench-table th:nth-child(-n+2), .bench-table td:nth-child(-n+2) { text-align: left; }
+.bench-table td:first-child { white-space: normal; min-width: 220px; }
+.bench-table th { color: var(--muted); font-weight: 500; }
+.bench-table tr.sub td { color: var(--muted); }
+.bench-table tr.sub td:first-child { padding-left: 22px; }
+.bench-md { margin-top: 10px; }
