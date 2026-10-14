@@ -45,6 +45,7 @@ export class EncoderPool {
     this.pool = new WorkerPool<EncoderWorker>({
       create: makeWorker,
       terminate: (w) => w.worker.terminate(),
+      broken: (w) => w.dead,
       priority: 'foreground',
       want: budget.total,
       idleMs: o.idleMs,

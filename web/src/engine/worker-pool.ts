@@ -25,6 +25,8 @@ export interface WorkerPoolOptions<W> {
   lingerMs?: number
   /** Take the lease now and keep it until `dispose`. */
   hold?: boolean
+  /** A worker that can't be used again (it failed to start): ended after its task instead of kept. */
+  broken?: (w: W) => boolean
   budget?: CpuBudget
 }
 
@@ -156,6 +158,11 @@ export class WorkerPool<W> {
   }
 
   private put(w: W) {
+    if (this.o.broken?.(w)) {
+      this.o.terminate(w)
+      this.live--
+      return
+    }
     const entry = {
       w,
       timer: setTimeout(() => {

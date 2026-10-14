@@ -203,6 +203,17 @@ describe('worker pools on the budget', () => {
     }
   })
 
+  it('ends a worker that broke and makes a new one for the next task', async () => {
+    const b = new CpuBudget(1)
+    let made = 0
+    const ended: number[] = []
+    const pool = new WorkerPool<W & { dead?: boolean }>({ create: () => ({ id: ++made }), terminate: (w) => ended.push(w.id), broken: (w) => !!w.dead, priority: 'foreground', want: 1, budget: b })
+    await expect(pool.run(async (w) => { w.dead = true; throw new Error('failed to start') })).rejects.toThrow('failed to start')
+    expect(ended).toEqual([1])
+    await pool.run(async (w) => expect(w.id).toBe(2))
+    pool.dispose()
+  })
+
   it('clear() drops queued tasks; dispose() ends the workers and gives the slots back', async () => {
     const b = new CpuBudget(1)
     const ended: number[] = []

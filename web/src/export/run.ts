@@ -181,11 +181,11 @@ export async function runExport(
     engine.destroy()
     engine = await DevelopEngine.create('readback')
   }
-  // Export is foreground work for its whole run: background passes (culling analysis) leave it the CPU budget.
-  const encoders = new EncoderPool({ hold: true })
   const space = OUTPUT_SPACES[s.space]
   const icc = buildIcc(space.profile)
   const budget = inFlightBudget((navigator as Navigator & { deviceMemory?: number }).deviceMemory)
+  // Export is foreground work for its whole run: background passes (culling analysis) leave it the CPU budget.
+  const encoders = new EncoderPool({ hold: true })
   // Developed photos not yet written, and the largest one's memory so far.
   let waiting = 0
   let largest = 0
