@@ -82,6 +82,20 @@ export class WorkerPool<W> {
     })
   }
 
+  /**
+   * Makes up to `n` workers now (as many as the lease allows), so their start-up overlaps with whatever the caller
+   * does before its first task (Open folder: reading the folder). They wait idle like any other.
+   */
+  prestart(n = this.o.want) {
+    if (this.disposed) return
+    if (!this.lease) this.takeLease()
+    for (let k = Math.min(n, this.slots) - this.live; k > 0; k--) {
+      this.live++
+      this.put(this.o.create())
+    }
+    this.pump()
+  }
+
   /** Drops queued (not yet started) tasks; they reject with "cancelled". */
   clear() {
     for (const job of this.queue.splice(0)) job.reject(new Error('cancelled'))

@@ -14,7 +14,9 @@ interface ProbeWorker {
  * A small pool of probe workers so several photos are read in parallel, on the page's CPU budget
  * (engine/cpu-budget.ts; PHASE3.md, Part 22). Open folder and Import are foreground work: they get half the cores, at
  * most 6 and at least 2 (as before the budget, so Open folder is never slower), less only while other foreground work
- * (Remove, Export) shares the budget. The one-time refresh asks as background work. Workers are made on first use.
+ * (Remove, Export) shares the budget. The one-time refresh asks as background work. A foreground pool starts its
+ * workers when it is made (Open folder and Import make it when they start reading a folder, so the workers load while
+ * the folder is listed, as before the budget); a background pool makes them on first use.
  */
 export class ProbePool {
   private readonly pool: WorkerPool<ProbeWorker>
@@ -31,6 +33,7 @@ export class ProbePool {
       want: o.want ?? Math.min(6, Math.max(2, cpuBudget.total)),
       min: priority === 'foreground' ? 2 : 0,
     })
+    if (priority === 'foreground') this.pool.prestart()
   }
 
   probe(file: File): Promise<ProbeResult> {
