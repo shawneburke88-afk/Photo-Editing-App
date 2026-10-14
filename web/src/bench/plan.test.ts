@@ -5,9 +5,9 @@ describe('benchmark plan', () => {
   it('Quick: the 24 MP Bayer image through every stage, the sRGB image in part; 1 warm-up and 3 runs', () => {
     const p = benchPlan('quick')
     expect(p.datasets.map((d) => [d.id, d.width, d.height])).toEqual([['bayer24', 6000, 4000], ['srgb24', 6000, 4000]])
-    expect(p.datasets[0].stages).toEqual(['stageA', 'warp', 'toneMask', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'remove', 'export', 'exportAll', 'jpeg', 'thumb'])
+    expect(p.datasets[0].stages).toEqual(['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'remove', 'export', 'exportAll', 'jpeg', 'thumb'])
     expect([p.warmup, p.runs, p.scaledTo]).toEqual([1, 3, null])
-    expect(plannedRuns(p)).toBe((14 + 3) * 4)
+    expect(plannedRuns(p)).toBe((16 + 3) * 4)
   })
 
   it('Full: 45 MP and X-Trans too, Markesteijn 3-pass, 2 warm-ups and 5 runs', () => {
@@ -15,6 +15,23 @@ describe('benchmark plan', () => {
     expect(p.datasets.map((d) => d.id)).toEqual(['bayer24', 'bayer45', 'xtrans26', 'srgb24'])
     expect(p.datasets[2].stages).toContain('stageA3')
     expect([p.warmup, p.runs]).toEqual([2, 5])
+  })
+
+  it('Colour Mixer rows: guided filter on (its pre-pass and the display pass) and off (the display pass only)', async () => {
+    const { defaultsFor } = await import('../engine/develop/settings')
+    const base = defaultsFor('raw', 400)
+    const on = STAGES.mixer.settings(base, 'bayer')
+    const off = STAGES.mixerNoGuide.settings(base, 'bayer')
+    expect(on.colourMixer?.advanced?.guided ?? true).toBe(true)
+    expect(off.colourMixer?.advanced?.guided).toBe(false)
+    expect(on.colourMixer?.saturation[5]).toBe(40)
+    const gpuOn = STAGES.mixer.gpu as (l: string) => boolean
+    const gpuOff = STAGES.mixerNoGuide.gpu as (l: string) => boolean
+    for (const l of ['mixerInput', 'prefilterStats', 'prefilterApply', 'guideStats', 'guideApply', 'display']) expect(gpuOn(l)).toBe(true)
+    expect(gpuOn('moments')).toBe(false)
+    expect(gpuOff('display')).toBe(true)
+    expect(gpuOff('mixerInput')).toBe(false)
+    expect(STAGES.mixer.subs!('bayer').map((x) => x.id)).toEqual(['input', 'filters', 'display'])
   })
 
   it('every planned stage exists; scaled images and a library photo are added as asked', () => {

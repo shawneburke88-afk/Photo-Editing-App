@@ -9,12 +9,14 @@ import { DEFAULT_TRANSFORM, normalizeTransform, ZERO_PERSPECTIVE, type Transform
 import { DEFAULT_DETAIL, withDetail, type DetailSettings } from '../engine/detail/settings'
 import { CURVE_NORMS, DEFAULT_TONE_CURVE, isLinear, REGION_KEYS, REGION_NAMES, withToneCurve, type ToneCurveSettings } from '../engine/develop/tone-curve'
 import { describeSpots } from '../engine/develop/spots'
+import { bandsOf, describeMixer, describePoints, withColourMixer, withPoints } from '../engine/develop/colour-mixer'
 
 export type PasteKey =
   | 'whiteBalance'
   | 'exposure' | 'contrast' | 'highlights' | 'shadows' | 'whites' | 'blacks'
   | 'vibrance' | 'saturation'
   | 'toneCurve'
+  | 'colourMixer' | 'pointColor'
   | 'rotate' | 'straighten' | 'crop' | 'upright' | 'transform'
   | 'lensProfile' | 'lensAmounts' | 'lensCa'
   | 'sharpening' | 'luminanceNoise' | 'colorNoise'
@@ -24,7 +26,7 @@ export type PasteKey =
 export interface PasteItem {
   key: PasteKey
   label: string
-  group: 'White balance' | 'Tone' | 'Presence' | 'Tone Curve' | 'Detail' | 'Crop' | 'Lens' | 'Remove' | 'Advanced (darktable modules)'
+  group: 'White balance' | 'Tone' | 'Presence' | 'Tone Curve' | 'Colour' | 'Detail' | 'Crop' | 'Lens' | 'Remove' | 'Advanced (darktable modules)'
   /**
    * Only pasted between photos of the same kind (RAW to RAW, JPEG to JPEG): a RAW's +0.7 EV base exposure or its
    * camera white balance would be wrong on a JPEG, which is already rendered.
@@ -118,6 +120,22 @@ export const PASTE_ITEMS: PasteItem[] = [
     group: 'Tone Curve',
     copy: (to, from) => withToneCurve(to, from.toneCurve),
     show: (s) => describeCurve(s.toneCurve),
+  },
+  // The Colour group (Part 15): the mixer's bands (with its darktable settings) and Point Color travel separately, both
+  // ticked by default like the Tone Curve. A photo without them copies "none".
+  {
+    key: 'colourMixer',
+    label: 'Colour Mixer',
+    group: 'Colour',
+    copy: (to, from) => withColourMixer(to, withPoints(from.colourMixer ? bandsOf(from.colourMixer) : undefined, to.colourMixer?.points)),
+    show: (s) => describeMixer(s.colourMixer),
+  },
+  {
+    key: 'pointColor',
+    label: 'Point Color',
+    group: 'Colour',
+    copy: (to, from) => withColourMixer(to, withPoints(to.colourMixer, from.colourMixer?.points)),
+    show: (s) => describePoints(s.colourMixer?.points),
   },
   // Lightroom's Copy Settings lists Sharpening and Noise Reduction (Luminance, Color) (from general knowledge).
   detailItem('sharpening', 'Sharpening', (to, from) => ({ ...to, sharpen: { ...from.sharpen } }), (d) =>

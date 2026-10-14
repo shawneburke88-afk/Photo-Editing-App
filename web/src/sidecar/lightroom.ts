@@ -60,10 +60,20 @@
 // reads as Lightroom's default (Radius 1.0, Detail 25, Masking 0, Luminance Detail 50, Contrast 0, Color Detail 50,
 // Smoothness 50; from general knowledge of Lightroom, not checked). Not checked against a sidecar Lightroom wrote.
 
+// The Colour Mixer's bands (Phase 3, Part 15; the same rules): crs:HueAdjustment<Band>, SaturationAdjustment<Band> and
+// LuminanceAdjustment<Band> for Lightroom's eight bands Red, Orange, Yellow, Green, Aqua, Blue, Purple, Magenta (the names
+// darktable's Lightroom importer reads: src/develop/lightroom.c lines 621-764, commit 6271f53). Both have −100…100 sliders
+// with these names, so the numbers carry over one for one; Lightroom's band centres, widths and scales aren't public, so
+// the look is only approximately Lightroom's (closest match). Absent fields read as 0; a sidecar with none of the 24
+// leaves the mixer alone. Positive values are written with a sign ("+13"), as LightCraft's test sidecar has them; not
+// checked against a sidecar Lightroom wrote. Point Color (crs:PointColors) isn't read or written: its format isn't
+// documented anywhere available here (only LightCraft's tests name the field, with an "empty" slot of four −1 values).
+
 import { composeOrientation, normalizeGeometry, orientationMatrix, orientationParts, setLocked, withOrientation, type GeometrySettings } from '../engine/develop/geometry'
 import { fromPoints, UNIT_RECT, withAngle, type Rect } from '../engine/develop/crop'
 import { DEFAULT_TRANSFORM, normalizeTransform, SCALE_RANGE, ZERO_PERSPECTIVE, type Orient, type TransformSettings, type UprightMode } from '../engine/develop/upright'
 import { DEFAULT_DETAIL, normalizeDetail, type DetailSettings } from '../engine/detail/settings'
+import { BAND_NAMES, DEFAULT_COLOUR_MIXER, normalizeColourMixer, withPoints, type ColourMixerSettings } from '../engine/develop/colour-mixer'
 
 export const NS_CRS = 'http://ns.adobe.com/camera-raw-settings/1.0/'
 export const NS_TIFF = 'http://ns.adobe.com/tiff/1.0/'
@@ -100,7 +110,12 @@ export interface LrFields {
   colorNoiseReduction?: number
   colorDetail?: number
   colorSmoothness?: number
+  /** The Colour Mixer's 24 fields in LR_HSL_FIELDS order (undefined where absent), when any is present. */
+  hsl?: (number | undefined)[]
 }
+
+/** The Colour Mixer's crs: fields: Hue, then Saturation, then Luminance, each for Lightroom's eight bands. */
+export const LR_HSL_FIELDS: string[] = ['HueAdjustment', 'SaturationAdjustment', 'LuminanceAdjustment'].flatMap((k) => BAND_NAMES.map((b) => `${k}${b}`))
 
 /** The Detail fields in LrState order, with their crs: names and Lightroom's defaults. */
 export const LR_DETAIL_FIELDS = [
@@ -142,10 +157,34 @@ export interface LrState {
    * none of Sharpness, LuminanceSmoothing and ColorNoiseReduction: unknown, so never counted as a difference.
    */
   detail?: number[] | null
+  /** The Colour Mixer's 24 numbers (LR_HSL_FIELDS order); null (or absent) when the sidecar has none of them. */
+  hsl?: number[] | null
 }
 
-export type LrGroup = 'orientation' | 'crop' | 'transform' | 'detail'
-export const LR_GROUPS: LrGroup[] = ['orientation', 'crop', 'transform', 'detail']
+export type LrGroup = 'orientation' | 'crop' | 'transform' | 'detail' | 'hsl'
+export const LR_GROUPS: LrGroup[] = ['orientation', 'crop', 'transform', 'detail', 'hsl']
+
+/** The Colour Mixer's bands as Lightroom's 24 numbers (none = all 0). */
+export function mixerToLr(m: ColourMixerSettings | undefined): number[] {
+  const x = m ?? DEFAULT_COLOUR_MIXER
+  return [...x.hue, ...x.saturation, ...x.luminance]
+}
+
+/** Lightroom's 24 numbers as the mixer's bands, keeping the photo's Point Color and darktable settings. */
+export function mixerFromLr(current: ColourMixerSettings | undefined, v: number[]): ColourMixerSettings | undefined {
+  const base = withPoints(current, current?.points)
+  return normalizeColourMixer({ ...base, hue: v.slice(0, 8), saturation: v.slice(8, 16), luminance: v.slice(16, 24) })
+}
+
+/** The Colour Mixer of develop settings saved as JSON (none for missing or damaged settings). */
+export function mixerOf(develop: string | null | undefined): ColourMixerSettings | undefined {
+  try {
+    if (develop) return normalizeColourMixer((JSON.parse(develop) as { colourMixer?: unknown }).colourMixer)
+  } catch {
+    // damaged settings: none
+  }
+  return undefined
+}
 
 /** The Detail settings as Lightroom's ten numbers. */
 export function detailToLr(d: DetailSettings | undefined): number[] {
@@ -243,22 +282,24 @@ export function lrState(f: LrFields | undefined, frame: LrFrame): LrState {
       x.sharpness === undefined && x.luminanceSmoothing === undefined && x.colorNoiseReduction === undefined
         ? null
         : LR_DETAIL_FIELDS.map(([k, , d]) => (finite(x[k]) ? x[k]! : d)),
+    hsl: x.hsl && x.hsl.some((v) => finite(v)) ? x.hsl.map((v) => (finite(v) ? v : 0)) : null,
   }
 }
 
 /** A stable text form, for remembering and comparing (sidecar/changes.ts, the marker). */
 export function lrKey(s: LrState): string {
-  return JSON.stringify({ o: s.orientation, c: s.crop && s.crop.map((v) => round(v)), u: s.upright, t: s.sliders.map((v) => round(v, 3)), ...(s.detail ? { d: s.detail.map((v) => round(v, 2)) } : {}) })
+  return JSON.stringify({ o: s.orientation, c: s.crop && s.crop.map((v) => round(v)), u: s.upright, t: s.sliders.map((v) => round(v, 3)), ...(s.detail ? { d: s.detail.map((v) => round(v, 2)) } : {}), ...(s.hsl ? { h: s.hsl.map((v) => round(v, 2)) } : {}) })
 }
 
 export function parseLrKey(key: string | null | undefined): LrState | null {
   if (!key) return null
   try {
-    const j = JSON.parse(key) as { o: number; c: LrState['crop']; u: number; t: LrState['sliders']; d?: number[] }
+    const j = JSON.parse(key) as { o: number; c: LrState['crop']; u: number; t: LrState['sliders']; d?: number[]; h?: number[] }
     if (typeof j.o !== 'number' || typeof j.u !== 'number' || !Array.isArray(j.t) || j.t.length !== 7) return null
     if (j.c !== null && (!Array.isArray(j.c) || j.c.length !== 5)) return null
     const detail = Array.isArray(j.d) && j.d.length === LR_DETAIL_FIELDS.length ? j.d : null
-    return { orientation: j.o, crop: j.c, upright: j.u, sliders: j.t, ...(detail ? { detail } : {}) }
+    const hsl = Array.isArray(j.h) && j.h.length === LR_HSL_FIELDS.length ? j.h : null
+    return { orientation: j.o, crop: j.c, upright: j.u, sliders: j.t, ...(detail ? { detail } : {}), ...(hsl ? { hsl } : {}) }
   } catch {
     return null
   }
@@ -272,6 +313,7 @@ export function sameGroup(a: LrState, b: LrState, g: LrGroup): boolean {
     return a.crop.every((v, i) => Math.abs(v - b.crop![i]) <= (i === 4 ? 1e-3 : 1e-5))
   }
   if (g === 'detail') return !a.detail || !b.detail || a.detail.every((v, i) => Math.abs(v - b.detail![i]) <= 0.05)
+  if (g === 'hsl') return !a.hsl || !b.hsl || a.hsl.every((v, i) => Math.abs(v - b.hsl![i]) <= 0.05)
   return a.upright === b.upright && a.sliders.every((v, i) => Math.abs(v - b.sliders[i]) <= 0.05)
 }
 
@@ -293,8 +335,8 @@ const totalOrientation = (g: GeometrySettings, frame: LrFrame) => composeOrienta
 /** The size of LightBench's straightened frame for an orientation. */
 const frameSize = (o: Orient, frame: LrFrame): [number, number] => (swaps(o) ? [frame.stored[1], frame.stored[0]] : frame.stored)
 
-/** What Lightroom's fields would be for LightBench's geometry (and Detail settings: none = all off). */
-export function toLightroom(g: GeometrySettings, frame: LrFrame, detail?: DetailSettings): LrState {
+/** What Lightroom's fields would be for LightBench's geometry (and Detail settings: none = all off; the Colour Mixer: none = 0). */
+export function toLightroom(g: GeometrySettings, frame: LrFrame, detail?: DetailSettings, mixer?: ColourMixerSettings): LrState {
   const o = totalOrientation(g, frame)
   const [W, H] = frame.stored
   const [fw, fh] = frameSize(o, frame)
@@ -331,6 +373,7 @@ export function toLightroom(g: GeometrySettings, frame: LrFrame, detail?: Detail
     upright: UPRIGHT_CODE[t?.upright ?? 'off'],
     sliders: t ? [-t.vertical + 0, -t.horizontal + 0, t.rotate, t.scale, -t.aspect + 0, t.offsetX, t.offsetY] : [0, 0, 0, 100, 0, 0, 0],
     detail: detailToLr(detail),
+    hsl: mixerToLr(mixer),
   }
 }
 
@@ -340,6 +383,8 @@ export interface FromLightroom {
   geometry: GeometrySettings
   /** Detail settings read from Lightroom, when that group was taken. */
   detail?: DetailSettings
+  /** The Colour Mixer's 24 numbers read from Lightroom (`mixerFromLr`), when that group was taken. */
+  hsl?: number[]
   /** The groups that were taken from Lightroom (the others already matched). */
   changed: LrGroup[]
   /** The Upright mode read must be solved again on the photo (Auto, Level, Vertical, Full). */
@@ -351,8 +396,8 @@ export interface FromLightroom {
  * taken, so the parts Lightroom can't describe (the aspect lock, a Guided correction drawn in LightBench) stay when
  * nothing changed there.
  */
-export function fromLightroom(current: GeometrySettings, s: LrState, frame: LrFrame, currentDetail?: DetailSettings): FromLightroom {
-  const ours = toLightroom(current, frame, currentDetail)
+export function fromLightroom(current: GeometrySettings, s: LrState, frame: LrFrame, currentDetail?: DetailSettings, currentMixer?: ColourMixerSettings): FromLightroom {
+  const ours = toLightroom(current, frame, currentDetail, currentMixer)
   const changed = LR_GROUPS.filter((g) => !sameGroup(ours, s, g))
   let g = current
   if (changed.includes('orientation')) {
@@ -406,11 +451,12 @@ export function fromLightroom(current: GeometrySettings, s: LrState, frame: LrFr
     g = nt ? { ...rest, transform: nt } : rest
   }
   const detail = changed.includes('detail') && s.detail ? detailFromLr(s.detail) : undefined
-  return { geometry: g, changed, rerun, ...(detail ? { detail } : {}) }
+  const hsl = changed.includes('hsl') && s.hsl ? s.hsl : undefined
+  return { geometry: g, changed, rerun, ...(detail ? { detail } : {}), ...(hsl ? { hsl } : {}) }
 }
 
-/** Whether Lightroom's fields would change LightBench's geometry or Detail settings. */
-export const lrDiffers = (current: GeometrySettings, s: LrState, frame: LrFrame, detail?: DetailSettings) => !sameState(toLightroom(current, frame, detail), s)
+/** Whether Lightroom's fields would change LightBench's geometry, Detail settings or Colour Mixer. */
+export const lrDiffers = (current: GeometrySettings, s: LrState, frame: LrFrame, detail?: DetailSettings, mixer?: ColourMixerSettings) => !sameState(toLightroom(current, frame, detail, mixer), s)
 
 // ---- writing
 
@@ -438,6 +484,8 @@ export interface LrWritePlan {
    * reduction in LightBench never resets Lightroom's sharpening it didn't touch.
    */
   detailFields?: number[]
+  /** The same for the Colour Mixer's fields (indices into LR_HSL_FIELDS). */
+  hslFields?: number[]
 }
 
 /**
@@ -460,13 +508,15 @@ export function planLightroomWrite(
   frame: LrFrame,
   fileDetail?: DetailSettings,
   oursDetail?: DetailSettings,
+  fileMixer?: ColourMixerSettings,
+  oursMixer?: ColourMixerSettings,
 ): LrWritePlan {
-  const state = toLightroom(ours, frame, oursDetail)
+  const state = toLightroom(ours, frame, oursDetail, oursMixer)
   if (!file || !file.processVersion || file.applied) return { groups: [], state }
   const theirs = lrState(file.fields, frame)
   // What LightBench's geometry was when this file was last written (or read): its own settings in the file, none if
   // it has none yet.
-  const before = toLightroom(fileDevelop ?? normalizeGeometry(null), frame, fileDevelop ? fileDetail : undefined)
+  const before = toLightroom(fileDevelop ?? normalizeGeometry(null), frame, fileDevelop ? fileDetail : undefined, fileDevelop ? fileMixer : undefined)
   const marker = parseLrKey(file.marker)
   const groups = LR_GROUPS.filter((g) => !sameGroup(state, theirs, g) && (!sameGroup(state, before, g) || (!!marker && !sameGroup(marker, theirs, g))))
   // Detail, field by field: those LightBench changed (or all, after Ignore), where they differ from the file's.
@@ -476,20 +526,34 @@ export function planLightroomWrite(
     ? od.map((_, i) => i).filter((i) => Math.abs(od[i] - theirs.detail![i]) > 0.05 && (ignored || Math.abs(od[i] - before.detail![i]) > 0.05))
     : []
   if (groups.includes('detail') && !detailFields.length) groups.splice(groups.indexOf('detail'), 1)
+  // The Colour Mixer, field by field the same way. A sidecar without any of its fields is left without them.
+  const hslIgnored = !!marker && !sameGroup(marker, theirs, 'hsl')
+  const oh = state.hsl!
+  const hslFields = groups.includes('hsl') && theirs.hsl
+    ? oh.map((_, i) => i).filter((i) => Math.abs(oh[i] - theirs.hsl![i]) > 0.05 && (hslIgnored || Math.abs(oh[i] - before.hsl![i]) > 0.05))
+    : []
+  if (groups.includes('hsl') && !hslFields.length) groups.splice(groups.indexOf('hsl'), 1)
   const after: LrState = {
     orientation: groups.includes('orientation') ? state.orientation : theirs.orientation,
     crop: groups.includes('crop') ? state.crop : theirs.crop,
     upright: groups.includes('transform') ? state.upright : theirs.upright,
     sliders: groups.includes('transform') ? state.sliders : theirs.sliders,
     detail: groups.includes('detail') && theirs.detail ? theirs.detail.map((v, i) => (detailFields.includes(i) ? od[i] : v)) : theirs.detail,
+    hsl: groups.includes('hsl') && theirs.hsl ? theirs.hsl.map((v, i) => (hslFields.includes(i) ? oh[i] : v)) : theirs.hsl,
   }
-  return { groups, state, marker: sameState(after, state) ? lrKey(after) : undefined, ...(detailFields.length ? { detailFields } : {}) }
+  return { groups, state, marker: sameState(after, state) ? lrKey(after) : undefined, ...(detailFields.length ? { detailFields } : {}), ...(hslFields.length ? { hslFields } : {}) }
 }
 
 /** The values written for a group, as Lightroom-style text (tiff:Orientation is in the TIFF namespace). */
-export function lrValues(s: LrState, g: LrGroup, detailFields?: number[]): [ns: string, local: string, value: string][] {
+export function lrValues(s: LrState, g: LrGroup, detailFields?: number[], hslFields?: number[]): [ns: string, local: string, value: string][] {
   const num = (v: number, digits: number) => String(round(v, digits))
   if (g === 'orientation') return [[NS_TIFF, 'Orientation', String(s.orientation)]]
+  if (g === 'hsl') {
+    const h = s.hsl ?? mixerToLr(undefined)
+    // Integers, positive ones with a sign ("+13", as LightCraft's test sidecar writes them; not checked against Lightroom).
+    const all = LR_HSL_FIELDS.map((name, i): [string, string, string] => [NS_CRS, name, h[i] > 0 ? `+${Math.round(h[i])}` : String(Math.round(h[i]) + 0)])
+    return hslFields ? all.filter((_, i) => hslFields.includes(i)) : all
+  }
   if (g === 'detail') {
     const d = s.detail ?? detailToLr(undefined)
     // Lightroom writes the radius with a sign and one decimal ("+1.0", as ExifTool shows it; not checked against a file

@@ -7,6 +7,7 @@
 // filter, version 2 with darktable's defaults, the Euclidean norm refined by the exposure-independent guided
 // filter (src/common/eigf.h; its blurred statistics come from tone-mask.wgsl).
 // The Tone Curve (engine/develop/tone-curve.ts) comes after the sigmoid, on the tones shown (its CPU twin is there).
+// The Colour Mixer and Point Color (colour-mixer.wgsl, appended to this file) come before the sigmoid, after presence.
 // The clipping indicators are translated from darktable's src/iop/overexposed.c (display clipping:
 // any RGB / luminance / saturation / full gamut) and src/iop/rawoverexposed.c (sensor clipping).
 
@@ -82,6 +83,23 @@ struct View {
 // The Tone Curve's lookup table (tone-curve.ts buildLut): N×1, RGBA = the Red, Green, Blue and RGB curves, sRGB-encoded
 // in and out; 1×1 unused when the curve is off.
 @group(0) @binding(6) var curveLut: texture_2d<f32>;
+// The Colour Mixer (PHASE3.md Part 15; colour-mixer.wgsl): its guided filter's corrections for the tile being drawn
+// (colour-mixer-filter.wgsl; 1×1 unused without it), where the tile sits (`MixTile`), its parameters and its hue tables.
+@group(0) @binding(7) var mixCorr: texture_2d<f32>;
+@group(0) @binding(8) var<uniform> MT: MixTile;
+@group(0) @binding(9) var<uniform> MX: Mixer;
+@group(0) @binding(10) var mixLut: texture_2d<f32>;
+
+struct MixTile {
+  origin: vec2f,  // the target pixel of the tile texture's texel (0, 0)
+  mode: u32,      // 0: drawing as usual; 1: the mixer's input for its filter (U*′, V*′, RGB saturation, L*);
+                  // 2: drawing a tile with the filter's corrections; 3, 4: linear Rec.2020 before / after the mixer
+                  // (before the sigmoid; tests and the mixer's pickers)
+  pad: u32,
+}
+
+/** The target pixel being drawn (fs), for the mixer's corrections. */
+var<private> fragPos: vec2f;
 
 const REC2020_Y = vec3f(0.2627002, 0.6779981, 0.0593017);
 
@@ -322,6 +340,24 @@ fn developRec2020(scene: vec3f, uv: vec2f) -> vec3f {
 
 /** The develop transform up to the sigmoid, before the Tone Curve. */
 fn developBeforeCurve(scene: vec3f, uv: vec2f) -> vec3f {
+  var c = developPreSigmoid(scene, uv);
+  if (MX.flags != 0u || MX.visualize != 0u) { c = mixerApply(c); }
+  return sigmoid(c);
+}
+
+/** The Colour Mixer and Point Color at the pixel being drawn (the guided filter's corrections from the tile texture). */
+fn mixerApply(c: vec3f) -> vec3f {
+  let guided = (MX.flags & 2u) != 0u;
+  var corr = vec4f(0.0, 1.0, 0.0, 0.0);
+  if (guided) {
+    let size = vec2i(textureDimensions(mixCorr));
+    corr = textureLoad(mixCorr, clamp(vec2i(floor(fragPos - MT.origin)), vec2i(0), size - 1), 0);
+  }
+  return mixApplyPixel(c, corr, guided);
+}
+
+/** The develop transform up to the sigmoid: white balance fix, exposure, tone equalizer, presence (scene-referred). */
+fn developPreSigmoid(scene: vec3f, uv: vec2f) -> vec3f {
   var c = vec3f(dot(V.wbFix0.xyz, scene), dot(V.wbFix1.xyz, scene), dot(V.wbFix2.xyz, scene));
   c *= V.exposure;
 
@@ -343,7 +379,24 @@ fn developBeforeCurve(scene: vec3f, uv: vec2f) -> vec3f {
     c = y + (c - y) * k;
   }
 
-  return sigmoid(c);
+  return c;
+}
+
+/**
+ * The Colour Mixer's own passes (MT.mode 1, 3, 4) at a target pixel: the photo's pixel there, the drawn image's edge
+ * repeated outside it (darktable's colour equalizer sees the cropped photo and nothing beyond).
+ */
+fn mixerPass(p: vec2f) -> vec4f {
+  let q = clamp(p, V.offset + 0.5, V.offset + V.size - 0.5);
+  let uv = (q - V.offset) / V.size;
+  let tuv = applyMap(V.texMap0, V.texMap1, V.texMap2, uv);
+  let c = developPreSigmoid(textureSampleLevel(img, samp, tuv, V.lod).rgb, uv);
+  if (MT.mode == 1u) {
+    let luv = ucsLuv(c);
+    return vec4f(luv.y, luv.z, mixRgbSat(c), luv.x);
+  }
+  if (MT.mode == 4u && (MX.flags != 0u || MX.visualize != 0u)) { return vec4f(mixerApply(c), 1.0); }
+  return vec4f(c, 1.0);
 }
 
 // ---- clipping indicators
@@ -480,6 +533,10 @@ fn rawOverexposed(uv: vec2f, out: vec3f) -> vec3f {
 
 @fragment
 fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  fragPos = pos.xy;
+  // The mixer's input is drawn into a tile texture (texel + origin = target pixel); modes 3 and 4 draw the target itself.
+  if (MT.mode == 1u) { return mixerPass(pos.xy + MT.origin); }
+  if (MT.mode >= 3u) { return mixerPass(pos.xy); }
   let uv = (pos.xy - V.offset) / V.size;
   // The crop tool's view also draws the turned photo's corners in the margin around the frame.
   if (V.frame == 0u && (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0)))) { return V.background; }

@@ -197,6 +197,31 @@ describe('shortcut sets', () => {
     }
   })
 
+  it('gives the Colour Mixer’s tools their own keys (H, S, L targets, ↑ ↓ nudge, Esc and Ctrl+Alt+Shift+N end), apart from Develop’s', () => {
+    const MIXER: Context[] = ['global', 'mixer']
+    for (const set of [LB, LR]) {
+      const map = resolveKeymap(set)
+      const cas = (k: string) => key(k, { ctrlKey: true, altKey: true, shiftKey: true })
+      for (const ctx of [DEVELOP, MIXER]) {
+        expect(matchAction(map, cas('H'), ctx)).toBe('develop.mixerTargetHue')
+        expect(matchAction(map, cas('S'), ctx)).toBe('develop.mixerTargetSat')
+        expect(matchAction(map, cas('L'), ctx)).toBe('develop.mixerTargetLum')
+      }
+      expect(matchAction(map, cas('N'), MIXER)).toBe('develop.mixerTargetOff')
+      expect(matchAction(map, cas('T'), DEVELOP)).toBe('develop.curveTarget')
+      expect(matchAction(map, key('ArrowUp'), MIXER)).toBe('mixer.up')
+      expect(matchAction(map, key('ArrowDown', { shiftKey: true }), MIXER)).toBe('mixer.downBig')
+      expect(matchAction(map, key('Escape'), MIXER)).toBe('mixer.done')
+      expect(matchAction(map, key('Enter'), MIXER)).toBe('mixer.done')
+      expect(matchAction(map, key('z', { ctrlKey: true }), MIXER)).toBe('develop.undo')
+      expect(matchAction(map, key('\\'), MIXER)).toBe('develop.before')
+      // Not while the tool is on: the next photo, the grid.
+      expect(matchAction(map, key('ArrowRight'), MIXER)).toBeNull()
+      expect(matchAction(map, key('g'), MIXER)).toBeNull()
+      expect(matchAction(map, key('ArrowUp'), DEVELOP)).toBeNull()
+    }
+  })
+
   it('raises and lowers the rating with ] and [, and rates then moves on with Shift+0–5, in both sets', () => {
     for (const set of [LB, LR]) {
       const map = resolveKeymap(set)

@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.5.7",
+    "date": "2026-10-14",
+    "newFeatures": [
+      "New Colour Mixer in Develop: Hue, Saturation and Luminance for eight colours (Red, Orange, Yellow, Green, Aqua, Blue, Purple, Magenta), built on darktable's color equalizer. Each colour blends smoothly into its neighbours without pushing other colours the wrong way, and greys stay neutral.",
+      "Point Color, a tab of the mixer: pick a colour on the photo and shift just that colour's hue, saturation and lightness, with range controls. Several points per photo.",
+      "Drag on the photo to adjust the colour under the pointer (Ctrl+Alt+Shift+H, S or L), and hold Alt while dragging a slider to see which areas it affects.",
+      "Lightroom's HSL / Color Mixer values are read from and written to its .xmp files. Point Color isn't exchanged with Lightroom yet, because its file format isn't documented."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.5.6",
     "date": "2026-10-14",
     "newFeatures": [

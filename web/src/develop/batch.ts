@@ -24,7 +24,8 @@ import { current, loadHistory, record, savedForm, type History } from './history
 import { applyPaste, mergeClipboards, type Clipboard } from './paste'
 import { loadIntoEngine, multipliers, renderThumbnail, stageOptions, type SensorInfo } from './source'
 import { ownFocal, rerunUpright, wantsUprightRerun } from './uprightRun'
-import { fromLightroom, lrFrame, parseLrKey, UPRIGHT_CODE } from '../sidecar/lightroom'
+import { fromLightroom, lrFrame, mixerFromLr, parseLrKey, UPRIGHT_CODE } from '../sidecar/lightroom'
+import { withColourMixer } from '../engine/develop/colour-mixer'
 import { withDetail } from '../engine/detail/settings'
 import { parseLrToneKey, toneFromLightroom } from '../sidecar/lightroomCurve'
 import { withToneCurve } from '../engine/develop/tone-curve'
@@ -271,9 +272,10 @@ class BatchDeveloper {
         next = await rerunUpright(engine, next, info)
       }
       if (lightroom) {
-        const r = fromLightroom(next.geometry, lightroom, lrFrame(p), next.detail)
+        const r = fromLightroom(next.geometry, lightroom, lrFrame(p), next.detail, next.colourMixer)
         next = { ...next, geometry: r.geometry }
         if (r.detail) next = withDetail(next, r.detail)
+        if (r.hsl) next = withColourMixer(next, mixerFromLr(next.colourMixer, r.hsl))
         if (info) next = ownFocal(next, info)
         if (r.rerun && engine && info) {
           // LightBench's own Upright for the mode Lightroom used. Upright resets the straighten angle, but Lightroom's

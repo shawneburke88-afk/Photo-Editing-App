@@ -20,6 +20,7 @@ import { loadIntoEngine, multipliers, renderThumbnail, stageOptions, type Sensor
 import { outputTrc, rec2020ToProfile, SRGB_PROFILE } from '../engine/color/icc'
 import type { Vec3 } from '../engine/color/matrix'
 import { DEFAULT_DETAIL } from '../engine/detail/settings'
+import { DEFAULT_ADVANCED } from '../engine/develop/colour-mixer'
 import { CURRENT_PROCESS } from '../engine/develop/process'
 import { defaultsFor, displayUniforms, normalizeSettings, type DevelopSettings } from '../engine/develop/settings'
 import { DevelopEngine, GpuWorkError, retryableGpuError, type OutputImage, type ViewState } from '../engine/gpu/develop-engine'
@@ -36,7 +37,7 @@ export type BenchMode = 'quick' | 'full'
 
 /** The stages, in pipeline order (the table's order). */
 export type StageId =
-  | 'stageA' | 'stageA3' | 'warp' | 'toneMask' | 'denoise' | 'sharpen'
+  | 'stageA' | 'stageA3' | 'warp' | 'toneMask' | 'mixer' | 'mixerNoGuide' | 'denoise' | 'sharpen'
   | 'displayFit' | 'display100' | 'displayFitCurve' | 'display100Curve'
   | 'remove' | 'export' | 'exportAll' | 'jpeg' | 'thumb'
 
@@ -62,7 +63,7 @@ export interface BenchPlan {
   datasets: DatasetPlan[]
 }
 
-const ALL_RAW: StageId[] = ['stageA', 'warp', 'toneMask', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'remove', 'export', 'exportAll', 'jpeg', 'thumb']
+const ALL_RAW: StageId[] = ['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'remove', 'export', 'exportAll', 'jpeg', 'thumb']
 const STAGES_FOR: Record<BenchMode, Record<Kind, StageId[]>> = {
   quick: {
     bayer: ALL_RAW,
@@ -72,7 +73,7 @@ const STAGES_FOR: Record<BenchMode, Record<Kind, StageId[]>> = {
   full: {
     bayer: ALL_RAW,
     xtrans: ['stageA', 'stageA3', 'displayFit', 'display100', 'export', 'exportAll'],
-    srgb: ['stageA', 'displayFit', 'display100', 'displayFitCurve', 'export', 'jpeg', 'thumb'],
+    srgb: ['stageA', 'mixer', 'mixerNoGuide', 'displayFit', 'display100', 'displayFitCurve', 'export', 'jpeg', 'thumb'],
   },
 }
 
@@ -183,6 +184,18 @@ const display = (view: ViewState, curve: boolean): StageDef => ({
   note: 'one redraw after an Exposure move (Detail, warp and masks cached); wall includes the read-back copy in compatibility mode',
 })
 
+/**
+ * A representative Colour Mixer (PHASE3.md Part 15): a few bands moved in each channel. What it costs doesn't depend
+ * on the values, only on whether the guided filter runs (`guided`).
+ */
+const COLOUR_MIXER = (guided: boolean) => ({
+  hue: [0, 0, 0, 15, 0, 0, 0, 0],
+  saturation: [0, 0, 0, 0, 0, 40, 0, 0],
+  luminance: [0, 20, 0, 0, 0, -20, 0, 0],
+  advanced: { ...DEFAULT_ADVANCED, guided },
+})
+const MIXER_PREPASS = one('mixerInput', 'prefilterStats', 'prefilterApply', 'guideStats', 'guideApply')
+
 /** Where the k-th Remove spot goes: spread over the frame, away from the edges and the highlight. */
 const spotAt = (k: number): [number, number] => [0.15 + 0.5 * ((k * 0.6180339) % 1), 0.45 + 0.4 * ((k * 0.3819660) % 1)]
 
@@ -231,8 +244,29 @@ export const STAGES: Record<StageId, StageDef> = {
     gpu: one('moments', 'reduce', 'blurX', 'blurY'),
     note: 'full-size guided-filter statistics; wall includes a 64 px measurement',
   },
-  // Colour Mixer pre-pass (lightbench/colour-mixer, not merged yet): add its stage here, after the tone mask, with
-  // its settings, a run that changes its cache key, and `gpu` matching its passes' entry points.
+  // The Colour Mixer (Part 15). Its guided filter isn't cached: every drawing draws the mixer's input around each
+  // 1024 px tile and runs darktable's two guided filters on it, then the display pass with the corrections. So one
+  // redraw after an Exposure move is one run, as in the display rows (compare with "Display pass, fit, without Tone
+  // Curve"); the second row is the same mixer with the guided filter off (per-pixel tables only, no pre-pass).
+  mixer: {
+    label: 'Colour Mixer, guided filter on: pre-pass + display pass, fit',
+    settings: (b, kind) => edit(kind, { ...b, colourMixer: COLOUR_MIXER(true) }),
+    run: (c, s, k) => c.engine.render(displayUniforms(nudged(s, k)), wbOf(c, s), FIT),
+    gpu: (l) => MIXER_PREPASS(l) || l === 'display',
+    subs: () => [
+      { id: 'input', label: 'the mixer\'s input around each tile (display shader, rgba32float)', match: one('mixerInput') },
+      { id: 'filters', label: 'darktable\'s guided filters (4 compute passes per tile)', match: one('prefilterStats', 'prefilterApply', 'guideStats', 'guideApply') },
+      { id: 'display', label: 'display pass with the corrections', match: one('display') },
+    ],
+    note: 'one redraw after an Exposure move with a mixer on (Hue, Saturation and Luminance moved on 4 bands); wall includes the read-back copy in compatibility mode',
+  },
+  mixerNoGuide: {
+    label: 'Colour Mixer, guided filter off: display pass, fit',
+    settings: (b, kind) => edit(kind, { ...b, colourMixer: COLOUR_MIXER(false) }),
+    run: (c, s, k) => c.engine.render(displayUniforms(nudged(s, k)), wbOf(c, s), FIT),
+    gpu: one('display'),
+    note: 'the same mixer with Advanced → guided filter off: the bands from the tables per pixel, no pre-pass',
+  },
   denoise: {
     label: 'Detail: denoise (profiled, wavelets), full size',
     settings: (b, kind) => edit(kind, { ...plain(b), detail: { ...DEFAULT_DETAIL, sharpen: { ...DEFAULT_DETAIL.sharpen, amount: 0 }, noise: { ...DEFAULT_DETAIL.noise, luminance: 30, color: 25 } } }),

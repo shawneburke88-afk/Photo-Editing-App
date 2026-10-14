@@ -9,7 +9,7 @@
 import type { Chord } from './chords'
 
 /** Where an action works. A view uses `global` plus one or more of the others (see `VIEWS`). */
-export type Context = 'global' | 'library' | 'cull' | 'cull-one' | 'compare' | 'survey' | 'develop' | 'crop' | 'guided' | 'curve' | 'remove'
+export type Context = 'global' | 'library' | 'cull' | 'cull-one' | 'compare' | 'survey' | 'develop' | 'crop' | 'guided' | 'curve' | 'mixer' | 'remove'
 
 export const CONTEXT_NAMES: Record<Context, string> = {
   global: 'Everywhere',
@@ -22,6 +22,7 @@ export const CONTEXT_NAMES: Record<Context, string> = {
   crop: 'Develop: cropping',
   guided: 'Develop: Guided Upright',
   curve: 'Develop: tone curve target',
+  mixer: 'Develop: colour mixer tool',
   remove: 'Develop: Remove brush',
 }
 
@@ -39,6 +40,8 @@ export const VIEWS: Context[][] = [
   // While the Tone Curve's targeted adjustment tool is on, Develop listens to 'curve' instead (↑ ↓ nudge the tones
   // under the pointer, Esc ends the tool), like the other on-photo tools.
   ['global', 'curve'],
+  // The same for the Colour Mixer's targeted adjustment tool and Point Color's picker (↑ ↓ nudge, Esc ends).
+  ['global', 'mixer'],
   // While the Remove brush is on the photo, Develop listens to 'remove' instead ([ and ] change the brush size).
   ['global', 'remove'],
 ]
@@ -159,12 +162,12 @@ export const ACTIONS: ActionDef[] = [
   { id: 'survey.close', label: 'Back to the grid', contexts: ['survey'], keys: ['Escape', 'G', 'N', 'E', 'F'] },
 
   // Develop
-  { id: 'develop.undo', label: 'Undo', contexts: [...DEVELOP_ANY, 'guided', 'curve', 'remove'], keys: ['Ctrl+Z'] },
-  { id: 'develop.redo', label: 'Redo', contexts: [...DEVELOP_ANY, 'guided', 'curve', 'remove'], keys: ['Ctrl+Y', 'Ctrl+Shift+Z'] },
-  { id: 'develop.before', label: 'Before / after', contexts: ['develop', 'curve', 'remove'], keys: ['\\'] },
-  { id: 'develop.clipping', label: 'Show clipping', contexts: ['develop', 'curve'], keys: ['J', 'O'], lightroom: ['J'] },
+  { id: 'develop.undo', label: 'Undo', contexts: [...DEVELOP_ANY, 'guided', 'curve', 'mixer', 'remove'], keys: ['Ctrl+Z'] },
+  { id: 'develop.redo', label: 'Redo', contexts: [...DEVELOP_ANY, 'guided', 'curve', 'mixer', 'remove'], keys: ['Ctrl+Y', 'Ctrl+Shift+Z'] },
+  { id: 'develop.before', label: 'Before / after', contexts: ['develop', 'curve', 'mixer', 'remove'], keys: ['\\'] },
+  { id: 'develop.clipping', label: 'Show clipping', contexts: ['develop', 'curve', 'mixer'], keys: ['J', 'O'], lightroom: ['J'] },
   { id: 'develop.sensorClipping', label: 'Show sensor clipping', contexts: ['develop'], keys: ['Shift+O'] },
-  { id: 'develop.zoom', label: 'Zoom to 100 % and back', contexts: ['develop', 'curve', 'remove'], keys: ['Z'] },
+  { id: 'develop.zoom', label: 'Zoom to 100 % and back', contexts: ['develop', 'curve', 'mixer', 'remove'], keys: ['Z'] },
   { id: 'develop.next', label: 'Next photo', contexts: ['develop'], keys: ['ArrowRight'] },
   { id: 'develop.prev', label: 'Previous photo', contexts: ['develop'], keys: ['ArrowLeft'] },
   { id: 'develop.whiteBalance', label: 'White balance picker', contexts: ['develop'], keys: ['W'] },
@@ -194,6 +197,23 @@ export const ACTIONS: ActionDef[] = [
   { id: 'curve.down', label: 'Targeted adjustment: darken the tones under the pointer', contexts: ['curve'], keys: ['ArrowDown'] },
   { id: 'curve.upBig', label: 'Targeted adjustment: brighten more', contexts: ['curve'], keys: ['Shift+ArrowUp'] },
   { id: 'curve.downBig', label: 'Targeted adjustment: darken more', contexts: ['curve'], keys: ['Shift+ArrowDown'] },
+
+  // The Colour Mixer's targeted adjustment tool, per channel, and Point Color's picker. Ctrl+Alt+Shift+H, S and L (and N
+  // to end the tool) are Lightroom Classic's keys for its HSL targeted adjustment as remembered, not checked against
+  // Adobe's page here; LightBench uses the same.
+  { id: 'develop.mixerTargetHue', label: 'Colour mixer: targeted adjustment of Hue (drag on the photo)', contexts: ['develop', 'mixer'], keys: ['Ctrl+Alt+Shift+H'] },
+  { id: 'develop.mixerTargetSat', label: 'Colour mixer: targeted adjustment of Saturation', contexts: ['develop', 'mixer'], keys: ['Ctrl+Alt+Shift+S'] },
+  { id: 'develop.mixerTargetLum', label: 'Colour mixer: targeted adjustment of Luminance', contexts: ['develop', 'mixer'], keys: ['Ctrl+Alt+Shift+L'] },
+  { id: 'develop.mixerTargetOff', label: 'Colour mixer: end the targeted adjustment', contexts: ['mixer'], keys: ['Ctrl+Alt+Shift+N'] },
+  { id: 'develop.pointColorPick', label: 'Point Color: pick a colour on the photo', contexts: ['develop', 'mixer'], keys: [] },
+  { id: 'develop.mixerReset', label: 'Colour mixer: reset', contexts: ['develop'], keys: [] },
+
+  // Develop, while the Colour Mixer's targeted adjustment tool or Point Color's picker is on
+  { id: 'mixer.done', label: 'Finish the colour mixer tool', contexts: ['mixer'], keys: ['Escape', 'Enter'] },
+  { id: 'mixer.up', label: 'Colour mixer target: raise the colour under the pointer', contexts: ['mixer'], keys: ['ArrowUp'] },
+  { id: 'mixer.down', label: 'Colour mixer target: lower the colour under the pointer', contexts: ['mixer'], keys: ['ArrowDown'] },
+  { id: 'mixer.upBig', label: 'Colour mixer target: raise more', contexts: ['mixer'], keys: ['Shift+ArrowUp'] },
+  { id: 'mixer.downBig', label: 'Colour mixer target: lower more', contexts: ['mixer'], keys: ['Shift+ArrowDown'] },
 
   // Develop, while drawing Guided Upright lines
   { id: 'guided.done', label: 'Finish Guided Upright', contexts: ['guided'], keys: ['Enter', 'Escape'] },
