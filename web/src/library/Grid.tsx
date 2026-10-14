@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { PhotoRow } from '../catalog/types'
 import { Stars } from './Stars'
 import { Thumb } from './Thumb'
+import { CullBadges } from './CullBadges'
 import { keyText, withKey } from '../settings/shortcuts'
 
 interface Props {
@@ -81,6 +82,7 @@ export function Grid({ rows, selected, focus, cellSize, onClick, onOpen, onDragS
             {row.flag === -1 && <span className="flag reject" title="Rejected">✕</span>}
             {row.edited && <span className="edited-badge" title="Edited in Develop">✎</span>}
             {row.quick && <span className="quick-badge" title={withKey('In the Quick Collection', 'photo.quick')}>●</span>}
+            <CullBadges row={row} className="in-cell" />
             {row.stackId !== null && (
               <button
                 className={`stack-badge ${row.stackExpanded ? 'open' : ''}`}

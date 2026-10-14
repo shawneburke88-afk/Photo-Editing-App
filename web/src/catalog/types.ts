@@ -72,6 +72,8 @@ export interface PhotoRow {
   stackSize: number
   stackTop: boolean
   stackExpanded: boolean
+  /** Culling helpers (docs/PHASE3.md Part 18): what the analysis says; null or absent when not analysed yet. */
+  cull?: import('./analysis').CullInfo | null
 }
 
 export interface PhotoDetail extends PhotoMeta {
@@ -103,7 +105,15 @@ export interface PhotoQuery {
   /** Keyword path; photos with it or any keyword below it. */
   keyword?: string
   text?: string
-  sort?: 'captureAsc' | 'captureDesc' | 'name'
+  /** Capture time, file name, or sharpness (relative to photos from the same camera at a similar ISO; Part 18). */
+  sort?: 'captureAsc' | 'captureDesc' | 'name' | 'sharpDesc' | 'sharpAsc'
+  /**
+   * Culling helpers' filter: possibly soft (also shake, or clearly softer than the best of its stack or look-alikes),
+   * the rest of the analysed photos, suggested rejects, look-alikes of a sharper photo, or not analysed yet.
+   */
+  cull?: 'soft' | 'notSoft' | 'suggested' | 'duplicates' | 'unanalysed'
+  /** Which reasons count as suggested rejects (default: catalog/analysis.ts DEFAULT_SUGGEST). */
+  suggest?: import('./analysis').SuggestOptions
 }
 
 /** Key used to recognise a photo that was already imported (Lightroom's "suspected duplicate" test). */

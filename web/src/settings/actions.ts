@@ -131,11 +131,16 @@ export const ACTIONS: ActionDef[] = [
   { id: 'library.keywords', label: 'Add keywords', contexts: ['library'], keys: ['Ctrl+K'] },
   { id: 'library.openFolder', label: 'Open folder…', contexts: ['library'], keys: ['Ctrl+O'] },
   { id: 'library.import', label: 'Import from card…', contexts: ['library'], keys: [], lightroom: ['Ctrl+Shift+I'] },
+  // Culling helpers (docs/PHASE3.md Part 18). Ctrl+Z undoes only an Apply of suggested rejects (the Library has no other
+  // undo); Develop's own Ctrl+Z is in its contexts.
+  { id: 'library.suggestRejects', label: 'Suggest rejects… (soft, shake: you choose and Apply)', contexts: ['library'], keys: [] },
+  { id: 'library.selectBest', label: 'Select the best of each stack', contexts: ['library'], keys: [] },
+  { id: 'library.undoSuggested', label: 'Undo applying suggested rejects', contexts: ['library'], keys: ['Ctrl+Z'] },
 
   // Culling, Compare and Survey
   { id: 'cull.info', label: 'Show or hide the info line', contexts: ['cull'], keys: ['I'] },
   { id: 'cull.compare', label: 'Switch between one photo and Compare', contexts: ['cull-one', 'compare', 'survey'], keys: ['C'] },
-  { id: 'cull.zoom', label: 'Zoom to 100 % and back', contexts: ONE_OR_COMPARE, keys: ['Z'] },
+  { id: 'cull.zoom', label: 'Zoom to 100 % at the measured focus point, and back', contexts: ONE_OR_COMPARE, keys: ['Z'] },
   { id: 'cull.advance', label: 'Auto-advance on or off', contexts: ONE_OR_COMPARE, keys: ['A'] },
   { id: 'cull.back', label: 'Back (to the survey if it was open, otherwise to the grid)', contexts: ONE_OR_COMPARE, keys: ['Escape'] },
   { id: 'cull.close', label: 'Close: back to the grid', contexts: ONE_OR_COMPARE, keys: ['G', 'E', 'F'] },

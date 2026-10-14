@@ -825,3 +825,27 @@ button.kbd:hover { border-color: var(--muted); }
 .point-swatch.on { border-color: #f2f2f2; }
 .point-ranges { font-size: 0.85rem; margin: 4px 0 2px; }
 .point-pick-layer { cursor: crosshair; }
+
+/* Culling helpers (docs/PHASE3.md Part 18): badges apart from flags, the Culling menu, Suggest rejects. */
+.cull-badges { display: inline-flex; flex-wrap: wrap; gap: 3px; }
+.cull-badges.in-cell { position: absolute; left: 6px; bottom: 6px; right: 46px; }
+.cull-badge { font-size: 0.66rem; line-height: 1.3; padding: 0 5px; border-radius: 3px; background: rgba(20,21,24,0.85); color: var(--text); border: 1px solid transparent; cursor: help; white-space: nowrap; }
+.cull-badge.cb-suggested { color: var(--bad); border: 1px dashed var(--bad); background: rgba(20,21,24,0.7); }
+.cull-badge.cb-best { color: var(--accent); }
+.cull-badge.cb-soft, .cull-badge.cb-shake { color: #f0c27a; }
+.cull-badge.cb-clipped, .cull-badge.cb-exposure { color: #9fc6ff; }
+.cull-badge.cb-dup { color: #c9b6ff; }
+.cull-info .cull-badges { margin-left: 4px; }
+.cull-pane-tags .cull-badges { margin-left: 6px; }
+.culling-menu .menu { right: auto; left: 0; min-width: 250px; }
+.culling-menu .menu-sep { border-top: 1px solid var(--line); margin: 4px 0; }
+.culling-menu .menu-label { padding: 2px 12px; }
+.culling-menu .menu-check { padding: 3px 12px; display: flex; gap: 6px; align-items: center; }
+.suggest-dialog { max-width: 640px; }
+.suggest-dialog .suggest-reasons { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.suggest-dialog .suggest-list { max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px 4px 24px; margin: 8px 0; font-size: 0.82rem; }
+.suggest-dialog .suggest-list li { margin: 3px 0; }
+.suggest-dialog .suggest-list .muted { display: block; }
+.settings-checks { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.autostack-similar { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.autostack-similar input[type=range] { width: 220px; }

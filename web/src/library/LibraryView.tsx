@@ -30,6 +30,11 @@ import { CollectionChips } from './CollectionChips'
 import { CollectionDialog, type CollectionDraft } from './CollectionDialog'
 import { CollectionList, PHOTOS_DRAG_TYPE } from './CollectionList'
 import { AutoStackDialog } from './AutoStackDialog'
+import { analysisPass } from './analysis-pass'
+import { AnalysisProgress } from './AnalysisProgress'
+import { useCullPrefs } from './cull-badges'
+import { SuggestRejectsDialog } from './SuggestRejectsDialog'
+import { applyRejects, undoRejects, type AppliedRejects } from './reject-suggestions'
 import { Grid } from './Grid'
 import { IndexProgress } from './IndexProgress'
 import { extrasRefresh } from './refresh'
@@ -43,7 +48,7 @@ import { MetadataPanel, NewPhotosMetadataPreset } from './MetadataPanel'
 import { Loupe } from './Loupe'
 import { OpenWithDialog } from './OpenWithDialog'
 
-type Filters = Pick<PhotoQuery, 'text' | 'minRating' | 'flag' | 'color' | 'sort' | 'keyword'>
+type Filters = Pick<PhotoQuery, 'text' | 'minRating' | 'flag' | 'color' | 'sort' | 'keyword' | 'cull'>
 
 const SUBFOLDERS_KEY = 'library:subfolders'
 
@@ -83,6 +88,13 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   const [targetCollections, setTargetCollections] = useState<{ id: number; name: string; count: number }[]>([])
   const [draft, setDraft] = useState<CollectionDraft | null>(null)
   const [autoStacking, setAutoStacking] = useState(false)
+  /** Suggest rejects (Part 18): every photo of the view (null while loading), or false when closed. */
+  const [suggesting, setSuggesting] = useState<PhotoRow[] | null | false>(false)
+  /** The last Apply of suggested rejects, for Undo: each photo's flag before it. */
+  const [undoReject, setUndoReject] = useState<AppliedRejects | null>(null)
+  /** Originals analysed for the culling helpers, of all. */
+  const [analysedCount, setAnalysedCount] = useState<{ done: number; total: number } | null>(null)
+  const cullPrefsNow = useCullPrefs()
   /** Copy / Paste / Sync settings dialog, with the photos it applies to. */
   const [pasting, setPasting] = useState<{ mode: 'copy' | 'sync' | 'paste'; clip: Clipboard; ids: number[] } | null>(null)
   const hasClip = useSyncExternalStore(settingsClipboard.subscribe, () => !!settingsClipboard.get())
@@ -140,6 +152,26 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   useEffect(() => {
     if (status === 'ready' && !indexing.active) extrasRefresh.start()
   }, [status, indexing.active, disconnectedKey])
+  // The culling analysis of photos already in the library (analysis-pass.ts): the same moments, after the refresh.
+  useEffect(() => {
+    if (status === 'ready' && !indexing.active) analysisPass.start()
+  }, [status, indexing.active, disconnectedKey])
+  useEffect(() => {
+    let changes = analysisPass.status.changes
+    return analysisPass.subscribe(() => {
+      if (analysisPass.status.changes === changes) return
+      changes = analysisPass.status.changes
+      refresh()
+    })
+  }, [refresh])
+  useEffect(() => {
+    if (status !== 'ready') return
+    let live = true
+    void catalog.analysisCounts().then((c) => live && setAnalysedCount(c))
+    return () => {
+      live = false
+    }
+  }, [catalog, status, version])
   useEffect(() => {
     let changes = extrasRefresh.status.changes
     return extrasRefresh.subscribe(() => {
@@ -278,11 +310,22 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     })()
   }, [catalog, status, version])
 
+  /** The query of the photos shown: folder or collection, and the filters. */
+  function query(): PhotoQuery {
+    return {
+      ...filters,
+      collection,
+      folder: folder ? { ...folder, recursive: subfolders } : undefined,
+      ids: only?.ids,
+      suggest: filters.cull === 'suggested' ? cullPrefsNow.suggest : undefined,
+    }
+  }
+
   // Photos for the current folder + filters.
   useEffect(() => {
     if (status !== 'ready') return
     let live = true
-    void catalog.queryPhotos({ ...filters, collection, folder: folder ? { ...folder, recursive: subfolders } : undefined, ids: only?.ids, ungrouped: only ? true : undefined }).then((r) => {
+    void catalog.queryPhotos({ ...query(), ungrouped: only ? true : undefined }).then((r) => {
       if (!live) return
       setRows(r)
       setSelected((s) => new Set([...s].filter((id) => r.some((x) => x.id === id))))
@@ -291,7 +334,8 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     return () => {
       live = false
     }
-  }, [catalog, status, folder, collection, filters, subfolders, version, externalVersion, only])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- query() reads these
+  }, [catalog, status, folder, collection, filters, subfolders, version, externalVersion, only, cullPrefsNow.suggest])
 
   // Details of the focused photo.
   useEffect(() => {
@@ -484,6 +528,48 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     refresh()
   }
 
+  // ---- culling helpers (docs/PHASE3.md Part 18)
+
+  /** Selects (doesn't flag) the sharpest photo of each stack shown, expanding stacks whose best photo is hidden. */
+  async function selectBest() {
+    const best = new Map<number, number>()
+    for (const r of rows) if (r.stackId !== null && r.cull?.group?.kind === 'stack') best.set(r.stackId, r.cull.group.bestId)
+    if (!best.size) {
+      showNotice(rows.some((r) => r.stackId !== null) ? 'The stacks shown aren’t analysed yet; their best photos will be known once the culling analysis has reached them.' : 'There are no stacks here. Auto-stack (Stacks menu) can stack bursts and look-alikes first.')
+      return
+    }
+    const shownIds = new Set(rows.map((r) => r.id))
+    const hidden = [...best.values()].filter((id) => !shownIds.has(id))
+    for (const id of hidden) await catalog.setStackExpanded(id, true)
+    const ids = [...best.values()]
+    setSelected(new Set(ids))
+    setFocus(ids[0])
+    anchor.current = ids[0]
+    if (hidden.length) refresh()
+    showNotice(`Selected the sharpest photo of ${ids.length} ${ids.length === 1 ? 'stack' : 'stacks'}${keyText('photo.pick') ? `: ${keyText('photo.pick')} picks them` : ''}.`)
+  }
+
+  /** Suggest rejects: every photo of the view, stacks' hidden members included. */
+  async function openSuggest() {
+    setSuggesting(null)
+    setSuggesting(await catalog.queryPhotos({ ...query(), cull: undefined, ungrouped: true }))
+  }
+
+  /** Apply: the suggested photos get the reject flag, in one step that Undo reverses. */
+  async function applySuggested(ids: number[]) {
+    setSuggesting(false)
+    setUndoReject(await applyRejects(catalog, ids, (x) => sidecars.schedule(x)))
+    refresh()
+  }
+
+  /** Undo the last Apply: flags go back, except on photos whose flag was changed since. */
+  async function undoSuggested() {
+    if (!undoReject) return
+    await undoRejects(catalog, undoReject, (x) => sidecars.schedule(x))
+    setUndoReject(null)
+    refresh()
+  }
+
   // ---- virtual copies (saved inside the original's sidecar)
   async function makeVirtualCopy() {
     if (focus === null) return
@@ -611,7 +697,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
 
   // Keyboard shortcuts (Lightroom's keys by default; see settings/actions.ts). Paused while a dialog or
   // the culling view is open.
-  const keysOn = active && !importing && !culling && !draft && !autoStacking && !launchFiles.length && !pasting && !backupMode && status === 'ready'
+  const keysOn = active && !importing && !culling && !draft && !autoStacking && suggesting === false && !launchFiles.length && !pasting && !backupMode && status === 'ready'
   useShortcuts(['library'], keysOn, (id, e) => {
     const idx = focus === null ? -1 : rows.findIndex((r) => r.id === focus)
     const move = (delta: number) => {
@@ -691,6 +777,12 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
         if (focus === null) return false
         void makeTop(focus)
         break
+      case 'library.suggestRejects': void openSuggest(); break
+      case 'library.selectBest': void selectBest(); break
+      case 'library.undoSuggested':
+        if (!undoReject) return false
+        void undoSuggested()
+        break
       case 'library.remove':
         // Like Lightroom: in a collection, Delete takes photos out of the collection, not the library.
         if (activeCollection && activeCollection.kind !== 'smart') void removeFromCollection(activeCollection.id, targets())
@@ -742,6 +834,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
         </button>
         <IndexProgress status={indexing} />
         <RefreshProgress />
+        <AnalysisProgress />
         {folderError && <p className="error small pad">{folderError}</p>}
         <FolderPanel
           roots={roots}
@@ -791,6 +884,15 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           <div className="banner" role="status">
             <span>{notice}</span>
             <button className="button small" onClick={() => setNotice('')} aria-label="Dismiss">✕</button>
+          </div>
+        )}
+        {undoReject && (
+          <div className="banner" role="status">
+            <span>
+              Rejected {undoReject.ids.length} suggested {undoReject.ids.length === 1 ? 'photo' : 'photos'} (flags only; no file was deleted).
+            </span>
+            <button className="button small" onClick={() => void undoSuggested()} title={withKey('Puts their flags back', 'library.undoSuggested')}>Undo</button>
+            <button className="button small" onClick={() => setUndoReject(null)} aria-label="Dismiss">✕</button>
           </div>
         )}
         {only && (
@@ -851,6 +953,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
                 collapseAll: () => void catalog.setStackExpanded(null, false).then(refresh),
                 canStack: targets().length > 1,
               }}
+              culling={{ suggest: () => void openSuggest(), selectBest: () => void selectBest(), analysed: analysedCount }}
               cellSize={cellSize}
               onCellSize={setCellSize}
               shown={rows.length}
@@ -981,14 +1084,19 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
       {autoStacking && (
         <AutoStackDialog
           count={rows.length}
-          onRun={async (gap) => {
-            const r = await catalog.autoStack(rows.map((x) => x.id), gap)
+          analysed={rows.filter((r) => r.cull).length}
+          onRun={async (o) => {
+            const r = await catalog.autoStack(rows.map((x) => x.id), o.gap, { similar: o.similar, sharpestTop: o.sharpestTop })
             sidecars.schedule(r.touched)
             refresh()
-            return r.stacks
+            return r
           }}
           onClose={() => setAutoStacking(false)}
         />
+      )}
+
+      {suggesting !== false && (
+        <SuggestRejectsDialog rows={suggesting} onApply={(ids) => void applySuggested(ids)} onClose={() => setSuggesting(false)} />
       )}
 
       {draft && (

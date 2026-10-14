@@ -4,6 +4,7 @@ import { currentDisplaySpace } from '../engine/gpu/display-space'
 import { drawFitted, type Preview } from './preview'
 import { Stars } from './Stars'
 import { Thumb } from './Thumb'
+import { CullBadges } from './CullBadges'
 
 /** Point of the image at the centre of the view, in 0–1 image coordinates. */
 export interface ZoomCenter {
@@ -121,6 +122,7 @@ export function CullPane({ row, preview, full, zoom, zoomNote, previewNote, acti
       <canvas
         ref={canvasRef}
         className={`cull-canvas ${zoom ? 'zoomed' : ''}`}
+        data-zoom={zoom ? `${zoom.u.toFixed(4)},${zoom.v.toFixed(4)}` : undefined}
         aria-label={row.fileName}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -134,6 +136,7 @@ export function CullPane({ row, preview, full, zoom, zoomNote, previewNote, acti
           {row.flag === 1 && <span className="flag pick">⚑</span>}
           {row.flag === -1 && <span className="flag reject">✕</span>}
           {row.color > 0 && <span className={`label label-${row.color}`} />}
+          <CullBadges row={row} />
         </div>
       )}
       {showFull ? (
