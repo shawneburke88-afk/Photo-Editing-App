@@ -87,6 +87,16 @@ export interface ViewState {
   frame?: boolean
 }
 
+/**
+ * A benchmark's view of an engine's device (the System Check's GPU benchmark, bench/profiler.ts; PHASE3.md Part 16):
+ * optional features to ask for where the adapter has them, and a hook that sees the device before the engine makes
+ * anything on it. Engines made without one are made exactly as before.
+ */
+export interface DeviceInstrument {
+  features: GPUFeatureName[]
+  attach(device: GPUDevice, adapter: GPUAdapter): void
+}
+
 /** Margin around the photo in the crop tool's view, in CSS pixels. */
 export const FRAME_PAD = 28
 
@@ -422,17 +432,20 @@ export class DevelopEngine {
 
     this.rawModule = device.createShaderModule({ code: rawWgsl })
     const displayModule = (this.displayModule = device.createShaderModule({ code: displayWgsl + lensWgsl + colourMixerWgsl }))
-    const renderPipe = (format: GPUTextureFormat) =>
+    // Labels name the passes in the System Check's GPU benchmark (bench/profiler.ts); they change no pixels.
+    const renderPipe = (format: GPUTextureFormat, label: string) =>
       device.createRenderPipeline({
+        label,
         layout: 'auto',
         vertex: { module: displayModule, entryPoint: 'vs' },
         fragment: { module: displayModule, entryPoint: 'fs', targets: [{ format }] },
       })
-    this.displayPipe = renderPipe(this.format)
-    this.offscreenPipe = this.format === 'rgba8unorm' ? this.displayPipe : renderPipe('rgba8unorm')
-    this.statsRenderPipe = renderPipe('rgba16float')
+    this.displayPipe = renderPipe(this.format, 'display')
+    this.offscreenPipe = this.format === 'rgba8unorm' ? this.displayPipe : renderPipe('rgba8unorm', 'display')
+    this.statsRenderPipe = renderPipe('rgba16float', 'develop')
     const mipModule = device.createShaderModule({ code: mipWgsl })
     this.mipPipe = device.createRenderPipeline({
+      label: 'mip',
       layout: 'auto',
       vertex: { module: mipModule, entryPoint: 'vs' },
       fragment: { module: mipModule, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] },
@@ -451,27 +464,32 @@ export class DevelopEngine {
     })
   }
 
-  private static async device(): Promise<GPUDevice> {
+  private static async device(instrument?: DeviceInstrument): Promise<GPUDevice> {
     const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' })
     if (!adapter) throw new Error('No WebGPU adapter available')
     const l = adapter.limits
-    return adapter.requestDevice({
-      requiredLimits: {
-        maxTextureDimension2D: l.maxTextureDimension2D,
-        maxBufferSize: l.maxBufferSize,
-        maxStorageBufferBindingSize: l.maxStorageBufferBindingSize,
-        maxStorageBuffersPerShaderStage: Math.min(l.maxStorageBuffersPerShaderStage, 10),
-      },
-    })
+    const requiredLimits = {
+      maxTextureDimension2D: l.maxTextureDimension2D,
+      maxBufferSize: l.maxBufferSize,
+      maxStorageBufferBindingSize: l.maxStorageBufferBindingSize,
+      maxStorageBuffersPerShaderStage: Math.min(l.maxStorageBuffersPerShaderStage, 10),
+    }
+    if (!instrument) return adapter.requestDevice({ requiredLimits })
+    // The benchmark's engine only: its optional features (timestamp-query) where the adapter has them.
+    const requiredFeatures = instrument.features.filter((f) => adapter.features.has(f))
+    const device = await adapter.requestDevice({ requiredLimits, requiredFeatures })
+    instrument.attach(device, adapter)
+    return device
   }
 
   /**
    * Creates an engine. 'auto' uses the page's display mode, tested once per page (present.ts); every mode waits for
-   * that test first, so no device is made while it runs.
+   * that test first, so no device is made while it runs. `instrument` is for the System Check's GPU benchmark only
+   * (bench/profiler.ts): it sees the device before the engine uses it.
    */
-  static async create(mode: PresentMode | 'auto' = 'auto'): Promise<DevelopEngine> {
+  static async create(mode: PresentMode | 'auto' = 'auto', instrument?: DeviceInstrument): Promise<DevelopEngine> {
     const chosen = await presentMode().catch((): PresentMode => 'readback')
-    return new DevelopEngine(await DevelopEngine.device(), mode === 'auto' ? chosen : mode)
+    return new DevelopEngine(await DevelopEngine.device(instrument), mode === 'auto' ? chosen : mode)
   }
 
   /** The GPU device was lost (a driver reset, or the browser reclaimed it); a new engine is needed. */

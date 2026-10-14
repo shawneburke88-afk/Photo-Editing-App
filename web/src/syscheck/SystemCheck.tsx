@@ -1,10 +1,13 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { CatalogCheck } from './CatalogCheck'
 import { EnvironmentCheck } from './EnvironmentCheck'
 import { FolderCheck } from './FolderCheck'
 import { RawCheck } from './RawCheck'
 import { ReportProvider, useReport } from './report'
 import { SOURCE_URL } from '../lib/source'
+
+// The GPU benchmark is loaded only when this page opens, so the main app doesn't carry it (PHASE3.md Part 16).
+const Benchmark = lazy(() => import('../bench/Benchmark'))
 
 export function SystemCheck() {
   return (
@@ -28,6 +31,9 @@ export function SystemCheck() {
         <RawCheck />
         <FolderCheck />
         <CatalogCheck />
+        <Suspense fallback={<section className="card"><h2>GPU benchmark</h2><p className="card-intro">Loading…</p></section>}>
+          <Benchmark />
+        </Suspense>
         <ReportBox />
       </div>
     </ReportProvider>
