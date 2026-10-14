@@ -1592,3 +1592,122 @@ Headless Chromium 141 with SwiftShader WebGPU (which reports a fallback adapter)
 - After a loss, Develop uploads the photo again from its kept decode; the decode stays in memory as long as the photo is shown (the engine already held the same data).
 - A retry develops a photo twice; a photo whose thumbnail fails twice keeps its new settings with the old thumbnail.
 - **The memory saving of `unload()` is unmeasured on a real GPU**, and on SwiftShader the GPU process kept its memory (above). The diagnosis's other memory ideas (reusing RCD temporaries, Bayer Stage A in strips, one shared device) weren't done.
+
+
+## Part 16: GPU benchmark
+
+**What it does.** A **GPU benchmark** section at the foot of the System Check page times each step of LightBench's develop pipeline on the computer's own graphics card, with test images made in the page, and gives a table to copy and paste back. Every speed number in Parts 1–14 came from SwiftShader, a software renderer running on the CPU; this is how the owner's RTX 4000 Ada (or any other GPU) gets real numbers. It is IMPROVEMENTS.md item C20a (the real-GPU benchmark harness), without C20a's fixed set of real photos and without a release gate yet. Nothing renders differently: the benchmark adds code paths and changes no existing one (engine-level identity below).
+
+### How to run it
+
+1. Open LightBench in **Chrome or Edge**, go to **System Check** (top bar), and scroll to **GPU benchmark**. Close other apps that use the graphics card (games, video calls, other LightBench tabs), and keep the laptop on mains power.
+2. Check **Graphics adapter**: on a laptop with two GPUs it should name the NVIDIA card. LightBench asks for the high-performance adapter, but Windows can still hand the browser the integrated one; if so, set Chrome or Edge to "High performance" in Windows Settings → System → Display → Graphics, restart the browser and reload the page.
+3. Press **Run Quick** (about 30 seconds on a discrete GPU) or **Run Full** (a few minutes). A progress bar shows the stage and run; **Cancel** stops after the current run and keeps what was measured. Leaving the page also cancels.
+4. Press **Copy results (Markdown)** (or **JSON**) and paste the text into the conversation. **Show the results as text** shows the same Markdown, for copying by hand if the browser refuses the clipboard.
+
+Optionally, **Also use a photo from my library** adds one photo of the library to the run (the stages of the test image of its kind). It is read locally from its folder, which must be connected in this session; its name, camera and pixels are not in the results, only e.g. "Your photo (Bayer RAW, 24.2 MP)".
+
+Nothing is sent anywhere. The results hold the app version and commit, the date, the browser's user agent, the adapter's vendor, architecture, device and description strings, whether it is a fallback (software) adapter, whether it has `timestamp-query` and `shader-f16`, eight of its limits, the screen's devicePixelRatio, the canvas mode and why it was chosen, and the measurements. No serial numbers or other identifiers.
+
+### Test images
+
+Made in the page and deterministic (`bench/synthetic.ts`), so nothing is downloaded and every machine times the same pixels. One procedural scene (gradients, a colour-checker-like set of patches, fine chirps that stress the demosaic, a highlight above the sensor's white so highlight reconstruction has work, shot and read noise) is written as:
+
+| Image | Size | Posing as |
+|---|---|---|
+| Bayer 24 MP | 6000 × 4000, RGGB, 14 bits, black 512 | a Sony ILCE-6300 at ISO 400 (so noise reduction uses darktable's real profile for that camera), with Sony-style lens data (distortion, lateral CA and vignetting knots, the kind the A6300 test file carries), so the lens correction needs no Lensfun download |
+| Bayer 45 MP (Full) | 8256 × 5504 | the same |
+| X-Trans 26 MP (Full) | 6240 × 4160, the X-T4's pattern | a Fujifilm X-T4 at ISO 400, no lens data |
+| sRGB 24 MP | 6000 × 4000, 8 bits | a JPEG's decoded pixels with the sRGB profile |
+
+Each image goes through `loadIntoEngine` (develop/source.ts) like a decoded photo, then through the stages with its kind's default edit (`defaultsFor`: for the RAWs, sharpening Amount 40 and lens correction on), changed per stage as listed below. For testing on software renderers, `?benchmp=N` scales the images to N megapixels; the page, the image labels ("Bayer 0.30 MP (synthetic, scaled)") and the results then say so, because such numbers can't be compared with the nominal sizes.
+
+### What each number means
+
+Quick runs the 24 MP Bayer image through every stage below and the sRGB image through Stage A, the fitted display pass and the export render, with 1 warm-up and 3 measured runs per stage. Full adds the 45 MP Bayer image (every stage), the X-Trans image (Stage A with Markesteijn 1- and 3-pass, display at fit and 100 %, both export rows) and more sRGB stages, with 2 warm-ups and 5 runs.
+
+| Row | What runs (the engine's own API) | What each run changes, so the work is done again |
+|---|---|---|
+| **Stage A: RAW → scene** | `engine.process(stageOptions(...))`: rawprepare, highlights (inpaint opposed, including one GPU → CPU read-back of its chroma statistics), demosaic, the scene's mip chain. For the JPEG: the input stage (profile → linear, inverse tone mapping, mips). | nothing: every call builds the scene again |
+| ↳ rawprepare, highlights, demosaic (RCD; Markesteijn for X-Trans), mip chain | the same runs' passes, grouped by entry point (`prepare`; `hl*`; `rcd*` and `writeRcd`, or `xt*`; `mip`). GPU time only, so only with timestamp-query. | — |
+| Stage A, Markesteijn 3-pass (Full, X-Trans) | the same with the 3-pass method | — |
+| **Geometry warp: lens correction + straighten** | `renderStats(…, 64)` with lens correction on and a 0.5° angle: the full-size bicubic warp through the combined map (`warp.wgsl` + `lens.wgsl`) and its mip chain; GPU = the `warp` and `mip` passes. No Detail. | the angle, by 0.001° |
+| **Tone equalizer mask pre-pass** | `renderStats(…, 64)` with process version 2 and Shadows +40: the full-size guided-filter statistics; GPU = `moments`, `reduce`, `blurX`, `blurY` | the red white-balance multiplier, by 0.01 % (the mask is keyed on it) |
+| **Detail: denoise (profiled, wavelets)** | `render(…, 100 %)` with Luminance 30, Color 25 and no sharpening: the full-size wavelet denoise (7 scales) and its mip chain, then one redraw; GPU = the denoise passes and mips | Luminance 30 → 31 → 32 |
+| **Detail: capture sharpening, Amount 40** | the same with sharpening only (8 Richardson–Lucy iterations): masks, iterations, result; GPU = the `cs*` passes and mips. **Only the shipped separable kernel is measured: the 9 × 9 kernel it replaced (Part 13) is no longer in the code.** | Detail 25 → 26 → 27 |
+| **Display pass**, fit and 100 %, without and with a Tone Curve | `render(…)` on the benchmark's canvas (full width of the section, `min(50vh, 420px)` high; its size in device pixels is in the results) after an Exposure change of 0.01 EV, with everything upstream cached: one slider redraw; GPU = the display pass. In compatibility (read-back) mode the wall time includes copying the frame back and drawing it on a 2D canvas. | Exposure |
+| **Remove: one spot** | `renderStats(…, 64)` with one Remove spot (radius 1 % of the short side, feather 0.5), no Detail, no lens: reading the scene's tiles, the fill search (on the CPU, in the retouch worker), writing the retouched copy and its mips | the spot's position |
+| **Export render** | `renderOutput` at full size, 8-bit sRGB, as Export calls it (no output sharpening, Export's default), read back; Detail, warp and masks already cached, as when exporting right after editing | Exposure |
+| **Export end to end** | `process` then `renderOutput`: Stage A, Detail (Amount 40, full size), the lens warp of the detailed scene and the render: one exported photo's GPU work after decoding | nothing (Stage A drops every cache) |
+| **JPEG encode** | `encodeJpeg` (jpegli, WebAssembly in a worker) of the last export render at quality 90 and 4:4:4 (Export's defaults), without metadata. CPU only. | — |
+| **Thumbnail** | `renderThumbnail` (a 512 px render and the browser's JPEG encoder), as the background developer refreshes one; Detail at the thumbnail's level is cached after the warm-up | Exposure |
+
+The **Colour Mixer** pre-pass (being built on another branch) gets one more row after the tone mask: `STAGES` in `bench/run.ts` is in pipeline order and has a comment at that place.
+
+The columns:
+- **Median / Min**: wall-clock time of the engine call, from just before it until `queue.onSubmittedWorkDone()` resolves after it (`performance.now()`): what a person waits for, CPU work and read-backs included.
+- **GPU median / GPU min**: the sum of the stage's passes from **timestamp queries**, where the adapter has `timestamp-query`. Chrome rounds them to 0.1 ms unless its WebGPU developer features are on (`chrome://flags/#enable-webgpu-developer-features`); the results say when the values look rounded, and a stage of many tiny passes is then off by up to 0.1 ms per pass. Without timestamp-query (or with `?benchts=0`) the GPU columns and the ↳ rows are empty and the results say "wall-clock only".
+- **Peak memory**: the most bytes of buffers and textures the benchmark's engine had allocated during the stage, warm-ups included. LightBench has no memory accounting of its own, so this is **estimated from the allocations**: each buffer's size and each texture's texels × bytes per texel over its mip levels, from creation until it is destroyed. Driver padding, the canvas's own textures and the browser's overhead are not included. Per image the results also give the peak over all its stages and what stayed allocated after `unload()`.
+- Median and minimum are over the measured runs only. The warm-ups (shader compilation, the noise profiles' download, the JPEG encoder's WebAssembly, first-use caches) are not counted.
+
+### How it measures
+
+| Part | Detail |
+|---|---|
+| Its own engine | `DevelopEngine.create('auto', profiler)`: the page's canvas mode (Part 14's probe, or `?gpu=`), and a `DeviceInstrument` (new, optional) that asks for `timestamp-query` where the adapter has it and sees the device before the engine makes anything on it. Engines made without one (Develop, Export, the background developer, the 100 % view) are made exactly as before. |
+| Pass times (`bench/profiler.ts`) | On that device only, every compute and render pass begun while a run is measured gets `timestampWrites`, and is named after the pipeline it sets: the compute entry point, or the render pipeline's label (the engine's render pipelines now have labels: `display`, `develop`, `mip`; labels change no pixels). After the run the queries are resolved and read back. Up to 8,192 passes per run are timed. |
+| Statistics (`bench/stats.ts`) | Median (the mean of the middle two for an even count) and minimum of the finite values. |
+| Never with Develop | Before every run it waits until the foreground gate (Part 14) is quiet, and before every stage until the background developer (Paste, Sync, presets) has nothing running or queued. The System Check page never shows Develop at the same time. |
+| Device loss | Each stage (its warm-ups and runs) is one `guarded` call (Part 14). A lost device, out of memory or an internal error runs the stage once more on a new engine with the image loaded again; the row is marked "(recovered)" and its note says why. A validation error, or a second failure, marks the row "failed" with the message, and the benchmark goes on with the next stage (on a new engine if the device is gone). |
+| Lazy | `SystemCheck.tsx` loads `bench/Benchmark.tsx` with `React.lazy`: the benchmark is its own 29.8 kB chunk (12.1 kB gzipped) plus 1.0 kB of CSS, loaded only when System Check opens. |
+| Test switches | `?benchmp=N` (scaled test images) and `?benchts=0` (wall-clock only, to test that path or to sidestep a driver's bad timestamps) in every build; `?benchlose=<stage id>` (lose the device once before that stage, to test recovery) on the development server only. |
+
+### Verified
+
+Headless Chromium 141 with SwiftShader WebGPU (a fallback adapter, which **has** `timestamp-query`), the Vite development server, `?gpu=readback&benchmp=0.3` (the test images at 0.3 MP: at nominal size the denoise alone takes minutes per run on SwiftShader). Scripts in the scratchpad's `gpubench/` folder.
+- **Quick, end to end** (`e2e-bench.mjs`): the adapter facts (google · swiftshader, fallback yes, timestamp-query available, canvas mode "readback (forced)"); Cancel offered while running; 17 stage rows and 6 ↳ rows, none failed, every stage row with a median; **Copy results** put on the clipboard Markdown with the title, app version and commit, date, user agent, adapter, features and limits, both timing methods, the scaling note, one table row per row on the page and no file names, and JSON with the same rows and each image's memory; the System Check report gained a GPU benchmark section; no page errors. A second run cancelled after 6 s stopped with "Cancelled" and partial results, and the buttons came back.
+- **Wall-clock only** (`?benchts=0`): every GPU cell empty, every stage row still timed, the Markdown says "unavailable (no timestamp-query): wall-clock only" and the ↳ rows "needs timestamp-query".
+- **Recovery** (`?benchlose=export`): the device was lost before the export stage's first run; the stage ran again on a new engine (marked "(recovered)", the loss logged as a warning) and every later stage ran on it, none failed.
+
+A SwiftShader sample (Quick, test images at 0.3 MP, the canvas 938 × 420; **it says nothing about a real GPU**, it shows what the table looks like; the ↳ rows are medians of the parts, so they don't add up exactly to the median above them):
+
+| Stage | Image | Median | Min | GPU median | GPU min | Peak memory |
+|---|---|---:|---:|---:|---:|---:|
+| Stage A: RAW → scene (process) | Bayer 0.3 MP | 602 ms | 562 ms | 592 ms | 557 ms | 16 MB |
+| ↳ rawprepare (black/white, white balance) | Bayer 0.3 MP | — | — | 11.4 ms | 9.67 ms | — |
+| ↳ highlights (inpaint opposed) | Bayer 0.3 MP | — | — | 308 ms | 86.2 ms | — |
+| ↳ demosaic (RCD) | Bayer 0.3 MP | — | — | 451 ms | 263 ms | — |
+| ↳ mip chain | Bayer 0.3 MP | — | — | 9.91 ms | 9.49 ms | — |
+| Geometry warp: lens correction + straighten, full size | Bayer 0.3 MP | 554 ms | 466 ms | 545 ms | 448 ms | 9.6 MB |
+| Tone equalizer mask pre-pass (process 2, Shadows +40) | Bayer 0.3 MP | 77.5 ms | 68.7 ms | 58.1 ms | 56.4 ms | 7.3 MB |
+| Detail: denoise (profiled, wavelets), full size | Bayer 0.3 MP | 8099 ms | 6994 ms | 7331 ms | 6037 ms | 20 MB |
+| Detail: capture sharpening, Amount 40 (separable blur), full size | Bayer 0.3 MP | 3164 ms | 2525 ms | 1893 ms | 1829 ms | 20 MB |
+| Display pass, fit, without Tone Curve | Bayer 0.3 MP | 877 ms | 857 ms | 856 ms | 849 ms | 16 MB |
+| Display pass, 100 %, without Tone Curve | Bayer 0.3 MP | 979 ms | 977 ms | 972 ms | 971 ms | 16 MB |
+| Display pass, fit, with Tone Curve | Bayer 0.3 MP | 1031 ms | 794 ms | 1024 ms | 784 ms | 16 MB |
+| Display pass, 100 %, with Tone Curve | Bayer 0.3 MP | 1187 ms | 1148 ms | 1173 ms | 1141 ms | 16 MB |
+| Remove: one spot (fill search on the CPU, tiles on the GPU) | Bayer 0.3 MP | 203 ms | 180 ms | 24.6 ms | 16.0 ms | 19 MB |
+| Export render, full size, 8-bit sRGB (develop + read back) | Bayer 0.3 MP | 709 ms | 589 ms | 700 ms | 584 ms | 21 MB |
+| Export end to end: Stage A + Detail + warp + render | Bayer 0.3 MP | 4891 ms | 4004 ms | 4849 ms | 3935 ms | 28 MB |
+| JPEG encode, full size (jpegli, quality 90) | Bayer 0.3 MP | 44.1 ms | 38.6 ms | — | — | 13 MB |
+| Thumbnail: 512 px JPEG (renderThumbnail) | Bayer 0.3 MP | 479 ms | 431 ms | 442 ms | 405 ms | 14 MB |
+| Stage A: RAW → scene (process) | sRGB 0.3 MP | 86.7 ms | 86.3 ms | 84.2 ms | 80.1 ms | 7.9 MB |
+| ↳ input profile + inverse tone map | sRGB 0.3 MP | — | — | 69.4 ms | 68.2 ms | — |
+| ↳ mip chain | sRGB 0.3 MP | — | — | 10.7 ms | 10.5 ms | — |
+| Display pass, fit, without Tone Curve | sRGB 0.3 MP | 847 ms | 714 ms | 836 ms | 706 ms | 7.8 MB |
+| Export render, full size, 8-bit sRGB (develop + read back) | sRGB 0.3 MP | 1052 ms | 799 ms | 828 ms | 795 ms | 9.4 MB |
+
+- **Rendering unchanged**: engine level, Part 14's `identity.mjs` run on this branch for 9 of its 19 cases (A.NEF defaults with the RAW sharpening, spots with crop, angle and custom white balance, a Tone Curve with crop and angle, Detail sharpening with spots; C.JPG defaults, a process 2 edit, a Tone Curve with spots; D.ARW defaults, Detail radius/masking with Color noise reduction and an angle): **9 of 9 identical** to main's hashes recorded in Part 14's final run (full-size and 1024 px export SHA-256, 512 px thumbnail, histogram statistics). The rendering code of main `19015b0` is that run's code.
+- **Bundle**: the main chunk grew from 974.70 kB to 977.55 kB (+2.85 kB; gzipped 311.96 → 313.19 kB, +1.23 kB): the lazy import, the engine's instrument option and pipeline labels, and the export names the lazy chunk imports from the main chunk. The benchmark itself is in its own chunk (above).
+- **Unit tests**: `bench/bench.test.ts` (median and min for odd and even counts, unsorted input, non-finite values and none at all; pass sums; rounding detection; ms and byte formatting; the commit from the version; the Markdown's header facts, table, sub-rows, escaped pipes and failed rows, and its wall-clock-only, scaled and cancelled lines; the JSON round trip; the test images' sizes, levels, patterns and determinism; the texture memory estimate) and `bench/plan.test.ts` (what Quick and Full run, scaled images, a library photo's label). `npm ci`, `npx tsc -b`, `npx oxlint` (the two existing warnings), `npx vitest run` (77 files, 748 tests; main `19015b0` has 75 and 730, so 18 new) and `npm run build` passed.
+
+### Limitations and unverified
+
+- **Not run on a real GPU** here: no NVIDIA, AMD, Intel or Apple numbers yet; that is what the owner's run is for. Which GPU Chrome or Edge uses on the owner's laptop is unconfirmed (step 2 above).
+- **Timestamp queries** are what the browser reports: Chrome rounds them to 0.1 ms by default, and some drivers report overlapping or reordered passes oddly. The wall-clock times are the reference; the GPU times split them up.
+- The test images are synthetic: speeds that depend on content (highlight reconstruction's clipped area, Remove's search) can differ on real photos. The library photo option covers that; C20a's fixed set of real photos (D700, A6300, X100F, 1D Mark III at ISO 6400) isn't bundled.
+- **"Use a photo from my library" wasn't tested end to end** (the test library is empty); it reads the photo as Export does (`getPhoto`, `openPhotoFile`, the decoder).
+- Peak memory estimates the engine's own allocations, not what the driver or the GPU process uses; on SwiftShader it says nothing about video memory.
+- The display pass is measured on the benchmark's canvas, not Develop's; at another canvas size the fitted view's cost changes.
+- Remove's fill search runs on the CPU, so its row measures the CPU as much as the GPU; the JPEG row is CPU only.
+- No release gate yet (PLAN, "Every release"): the numbers are for the owner to read and paste, not checked against budgets.
