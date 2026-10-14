@@ -48,7 +48,7 @@ import { sidecars } from '../sidecar/sync'
 import { checkPhoto } from '../sidecar/watch'
 import { canRedo, canUndo, current, jump, loadHistory, record, redo, replaceCurrent, savedForm, undo, type History } from './history'
 import { batch, rerunAuto } from './batch'
-import { applyPaste, changedKeys, rememberedChoice, settingsClipboard, type Clipboard, type PasteKey } from './paste'
+import { applyPaste, changedKeys, NOT_AUTO_SYNCED, rememberedChoice, settingsClipboard, type Clipboard, type PasteKey } from './paste'
 import { PasteDialog } from './PasteDialog'
 import { PresetPanel } from './PresetPanel'
 import { blendSettings, presetClip, type Preset, type PresetData } from './presets'
@@ -76,6 +76,13 @@ import { ContextMenu } from './ContextMenu'
 import { menuPoint } from './menuPoint'
 import { cleanName, makeSnapshot, sortSnapshots, uniqueName, type Snapshot } from './snapshots'
 import { snapshotsChanged } from './snapshotStore'
+import { useMasking } from './useMasking'
+import { MaskOverlay } from './MaskOverlay'
+import { MasksPanel } from './MasksPanel'
+import { MASK_BRUSH_SIZE, OVERLAY_COLOURS } from './maskUi'
+import { presetMasks, withMasksList, type LocalMask } from '../engine/develop/masks'
+import { hasAcrSidecar } from '../sidecar/acr'
+import type { MaskOverlayDraw } from '../engine/develop/indicators'
 
 interface Props {
   ids: number[]
@@ -126,6 +133,7 @@ interface Bypass {
   colour: boolean
   grading: boolean
   detail: boolean
+  masks: boolean
 }
 
 /** Settings without their spots (the field left out, as in edits that never had any). */
@@ -274,6 +282,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [proofCopyBusy, setProofCopyBusy] = useState(false)
   const [placing, setPlacing] = useState(false)
   const [spotError, setSpotError] = useState<string | null>(null)
+  /** A Lightroom `.acr` sidecar is next to the photo (its masks can't be read; PHASE3.md Part 23). */
+  const [acr, setAcr] = useState(false)
   /**
    * Where the photo sits on the stage (CSS pixels) after the last drawing, and how that drawing maps to the sensor,
    * while the Remove brush is on. Box and map come from the same finished drawing, so the pins always match the photo
@@ -282,6 +292,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [shownBox, setShownBox] = useState<ShownBox | null>(null)
   /** The same for the last finished drawing, whatever the tool (shown at once when the Remove brush opens). */
   const lastDraw = useRef<Omit<ShownBox, 'n'> | null>(null)
+  /** The selected mask over the photo while masking (Part 23): a view, on Develop's canvas only (set by the masking tool). */
+  const [maskOverlayDraw, setMaskOverlayDraw] = useState<MaskOverlayDraw | null>(null)
   /** Counts engines made ready (a new one after a lost device), so effects that use the engine run again. */
   const [engineReady, setEngineReady] = useState(0)
   /** Bumped when the GPU device was lost: the engine is made again (PHASE3.md, Part 14). */
@@ -320,6 +332,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [rightW, setRightW] = useStoredNumber('lightbench.develop.right', 300)
   const [histH, setHistH] = useStoredNumber('lightbench.develop.histogram', 170)
   const builtStage = useRef<RawStageOptions | null>(null)
+  /** The masking tool, for effects declared before it (a new photo resets it). */
+  const maskingRef = useRef<{ resetForPhoto: () => void } | null>(null)
   const dirty = useRef(false)
   const loadToken = useRef(0)
   /** A save waiting for its debounce timer, and the save currently running. */
@@ -492,6 +506,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setSelectedPoint(0)
     setSelectedSpot(null)
     setSpotError(null)
+    maskingRef.current?.resetForPhoto()
+    setAcr(false)
     detection.current = null
     angleBase.current = null
     builtStage.current = null
@@ -503,6 +519,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       if (stale() || !d) return
       setPhoto(d)
       void checkPhoto(id)
+      void hasAcrSidecar(d.rootId, d.folderPath, d.fileName).then((x) => !stale() && setAcr(x), () => {})
       const file = await openPhotoFile(d.rootId, d.folderPath, d.fileName)
       if (!file) throw new Error('This photo’s folder isn’t connected. Go to the Library and click “Reconnect”.')
       decoder ??= new RawDecoder()
@@ -578,11 +595,12 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   // ---- drawing (coalesced so dragging never queues up frames)
   const indicators: Indicators = useMemo(
     // While a drag pushes the tone curve towards black or white, clipping shows on the photo (TONE_CURVE.md §2.5).
-    () => ({ clip: clipSettings, showClip: overlay || (curveDragClip && clipWhileDragging === 1), raw: rawClipSettings, showRaw: rawOverlay, ...(proof.draw ? { proof: proof.draw } : {}) }),
-    [clipSettings, overlay, rawClipSettings, rawOverlay, curveDragClip, clipWhileDragging, proof.draw],
+    () => ({ clip: clipSettings, showClip: overlay || (curveDragClip && clipWhileDragging === 1), raw: rawClipSettings, showRaw: rawOverlay, ...(proof.draw ? { proof: proof.draw } : {}), ...(maskOverlayDraw ? { maskOverlay: maskOverlayDraw } : {}) }),
+    [clipSettings, overlay, rawClipSettings, rawOverlay, curveDragClip, clipWhileDragging, proof.draw, maskOverlayDraw],
   )
-  const latest = useRef({ settings, info, view, before, beforeSettings, indicators, hover, draft, bypass, sectionsOff, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost })
-  latest.current = { settings, info, view, before, beforeSettings, indicators, hover, draft, bypass, sectionsOff, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost }
+  const maskView = useRef<{ draft: LocalMask[] | null; hidden: ReadonlySet<string>; active: boolean }>({ draft: null, hidden: new Set(), active: false })
+  const latest = useRef({ settings, info, view, before, beforeSettings, indicators, hover, draft, bypass, sectionsOff, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost, maskView: maskView.current })
+  latest.current = { settings, info, view, before, beforeSettings, indicators, hover, draft, bypass, sectionsOff, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost, maskView: maskView.current }
   /** The settings drawn: Before shows the defaults (or the snapshot set as Before); a preset or snapshot hovered, the crop being edited and switched-off groups apply on top. */
   const shownOf = (x: typeof latest.current, inf: SensorInfo): DevelopSettings => {
     // Before is the snapshot set as Before, exactly as it was saved (its process version too), …
@@ -594,6 +612,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     if (x.mixerDraft && !x.hover) s = withColourMixer(s, x.mixerDraft.m)
     if (x.gradingDraft && !x.hover) s = withColourGrading(s, x.gradingDraft.g)
     if (x.gradingBoost && !x.hover) s = withColourGrading(s, boostedGrading(s.colourGrading))
+    // Masks (Part 23): a stroke or a handle drag in progress, and the masks whose own eye is off (a view only).
+    if (x.maskView.draft && !x.hover) s = withMasksList(s, x.maskView.draft)
+    if (x.maskView.hidden.size && s.masks) s = withMasksList(s, shownMasks(s.masks, x.maskView.hidden))
     // The eyes (PHASE3.md Parts 1 and 21): hidden sections at their defaults, then hidden groups (a group's eye overrides
     // its sections'). While cropping, the crop being edited is shown, without Crop & Lens's eyes.
     const hidden = x.draft ? new Set([...x.sectionsOff].filter((k) => !k.startsWith('crop.'))) : x.sectionsOff
@@ -678,7 +699,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             const drawn = { x: l.x / dpr, y: l.y / dpr, w: l.w / dpr, h: l.h / dpr, map: engine.shownSnapshot() }
             lastDraw.current = drawn
             // Whether the brush is on now, not when this drawing started (it may have been opened meanwhile).
-            if (latest.current.removing) setShownBox((b) => ({ ...drawn, n: (b?.n ?? 0) + 1 }))
+            if (latest.current.removing || latest.current.maskView.active) setShownBox((b) => ({ ...drawn, n: (b?.n ?? 0) + 1 }))
           }
           scheduleStats()
         } catch (e) {
@@ -805,6 +826,51 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     },
     [change],
   )
+  /** Masks (PHASE3.md Part 23): the masking tool on the photo and what it does to the photo's masks. */
+  const masking = useMasking({
+    settings: () => (historyRef.current ? current(historyRef.current) : latest.current.settings),
+    change,
+    sensor: () => sensorSize(),
+    sample: async (uv) => {
+      const engine = engineRef.current
+      const x = latest.current
+      const inf = x.info
+      if (!engine || !inf) return null
+      const shown = shownOf(x, inf)
+      const l = engine.layout(x.view, engine.canvas.width, engine.canvas.height)
+      return gpuGate.foreground(() => engine.sampleMaskInput(displayUniforms(shown), multipliers(shown, inf), uv[0], uv[1], l.scale))
+    },
+    onStart: () => {
+      if (draftRef.current) endCrop(true)
+      setGuiding(false)
+      setCurveTarget(false)
+      setMixerTarget(null)
+      setPointPick(false)
+      setRemoving(false)
+      setSelectedSpot(null)
+      setWbPick(false)
+      setLoupe(null)
+      setPicking(false)
+      setBefore(false)
+      setBypass((b) => ({ ...b, masks: false }))
+      const drawn = lastDraw.current
+      if (drawn) setShownBox((b) => ({ ...drawn, n: (b?.n ?? 0) + 1 }))
+      setReveal({ id: 'masks', n: Date.now() })
+    },
+  })
+  maskingRef.current = masking
+  const ovKey = masking.active && masking.overlay.on && masking.sel.mask && !masking.hidden.has(masking.sel.mask) ? `${masking.sel.mask}|${masking.overlay.mode}|${masking.overlay.colour}|${masking.overlay.opacity}` : ''
+  useEffect(() => {
+    const o = masking.overlay
+    setMaskOverlayDraw(ovKey && masking.sel.mask ? { id: masking.sel.mask, mode: o.mode, colour: OVERLAY_COLOURS[o.colour % OVERLAY_COLOURS.length].rgb, opacity: o.opacity / 100 } : null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ovKey])
+  // A stroke or handle drag in progress, or a mask's eye: draw again.
+  useEffect(() => {
+    if (status.kind === 'ready') requestRender()
+  }, [masking.draft, masking.hidden, status.kind, requestRender])
+  maskView.current = { draft: masking.draft, hidden: masking.hidden, active: masking.active }
+  latest.current.maskView = maskView.current
   /** Tone Curve Auto (PHASE3.md Part 21): Auto contrast, Auto colour, their Amount and the suggestions. */
   const curveAuto = useCurveAuto({
     engine: () => engineRef.current,
@@ -832,6 +898,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setPointPick(false)
     setGuiding(false)
     setRemoving(false)
+    masking.end()
     setSelectedSpot(null)
     setWbPick(false)
     setLoupe(null)
@@ -869,6 +936,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     if (draft) endCrop(true)
     setGuiding(false)
     setRemoving(false)
+    masking.end()
     setSelectedSpot(null)
     setWbPick(false)
     setLoupe(null)
@@ -891,6 +959,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     if (draft) endCrop(true)
     setGuiding(false)
     setRemoving(false)
+    masking.end()
     setSelectedSpot(null)
     setWbPick(false)
     setLoupe(null)
@@ -1035,6 +1104,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setMixerTarget(null)
     setPointPick(false)
     setRemoving(false)
+    masking.end()
     setSelectedSpot(null)
     setWbPick(false)
     setLoupe(null)
@@ -1152,9 +1222,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       { id: 'colour', name: 'Colour Mixer', off: bypass.colour },
       { id: 'grading', name: 'Colour Grading', off: bypass.grading },
       { id: 'detail', name: 'Detail', off: bypass.detail && detailOn(settings.detail) },
+      { id: 'masks', name: 'Masks', off: bypass.masks && !!settings.masks?.length },
     ],
     sectionsOff,
-  )
+  ).concat(bypass.masks ? [] : (settings.masks ?? []).filter((x) => masking.hidden.has(x.id)).map((x) => `mask ${x.name}`))
 
   // ---- Transform and Upright (engine/develop/upright.ts; uprightRun.ts runs it on the photo shown)
   /** The lines of the photo shown, detected once per lens correction (after it, before the perspective). */
@@ -1311,6 +1382,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     setPicking(false)
     setBefore(false)
     setBypass((b) => ({ ...b, remove: false }))
+    masking.end()
     // The pins map through the drawing on screen now, not one from an earlier time the brush was on.
     const drawn = lastDraw.current
     if (drawn) setShownBox((b) => ({ ...drawn, n: (b?.n ?? 0) + 1 }))
@@ -1519,14 +1591,15 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   function openNewPreset() {
     // Pre-tick what differs from the defaults, so a preset holds what was actually changed.
     // Spots belong to one photo: a preset holds them only when ticked by hand.
-    const changed = changedKeys(defaults, settings).filter((k) => k !== 'spots')
+    const changed = changedKeys(defaults, settings).filter((k) => k !== 'spots' && k !== 'masks')
     const { keys } = rememberedChoice()
     const clip = clipFor(changed.length ? changed : keys, !!settings.auto)
     if (clip && status.kind === 'ready') setPasting({ mode: 'preset', clip })
   }
 
   async function savePreset(clip: Clipboard, name: string) {
-    const data: PresetData = { keys: clip.keys, settings: clip.settings, rerunAuto: clip.rerunAuto && !!clip.settings.auto, sourceKind: clip.sourceKind }
+    // Presets may hold gradients and range masks, not brush strokes (Part 23; owner's decision 7).
+    const data: PresetData = { keys: clip.keys, settings: withMasksList(clip.settings, presetMasks(clip.settings.masks)), rerunAuto: clip.rerunAuto && !!clip.settings.auto, sourceKind: clip.sourceKind }
     await catalog.savePreset(name, JSON.stringify(data))
     presetsChanged.emit()
   }
@@ -1644,7 +1717,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     if (!autoSync || !dirty.current || !prev || prev.id !== id || prev.settings === settings) return
     const p = syncPending.current
     // Spots belong to one photo, so Auto Sync doesn't send them (Sync… can, when they are ticked).
-    changedKeys(prev.settings, settings).forEach((k) => k !== 'spots' && p.keys.add(k))
+    changedKeys(prev.settings, settings).forEach((k) => !NOT_AUTO_SYNCED.includes(k) && p.keys.add(k))
     if (settings.auto && JSON.stringify(prev.settings.auto) !== JSON.stringify(settings.auto)) p.auto = true
     const clip = clipFor([...p.keys], p.auto)
     if (!clip || (!p.keys.size && !p.auto)) return
@@ -1792,8 +1865,59 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         return false
     }
   })
-  useShortcuts(['develop'], !pasting && !draft && !guiding && !curveTarget && !removing && !mixerTool, (cmd) => {
+  // While masking on the photo, Develop listens to 'mask' (PHASE3.md Part 23).
+  const maskNew = (cmd: string) => {
+    const kind = ({ 'develop.maskBrush': 'brush', 'develop.maskLinear': 'linear', 'develop.maskRadial': 'radial', 'develop.maskColour': 'colour', 'develop.maskLuminance': 'luminance' } as const)[cmd as 'develop.maskBrush']
+    if (!kind || status.kind !== 'ready') return false
+    masking.newOf(kind)
+    return true
+  }
+  useShortcuts(['mask'], !pasting && !draft && !guiding && masking.active, (cmd) => {
+    const b = masking.brush
     switch (cmd) {
+      case 'develop.masks':
+      case 'mask.done': masking.end(); break
+      case 'mask.cancel':
+        if (masking.creating) masking.setCreating(null)
+        else if (masking.picking) masking.setPicking(null)
+        else if (masking.sel.mask) masking.select(null)
+        else masking.end()
+        break
+      case 'develop.maskBrush':
+      case 'develop.maskLinear':
+      case 'develop.maskRadial':
+      case 'develop.maskColour':
+      case 'develop.maskLuminance': maskNew(cmd); break
+      case 'mask.overlay': masking.setOverlay({ ...masking.overlay, on: !masking.overlay.on }); break
+      case 'mask.overlayColour': masking.nextOverlayColour(); break
+      case 'mask.overlayMode': masking.nextOverlayMode(); break
+      case 'mask.pins': masking.setPins(!masking.pins); break
+      case 'mask.sizeUp': masking.setBrush({ ...b, size: Math.min(MASK_BRUSH_SIZE[1], Math.max(b.size + 1, Math.round(b.size * 1.15))) }); break
+      case 'mask.sizeDown': masking.setBrush({ ...b, size: Math.max(MASK_BRUSH_SIZE[0], Math.min(b.size - 1, Math.round(b.size / 1.15))) }); break
+      case 'mask.featherUp': masking.setBrush({ ...b, feather: Math.min(100, b.feather + 10) }); break
+      case 'mask.featherDown': masking.setBrush({ ...b, feather: Math.max(0, b.feather - 10) }); break
+      case 'mask.erase': masking.setBrush({ ...b, erase: !b.erase }); break
+      case 'mask.invert': masking.invertMask(); break
+      case 'mask.newSame': masking.newSame(); break
+      case 'mask.delete': masking.deleteSelected(); break
+      case 'develop.before': setBefore((x) => !x); break
+      case 'develop.zoom': setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center })); break
+      case 'develop.snapshot':
+      case 'develop.snapshotApp': createSnapshot(); break
+      case 'develop.undo':
+      case 'develop.redo': historyKey(cmd); break
+      default:
+        return false
+    }
+  })
+  useShortcuts(['develop'], !pasting && !draft && !guiding && !curveTarget && !removing && !mixerTool && !masking.active, (cmd) => {
+    switch (cmd) {
+      case 'develop.masks': masking.start(); break
+      case 'develop.maskBrush':
+      case 'develop.maskLinear':
+      case 'develop.maskRadial':
+      case 'develop.maskColour':
+      case 'develop.maskLuminance': maskNew(cmd); break
       case 'develop.grid': onLibrary(); break
       case 'develop.curveTarget': toggleCurveTarget(); break
       case 'develop.curveReset': changeCurve('Reset tone curve', undefined, true); break
@@ -1919,7 +2043,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   function onPointerDown(e: React.PointerEvent) {
     // The crop tool and Guided Upright have their own overlays; clicks there don't zoom or pan.
-    if (status.kind !== 'ready' || wbPick || draft || guiding || (removing && !before)) return
+    if (status.kind !== 'ready' || wbPick || draft || guiding || (removing && !before) || (masking.active && !before && !bypass.masks)) return
     ;(e.target as Element).setPointerCapture(e.pointerId)
     drag.current = { x: e.clientX, y: e.clientY, center: view.center, moved: false }
   }
@@ -2100,6 +2224,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           <button className={`button small ${removing ? 'on' : ''}`} onClick={() => (removing ? endRemove() : startRemove())} disabled={status.kind !== 'ready'} title={withKey(removing ? 'Finish with the Remove brush' : 'Remove, Heal and Clone: paint over what to remove', 'develop.remove')}>
             {removing ? 'Done' : 'Remove'}
           </button>
+          <button className={`button small ${masking.active ? 'on' : ''}`} onClick={() => (masking.active ? masking.end() : masking.start())} disabled={status.kind !== 'ready'} title={withKey(masking.active ? 'Finish masking' : 'Masks: local adjustments with brushes, gradients and ranges', 'develop.masks')}>
+            {masking.active ? 'Done' : 'Masks'}
+          </button>
           <button className={`button small ${before ? 'on' : ''}`} onClick={() => setBefore(!before)} disabled={status.kind !== 'ready' || !!draft} title={withKey(beforeSnap ? `Before / after: compares with the snapshot “${beforeSnap.name}”` : 'Before / after', 'develop.before')}>
             {before ? 'Showing before' : 'Before / after'}
           </button>
@@ -2137,7 +2264,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           />
         )}
         <div
-          className={`dstage ${draft ? 'cropping' : guiding ? 'guiding' : removing ? 'removing' : view.zoom === 'fit' ? 'fit' : 'zoomed'} ${wbPick ? 'wb-picking' : ''}`}
+          className={`dstage ${draft ? 'cropping' : guiding ? 'guiding' : removing ? 'removing' : masking.active ? 'masking' : view.zoom === 'fit' ? 'fit' : 'zoomed'} ${wbPick ? 'wb-picking' : ''}`}
           ref={stageRef}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -2258,6 +2385,44 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
               />
             )
           })()}
+          {masking.active && !draft && !guiding && !before && !bypass.masks && shownBox?.map && info && status.kind === 'ready' && (() => {
+            const b = shownBox
+            const map = b.map!
+            const [sw, sh] = map.sensor
+            return (
+              <MaskOverlay
+                key={id}
+                box={b}
+                toView={(x, y) => {
+                  const [u, v] = sensorToDisplayAt(map, x * sw, y * sh)
+                  return [b.x + u * b.w, b.y + v * b.h]
+                }}
+                fromView={(x, y) => {
+                  const [px, py] = displayToSensorAt(map, (x - b.x) / b.w, (y - b.y) / b.h)
+                  return [px / sw, py / sh]
+                }}
+                sensor={[sw, sh]}
+                masks={shownMasks(masking.draft ?? settings.masks ?? [], masking.hidden)}
+                selected={masking.sel.mask}
+                selectedComp={masking.sel.comp}
+                creating={masking.creating?.kind ?? null}
+                picking={masking.picking}
+                brush={masking.brush}
+                showPins={masking.pins}
+                onSelect={(mid, cid) => masking.select(mid, cid)}
+                onCreate={masking.onCreate}
+                onShape={masking.onShape}
+                onStroke={masking.onStroke}
+                onPick={(uv, add) => void masking.onPick(uv, add)}
+                onPan={(dx, dy) => panBy(dx, dy)}
+              />
+            )
+          })()}
+          {masking.active && !draft && !guiding && (
+            <div className="dbadge crop-hint">
+              {before || bypass.masks ? 'Masks hidden' : 'Masking: K brush · M linear · Shift+M radial · Shift+J colour · Shift+Q luminance · O overlay · Alt-drag erases · Enter finishes'}
+            </div>
+          )}
           {removing && !draft && !guiding && (
             <div className="dbadge crop-hint">
               {before || bypass.remove ? 'Spots hidden' : 'Paint over what to remove · click a pin to select · drag the dashed outline to change the source'} · [ ] size · Delete removes the spot · Enter finishes
@@ -2445,6 +2610,25 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
               ),
             },
             {
+              id: 'masks',
+              label: 'Masks',
+              title: 'Masks',
+              icon: GROUP_ICONS.masks,
+              bypass: settings.masks?.length || bypass.masks
+                ? { off: bypass.masks, onToggle: () => setBypass((b) => ({ ...b, masks: !b.masks })), title: bypass.masks ? 'Show the masks again' : 'Show the photo without its masks (nothing is changed)' }
+                : undefined,
+              content: (
+                <MasksPanel
+                  masks={masking.draft ?? settings.masks ?? []}
+                  m={masking}
+                  disabled={status.kind !== 'ready'}
+                  showHint={hintsPref === 1}
+                  acr={acr}
+                  lightroomNote={settings.masks?.some((x) => x.id.startsWith('lr')) ? 'Some masks were read from Lightroom’s settings in the .xmp (experimental: Lightroom’s mask format isn’t documented, so their look is approximate, and parts LightBench can’t read were left out).' : null}
+                />
+              ),
+            },
+            {
               id: 'basic',
               label: 'Basic',
               title: 'Basic',
@@ -2605,4 +2789,15 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       )}
     </div>
   )
+}
+
+/** The masks shown: those whose own eye is on (Part 23). */
+const shownCache = new WeakMap<LocalMask[], { hidden: ReadonlySet<string>; out: LocalMask[] }>()
+function shownMasks(list: LocalMask[], hidden: ReadonlySet<string>): LocalMask[] {
+  if (!hidden.size) return list
+  const hit = shownCache.get(list)
+  if (hit && hit.hidden === hidden) return hit.out
+  const out = list.filter((m) => !hidden.has(m.id))
+  shownCache.set(list, { hidden, out })
+  return out
 }

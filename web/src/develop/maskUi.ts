@@ -2,6 +2,7 @@
 // whether the pins show (docs/PHASE3.md Part 23).
 
 import { OVERLAY_MODES } from '../engine/develop/indicators'
+import type { BrushShape, LinearShape, LocalMask, Pt, RadialShape } from '../engine/develop/masks'
 
 export interface OverlayPrefs {
   on: boolean
@@ -65,3 +66,18 @@ export function spaceDabs(pts: [number, number][], spacing: number): number[] {
   }
   return out
 }
+
+/** Where a mask's pin sits (sensor-normalised), or null for range masks (they cover the whole photo). */
+export function maskAnchor(m: LocalMask): Pt | null {
+  for (const c of m.components) {
+    const s = c.shape
+    if (s.kind === 'linear') return [((s as LinearShape).full[0] + (s as LinearShape).zero[0]) / 2, ((s as LinearShape).full[1] + (s as LinearShape).zero[1]) / 2]
+    if (s.kind === 'radial') return (s as RadialShape).center
+    if (s.kind === 'brush') {
+      const d = (s as BrushShape).strokes[0]?.dabs
+      if (d?.length) return [d[0], d[1]]
+    }
+  }
+  return null
+}
+

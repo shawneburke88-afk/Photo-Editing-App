@@ -13,7 +13,7 @@ export const CROP_OVERLAYS: { id: CropOverlayKind; label: string }[] = [
 ]
 
 /** Icons for the groups, 16 px, drawn with the text colour. */
-export const GROUP_ICONS: Record<'crop' | 'remove' | 'basic' | 'curve' | 'colour' | 'grading' | 'detail', ReactNode> = {
+export const GROUP_ICONS: Record<'crop' | 'remove' | 'basic' | 'curve' | 'colour' | 'grading' | 'detail' | 'masks', ReactNode> = {
   crop: (
     <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
       <path fill="none" stroke="currentColor" strokeWidth="1.6" d="M4 1v10.5h10.5M1 4.5h10.5V15" />
@@ -58,6 +58,13 @@ export const GROUP_ICONS: Record<'crop' | 'remove' | 'basic' | 'curve' | 'colour
       <circle cx="9.2" cy="3.4" r="1.1" fill="currentColor" />
       <circle cx="3.2" cy="12.3" r="1.1" fill="currentColor" />
       <circle cx="12.9" cy="10.4" r="1.1" fill="currentColor" />
+    </svg>
+  ),
+  // A circle half filled: a mask (Part 23).
+  masks: (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <path fill="currentColor" d="M8 1.7a6.3 6.3 0 0 0 0 12.6z" />
     </svg>
   ),
   // A magnifier over a fine grid: detail (sharpening and noise).
