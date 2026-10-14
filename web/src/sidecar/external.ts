@@ -25,7 +25,7 @@ export async function locateSidecar(dir: FileSystemDirectoryHandle, photoName: s
 }
 
 export const oursOf = (src: Source) =>
-  fieldsFromCatalog({ rating: src.photo.rating, flag: src.photo.flag, color: src.photo.color, keywords: src.keywords, metadata: src.metadata, develop: src.settings }, lrFrame(src.photo))
+  fieldsFromCatalog({ rating: src.photo.rating, flag: src.photo.flag, color: src.photo.color, keywords: src.keywords, metadata: src.metadata, develop: src.settings, snapshots: src.snapshots }, lrFrame(src.photo))
 
 /**
  * Looks at a photo's sidecar file. 'same': unchanged since LightBench last read or wrote it (not read); 'adopted':

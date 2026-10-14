@@ -270,6 +270,48 @@ describe('shortcut sets', () => {
     }
   })
 
+  it('gives soft proofing S and Shift+S in Develop only, leaving the Library’s stack keys and Ctrl+Shift+S alone', () => {
+    for (const set of [LB, LR]) {
+      const map = resolveKeymap(set)
+      expect(matchAction(map, key('s'), DEVELOP)).toBe('develop.softProof')
+      expect(matchAction(map, key('S', { shiftKey: true }), DEVELOP)).toBe('develop.proofGamut')
+      expect(matchAction(map, key('S', { ctrlKey: true, shiftKey: true }), DEVELOP)).toBe('settings.sync')
+      expect(matchAction(map, key('S', { ctrlKey: true, altKey: true, shiftKey: true }), DEVELOP)).toBe('develop.mixerTargetSat')
+      expect(matchAction(map, key('s'), LIBRARY)).toBe('library.stackToggle')
+      expect(matchAction(map, key('S', { shiftKey: true }), LIBRARY)).toBe('library.stackTop')
+      // Not while cropping or with an on-photo tool: those views listen to their own contexts.
+      for (const ctx of [CROP, ['global', 'curve'], ['global', 'mixer'], ['global', 'remove'], ['global', 'guided']] as Context[][]) {
+        expect(matchAction(map, key('s'), ctx)).toBeNull()
+      }
+    }
+  })
+
+  it('makes a snapshot with Ctrl+Alt+N in Develop and its on-photo tools, and with Ctrl+N only in the installed app window', () => {
+    const tools: Context[][] = [DEVELOP, ['global', 'curve'], ['global', 'mixer'], ['global', 'remove']]
+    for (const set of [LB, LR]) {
+      const map = resolveKeymap(set)
+      const ctrlAltN = key('n', { ctrlKey: true, altKey: true, code: 'KeyN' })
+      const ctrlN = key('n', { ctrlKey: true, code: 'KeyN' })
+      for (const ctx of tools) {
+        expect(matchAction(map, ctrlAltN, ctx)).toBe('develop.snapshot')
+        expect(matchAction(map, ctrlAltN, ctx, true)).toBe('develop.snapshot')
+        // In a browser tab Ctrl+N is the browser's (a new window): LightBench doesn't take it.
+        expect(matchAction(map, ctrlN, ctx)).toBeNull()
+        expect(matchAction(map, ctrlN, ctx, true)).toBe('develop.snapshotApp')
+      }
+      // Not while cropping or drawing Guided Upright lines, and nowhere outside Develop, even in the app.
+      for (const ctx of [CROP, ['global', 'guided'] as Context[], LIBRARY, ONE, COMPARE, SURVEY]) {
+        expect(matchAction(map, ctrlAltN, ctx, true)).toBeNull()
+        expect(matchAction(map, ctrlN, ctx, true)).toBeNull()
+      }
+      // Ctrl+Alt+Shift+N still ends the colour mixer tool.
+      expect(matchAction(map, key('N', { ctrlKey: true, altKey: true, shiftKey: true }), ['global', 'mixer'], true)).toBe('develop.mixerTargetOff')
+      expect(allConflicts(map)).toEqual([])
+    }
+    expect(ACTION_BY_ID.get('develop.snapshotApp')?.standalone).toBe(true)
+    expect(ACTION_BY_ID.get('develop.snapshot')?.standalone).toBeUndefined()
+  })
+
   it('uses Lightroom keys where LightBench differs', () => {
     const map = resolveKeymap(LR)
     expect(matchAction(map, key('o'), DEVELOP)).toBeNull()

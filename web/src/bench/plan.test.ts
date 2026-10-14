@@ -5,9 +5,9 @@ describe('benchmark plan', () => {
   it('Quick: the 24 MP Bayer image through every stage, the sRGB image in part; 1 warm-up and 3 runs', () => {
     const p = benchPlan('quick')
     expect(p.datasets.map((d) => [d.id, d.width, d.height])).toEqual([['bayer24', 6000, 4000], ['srgb24', 6000, 4000]])
-    expect(p.datasets[0].stages).toEqual(['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'grading', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'remove', 'export', 'exportAll', 'jpeg', 'thumb'])
+    expect(p.datasets[0].stages).toEqual(['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'grading', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'proof', 'proofLut', 'remove', 'export', 'exportAll', 'jpeg', 'thumb'])
     expect([p.warmup, p.runs, p.scaledTo]).toEqual([1, 3, null])
-    expect(plannedRuns(p)).toBe((17 + 3) * 4)
+    expect(plannedRuns(p)).toBe((19 + 3) * 4)
   })
 
   it('Full: 45 MP and X-Trans too, Markesteijn 3-pass, 2 warm-ups and 5 runs', () => {
@@ -45,6 +45,15 @@ describe('benchmark plan', () => {
     expect(gpu('mixerInput')).toBe(false)
     const stages = benchPlan('quick').datasets[0].stages
     expect(stages.indexOf('grading')).toBe(stages.indexOf('mixerNoGuide') + 1)
+  })
+
+  it('Soft proofing rows: the display pass with a proof, and the table’s build on the CPU, after the display rows', () => {
+    const stages = benchPlan('quick').datasets[0].stages
+    expect(stages.indexOf('proof')).toBe(stages.indexOf('display100Curve') + 1)
+    expect(stages.indexOf('proofLut')).toBe(stages.indexOf('proof') + 1)
+    expect((STAGES.proof.gpu as (l: string) => boolean)('display')).toBe(true)
+    expect(STAGES.proofLut.gpu).toBe('none')
+    expect(STAGES.proof.label).toMatch(/^Soft proofing on: display pass, fit/)
   })
 
   it('every planned stage exists; scaled images and a library photo are added as asked', () => {

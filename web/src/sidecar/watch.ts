@@ -4,8 +4,8 @@
 // doesn't read every sidecar.
 //
 // Owner's choice (2026-10-12): offer, don't surprise. There is no setting: LightBench always asks (SidecarBanner):
-// "Read changes" takes the other app's stars, label, keywords and metadata (and LightBench develop settings, if
-// another LightBench changed them, and Lightroom's crop, orientation and Transform, sidecar/lightroom.ts); "Ignore" keeps LightBench's values, which replace the other app's in the file the
+// "Read changes" takes the other app's stars, label, keywords and metadata (and LightBench develop settings and
+// snapshots, if another LightBench changed them, and Lightroom's crop, orientation and Transform, sidecar/lightroom.ts); "Ignore" keeps LightBench's values, which replace the other app's in the file the
 // next time LightBench writes it.
 
 import { getCatalog } from '../catalog/client'
@@ -20,6 +20,8 @@ import { sidecarCandidates } from './naming'
 import { externalChanges, inspectSidecar, locateSidecar, oursOf } from './external'
 import { sidecars } from './sync'
 import { isValidXmp, readXmp } from './xmp'
+import { fromSidecar } from '../develop/snapshots'
+import { snapshotsChanged } from '../develop/snapshotStore'
 
 export interface FolderCheck {
   /** Photos whose sidecar record was looked at, sidecar files found, files read (date or size changed), changed by another app. */
@@ -159,6 +161,10 @@ export async function readChanges(ids: number[]): Promise<Answer> {
     if (p.addKeywords.length) await catalog.addKeywords([id], p.addKeywords)
     if (p.removeKeywords.length) await catalog.removeKeywords([id], p.removeKeywords)
     if (Object.keys(p.metadata).length) await catalog.setMetadata([id], p.metadata)
+    if (p.snapshots) {
+      await catalog.saveSnapshots(id, fromSidecar(p.snapshots))
+      snapshotsChanged.emit(id)
+    }
     await catalog.recordSidecar(id, located.file.lastModified, located.file.size, JSON.stringify(p.record))
     if (p.develop || p.geometry || p.toneCurve) {
       // LightBench settings from another LightBench are pasted whole; Lightroom's crop, orientation, Transform and tone

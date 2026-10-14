@@ -181,6 +181,20 @@ Every group follows the same rules:
 | What does 100 % show? | Always the photo rendered from the original file (true pixels), even though it takes a few seconds. |
 | What surrounds the photo? | Filmstrip, info line (I toggles) and key hints. |
 
+### Snapshots (owner, 2026-10-14)
+
+After [research/SNAPSHOTS_PROOFING_SEARCH.md](research/SNAPSHOTS_PROOFING_SEARCH.md) Part A (built: [PHASE3.md, Part 19](PHASE3.md#part-19-snapshots)). They answer round 2's "snapshots, before/after and virtual copies are basics" (lesson 9 above).
+
+| Question | Owner's answer |
+|---|---|
+| What is a snapshot? | A named copy of the photo's full develop settings, process version included, plus when it was made. The default name is a date/time stamp (Lightroom's is one too, per a secondary source); it can be renamed. |
+| Where? | A Snapshots panel in Develop's left side, near History (built between Presets and History, Lightroom's order). |
+| What do they do? | Click applies one as one undoable history step ("Snapshot: name"); hover previews it; Update with current settings, Rename, Delete (undoable); **Set as Before** makes Before / after (`\`) compare against it until cleared or another photo is shown. A History step's menu has "Create snapshot from this step". |
+| Keys | **Ctrl+Alt+N** everywhere; **Ctrl+N** as well in the installed app window (`display-mode: standalone`), where Chromium doesn't keep it. Both in the shortcut registry, so they can be changed. |
+| Storage | The catalog (a new table, schema 15) **and** the photo's sidecar (`lightbench:Snapshots`), read back on Open folder, Import and Read changes. Lightroom's own snapshot field is undocumented, so it is neither read nor written. |
+| Virtual copies, Copy/Paste, presets | Each virtual copy has its own snapshots (Lightroom shares them). Copy/Paste and Sync don't carry snapshots; presets don't include them. |
+| Old edits | Rendering never changes. An older snapshot applied keeps its process version: the photo as it was. |
+
 ### AI features requested by the owner (2026-10-11)
 
 | Request | Plan |
@@ -190,3 +204,18 @@ Every group follows the same rules:
 | Hover over the photo to preview selectable objects | Phase 4, SAM-style promptable segmentation. |
 | Model download size | User's choice: small default, optional high-quality download. |
 | Model research | Now, alongside Phase 2 (`docs/research/AI_MODELS.md`). |
+
+### Soft proofing (owner, 2026-10-14)
+
+Built in Phase 3, Part 20 ([PHASE3.md](PHASE3.md#part-20-soft-proofing)), after [research/SNAPSHOTS_PROOFING_SEARCH.md](research/SNAPSHOTS_PROOFING_SEARCH.md) Part B and its Cowork check.
+
+| Question | Owner's answer |
+|---|---|
+| How does it look and work? | Like Lightroom Classic's: **S** turns soft proofing on and off, **Shift+S** shows the destination gamut warning (Adobe's shortcut table). A bar under the toolbar: profile, rendering intent, black point compensation, Simulate Paper & Ink, a screen gamut warning, a destination gamut warning, and **Create Proof Copy** (a virtual copy named after the profile). The histogram follows the proof. |
+| Which screen does the screen warning test? | The colour space LightBench draws in, **sRGB or Display P3**, and it says so on the button: browsers don't give web pages the monitor's ICC profile. |
+| Which profiles? | Built-in sRGB, Adobe RGB (1998)-compatible and Display P3 (written by LightBench from published primaries), plus printer and paper ICC files loaded from disk, kept in this browser (never uploaded) and removable. RGB destinations as Lightroom; CMYK works too (Little CMS reads it). |
+| Rendering intent? | Relative Colorimetric with black point compensation by default; Perceptual, Saturation and Absolute Colorimetric selectable (Absolute without black point compensation). |
+| Colour management? | Little CMS (lcms-wasm, MIT) in a worker, baking a 65³ lookup table the display shader samples only while proofing; cached per profile and options. |
+| Firefox? | Its 2D canvases have no colour space option (MDN's compatibility data, checked by Cowork; not tried in Firefox here), so LightBench asks the browser whether a canvas can hold Display P3 and shows sRGB where it can't, with a note on the screen warning's button. Chrome, Edge and Safari keep Display P3. |
+| Export? | Proofing never changes exports. "Export with this profile" for loaded printer profiles is left for later; Export already writes sRGB, Display P3 and Adobe RGB. |
+| Where are the settings kept? | In this browser, as a way of viewing: not in the edit, the history or sidecars. |

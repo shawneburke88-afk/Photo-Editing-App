@@ -18,9 +18,13 @@
 //   darktable's filters run on it (colour-mixer-filter.wgsl) and Stage B draws the tile with their corrections.
 // Colour Grading (PHASE3.md Part 17; only when the edit has one): per pixel in Stage B, after the mixer, before the
 //   sigmoid (colour-grading.wgsl), from one uniform (binding 11) that holds its parameters and the gamut table.
+// Soft proofing (PHASE3.md Part 20; only on Develop's canvas and in its histogram, `Indicators.proof`): per pixel in
+//   Stage B, the proof table (a 3D texture, binding 12, built by engine/proof/ in a worker) replaces the developed
+//   colour before the output profile; its uniform (binding 13) is all zero otherwise.
 
-import { apply, invert, mul, REC2020_TO_XYZ, SRGB_TO_REC2020, type Mat3, type Vec3 } from '../color/matrix'
-import { clipUniforms, DEFAULT_CLIP, DEFAULT_RAW_CLIP, RAW_COLOURS, rawModeCode, rawThresholds, type Indicators } from '../develop/indicators'
+import { apply, invert, mul, REC2020_TO_SRGB, REC2020_TO_XYZ, SRGB_TO_REC2020, type Mat3, type Vec3 } from '../color/matrix'
+import { clipUniforms, DEFAULT_CLIP, DEFAULT_RAW_CLIP, RAW_COLOURS, rawModeCode, rawThresholds, type Indicators, type ProofDraw } from '../develop/indicators'
+import { GAMUT_DE } from '../proof/settings'
 import { applyMap, DEFAULT_GEOMETRY, IDENTITY_MAP, resolveGeometry, type GeometrySettings, type ResolvedGeometry } from '../develop/geometry'
 import { withLens } from '../develop/geometry'
 import { lensSourcePoint, lensWarpKey, needsLensfun, resolveLens, type LensSettings, type LensStatus, type LensWarp } from '../lens/correction'
@@ -264,6 +268,12 @@ const STATS_WORDS = 1028
 const IDENTITY: Mat3 = [1, 0, 0, 0, 1, 0, 0, 0, 1]
 const RAW_PARAMS_SIZE = 176
 const VIEW_SIZE = 512
+/** develop-display.wgsl's `struct Proof`: four words, then three colours. */
+const PROOF_UNIFORM_SIZE = 64
+/** The warning colours (sRGB; converted for a Display P3 canvas): destination red, screen blue, both magenta. */
+const PROOF_DEST_COLOUR: Vec3 = [1, 0, 0]
+const PROOF_SCREEN_COLOUR: Vec3 = [0, 0.4, 1]
+const PROOF_BOTH_COLOUR: Vec3 = [1, 0, 1]
 /** lens.wgsl's `struct Lens` (`lensUniforms`). */
 const LENS_UNIFORM_SIZE = 576
 /** demosaic-xtrans.wgsl's Const: 4 ints, the pattern, 3 matrix rows, 36 × vec4i of hexagon offsets. */
@@ -278,6 +288,15 @@ const B = (b: GPUBuffer): Res => ({ buffer: b })
 // Without explicit indicators (e.g. for Auto), clipping is counted on screen values only: sensor
 // clipping can't be fixed by moving sliders.
 const NO_INDICATORS: Indicators = { clip: { ...DEFAULT_CLIP, mode: 'anyrgb' }, showClip: false, raw: DEFAULT_RAW_CLIP, showRaw: false }
+
+/** A linear Rec.2020 colour (the proof's paper) as the canvas's encoded colour, for the surround. */
+function paperIn(space: DisplaySpace, rec: Vec3): Vec3 {
+  const lin = apply(space === 'display-p3' ? REC2020_TO_DISPLAY_P3 : REC2020_TO_SRGB, rec)
+  return lin.map((x) => {
+    const c = Math.min(1, Math.max(0, x))
+    return c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055
+  }) as Vec3
+}
 
 /** IEEE 754 half-precision → number. */
 function halfToFloat(h: number): number {
@@ -381,6 +400,15 @@ export class DevelopEngine {
    */
   private readonly gradeBuf: GPUBuffer
   private gradeKey: string | null = null
+  /**
+   * Soft proofing (Part 20): its uniform (bound always; all zero = off), whether it holds anything, the proof table on
+   * the GPU (uploaded again only when its key changes), the one bound next, and the 1×1×1 bound when it is off.
+   */
+  private readonly proofBuf: GPUBuffer
+  private proofOn = false
+  private proofTex: { key: string; tex: GPUTexture } | null = null
+  private boundProof: GPUTexture | null = null
+  private noProof: GPUTexture | null = null
   private readonly displayModule: GPUShaderModule
   private readonly texIds = new WeakMap<GPUTexture, number>()
   private nextTexId = 1
@@ -468,6 +496,8 @@ export class DevelopEngine {
     this.mixTileBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM })
     // Zero-initialised: Colour Grading off.
     this.gradeBuf = device.createBuffer({ size: GRADING_UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    // Zero-initialised: soft proofing off.
+    this.proofBuf = device.createBuffer({ size: PROOF_UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.statsModule = device.createShaderModule({ code: statsWgsl })
     this.retouch = new RetouchStage({
       device,
@@ -538,7 +568,7 @@ export class DevelopEngine {
   /**
    * Frees the photo's GPU memory: the scene, its warped and lens-corrected copies, the retouched copy, the tone
    * masks, the Detail stage's results and their warps, the Tone Curve's table, the Colour Mixer's hue tables, Colour
-   * Grading's parameters (zeroed) and the uploaded sensor data or pixels. (The mixer's pre-pass textures and buffers belong to each drawing and are freed
+   * Grading's parameters (zeroed), soft proofing's table (zeroed uniform) and the uploaded sensor data or pixels. (The mixer's pre-pass textures and buffers belong to each drawing and are freed
    * when it is submitted, or when encoding it fails.) The engine keeps its pipelines; load a photo again before using
    * it. Background engines call this after each photo (PHASE3.md, Parts 14 and 15).
    */
@@ -573,6 +603,12 @@ export class DevelopEngine {
     // Colour Grading's parameters (Part 17): zeroed, so the next photo's drawings start with the stage off.
     if (this.gradeKey !== null) this.device.queue.writeBuffer(this.gradeBuf, 0, new ArrayBuffer(GRADING_UNIFORM_SIZE))
     this.gradeKey = null
+    // Soft proofing's table (Part 20; 8.8 MB at 65³) and uniform: the next drawing that proofs uploads it again.
+    if (this.proofTex) this.retireTex(this.proofTex.tex)
+    this.proofTex = null
+    this.boundProof = null
+    if (this.proofOn) this.device.queue.writeBuffer(this.proofBuf, 0, new ArrayBuffer(PROOF_UNIFORM_SIZE))
+    this.proofOn = false
     this.rawBuf?.destroy()
     this.rawBuf = null
     this.rgbInput?.texture.destroy()
@@ -1708,6 +1744,28 @@ export class DevelopEngine {
       this.device.queue.writeBuffer(this.gradeBuf, 0, cg ? cg.uniform : new ArrayBuffer(GRADING_UNIFORM_SIZE))
       this.gradeKey = gk
     }
+    // Soft proofing: Develop's canvas (pass 0) and its histogram (pass 1) only; written when on, zeroed once when it
+    // goes off, so a drawing without it is made exactly as before.
+    const pf = ind.proof && (pass === 0 || pass === 1) ? ind.proof : null
+    if (pf) {
+      this.boundProof = this.proofTexture(pf)
+      const pb = new ArrayBuffer(PROOF_UNIFORM_SIZE)
+      const pu = new Uint32Array(pb)
+      const pff = new Float32Array(pb)
+      pu[0] = 1
+      pu[1] = pf.lut.size
+      pu[2] = (pf.destWarning ? 1 : 0) | (pf.screenWarning ? 2 : 0) | (pf.lut.device ? 4 : 0)
+      pff[3] = GAMUT_DE
+      pff.set([...srgbColourIn(display, PROOF_DEST_COLOUR), 1, ...srgbColourIn(display, PROOF_SCREEN_COLOUR), 1, ...srgbColourIn(display, PROOF_BOTH_COLOUR), 1], 4)
+      this.device.queue.writeBuffer(this.proofBuf, 0, pb)
+      this.proofOn = true
+      // The surround shows the proof's paper (white, or the paper's own with Simulate Paper & Ink).
+      if (pass === 0) f.set([...paperIn(display, pf.lut.paper), 1], 24)
+    } else {
+      if (this.proofOn) this.device.queue.writeBuffer(this.proofBuf, 0, new ArrayBuffer(PROOF_UNIFORM_SIZE))
+      this.proofOn = false
+      this.boundProof = null
+    }
     this.device.queue.writeBuffer(this.viewBuf, 0, v)
     // The sensor-clipping overlay reads the sensor through the same lens function as the warp (rawMap ends in the
     // lens-corrected frame). Only the overlay uses it; the picture itself is unchanged.
@@ -2309,8 +2367,26 @@ export class DevelopEngine {
         { binding: 9, resource: { buffer: this.mixBuf } },
         { binding: 10, resource: (this.boundMixLut ?? this.emptyCurve()).createView() },
         { binding: 11, resource: { buffer: this.gradeBuf } },
+        { binding: 12, resource: (this.boundProof ?? this.emptyProof()).createView() },
+        { binding: 13, resource: { buffer: this.proofBuf } },
       ],
     })
+  }
+
+  /** The proof table as a 3D texture, N × N × 2N (uploaded again only when its key changes). */
+  private proofTexture(pf: ProofDraw): GPUTexture {
+    if (this.proofTex?.key === pf.key) return this.proofTex.tex
+    const n = pf.lut.size
+    if (this.proofTex) this.retireTex(this.proofTex.tex)
+    const tex = this.device.createTexture({ size: [n, n, 2 * n], dimension: '3d', format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST })
+    this.device.queue.writeTexture({ texture: tex }, pf.lut.data, { bytesPerRow: n * 16, rowsPerImage: n }, [n, n, 2 * n])
+    this.proofTex = { key: pf.key, tex }
+    return tex
+  }
+
+  /** Bound in place of the proof table when proofing is off. */
+  private emptyProof(): GPUTexture {
+    return (this.noProof ??= this.device.createTexture({ size: [1, 1, 1], dimension: '3d', format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING }))
   }
 
   /** The tile edge of the Colour Mixer's tiled drawing (target pixels, before its margin). */
@@ -2512,6 +2588,9 @@ export class DevelopEngine {
     this.noMixCorr?.destroy()
     this.mixBuf.destroy()
     this.mixTileBuf.destroy()
+    this.proofTex?.tex.destroy()
+    this.noProof?.destroy()
+    this.proofBuf.destroy()
     this.retouch.destroy()
     this.scene?.destroy()
     this.rawBuf?.destroy()

@@ -9,6 +9,8 @@
 // The Tone Curve (engine/develop/tone-curve.ts) comes after the sigmoid, on the tones shown (its CPU twin is there).
 // The Colour Mixer and Point Color (colour-mixer.wgsl, appended to this file) come before the sigmoid, after presence;
 // Colour Grading (colour-grading.wgsl, appended after it) after them, still before the sigmoid.
+// Soft proofing (PHASE3.md Part 20) replaces the developed colour by the proof table's just before the output profile,
+// on Develop's canvas and in its histogram only; with it off (PF.mode 0) nothing here changes.
 // The clipping indicators are translated from darktable's src/iop/overexposed.c (display clipping:
 // any RGB / luminance / saturation / full gamut) and src/iop/rawoverexposed.c (sensor clipping).
 
@@ -92,6 +94,20 @@ struct View {
 @group(0) @binding(10) var mixLut: texture_2d<f32>;
 // Colour Grading (PHASE3.md Part 17; colour-grading.wgsl): its parameters and Rec.2020's gamut table; all zero = off.
 @group(0) @binding(11) var<uniform> CG: Grade;
+// Soft proofing (PHASE3.md Part 20; engine/proof/lut.ts): the proof table, N × N × 2N (the proofed colour, then the
+// destination's device values), and its parameters; all zero = off (a 1×1×1 texture bound), the stage skipped.
+@group(0) @binding(12) var proofLut: texture_3d<f32>;
+@group(0) @binding(13) var<uniform> PF: Proof;
+
+struct Proof {
+  mode: u32,           // 1 = proofing (Develop's canvas and its histogram only)
+  size: u32,           // grid points per axis
+  flags: u32,          // 1 destination gamut warning, 2 screen gamut warning, 4 the table has device values (histogram)
+  gamutDe: f32,        // round-trip ΔE above which a colour is outside the destination's gamut (lut.ts GAMUT_DE)
+  destColour: vec4f,   // warning colours, in the canvas's colour space
+  screenColour: vec4f,
+  bothColour: vec4f,
+}
 
 struct MixTile {
   origin: vec2f,  // the target pixel of the tile texture's texel (0, 0)
@@ -538,6 +554,39 @@ fn rawOverexposed(uv: vec2f, out: vec3f) -> vec3f {
   }
 }
 
+// ---- soft proofing (engine/proof/lut.ts builds the table; `sampleLut` there is this lookup on the CPU)
+
+/** Trilinear lookup of slice set `layer` (0 the proofed colour, 1 the device values) at an encoded colour. */
+fn proofTex(e: vec3f, layer: i32) -> vec4f {
+  let n = i32(PF.size);
+  let f = clamp(e, vec3f(0.0), vec3f(1.0)) * f32(n - 1);
+  let i0 = min(vec3i(floor(f)), vec3i(n - 2));
+  let t = f - vec3f(i0);
+  let z0 = i0.z + layer * n;
+  let c000 = textureLoad(proofLut, vec3i(i0.x, i0.y, z0), 0);
+  let c100 = textureLoad(proofLut, vec3i(i0.x + 1, i0.y, z0), 0);
+  let c010 = textureLoad(proofLut, vec3i(i0.x, i0.y + 1, z0), 0);
+  let c110 = textureLoad(proofLut, vec3i(i0.x + 1, i0.y + 1, z0), 0);
+  let c001 = textureLoad(proofLut, vec3i(i0.x, i0.y, z0 + 1), 0);
+  let c101 = textureLoad(proofLut, vec3i(i0.x + 1, i0.y, z0 + 1), 0);
+  let c011 = textureLoad(proofLut, vec3i(i0.x, i0.y + 1, z0 + 1), 0);
+  let c111 = textureLoad(proofLut, vec3i(i0.x + 1, i0.y + 1, z0 + 1), 0);
+  let y0 = mix(mix(c000, c100, t.x), mix(c010, c110, t.x), t.y);
+  let y1 = mix(mix(c001, c101, t.x), mix(c011, c111, t.x), t.y);
+  return mix(y0, y1, t.z);
+}
+
+/** The table's input: display-referred linear Rec.2020, clamped to 0…1, sRGB-encoded. */
+fn proofInput(rec: vec3f) -> vec3f {
+  let c = clamp(rec, vec3f(0.0), vec3f(1.0));
+  return vec3f(encode1(c.x), encode1(c.y), encode1(c.z));
+}
+
+/** The table stores linear values with the sRGB curve, sign kept. */
+fn proofDecode(e: vec3f) -> vec3f {
+  return sign(e) * vec3f(decode1(abs(e.x)), decode1(abs(e.y)), decode1(abs(e.z)));
+}
+
 @fragment
 fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   fragPos = pos.xy;
@@ -566,10 +615,24 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     // Export: the output colour profile, resizing and encoding happen afterwards (export.wgsl).
     return vec4f(developRec2020(scene, uv), 1.0);
   }
-  let rec = developRec2020(scene, uv);
+  var rec = developRec2020(scene, uv);
+  // Soft proofing: the proofed colour replaces the pixel's; the rest of the path is as without it.
+  var proofIn = vec3f(0.0);
+  var destOut = false;
+  if (PF.mode != 0u) {
+    proofIn = proofInput(rec);
+    let p = proofTex(proofIn, 0);
+    rec = proofDecode(p.rgb);
+    destOut = p.a > PF.gamutDe;
+  }
   // Histogram and clipping are judged in sRGB, whatever the screen.
-  let lin = rec2020ToSrgb(rec);
-  let t = srgbOetfUnbounded(lin);
+  var lin = rec2020ToSrgb(rec);
+  var t = srgbOetfUnbounded(lin);
+  if (PF.mode != 0u && V.statsPass == 1u && (PF.flags & 4u) != 0u) {
+    // While proofing to an RGB (or grey) profile, the histogram shows the destination's own values.
+    t = proofTex(proofIn, 1).rgb;
+    lin = vec3f(decode1(t.x), decode1(t.y), decode1(t.z));
+  }
   if (V.statsPass == 1u) {
     // Alpha carries the clipping class: 1 fine, 0.5 under, 0 over.
     let cls = clipClass(t, lin, uv);
@@ -580,6 +643,20 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     // Display P3: matrix, clamp, sRGB tone curve, as export.wgsl encodes a Display P3 export.
     let p3 = vec3f(dot(V.toDisplay0.xyz, rec), dot(V.toDisplay1.xyz, rec), dot(V.toDisplay2.xyz, rec));
     out = srgbOetf(clamp(p3, vec3f(0.0), vec3f(1.0)));
+  }
+  if (PF.mode != 0u && (PF.flags & 3u) != 0u) {
+    // Destination gamut warning (from the table) and screen gamut warning (the proofed colour outside the canvas's
+    // sRGB or Display P3, with 2/255 of slack for the table's interpolation).
+    var scr = false;
+    if ((PF.flags & 2u) != 0u) {
+      var s = t;
+      if (V.displaySpace == 1u) {
+        s = srgbOetfUnbounded(vec3f(dot(V.toDisplay0.xyz, rec), dot(V.toDisplay1.xyz, rec), dot(V.toDisplay2.xyz, rec)));
+      }
+      scr = any(s < vec3f(-2.0 / 255.0)) || any(s > vec3f(1.0 + 2.0 / 255.0));
+    }
+    let dst = destOut && (PF.flags & 1u) != 0u;
+    if (dst && scr) { out = PF.bothColour.rgb; } else if (dst) { out = PF.destColour.rgb; } else if (scr) { out = PF.screenColour.rgb; }
   }
   // darktable order: overexposed (66) before rawoverexposed (67), both just before gamma.
   if (V.clipMode != 0u) {

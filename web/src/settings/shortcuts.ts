@@ -8,6 +8,7 @@ import { ACTION_BY_ID, ACTIONS, CONTEXT_NAMES, type ActionDef, type Context } fr
 import { chordText } from './chords'
 import { matchAction } from './keymap'
 import { settings } from './store'
+import { isStandalone } from './standalone'
 
 /** Runs an action; returns false when it doesn't apply right now (the key then does what it normally does). */
 export type Runner = (id: string, e?: KeyboardEvent) => boolean | void
@@ -52,10 +53,11 @@ export function activeContexts(): Context[] {
   return ['global', ...new Set(scopes.flatMap((s) => s.contexts))]
 }
 
-/** The actions that can run now, in registry order. */
+/** The actions that can run now, in registry order (those only for the installed app window, only there). */
 export function availableActions(): ActionDef[] {
   const active = activeContexts()
-  return ACTIONS.filter((a) => a.contexts.some((c) => active.includes(c)))
+  const app = isStandalone()
+  return ACTIONS.filter((a) => (app || !a.standalone) && a.contexts.some((c) => active.includes(c)))
 }
 
 /** Runs an action in the newest view that knows it. Returns whether something handled it. */
@@ -79,7 +81,7 @@ export function onShortcutKey(e: KeyboardEvent) {
   if (e.defaultPrevented || e.isComposing || isTextEntry(e.target) || isSliderKey(e) || dialogOpen()) return
   // Enter on a focused button presses the button, not a shortcut.
   if (e.key === 'Enter' && (e.target as HTMLElement | null)?.closest?.('button, a[href], summary, [role="button"]')) return
-  const id = matchAction(settings.keymap(), e, activeContexts())
+  const id = matchAction(settings.keymap(), e, activeContexts(), isStandalone())
   if (id && runAction(id, e)) e.preventDefault()
 }
 
