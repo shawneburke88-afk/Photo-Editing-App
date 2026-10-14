@@ -270,8 +270,9 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 
 /* ---------- Develop ---------- */
 .develop { flex: 1; display: grid; grid-template-columns: var(--left-w, 240px) 5px 1fr 5px var(--right-w, 300px); min-height: 0; }
-.dleft { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
-.history { list-style: none; margin: 0; padding: 0 0 8px; overflow: auto; flex: 1; }
+.dleft { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+/* At least about three steps stay visible; when the panel is short it scrolls instead of squeezing History away. */
+.history { list-style: none; margin: 0; padding: 0 0 8px; overflow: auto; flex: 1; min-height: 84px; }
 .history button { width: 100%; text-align: left; background: none; border: 0; color: var(--text); font: inherit; font-size: 0.88rem; padding: 4px 12px; cursor: pointer; }
 .history button:hover { background: var(--panel-2); }
 .history button.on { background: var(--panel-2); box-shadow: inset 3px 0 0 var(--accent); }
@@ -661,6 +662,26 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .new-photos-preset { display: flex; flex-direction: column; gap: 3px; margin: 0 12px 10px; }
 .new-photos-preset select { width: 100%; }
 .preset-amount > .muted { white-space: nowrap; min-width: 3.4em; text-align: right; }
+
+/* Snapshots (PHASE3.md Part 19), between Presets and History, and the small context menu */
+.snapshots { border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.snap-list { list-style: none; margin: 0; padding: 0; max-height: 130px; overflow: auto; }
+.snap-row { display: flex; align-items: center; gap: 4px; }
+.snap-row:hover { background: var(--panel-2); }
+.snap-row.before { box-shadow: inset 3px 0 0 var(--muted); }
+.snap-name { flex: 1; min-width: 0; text-align: left; background: none; border: 0; color: var(--text); font: inherit; font-size: 0.88rem; padding: 3px 12px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snap-name:disabled { color: var(--muted); cursor: default; }
+.snap-rename { flex: 1; min-width: 0; margin: 1px 8px; font: inherit; font-size: 0.88rem; background: var(--bg); color: var(--text); border: 1px solid var(--accent); border-radius: 4px; padding: 2px 4px; }
+.snap-badge { font-size: 0.7rem; color: var(--muted); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+.snap-row .snap-more { visibility: hidden; background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; padding: 0 10px; }
+.snap-row:hover .snap-more, .snap-row .snap-more:focus-visible, .snap-row.before .snap-more { visibility: visible; }
+.snap-row .snap-more:hover { color: var(--text); }
+.snap-notice { margin: 4px 12px 0; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.ctx-menu { position: fixed; z-index: 50; min-width: 200px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 0; box-shadow: 0 6px 20px rgba(0,0,0,0.45); display: flex; flex-direction: column; }
+.ctx-menu button { display: flex; justify-content: space-between; gap: 12px; text-align: left; background: none; border: 0; color: var(--text); font: inherit; font-size: 0.88rem; padding: 5px 12px; cursor: pointer; }
+.ctx-menu button:hover, .ctx-menu button:focus-visible { background: var(--panel); outline: none; box-shadow: inset 3px 0 0 var(--accent); }
+.ctx-menu button:disabled { color: var(--muted); cursor: default; }
+.ctx-hint { color: var(--muted); }
 
 /* Metadata, metadata presets, import presets */
 .metadata-head .panel-title { margin: 10px 0 6px; }

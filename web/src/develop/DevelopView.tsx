@@ -1,10 +1,10 @@
-import { useKeymapVersion, useShortcuts, withKey } from '../settings/shortcuts'
+import { keyText, useKeymapVersion, useShortcuts, withKey } from '../settings/shortcuts'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { getCatalog } from '../catalog/client'
 import { forgetThumbUrl, loadThumb, saveThumb, thumbUrl } from '../catalog/thumbs'
 import type { PhotoDetail } from '../catalog/types'
 import { AUTO_SLIDERS, BUILT_IN_TARGETS, metricsFromStats, solveAuto, statsFromPixels, targetFromMetrics, type AutoKey, type AutoTarget } from '../engine/develop/auto'
-import { defaultsFor, displayUniforms, type DevelopSettings } from '../engine/develop/settings'
+import { defaultsFor, displayUniforms, normalizeSettings, type DevelopSettings } from '../engine/develop/settings'
 import { DEFAULT_GEOMETRY, flip, isIdentityGeometry, rotate90, sameGeometry, setAngle, setAspect, setLocked, swapAspect, type GeometrySettings } from '../engine/develop/geometry'
 import { CURRENT_PROCESS, PROCESS_VERSIONS, processStatus } from '../engine/develop/process'
 import { DevelopEngine, type ImageStats, type RawStageOptions, type ViewState } from '../engine/gpu/develop-engine'
@@ -67,6 +67,11 @@ import { useProof } from './useProof'
 import { ProofBar } from './ProofBar'
 import { currentDisplaySpace, displaySpaceNote } from '../engine/gpu/display-space'
 import { INTENT_LABELS } from '../engine/proof/settings'
+import { SnapshotPanel } from './SnapshotPanel'
+import { ContextMenu } from './ContextMenu'
+import { menuPoint } from './menuPoint'
+import { cleanName, makeSnapshot, sortSnapshots, uniqueName, type Snapshot } from './snapshots'
+import { snapshotsChanged } from './snapshotStore'
 
 interface Props {
   ids: number[]
@@ -293,6 +298,18 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [reveal, setReveal] = useState<{ id: GroupId; n: number } | null>(null)
   // Sublabels next to each slider: 1 = shown, 2 = hidden (tooltips are always available on hover).
   const [hintsPref, setHintsPref] = useStoredNumber('lightbench.develop.hints', 1)
+  /**
+   * Snapshots (PHASE3.md Part 19): the photo's list, the one hovered (previewed), the one Before / after compares against
+   * (until cleared or another photo), the one being renamed, the last change to the list (its Undo lasts until the photo's
+   * history changes), and the History step whose menu is open.
+   */
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([])
+  const [hoverSnap, setHoverSnap] = useState<Snapshot | null>(null)
+  const [beforeSnapId, setBeforeSnapId] = useState<string | null>(null)
+  const [renamingSnap, setRenamingSnap] = useState<string | null>(null)
+  const renamingRef = useRef<string | null>(null)
+  const [snapUndo, setSnapUndo] = useState<{ text: string; list: Snapshot[] | null; history: History | null } | null>(null)
+  const [historyMenu, setHistoryMenu] = useState<{ index: number; x: number; y: number } | null>(null)
   const [presets, setPresets] = useState<Preset[]>([])
   const [hoverPreset, setHoverPreset] = useState<Preset | null>(null)
   const [applied, setApplied] = useState<AppliedPreset | null>(null)
@@ -313,11 +330,14 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   // darktable's noise profiles (downloaded the first time noise reduction is used).
   const noiseDb = useSyncExternalStore(subscribeNoiseProfiles, noiseProfilesState)
   const settings = history ? current(history) : defaults
-  /** Hover preview of a preset (its Auto, if any, runs only when it is applied). */
-  const hover = useMemo(
-    () => (hoverPreset && info ? applyPaste(settings, { ...presetClip(hoverPreset), rerunAuto: false }, info.kind, engineRef.current?.imageSize) : null),
-    [hoverPreset, info, settings],
-  )
+  /** Hover preview of a snapshot, or of a preset (its Auto, if any, runs only when it is applied). */
+  const hover = useMemo(() => {
+    if (hoverSnap && info) return normalizeSettings(hoverSnap.settings, info.kind)
+    return hoverPreset && info ? applyPaste(settings, { ...presetClip(hoverPreset), rerunAuto: false }, info.kind, engineRef.current?.imageSize) : null
+  }, [hoverPreset, hoverSnap, info, settings])
+  /** The snapshot set as Before, and its settings (Before / after shows them instead of the defaults). */
+  const beforeSnap = beforeSnapId ? snapshots.find((x) => x.id === beforeSnapId) ?? null : null
+  const beforeSettings = useMemo(() => (beforeSnap && info ? normalizeSettings(beforeSnap.settings, info.kind) : null), [beforeSnap, info])
   const draftRef = useRef(draft)
   draftRef.current = draft
   const historyRef = useRef(history)
@@ -533,11 +553,13 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     () => ({ clip: clipSettings, showClip: overlay || (curveDragClip && clipWhileDragging === 1), raw: rawClipSettings, showRaw: rawOverlay, ...(proof.draw ? { proof: proof.draw } : {}) }),
     [clipSettings, overlay, rawClipSettings, rawOverlay, curveDragClip, clipWhileDragging, proof.draw],
   )
-  const latest = useRef({ settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost })
-  latest.current = { settings, info, view, before, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost }
-  /** The settings drawn: Before shows the defaults; a preset hovered, the crop being edited and switched-off groups apply on top. */
+  const latest = useRef({ settings, info, view, before, beforeSettings, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost })
+  latest.current = { settings, info, view, before, beforeSettings, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost }
+  /** The settings drawn: Before shows the defaults (or the snapshot set as Before); a preset or snapshot hovered, the crop being edited and switched-off groups apply on top. */
   const shownOf = (x: typeof latest.current, inf: SensorInfo): DevelopSettings => {
-    // Before is the photo as shot: the defaults without lens corrections or sharpening.
+    // Before is the snapshot set as Before, exactly as it was saved (its process version too), …
+    if (x.before && x.beforeSettings) return x.beforeSettings
+    // … else the photo as shot: the defaults without lens corrections or sharpening.
     if (x.before) return { ...defaultsFor(inf.kind), lens: LEGACY_LENS, detail: undefined }
     let s = x.hover ?? x.settings
     if (x.curveDraft && !x.hover) s = withToneCurve(s, x.curveDraft.tc)
@@ -574,7 +596,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       const shown = shownOf(x, inf)
       statsBusy.current = true
       try {
-        const wb = x.before ? inf.asShotWb : multipliers(shown, inf)
+        const wb = x.before && !x.beforeSettings ? inf.asShotWb : multipliers(shown, inf)
         setStats(await gpuGate.foreground(() => engine.renderStats(displayUniforms(shown), wb, 256, x.indicators)))
         // The Tone Curve's graph shows its input: before the curve, or after the RGB curve for the channel curves.
         const v = x.curveView
@@ -614,7 +636,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           const du = displayUniforms(shown)
           // View-only states: Sharpening's mask, the Colour Mixer's Visualize.
           const view = x.before ? du : { ...du, ...(x.maskPreview ? { detailMask: true } : {}), ...(x.mixerVis && !x.bypass.colour ? { mixerVisualize: x.mixerVis } : {}) }
-          const ms = await engine.render(view, x.before ? inf.asShotWb : multipliers(shown, inf), v, x.indicators)
+          const ms = await engine.render(view, x.before && !x.beforeSettings ? inf.asShotWb : multipliers(shown, inf), v, x.indicators)
           setTiming((t) => ({ ...t, frame: ms }))
           setNoiseProfile((p) => (p === engine.lastProfile ? p : engine.lastProfile))
           setSharpenRadius((r) => (r === engine.lastRadius ? r : engine.lastRadius))
@@ -647,7 +669,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   useEffect(() => {
     if (status.kind === 'ready') requestRender()
-  }, [status.kind, settings, view, before, indicators, hover, draft, bypass, guiding, removing, requestRender, lensDb, curveDraft, maskPreview, noiseDb, mixerDraft, mixerVis, gradingDraft, gradingBoost])
+  }, [status.kind, settings, view, before, beforeSettings, indicators, hover, draft, bypass, guiding, removing, requestRender, lensDb, curveDraft, maskPreview, noiseDb, mixerDraft, mixerVis, gradingDraft, gradingBoost])
   // Another curve graph shown: its histogram is measured again.
   useEffect(() => {
     if (status.kind === 'ready') scheduleStats()
@@ -1447,6 +1469,92 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     presetsChanged.emit()
   }
 
+  // ---- snapshots (PHASE3.md Part 19): kept in the catalog and the sidecar, apart from the history
+  useEffect(() => {
+    let alive = true
+    setSnapshots([])
+    setHoverSnap(null)
+    setBeforeSnapId(null)
+    renamingRef.current = null
+    setRenamingSnap(null)
+    setSnapUndo(null)
+    setHistoryMenu(null)
+    const load = () =>
+      void catalog.listSnapshots(id).then(
+        (list) => alive && setSnapshots(list),
+        () => {},
+      )
+    load()
+    // Read changes, or snapshots taken in from the sidecar before it is rewritten.
+    const off = snapshotsChanged.subscribe((pid) => pid === id && load())
+    return () => {
+      alive = false
+      off()
+    }
+  }, [catalog, id])
+
+  /** A new list for the photo shown: saved to the catalog, then the sidecar; `undo` offers Undo (the list before). */
+  function changeSnapshots(list: Snapshot[], text: string, undo = true) {
+    const before = snapshots
+    setSnapshots(sortSnapshots(list))
+    setSnapUndo({ text, list: undo ? before : null, history: historyRef.current })
+    const photoId = id
+    void catalog.saveSnapshots(photoId, list).then(() => sidecars.schedule([photoId]))
+  }
+  /** The last change to the list, while it can still be undone (until the photo's history changes). */
+  const snapNotice = snapUndo && snapUndo.history === history ? snapUndo : null
+  function undoSnapshots(): boolean {
+    if (!snapNotice?.list) return false
+    const list = snapNotice.list
+    if (beforeSnapId && !list.some((x) => x.id === beforeSnapId)) setBeforeSnapId(null)
+    startRename(null)
+    setSnapshots(sortSnapshots(list))
+    setSnapUndo({ text: 'Undone.', list: null, history: historyRef.current })
+    const photoId = id
+    void catalog.saveSnapshots(photoId, list).then(() => sidecars.schedule([photoId]))
+    return true
+  }
+  function startRename(sid: string | null) {
+    renamingRef.current = sid
+    setRenamingSnap(sid)
+  }
+  /** New snapshot of the photo's settings (or of a History step's), named with the date and time; its name is then edited. */
+  function createSnapshot(from?: DevelopSettings, what = 'the current settings') {
+    if (status.kind !== 'ready' || !history) return
+    const snap = makeSnapshot(from ?? settings, snapshots)
+    changeSnapshots([...snapshots, snap], `Saved ${what} as “${snap.name}”.`)
+    startRename(snap.id)
+  }
+  function renameSnapshot(snap: Snapshot, value: string) {
+    // Enter, then the field's blur: only once. Esc ended the editing first, so its blur keeps the name.
+    if (renamingRef.current !== snap.id) return
+    startRename(null)
+    const name = uniqueName(cleanName(value) || snap.name, snapshots, snap.id)
+    if (name === snap.name) return
+    changeSnapshots(snapshots.map((x) => (x.id === snap.id ? { ...x, name } : x)), `Renamed “${snap.name}” to “${name}”.`)
+  }
+  function updateSnapshot(snap: Snapshot) {
+    changeSnapshots(snapshots.map((x) => (x.id === snap.id ? { ...x, settings: JSON.parse(JSON.stringify(settings)) as DevelopSettings } : x)), `Updated “${snap.name}” with the current settings.`)
+  }
+  function deleteSnapshot(snap: Snapshot) {
+    if (beforeSnapId === snap.id) setBeforeSnapId(null)
+    setHoverSnap(null)
+    changeSnapshots(snapshots.filter((x) => x.id !== snap.id), `Deleted “${snap.name}”.`)
+  }
+  /** Applies a snapshot as one history step, exactly as saved (an older process version stays: the photo as it was). */
+  function applySnapshot(snap: Snapshot) {
+    if (status.kind !== 'ready' || !info) return
+    if (draft) endCrop(false)
+    setHoverSnap(null)
+    change(`Snapshot: ${snap.name}`, normalizeSettings(snap.settings, info.kind), true, true)
+  }
+  /** Undo/redo keys: undo first takes back the last change to the snapshot list, if that came after the last edit. */
+  function historyKey(cmd: 'develop.undo' | 'develop.redo') {
+    if (cmd === 'develop.undo' && undoSnapshots()) return
+    dirty.current = true
+    setHistory((h) => (h ? (cmd === 'develop.redo' ? redo(h) : undo(h)) : h))
+  }
+
   // Auto Sync: each change here goes to the other selected photos, a moment after the last one.
   const syncFrom = useRef<{ id: number; settings: DevelopSettings } | null>(null)
   const syncPending = useRef<{ keys: Set<PasteKey>; auto: boolean; job: { clip: Clipboard; to: number[] } | null; timer: ReturnType<typeof setTimeout> | null }>({
@@ -1543,11 +1651,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   useShortcuts(['curve'], !pasting && !draft && !guiding && curveTarget, (cmd) => {
     switch (cmd) {
       case 'develop.curveTarget': setCurveTarget(false); break
+      case 'develop.snapshot':
+      case 'develop.snapshotApp': createSnapshot(); break
       case 'develop.undo':
-      case 'develop.redo':
-        dirty.current = true
-        setHistory((h) => (h ? (cmd === 'develop.redo' ? redo(h) : undo(h)) : h))
-        break
+      case 'develop.redo': historyKey(cmd); break
       case 'develop.before': setBefore((b) => !b); break
       case 'develop.clipping': setOverlay((o) => !o); break
       case 'develop.zoom': setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center })); break
@@ -1567,11 +1674,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         setPointPick(false)
         break
       case 'develop.pointColorPick': startPointPick(); break
+      case 'develop.snapshot':
+      case 'develop.snapshotApp': createSnapshot(); break
       case 'develop.undo':
-      case 'develop.redo':
-        dirty.current = true
-        setHistory((h) => (h ? (cmd === 'develop.redo' ? redo(h) : undo(h)) : h))
-        break
+      case 'develop.redo': historyKey(cmd); break
       case 'develop.before': setBefore((b) => !b); break
       case 'develop.clipping': setOverlay((o) => !o); break
       case 'develop.zoom': setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center })); break
@@ -1607,11 +1713,12 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'remove.clear': clearSpots(); break
       case 'develop.before': setBefore((b) => !b); break
       case 'develop.zoom': setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center })); break
+      case 'develop.snapshot':
+      case 'develop.snapshotApp': createSnapshot(); break
       case 'develop.undo':
       case 'develop.redo':
-        dirty.current = true
         setSelectedSpot(null)
-        setHistory((h) => (h ? (cmd === 'develop.redo' ? redo(h) : undo(h)) : h))
+        historyKey(cmd)
         break
       default:
         return false
@@ -1646,11 +1753,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'settings.copy': openCopy('copy'); break
       case 'settings.paste': openPaste(); break
       case 'settings.sync': openCopy('sync'); break
+      case 'develop.snapshot':
+      case 'develop.snapshotApp': createSnapshot(); break
       case 'develop.undo':
-      case 'develop.redo':
-        dirty.current = true
-        setHistory((h) => (h ? (cmd === 'develop.redo' ? redo(h) : undo(h)) : h))
-        break
+      case 'develop.redo': historyKey(cmd); break
       case 'develop.before': setBefore((b) => !b); break
       // darktable: Shift+O toggles the raw (sensor) clipping indicator.
       case 'develop.sensorClipping': setRawOverlay((o) => !o); break
@@ -1852,6 +1958,23 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           onNew={openNewPreset}
           onDelete={(p) => void removePreset(p)}
         />
+        <SnapshotPanel
+          snapshots={snapshots}
+          disabled={status.kind !== 'ready' || autoBusy}
+          beforeId={beforeSnap?.id ?? null}
+          renaming={renamingSnap}
+          notice={snapNotice ? { text: snapNotice.text, undo: !!snapNotice.list } : null}
+          newKey={keyText('develop.snapshot')}
+          onCreate={() => createSnapshot()}
+          onApply={applySnapshot}
+          onHover={setHoverSnap}
+          onRenameStart={startRename}
+          onRename={renameSnapshot}
+          onUpdate={updateSnapshot}
+          onDelete={deleteSnapshot}
+          onSetBefore={(snap) => setBeforeSnapId(snap?.id ?? null)}
+          onUndo={() => void undoSnapshots()}
+        />
         <h3 className="panel-title">History</h3>
         <ol className="history" reversed>
           {history &&
@@ -1863,12 +1986,26 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                     dirty.current = true
                     setHistory((h) => (h ? jump(h, i) : h))
                   }}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    if (status.kind === 'ready') setHistoryMenu({ index: i, ...menuPoint(e) })
+                  }}
+                  title="Click to go back to this step · right-click to make a snapshot of it"
                 >
                   {history.steps[i].label}
                 </button>
               </li>
             ))}
         </ol>
+        {historyMenu && history?.steps[historyMenu.index] && (
+          <ContextMenu
+            x={historyMenu.x}
+            y={historyMenu.y}
+            label={`History step ${history.steps[historyMenu.index].label}`}
+            onClose={() => setHistoryMenu(null)}
+            items={[{ label: 'Create snapshot from this step', onSelect: () => createSnapshot(history.steps[historyMenu.index].settings, `the step “${history.steps[historyMenu.index].label}”`) }]}
+          />
+        )}
         <div className="dleft-actions">
           <button className="button small" disabled={!history || !canUndo(history)} onClick={() => { dirty.current = true; setHistory((h) => (h ? undo(h) : h)) }} title={withKey('Undo', 'develop.undo')}>Undo</button>
           <button className="button small" disabled={!history || !canRedo(history)} onClick={() => { dirty.current = true; setHistory((h) => (h ? redo(h) : h)) }} title={withKey('Redo', 'develop.redo')}>Redo</button>
@@ -1895,7 +2032,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           <button className={`button small ${removing ? 'on' : ''}`} onClick={() => (removing ? endRemove() : startRemove())} disabled={status.kind !== 'ready'} title={withKey(removing ? 'Finish with the Remove brush' : 'Remove, Heal and Clone: paint over what to remove', 'develop.remove')}>
             {removing ? 'Done' : 'Remove'}
           </button>
-          <button className={`button small ${before ? 'on' : ''}`} onClick={() => setBefore(!before)} disabled={status.kind !== 'ready' || !!draft} title={withKey('Before / after', 'develop.before')}>
+          <button className={`button small ${before ? 'on' : ''}`} onClick={() => setBefore(!before)} disabled={status.kind !== 'ready' || !!draft} title={withKey(beforeSnap ? `Before / after: compares with the snapshot “${beforeSnap.name}”` : 'Before / after', 'develop.before')}>
             {before ? 'Showing before' : 'Before / after'}
           </button>
           <button className="button small" onClick={() => setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center }))} disabled={status.kind !== 'ready'} title={withKey('Zoom', 'develop.zoom')}>
@@ -2068,8 +2205,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
               {leveling ? 'Draw along something that should be level or upright · double-click for Auto' : 'Drag corners or edges · drag inside to move · drag outside to turn · Ctrl-drag to level'} · Enter applies · Esc cancels
             </div>
           )}
-          {before && <div className="dbadge">Before</div>}
-          {!before && hoverPreset && !draft && <div className="dbadge">Preview: {hoverPreset.name}</div>}
+          {before && <div className="dbadge">{beforeSnap ? `Before: snapshot “${beforeSnap.name}”` : 'Before'}</div>}
+          {!before && hoverSnap && !draft && <div className="dbadge">Preview: snapshot “{hoverSnap.name}”</div>}
+          {!before && hoverPreset && !hoverSnap && !draft && <div className="dbadge">Preview: {hoverPreset.name}</div>}
           {!before && !draft && (bypass.crop || bypass.remove || bypass.basic || bypass.curve || bypass.colour || bypass.grading || (bypass.detail && detailOn(settings.detail))) && (
             <div className="dbadge">Hidden: {[bypass.crop && 'Crop & Lens', bypass.remove && 'Remove', bypass.basic && 'Basic', bypass.curve && 'Tone Curve', bypass.colour && 'Colour Mixer', bypass.grading && 'Colour Grading', bypass.detail && detailOn(settings.detail) && 'Detail'].filter(Boolean).join(', ')}</div>
           )}

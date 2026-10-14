@@ -13,6 +13,18 @@
     "bugFixes": []
   },
   {
+    "version": "0.6.1",
+    "date": "2026-10-14",
+    "newFeatures": [
+      "New Snapshots panel in Develop, above History: save the photo's current settings under a name (a date and time until you rename it) and go back to them at any time. Clicking a snapshot applies it as one step you can undo, and hovering one previews it.",
+      "Right-click a snapshot to update it with the current settings, rename it, delete it (Undo brings it back) or set it as the Before view (the \\ key). Right-click a History step to make a snapshot from it.",
+      "Ctrl+Alt+N makes a snapshot. In the installed app window, Ctrl+N does too; in a browser tab, Ctrl+N still opens a new window as before.",
+      "Snapshots are kept in your library and in the photo's .xmp file, so they come back when you open the folder again, including in another copy of LightBench. Virtual copies have their own snapshots. Copy/Paste, Sync and presets don't carry them.",
+      "Photos edited before look exactly the same. Libraries are upgraded automatically; an older version of LightBench will no longer open an upgraded library."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.6.0",
     "date": "2026-10-14",
     "newFeatures": [

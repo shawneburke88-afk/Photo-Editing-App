@@ -11,7 +11,9 @@
 import { getCatalog } from '../catalog/client'
 import { QUIET_MS } from '../catalog/storage'
 import { getDirAt, getRootHandle } from '../platform/roots'
-import { fieldsFromRead } from './changes'
+import { fieldsFromRead, parseFields } from './changes'
+import { snapshotsChanged } from '../develop/snapshotStore'
+import { fromSidecar, toSidecar } from '../develop/snapshots'
 import { externalChanges, inspectSidecar, locateSidecar } from './external'
 import { detailOf, geometryOf, lrFrame, mixerOf, planLightroomWrite } from './lightroom'
 import { gradingOf } from '../engine/develop/colour-grading'
@@ -136,9 +138,27 @@ class SidecarSync {
     const lightroom = planLightroomWrite(read?.lightroom, read?.develop ? geometryOf(read.develop) : null, geometryOf(src.settings), frame, detailOf(read?.develop), detailOf(src.settings), mixerOf(read?.develop), mixerOf(src.settings), gradingOf(read?.develop), gradingOf(src.settings))
     // Lightroom's tone curve, by the same rules (lightroomCurve.ts).
     const lightroomTone = planToneWrite(read?.lightroomTone, toneCurveOf(read?.develop), toneCurveOf(src.settings))
+    // Snapshots (docs/PHASE3.md Part 19). While the record doesn't know them (made before snapshots existed, or taken
+    // silently from an older file), snapshots in the file that the catalog doesn't have are taken into the library
+    // first, so rewriting the file doesn't drop snapshots another LightBench wrote. A damaged list stays in the file
+    // until this photo has snapshots of its own.
+    let snapshots = src.snapshots
+    if (read?.snapshots?.length && parseFields(src.sidecar.fields)?.snapshots === undefined) {
+      const have = new Set(snapshots.map((x) => x.id))
+      const missing = read.snapshots.filter((x) => !have.has(x.id))
+      if (missing.length) {
+        const list = fromSidecar([...snapshots, ...missing])
+        await catalog.saveSnapshots(photo.id, list)
+        snapshots = toSidecar(list)
+        snapshotsChanged.emit(photo.id)
+      }
+    }
     let text: string | null
     try {
-      text = writeXmp(existing, { rating: photo.rating, flag: photo.flag, color: photo.color, develop: src.settings, keywords, collections: src.collections, stack: src.stack, versions: src.versions, metadata, lightroom, lightroomTone })
+      text = writeXmp(existing, {
+        rating: photo.rating, flag: photo.flag, color: photo.color, develop: src.settings, keywords, collections: src.collections, stack: src.stack,
+        versions: src.versions, metadata, lightroom, lightroomTone, snapshots: read?.snapshotsDamaged && !snapshots.length ? undefined : snapshots,
+      })
     } catch (e) {
       throw new Error(`${where}: ${e instanceof Error ? e.message : e}`, { cause: e })
     }

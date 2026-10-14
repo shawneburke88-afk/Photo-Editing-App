@@ -58,6 +58,11 @@ export interface ActionDef {
   keys: Chord[]
   /** Keys in the Lightroom Classic set, when they differ. */
   lightroom?: Chord[]
+  /**
+   * Only when LightBench runs as an installed app window (`display-mode: standalone`), where the browser passes keys it
+   * keeps for itself in a tab (Ctrl+N). In a tab its keys do what the browser does.
+   */
+  standalone?: true
 }
 
 const PHOTO: Context[] = ['library', 'cull']
@@ -65,6 +70,8 @@ const SETTINGS: Context[] = ['library', 'develop']
 const ONE_OR_COMPARE: Context[] = ['cull-one', 'compare']
 /** Develop, also while cropping. */
 const DEVELOP_ANY: Context[] = ['develop', 'crop']
+/** Develop, also with an on-photo tool open (not while cropping or drawing Guided Upright lines). */
+const SNAPSHOT_CONTEXTS: Context[] = ['develop', 'curve', 'mixer', 'remove']
 
 export const ACTIONS: ActionDef[] = [
   // Everywhere
@@ -194,6 +201,12 @@ export const ACTIONS: ActionDef[] = [
   { id: 'develop.uprightAuto', label: 'Transform: Upright Auto', contexts: ['develop'], keys: [] },
   { id: 'develop.uprightOff', label: 'Transform: Upright off', contexts: ['develop'], keys: [] },
   { id: 'develop.transformReset', label: 'Transform: reset Upright and the sliders', contexts: ['develop'], keys: [] },
+
+  // Snapshots (docs/PHASE3.md Part 19). Lightroom Classic's key is Ctrl+N (Adobe's shortcut table, checked by Cowork),
+  // but in a browser tab Chromium keeps Ctrl+N for a new window. In an installed app window it doesn't ("In Apps mode, no
+  // keys are reserved", Chromium's browser_command_controller.cc, checked by Cowork), so Ctrl+N works there too.
+  { id: 'develop.snapshot', label: 'New snapshot (save this photo’s settings by name)', contexts: SNAPSHOT_CONTEXTS, keys: ['Ctrl+Alt+N'] },
+  { id: 'develop.snapshotApp', label: 'New snapshot (in the installed app window only)', contexts: SNAPSHOT_CONTEXTS, keys: ['Ctrl+N'], standalone: true },
 
   // The Tone Curve's targeted adjustment tool. Ctrl+Alt+Shift+T is Lightroom Classic's key for it as remembered, not
   // checked against Adobe's page here; LightBench uses the same.
