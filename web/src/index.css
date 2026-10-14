@@ -270,8 +270,9 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 
 /* ---------- Develop ---------- */
 .develop { flex: 1; display: grid; grid-template-columns: var(--left-w, 240px) 5px 1fr 5px var(--right-w, 300px); min-height: 0; }
-.dleft { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
-.history { list-style: none; margin: 0; padding: 0 0 8px; overflow: auto; flex: 1; }
+.dleft { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+/* At least about three steps stay visible; when the panel is short it scrolls instead of squeezing History away. */
+.history { list-style: none; margin: 0; padding: 0 0 8px; overflow: auto; flex: 1; min-height: 84px; }
 .history button { width: 100%; text-align: left; background: none; border: 0; color: var(--text); font: inherit; font-size: 0.88rem; padding: 4px 12px; cursor: pointer; }
 .history button:hover { background: var(--panel-2); }
 .history button.on { background: var(--panel-2); box-shadow: inset 3px 0 0 var(--accent); }
@@ -658,7 +659,7 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 
 /* Snapshots (PHASE3.md Part 19), between Presets and History, and the small context menu */
 .snapshots { border-bottom: 1px solid var(--line); padding-bottom: 6px; }
-.snap-list { list-style: none; margin: 0; padding: 0; max-height: 170px; overflow: auto; }
+.snap-list { list-style: none; margin: 0; padding: 0; max-height: 130px; overflow: auto; }
 .snap-row { display: flex; align-items: center; gap: 4px; }
 .snap-row:hover { background: var(--panel-2); }
 .snap-row.before { box-shadow: inset 3px 0 0 var(--muted); }

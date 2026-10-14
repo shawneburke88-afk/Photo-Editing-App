@@ -113,11 +113,7 @@ export function SnapshotPanel(p: Props) {
           </li>
         ))}
       </ul>
-      {p.snapshots.length ? (
-        <p className="muted small presets-hint">Click to apply · hover to preview · right-click for more</p>
-      ) : (
-        <p className="muted small presets-hint">None yet. “+ New”{p.newKey ? ` or ${p.newKey}` : ''} saves this photo’s settings by name.</p>
-      )}
+      {!p.snapshots.length && <p className="muted small presets-hint">None yet. “+ New”{p.newKey ? ` or ${p.newKey}` : ''} saves this photo’s settings by name.</p>}
       {p.notice && (
         <p className="snap-notice small" role="status">
           {p.notice.text}
