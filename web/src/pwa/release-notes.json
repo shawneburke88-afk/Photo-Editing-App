@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.6.2",
+    "date": "2026-10-14",
+    "newFeatures": [
+      "Soft proofing in Develop: press S (or tick Soft proofing in the toolbar) to preview how the photo will look in another colour space or on a printer. The preview changes only what you see; your edit and your exports stay the same.",
+      "Choose a profile: sRGB, an Adobe RGB (1998)-compatible profile and Display P3 are built in, and Load profile… adds your own .icc or .icm files (for example from your print lab). Loaded profiles stay on your computer and can be removed.",
+      "Choose the rendering intent: Relative Colorimetric with black point compensation is the default; Perceptual, Saturation and Absolute are available. Simulate Paper & Ink shows the paper's white and the ink's black.",
+      "Shift+S shows colours that fall outside the profile in red. The screen warning shows colours your display can't show in blue (based on sRGB or Display P3, because browsers don't tell the app which monitor profile you use); magenta means both. The histogram follows the proof.",
+      "Create Proof Copy makes a virtual copy named \"Proof: <profile>\" so you can adjust the photo for that output separately.",
+      "Colour conversion uses Little CMS, which starts only when you turn soft proofing on."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.6.0",
     "date": "2026-10-14",
     "newFeatures": [
