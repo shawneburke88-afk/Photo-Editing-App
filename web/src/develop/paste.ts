@@ -10,13 +10,14 @@ import { DEFAULT_DETAIL, withDetail, type DetailSettings } from '../engine/detai
 import { CURVE_NORMS, DEFAULT_TONE_CURVE, isLinear, REGION_KEYS, REGION_NAMES, withToneCurve, type ToneCurveSettings } from '../engine/develop/tone-curve'
 import { describeSpots } from '../engine/develop/spots'
 import { bandsOf, describeMixer, describePoints, withColourMixer, withPoints } from '../engine/develop/colour-mixer'
+import { describeGrading, withColourGrading } from '../engine/develop/colour-grading'
 
 export type PasteKey =
   | 'whiteBalance'
   | 'exposure' | 'contrast' | 'highlights' | 'shadows' | 'whites' | 'blacks'
   | 'vibrance' | 'saturation'
   | 'toneCurve'
-  | 'colourMixer' | 'pointColor'
+  | 'colourMixer' | 'pointColor' | 'colourGrading'
   | 'rotate' | 'straighten' | 'crop' | 'upright' | 'transform'
   | 'lensProfile' | 'lensAmounts' | 'lensCa'
   | 'sharpening' | 'luminanceNoise' | 'colorNoise'
@@ -136,6 +137,15 @@ export const PASTE_ITEMS: PasteItem[] = [
     group: 'Colour',
     copy: (to, from) => withColourMixer(to, withPoints(to.colourMixer, from.colourMixer?.points)),
     show: (s) => describePoints(s.colourMixer?.points),
+  },
+  // Colour Grading (Part 17): the four wheels, Blending, Balance and its darktable settings travel as one item, ticked by
+  // default like the mixer's (Lightroom's Copy Settings has a Color Grading box; its default not checked).
+  {
+    key: 'colourGrading',
+    label: 'Colour Grading',
+    group: 'Colour',
+    copy: (to, from) => withColourGrading(to, from.colourGrading),
+    show: (s) => describeGrading(s.colourGrading),
   },
   // Lightroom's Copy Settings lists Sharpening and Noise Reduction (Luminance, Color) (from general knowledge).
   detailItem('sharpening', 'Sharpening', (to, from) => ({ ...to, sharpen: { ...from.sharpen } }), (d) =>

@@ -69,11 +69,25 @@
 // checked against a sidecar Lightroom wrote. Point Color (crs:PointColors) isn't read or written: its format isn't
 // documented anywhere available here (only LightCraft's tests name the field, with an "empty" slot of four −1 values).
 
+// Colour Grading (Phase 3, Part 17; the same rules). Lightroom's XMP is a hybrid (ExifTool 3.79, lib/Image/ExifTool/XMP.pm,
+// whose notes say the SplitToning fields are "also used for newer ColorGrade settings"): Shadows and Highlights keep the old
+// crs:SplitToningShadowHue/Saturation and SplitToningHighlightHue/Saturation, Balance is crs:SplitToningBalance, and the rest
+// is crs:ColorGradeShadowLum, ColorGradeMidtoneHue/Sat/Lum, ColorGradeHighlightLum, ColorGradeGlobalHue/Sat/Lum and
+// ColorGradeBlending (there is no ColorGradeShadowHue). LightBench's wheels have Lightroom's names and ranges, so the numbers
+// carry over one for one (closest match: the engines differ). Saturation 0–100, Luminance −100…100 and Blending 0–100
+// (default 50) are Adobe's (its 2020-10-20 launch post); hue as degrees 0–360 and Balance as −100…100 are assumptions
+// that no Adobe text or Lightroom-written sidecar here confirms (darktable's importer divides the hues by 255, which isn't
+// copied). A sidecar with Split Toning fields and no crs:ColorGradeBlending reads as Blending 100: Adobe says Split Toning
+// "always used what we now call Blending = 100" and that old images look the same; that an absent field means 100 is
+// inferred, not documented. Lum and Balance are written with a sign ("+13", as the HSL fields), hue, saturation and Blending
+// without; none of this was checked against a sidecar Lightroom wrote. darktable's settings under Advanced aren't exchanged.
+
 import { composeOrientation, normalizeGeometry, orientationMatrix, orientationParts, setLocked, withOrientation, type GeometrySettings } from '../engine/develop/geometry'
 import { fromPoints, UNIT_RECT, withAngle, type Rect } from '../engine/develop/crop'
 import { DEFAULT_TRANSFORM, normalizeTransform, SCALE_RANGE, ZERO_PERSPECTIVE, type Orient, type TransformSettings, type UprightMode } from '../engine/develop/upright'
 import { DEFAULT_DETAIL, normalizeDetail, type DetailSettings } from '../engine/detail/settings'
 import { BAND_NAMES, DEFAULT_COLOUR_MIXER, normalizeColourMixer, withPoints, type ColourMixerSettings } from '../engine/develop/colour-mixer'
+import { DEFAULT_GRADING, normalizeColourGrading, WHEEL_KEYS, type ColourGradingSettings } from '../engine/develop/colour-grading'
 
 export const NS_CRS = 'http://ns.adobe.com/camera-raw-settings/1.0/'
 export const NS_TIFF = 'http://ns.adobe.com/tiff/1.0/'
@@ -112,10 +126,28 @@ export interface LrFields {
   colorSmoothness?: number
   /** The Colour Mixer's 24 fields in LR_HSL_FIELDS order (undefined where absent), when any is present. */
   hsl?: (number | undefined)[]
+  /** Colour Grading's 14 fields in LR_GRADE_FIELDS order (undefined where absent), when any is present. */
+  grade?: (number | undefined)[]
 }
 
 /** The Colour Mixer's crs: fields: Hue, then Saturation, then Luminance, each for Lightroom's eight bands. */
 export const LR_HSL_FIELDS: string[] = ['HueAdjustment', 'SaturationAdjustment', 'LuminanceAdjustment'].flatMap((k) => BAND_NAMES.map((b) => `${k}${b}`))
+
+/**
+ * Colour Grading's crs: fields: Shadows (hue, saturation, luminance), Midtones, Highlights, Global, then Blending and
+ * Balance. Shadows' and Highlights' hue and saturation are Lightroom's old Split Toning fields.
+ */
+export const LR_GRADE_FIELDS = [
+  'SplitToningShadowHue', 'SplitToningShadowSaturation', 'ColorGradeShadowLum',
+  'ColorGradeMidtoneHue', 'ColorGradeMidtoneSat', 'ColorGradeMidtoneLum',
+  'SplitToningHighlightHue', 'SplitToningHighlightSaturation', 'ColorGradeHighlightLum',
+  'ColorGradeGlobalHue', 'ColorGradeGlobalSat', 'ColorGradeGlobalLum',
+  'ColorGradeBlending', 'SplitToningBalance',
+] as const
+/** Index of crs:ColorGradeBlending in LR_GRADE_FIELDS. */
+export const LR_BLENDING = 12
+/** The fields written with a sign (Luminance and Balance). */
+const LR_GRADE_SIGNED = new Set([2, 5, 8, 11, 13])
 
 /** The Detail fields in LrState order, with their crs: names and Lightroom's defaults. */
 export const LR_DETAIL_FIELDS = [
@@ -159,10 +191,55 @@ export interface LrState {
   detail?: number[] | null
   /** The Colour Mixer's 24 numbers (LR_HSL_FIELDS order); null (or absent) when the sidecar has none of them. */
   hsl?: number[] | null
+  /** Colour Grading's 14 numbers (LR_GRADE_FIELDS order); null (or absent) when the sidecar has none of them. */
+  grade?: number[] | null
 }
 
-export type LrGroup = 'orientation' | 'crop' | 'transform' | 'detail' | 'hsl'
-export const LR_GROUPS: LrGroup[] = ['orientation', 'crop', 'transform', 'detail', 'hsl']
+export type LrGroup = 'orientation' | 'crop' | 'transform' | 'detail' | 'hsl' | 'grade'
+export const LR_GROUPS: LrGroup[] = ['orientation', 'crop', 'transform', 'detail', 'hsl', 'grade']
+
+/** Colour Grading as Lightroom's 14 numbers (none = the defaults: wheels 0, Blending 50, Balance 0). */
+export function gradingToLr(g: ColourGradingSettings | undefined): number[] {
+  const x = g ?? DEFAULT_GRADING
+  return [...WHEEL_KEYS.flatMap((k) => [x[k].hue, x[k].sat, x[k].lum]), x.blending, x.balance]
+}
+
+/** Whether Lightroom's 14 numbers grade nothing (every wheel's saturation and luminance 0). */
+const gradeNeutral = (v: number[]) => [1, 2, 4, 5, 7, 8, 10, 11].every((i) => Math.abs(v[i]) < 0.5)
+
+/**
+ * Lightroom's 14 numbers as LightBench's grade, keeping the photo's darktable settings (Advanced). A grade that changes
+ * nothing leaves no trace: its hues, Blending and Balance render nothing, so they aren't kept (e.g. the Split Toning
+ * fields at 0 that many sidecars carry).
+ */
+export function gradingFromLr(current: ColourGradingSettings | undefined, v: number[]): ColourGradingSettings | undefined {
+  const adv = current?.advanced ? { advanced: current.advanced } : {}
+  if (gradeNeutral(v)) return normalizeColourGrading({ ...DEFAULT_GRADING, ...adv })
+  const w = (i: number) => ({ hue: v[i], sat: v[i + 1], lum: v[i + 2] })
+  return normalizeColourGrading({ shadows: w(0), midtones: w(3), highlights: w(6), global: w(9), blending: v[12], balance: v[13], ...adv })
+}
+
+/**
+ * Two lists of Lightroom's 14 numbers grade the same way: equal where it matters (a hue counts only with its saturation;
+ * Blending and Balance only when some wheel grades), or both grading nothing.
+ */
+function sameGrade(a: number[], b: number[]): boolean {
+  const na = gradeNeutral(a)
+  const nb = gradeNeutral(b)
+  if (na || nb) return na && nb
+  for (let i = 0; i < 14; i++) if (gradeFieldDiffers(a, b, i)) return false
+  return true
+}
+
+/** One of the 14 numbers differs (a hue: only with a saturation, and modulo 360). */
+function gradeFieldDiffers(a: number[], b: number[], i: number): boolean {
+  if (i < 12 && i % 3 === 0) {
+    if (Math.abs(a[i + 1]) < 0.5 && Math.abs(b[i + 1]) < 0.5) return false
+    const d = Math.abs((((a[i] - b[i]) % 360) + 540) % 360 - 180)
+    return d > 0.05
+  }
+  return Math.abs(a[i] - b[i]) > 0.05
+}
 
 /** The Colour Mixer's bands as Lightroom's 24 numbers (none = all 0). */
 export function mixerToLr(m: ColourMixerSettings | undefined): number[] {
@@ -283,23 +360,35 @@ export function lrState(f: LrFields | undefined, frame: LrFrame): LrState {
         ? null
         : LR_DETAIL_FIELDS.map(([k, , d]) => (finite(x[k]) ? x[k]! : d)),
     hsl: x.hsl && x.hsl.some((v) => finite(v)) ? x.hsl.map((v) => (finite(v) ? v : 0)) : null,
+    grade: x.grade && x.grade.some((v) => finite(v)) ? gradeState(x.grade) : null,
   }
+}
+
+/**
+ * Colour Grading's fields resolved: absent ones 0, except Blending: 100 for a sidecar with Split Toning fields and no
+ * crs:ColorGradeBlending (Adobe: Split Toning always used Blending 100; that an absent field means it is inferred),
+ * otherwise Lightroom's default 50.
+ */
+function gradeState(f: (number | undefined)[]): number[] {
+  const splitToning = [0, 1, 6, 7, 13].some((i) => finite(f[i]))
+  return LR_GRADE_FIELDS.map((_, i) => (finite(f[i]) ? f[i]! : i === LR_BLENDING ? (splitToning ? 100 : 50) : 0))
 }
 
 /** A stable text form, for remembering and comparing (sidecar/changes.ts, the marker). */
 export function lrKey(s: LrState): string {
-  return JSON.stringify({ o: s.orientation, c: s.crop && s.crop.map((v) => round(v)), u: s.upright, t: s.sliders.map((v) => round(v, 3)), ...(s.detail ? { d: s.detail.map((v) => round(v, 2)) } : {}), ...(s.hsl ? { h: s.hsl.map((v) => round(v, 2)) } : {}) })
+  return JSON.stringify({ o: s.orientation, c: s.crop && s.crop.map((v) => round(v)), u: s.upright, t: s.sliders.map((v) => round(v, 3)), ...(s.detail ? { d: s.detail.map((v) => round(v, 2)) } : {}), ...(s.hsl ? { h: s.hsl.map((v) => round(v, 2)) } : {}), ...(s.grade ? { g: s.grade.map((v) => round(v, 2)) } : {}) })
 }
 
 export function parseLrKey(key: string | null | undefined): LrState | null {
   if (!key) return null
   try {
-    const j = JSON.parse(key) as { o: number; c: LrState['crop']; u: number; t: LrState['sliders']; d?: number[]; h?: number[] }
+    const j = JSON.parse(key) as { o: number; c: LrState['crop']; u: number; t: LrState['sliders']; d?: number[]; h?: number[]; g?: number[] }
     if (typeof j.o !== 'number' || typeof j.u !== 'number' || !Array.isArray(j.t) || j.t.length !== 7) return null
     if (j.c !== null && (!Array.isArray(j.c) || j.c.length !== 5)) return null
     const detail = Array.isArray(j.d) && j.d.length === LR_DETAIL_FIELDS.length ? j.d : null
     const hsl = Array.isArray(j.h) && j.h.length === LR_HSL_FIELDS.length ? j.h : null
-    return { orientation: j.o, crop: j.c, upright: j.u, sliders: j.t, ...(detail ? { detail } : {}), ...(hsl ? { hsl } : {}) }
+    const grade = Array.isArray(j.g) && j.g.length === LR_GRADE_FIELDS.length ? j.g : null
+    return { orientation: j.o, crop: j.c, upright: j.u, sliders: j.t, ...(detail ? { detail } : {}), ...(hsl ? { hsl } : {}), ...(grade ? { grade } : {}) }
   } catch {
     return null
   }
@@ -314,6 +403,7 @@ export function sameGroup(a: LrState, b: LrState, g: LrGroup): boolean {
   }
   if (g === 'detail') return !a.detail || !b.detail || a.detail.every((v, i) => Math.abs(v - b.detail![i]) <= 0.05)
   if (g === 'hsl') return !a.hsl || !b.hsl || a.hsl.every((v, i) => Math.abs(v - b.hsl![i]) <= 0.05)
+  if (g === 'grade') return !a.grade || !b.grade || sameGrade(a.grade, b.grade)
   return a.upright === b.upright && a.sliders.every((v, i) => Math.abs(v - b.sliders[i]) <= 0.05)
 }
 
@@ -335,8 +425,11 @@ const totalOrientation = (g: GeometrySettings, frame: LrFrame) => composeOrienta
 /** The size of LightBench's straightened frame for an orientation. */
 const frameSize = (o: Orient, frame: LrFrame): [number, number] => (swaps(o) ? [frame.stored[1], frame.stored[0]] : frame.stored)
 
-/** What Lightroom's fields would be for LightBench's geometry (and Detail settings: none = all off; the Colour Mixer: none = 0). */
-export function toLightroom(g: GeometrySettings, frame: LrFrame, detail?: DetailSettings, mixer?: ColourMixerSettings): LrState {
+/**
+ * What Lightroom's fields would be for LightBench's geometry (and Detail settings: none = all off; the Colour Mixer: none
+ * = 0; Colour Grading: none = the defaults).
+ */
+export function toLightroom(g: GeometrySettings, frame: LrFrame, detail?: DetailSettings, mixer?: ColourMixerSettings, grading?: ColourGradingSettings): LrState {
   const o = totalOrientation(g, frame)
   const [W, H] = frame.stored
   const [fw, fh] = frameSize(o, frame)
@@ -374,6 +467,7 @@ export function toLightroom(g: GeometrySettings, frame: LrFrame, detail?: Detail
     sliders: t ? [-t.vertical + 0, -t.horizontal + 0, t.rotate, t.scale, -t.aspect + 0, t.offsetX, t.offsetY] : [0, 0, 0, 100, 0, 0, 0],
     detail: detailToLr(detail),
     hsl: mixerToLr(mixer),
+    grade: gradingToLr(grading),
   }
 }
 
@@ -385,6 +479,8 @@ export interface FromLightroom {
   detail?: DetailSettings
   /** The Colour Mixer's 24 numbers read from Lightroom (`mixerFromLr`), when that group was taken. */
   hsl?: number[]
+  /** Colour Grading's 14 numbers read from Lightroom (`gradingFromLr`), when that group was taken. */
+  grade?: number[]
   /** The groups that were taken from Lightroom (the others already matched). */
   changed: LrGroup[]
   /** The Upright mode read must be solved again on the photo (Auto, Level, Vertical, Full). */
@@ -396,8 +492,8 @@ export interface FromLightroom {
  * taken, so the parts Lightroom can't describe (the aspect lock, a Guided correction drawn in LightBench) stay when
  * nothing changed there.
  */
-export function fromLightroom(current: GeometrySettings, s: LrState, frame: LrFrame, currentDetail?: DetailSettings, currentMixer?: ColourMixerSettings): FromLightroom {
-  const ours = toLightroom(current, frame, currentDetail, currentMixer)
+export function fromLightroom(current: GeometrySettings, s: LrState, frame: LrFrame, currentDetail?: DetailSettings, currentMixer?: ColourMixerSettings, currentGrading?: ColourGradingSettings): FromLightroom {
+  const ours = toLightroom(current, frame, currentDetail, currentMixer, currentGrading)
   const changed = LR_GROUPS.filter((g) => !sameGroup(ours, s, g))
   let g = current
   if (changed.includes('orientation')) {
@@ -452,11 +548,13 @@ export function fromLightroom(current: GeometrySettings, s: LrState, frame: LrFr
   }
   const detail = changed.includes('detail') && s.detail ? detailFromLr(s.detail) : undefined
   const hsl = changed.includes('hsl') && s.hsl ? s.hsl : undefined
-  return { geometry: g, changed, rerun, ...(detail ? { detail } : {}), ...(hsl ? { hsl } : {}) }
+  const grade = changed.includes('grade') && s.grade ? s.grade : undefined
+  return { geometry: g, changed, rerun, ...(detail ? { detail } : {}), ...(hsl ? { hsl } : {}), ...(grade ? { grade } : {}) }
 }
 
-/** Whether Lightroom's fields would change LightBench's geometry, Detail settings or Colour Mixer. */
-export const lrDiffers = (current: GeometrySettings, s: LrState, frame: LrFrame, detail?: DetailSettings, mixer?: ColourMixerSettings) => !sameState(toLightroom(current, frame, detail, mixer), s)
+/** Whether Lightroom's fields would change LightBench's geometry, Detail settings, Colour Mixer or Colour Grading. */
+export const lrDiffers = (current: GeometrySettings, s: LrState, frame: LrFrame, detail?: DetailSettings, mixer?: ColourMixerSettings, grading?: ColourGradingSettings) =>
+  !sameState(toLightroom(current, frame, detail, mixer, grading), s)
 
 // ---- writing
 
@@ -486,6 +584,8 @@ export interface LrWritePlan {
   detailFields?: number[]
   /** The same for the Colour Mixer's fields (indices into LR_HSL_FIELDS). */
   hslFields?: number[]
+  /** The same for Colour Grading's fields (indices into LR_GRADE_FIELDS). */
+  gradeFields?: number[]
 }
 
 /**
@@ -510,13 +610,15 @@ export function planLightroomWrite(
   oursDetail?: DetailSettings,
   fileMixer?: ColourMixerSettings,
   oursMixer?: ColourMixerSettings,
+  fileGrading?: ColourGradingSettings,
+  oursGrading?: ColourGradingSettings,
 ): LrWritePlan {
-  const state = toLightroom(ours, frame, oursDetail, oursMixer)
+  const state = toLightroom(ours, frame, oursDetail, oursMixer, oursGrading)
   if (!file || !file.processVersion || file.applied) return { groups: [], state }
   const theirs = lrState(file.fields, frame)
   // What LightBench's geometry was when this file was last written (or read): its own settings in the file, none if
   // it has none yet.
-  const before = toLightroom(fileDevelop ?? normalizeGeometry(null), frame, fileDevelop ? fileDetail : undefined, fileDevelop ? fileMixer : undefined)
+  const before = toLightroom(fileDevelop ?? normalizeGeometry(null), frame, fileDevelop ? fileDetail : undefined, fileDevelop ? fileMixer : undefined, fileDevelop ? fileGrading : undefined)
   const marker = parseLrKey(file.marker)
   const groups = LR_GROUPS.filter((g) => !sameGroup(state, theirs, g) && (!sameGroup(state, before, g) || (!!marker && !sameGroup(marker, theirs, g))))
   // Detail, field by field: those LightBench changed (or all, after Ignore), where they differ from the file's.
@@ -533,6 +635,20 @@ export function planLightroomWrite(
     ? oh.map((_, i) => i).filter((i) => Math.abs(oh[i] - theirs.hsl![i]) > 0.05 && (hslIgnored || Math.abs(oh[i] - before.hsl![i]) > 0.05))
     : []
   if (groups.includes('hsl') && !hslFields.length) groups.splice(groups.indexOf('hsl'), 1)
+  // Colour Grading, field by field the same way (a hue counts with its saturation: a changed saturation writes its hue
+  // too). A sidecar without any of its fields is left without them. A sidecar with Split Toning but no ColorGradeBlending
+  // (read as 100) gets ColorGradeBlending written with the first change, so the file keeps saying what LightBench read.
+  const gradeIgnored = !!marker && !sameGroup(marker, theirs, 'grade')
+  const og = state.grade!
+  const bg = before.grade!
+  const tg = theirs.grade
+  const isHue = (i: number) => i < 12 && i % 3 === 0
+  const changedHere = (x: number[], y: number[], i: number) => gradeFieldDiffers(x, y, i) || (isHue(i) && gradeFieldDiffers(x, y, i + 1) && Math.abs(x[i + 1]) >= 0.5)
+  const gradeFields = groups.includes('grade') && tg
+    ? og.map((_, i) => i).filter((i) => changedHere(og, tg, i) && (gradeIgnored || changedHere(og, bg, i)))
+    : []
+  if (gradeFields.length && file.fields.grade?.[LR_BLENDING] === undefined && !gradeFields.includes(LR_BLENDING)) gradeFields.push(LR_BLENDING)
+  if (groups.includes('grade') && !gradeFields.length) groups.splice(groups.indexOf('grade'), 1)
   const after: LrState = {
     orientation: groups.includes('orientation') ? state.orientation : theirs.orientation,
     crop: groups.includes('crop') ? state.crop : theirs.crop,
@@ -540,14 +656,31 @@ export function planLightroomWrite(
     sliders: groups.includes('transform') ? state.sliders : theirs.sliders,
     detail: groups.includes('detail') && theirs.detail ? theirs.detail.map((v, i) => (detailFields.includes(i) ? od[i] : v)) : theirs.detail,
     hsl: groups.includes('hsl') && theirs.hsl ? theirs.hsl.map((v, i) => (hslFields.includes(i) ? oh[i] : v)) : theirs.hsl,
+    grade: groups.includes('grade') && tg ? tg.map((v, i) => (gradeFields.includes(i) ? og[i] : v)) : tg,
   }
-  return { groups, state, marker: sameState(after, state) ? lrKey(after) : undefined, ...(detailFields.length ? { detailFields } : {}), ...(hslFields.length ? { hslFields } : {}) }
+  return {
+    groups,
+    state,
+    marker: sameState(after, state) ? lrKey(after) : undefined,
+    ...(detailFields.length ? { detailFields } : {}),
+    ...(hslFields.length ? { hslFields } : {}),
+    ...(gradeFields.length ? { gradeFields } : {}),
+  }
 }
 
 /** The values written for a group, as Lightroom-style text (tiff:Orientation is in the TIFF namespace). */
-export function lrValues(s: LrState, g: LrGroup, detailFields?: number[], hslFields?: number[]): [ns: string, local: string, value: string][] {
+export function lrValues(s: LrState, g: LrGroup, detailFields?: number[], hslFields?: number[], gradeFields?: number[]): [ns: string, local: string, value: string][] {
   const num = (v: number, digits: number) => String(round(v, digits))
   if (g === 'orientation') return [[NS_TIFF, 'Orientation', String(s.orientation)]]
+  if (g === 'grade') {
+    const v = s.grade ?? gradingToLr(undefined)
+    // Integers; Luminance and Balance with a sign ("+13"), as the HSL fields (not checked against a file Lightroom wrote).
+    const all = LR_GRADE_FIELDS.map((name, i): [string, string, string] => {
+      const n = Math.round(v[i]) + 0
+      return [NS_CRS, name, LR_GRADE_SIGNED.has(i) && n > 0 ? `+${n}` : String(n)]
+    })
+    return gradeFields ? all.filter((_, i) => gradeFields.includes(i)) : all
+  }
   if (g === 'hsl') {
     const h = s.hsl ?? mixerToLr(undefined)
     // Integers, positive ones with a sign ("+13", as LightCraft's test sidecar writes them; not checked against Lightroom).

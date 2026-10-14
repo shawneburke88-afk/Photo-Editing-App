@@ -286,6 +286,38 @@ export const HELP: Record<string, ControlHelp> = {
     pitfalls: 'Not Basic’s Saturation: like Lightroom’s Refine Saturation, it only takes back (or keeps) the colour the curve adds. Applies to the RGB curve and Regions, not to the Red, Green and Blue curves.',
     engine: 'LightBench; brightness measured with darktable’s preserve-colors norms (Advanced)',
   },
+  gradeWheel: {
+    hint: 'Tints these tones',
+    what: 'Drag the point (or use the arrow keys: ← → turn the hue, ↑ ↓ change the saturation) to tint this range of tones with a colour. The centre is no tint; the edge is the strongest (saturation 100). Shadows tint the dark tones, Highlights the bright ones, Midtones the middle, Global the whole photo.',
+    left: 'Hold Shift while dragging to change the saturation only, Ctrl (⌘) to change the hue only, Alt (Option) for fine moves.',
+    right: 'Double-click the wheel to remove the tint (hue and saturation back to 0).',
+    pitfalls: 'Strong tints look dated quickly: saturations of 10–30 are usually enough. To change one colour of the photo (a sky, skin), use the Colour Mixer instead. Set white balance first: grading on a colour cast mixes two tints.',
+    engine: 'darktable color balance rgb (4 ways: shadows lift, highlights gain, power, global offset); the wheel mapping is LightBench’s',
+  },
+  gradeLuminance: {
+    hint: 'Brightens or darkens these tones',
+    what: 'Brightens or darkens the tones this wheel covers, without a tint (it works with saturation 0 too). Shadows and Highlights scale their range (darktable’s lift and gain), Midtones bends the middle like a gamma, Global brightens or darkens the whole photo.',
+    left: 'Darker.',
+    right: 'Brighter.',
+    pitfalls: 'For overall brightness and recovering highlights or shadows, use Basic first (Exposure, Highlights, Shadows): they keep texture. Midtones −100 can crush the deepest shadows.',
+    engine: 'darktable color balance rgb: the luminance of lift, gain, power and offset',
+  },
+  gradeBlending: {
+    hint: 'How much the ranges overlap',
+    what: 'How softly the Shadows and Highlights ranges blend into each other and into the mid-tones. 50 is Lightroom’s default (and darktable’s fall-off 1). Global isn’t affected.',
+    left: 'Separate ranges: each tint stays in its own tones (0 is darktable’s steepest fall-off, 3).',
+    right: 'Wide overlap: the tints mix across the photo (100 is darktable’s softest, 0; old Split Toning edits used 100).',
+    pitfalls: 'Hold Alt (Option) while dragging to see the wheels’ tints at full saturation while you set it.',
+    engine: 'darktable color balance rgb: shadows and highlights fall-off (masks tab)',
+  },
+  gradeBalance: {
+    hint: 'Moves the split between shadows and highlights',
+    what: 'Moves the tone where the Shadows tint gives way to the Highlights tint (around middle grey at 0). Global isn’t affected.',
+    left: 'Favours the shadows’ tint: it reaches further into the brighter tones.',
+    right: 'Favours the highlights’ tint: it reaches further down (Adobe: values above 0 increase the effect of the highlights).',
+    pitfalls: '±100 moves the split by 2 EV in LightBench (Lightroom’s numbers aren’t public).',
+    engine: 'darktable color balance rgb: the masks’ middle-grey fulcrum',
+  },
   mixerHue: {
     hint: 'Turns this colour',
     what: 'Turns the hue of this band’s colours, measured in darktable’s perceptual colour space (UCS 22): ±100 turns them by ±30°, about as far as the neighbouring band. Colours between two bands follow both, in proportion; greys are never turned.',
@@ -399,6 +431,14 @@ export const CURVE_GUIDE = {
   what: 'The curve maps each tone of the photo (left to right, as in the histogram behind it) to a new tone (up is brighter). It acts after Basic, on the tones you see.',
   order: 'Set Basic first: Exposure and Contrast for the overall look, Highlights, Shadows, Whites and Blacks to recover or open areas (they keep texture). Use the curve last, to shape the look.',
   pitfalls: 'Lifting shadows with the curve flattens texture: use Shadows first. A steep curve can clip to pure black or white: watch for red (white) or blue (black) on the graph, and the clipping shown on the photo while you drag.',
+}
+
+/** The Colour Grading group's guidance (owner's rule: say what comes first). */
+export const GRADING_GUIDE = {
+  hint: 'Colour by tone: cool shadows, warm highlights',
+  what: 'Tints the shadows, mid-tones and highlights with colours of their own, or the whole photo (Global): Lightroom’s Color Grading on darktable’s color balance rgb. Each wheel also brightens or darkens its tones.',
+  order: 'Set white balance and Basic first, then the Colour Mixer for single colours; grade last, for the mood.',
+  pitfalls: 'Small saturations go a long way (10–30). Greys take the tint, so a strong Shadows tint shows in black areas. Blending and Balance shape the Shadows and Highlights ranges only.',
 }
 
 /** The Colour Mixer group's guidance (owner's rule: say what comes first). */

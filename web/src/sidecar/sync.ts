@@ -14,6 +14,7 @@ import { getDirAt, getRootHandle } from '../platform/roots'
 import { fieldsFromRead } from './changes'
 import { externalChanges, inspectSidecar, locateSidecar } from './external'
 import { detailOf, geometryOf, lrFrame, mixerOf, planLightroomWrite } from './lightroom'
+import { gradingOf } from '../engine/develop/colour-grading'
 import { planToneWrite, toneCurveOf } from './lightroomCurve'
 import { sidecarFor } from './naming'
 import { readXmp, writeXmp } from './xmp'
@@ -132,7 +133,7 @@ class SidecarSync {
     // Lightroom's crop, orientation, Transform and Detail fields: written only where LightBench changed them (lightroom.ts).
     const frame = lrFrame(photo)
     const read = existing ? readXmp(existing) : null
-    const lightroom = planLightroomWrite(read?.lightroom, read?.develop ? geometryOf(read.develop) : null, geometryOf(src.settings), frame, detailOf(read?.develop), detailOf(src.settings), mixerOf(read?.develop), mixerOf(src.settings))
+    const lightroom = planLightroomWrite(read?.lightroom, read?.develop ? geometryOf(read.develop) : null, geometryOf(src.settings), frame, detailOf(read?.develop), detailOf(src.settings), mixerOf(read?.develop), mixerOf(src.settings), gradingOf(read?.develop), gradingOf(src.settings))
     // Lightroom's tone curve, by the same rules (lightroomCurve.ts).
     const lightroomTone = planToneWrite(read?.lightroomTone, toneCurveOf(read?.develop), toneCurveOf(src.settings))
     let text: string | null
