@@ -38,6 +38,22 @@ export function toneEqualizerFactors(bandGainsEv: number[]): number[] {
   return leastSquares(A, bandGainsEv.map((g) => 2 ** g))
 }
 
+/**
+ * The least-squares fit above as one 8 × 9 matrix (row-major): factors = P · 2^bands, P = (AᵀA)⁻¹Aᵀ. The masks' local
+ * Highlights/Shadows/Whites/Blacks (PHASE3.md Part 23) change the bands per pixel, so the shader fits them per pixel with
+ * it. Only edits with masks use it; `toneEqualizerFactors` stays the global path.
+ */
+export function toneEqualizerPinv(): number[] {
+  const out: number[] = []
+  const A = BAND_CENTRES.map((b) => RBF_CENTRES.map((r) => gauss(b - r)))
+  for (let c = 0; c < BAND_CENTRES.length; c++) {
+    // Column c of P is the fit of the unit vector e_c.
+    const col = leastSquares(A, BAND_CENTRES.map((_, i) => (i === c ? 1 : 0)))
+    col.forEach((v, r) => (out[r * BAND_CENTRES.length + c] = v))
+  }
+  return out
+}
+
 /** Correction factor for a pixel of the given luminance exposure (log2), as the shader computes it. */
 export function toneCorrection(exposureEv: number, factors: number[]): number {
   const e = Math.min(0, Math.max(-8, exposureEv))

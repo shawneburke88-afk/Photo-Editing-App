@@ -18,6 +18,9 @@
 //   darktable's filters run on it (colour-mixer-filter.wgsl) and Stage B draws the tile with their corrections.
 // Colour Grading (PHASE3.md Part 17; only when the edit has one): per pixel in Stage B, after the mixer, before the
 //   sigmoid (colour-grading.wgsl), from one uniform (binding 11) that holds its parameters and the gamut table.
+// Masks (PHASE3.md Part 23; only when the edit has masks): each drawing is made in tiles; for each tile the masks are
+//   rasterised and their weighted local values accumulated into planes (mask-stage.ts, mask.wgsl), which Stage B reads
+//   (binding 14) in `developMasked`, before the sigmoid. Their parameters are binding 15, the tile's place binding 16.
 // Soft proofing (PHASE3.md Part 20; only on Develop's canvas and in its histogram, `Indicators.proof`): per pixel in
 //   Stage B, the proof table (a 3D texture, binding 12, built by engine/proof/ in a worker) replaces the developed
 //   colour before the output profile; its uniform (binding 13) is all zero otherwise.
@@ -63,6 +66,9 @@ import colourGradingWgsl from './colour-grading.wgsl?raw'
 import { GRADING_UNIFORM_SIZE } from '../develop/colour-grading'
 import { displayToSensorAt, sensorToDisplayAt, type ShownMap } from '../develop/shown-map'
 import { presentMode, type PresentMode } from './present'
+import { MaskStage, type MaskDraw, type PxRegion } from './mask-stage'
+import { prepareMasks } from '../develop/mask-render'
+import { toneEqualizerPinv } from '../color/tone-equalizer'
 
 export type { PresentMode } from './present'
 
@@ -268,6 +274,10 @@ const STATS_WORDS = 1028
 const IDENTITY: Mat3 = [1, 0, 0, 0, 1, 0, 0, 0, 1]
 const RAW_PARAMS_SIZE = 176
 const VIEW_SIZE = 512
+/** develop-display.wgsl's `struct Masks`: 34 vec4 (info, overlay, local, bands, weights, pinv). */
+const MASK_UNIFORM_SIZE = 34 * 16
+/** The tone equalizer's fit as a matrix (the masks' per-pixel tone bands). */
+const TONE_PINV = toneEqualizerPinv()
 /** develop-display.wgsl's `struct Proof`: four words, then three colours. */
 const PROOF_UNIFORM_SIZE = 64
 /** The warning colours (sRGB; converted for a Display P3 canvas): destination red, screen blue, both magenta. */
@@ -409,6 +419,16 @@ export class DevelopEngine {
   private proofTex: { key: string; tex: GPUTexture } | null = null
   private boundProof: GPUTexture | null = null
   private noProof: GPUTexture | null = null
+  /**
+   * Masks (Part 23): the stage that rasterises them, their uniform (bound always; all zero = off), whether it holds
+   * anything, the masks of the drawing being prepared (writeView), and what is bound without masks.
+   */
+  private readonly maskStage: MaskStage
+  private readonly maskBuf: GPUBuffer
+  private masksOn = false
+  private boundMasks: MaskDraw | null = null
+  private readonly noPlanes: GPUBuffer
+  private readonly noMaskTile: GPUBuffer
   private readonly displayModule: GPUShaderModule
   private readonly texIds = new WeakMap<GPUTexture, number>()
   private nextTexId = 1
@@ -499,6 +519,11 @@ export class DevelopEngine {
     // Zero-initialised: soft proofing off.
     this.proofBuf = device.createBuffer({ size: PROOF_UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.statsModule = device.createShaderModule({ code: statsWgsl })
+    // Zero-initialised: no masks.
+    this.maskBuf = device.createBuffer({ size: MASK_UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    this.noPlanes = device.createBuffer({ size: 64, usage: GPUBufferUsage.STORAGE })
+    this.noMaskTile = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM })
+    this.maskStage = new MaskStage(device, this.sampler)
     this.retouch = new RetouchStage({
       device,
       encodeMips: (enc, tex) => this.encodeMips(enc, tex),
@@ -568,7 +593,8 @@ export class DevelopEngine {
   /**
    * Frees the photo's GPU memory: the scene, its warped and lens-corrected copies, the retouched copy, the tone
    * masks, the Detail stage's results and their warps, the Tone Curve's table, the Colour Mixer's hue tables, Colour
-   * Grading's parameters (zeroed), soft proofing's table (zeroed uniform) and the uploaded sensor data or pixels. (The mixer's pre-pass textures and buffers belong to each drawing and are freed
+   * Grading's parameters (zeroed), soft proofing's table (zeroed uniform), the masks' buffers (Part 23) and the uploaded
+   * sensor data or pixels. (The mixer's pre-pass textures and buffers belong to each drawing and are freed
    * when it is submitted, or when encoding it fails.) The engine keeps its pipelines; load a photo again before using
    * it. Background engines call this after each photo (PHASE3.md, Parts 14 and 15).
    */
@@ -609,6 +635,12 @@ export class DevelopEngine {
     this.boundProof = null
     if (this.proofOn) this.device.queue.writeBuffer(this.proofBuf, 0, new ArrayBuffer(PROOF_UNIFORM_SIZE))
     this.proofOn = false
+    // The masks' working buffers and planes (Part 23); their uniform zeroed, so the next photo starts without masks.
+    // (Optional chaining: tests build engines without a mask stage.)
+    this.maskStage?.release()
+    this.boundMasks = null
+    if (this.masksOn) this.device.queue.writeBuffer(this.maskBuf, 0, new ArrayBuffer(MASK_UNIFORM_SIZE))
+    this.masksOn = false
     this.rawBuf?.destroy()
     this.rawBuf = null
     this.rgbInput?.texture.destroy()
@@ -1655,7 +1687,7 @@ export class DevelopEngine {
    * denoiseprofile); LightBench's choice is documented in PHASE3.md Part 13.
    */
   private async toneSource(u: DisplayUniforms, src: Source): Promise<Source> {
-    return src.plain && u.toneEnabled && u.toneMask.filter === 'eigf' ? src.plain() : src
+    return src.plain && toneWanted(u) && u.toneMask.filter === 'eigf' ? src.plain() : src
   }
 
   /** `display`: the colour space of the target (only the on-screen canvas is ever Display P3). */
@@ -1701,7 +1733,7 @@ export class DevelopEngine {
     const d = REC2020_TO_DISPLAY_P3
     f.set([d[0], d[1], d[2], 0, d[3], d[4], d[5], 0, d[6], d[7], d[8], 0], 92)
     const tm = u.toneMask
-    if (u.toneEnabled && tm.filter === 'eigf') {
+    if (toneWanted(u) && tm.filter === 'eigf') {
       const toMask = this.maskSpace()
       const mask = this.toneMask(maskSrc, mul(toMask, fix), tm.blending)
       this.boundMask = mask.tex
@@ -1744,6 +1776,9 @@ export class DevelopEngine {
       this.device.queue.writeBuffer(this.gradeBuf, 0, cg ? cg.uniform : new ArrayBuffer(GRADING_UNIFORM_SIZE))
       this.gradeKey = gk
     }
+    // Masks (Part 23): prepared for this drawing (mapped into its target pixels); written when there are any, zeroed once
+    // when they go away, so a drawing without them is made exactly as before.
+    this.writeMasks(u, src, rect, f[28], fix, ind, pass, display)
     // Soft proofing: Develop's canvas (pass 0) and its histogram (pass 1) only; written when on, zeroed once when it
     // goes off, so a drawing without it is made exactly as before.
     const pf = ind.proof && (pass === 0 || pass === 1) ? ind.proof : null
@@ -1774,6 +1809,34 @@ export class DevelopEngine {
       this.device.queue.writeBuffer(this.viewLensBuf, 0, lensUniforms(lw, this.camToWorking))
       this.viewLensFor = lw
     }
+  }
+
+  /** The masks of the drawing being prepared (Part 23): mapped into its target pixels, their uniform written. */
+  private writeMasks(u: DisplayUniforms, src: Source, rect: { x: number; y: number; w: number; h: number }, lod: number, fix: Mat3, ind: Indicators, pass: number, display: DisplaySpace) {
+    const mk = u.masks
+    const ov = pass === 0 && ind.maskOverlay ? ind.maskOverlay : null
+    const s = this.sensor!
+    const prepared = mk ? prepareMasks(mk.list, { rawMap: src.rawMap, lens: src.lens, w: src.w, h: src.h, sensor: [s.width, s.height] }, rect, mk.params, ov?.id ?? null) : null
+    if (!mk || !prepared?.masks.length) {
+      if (this.masksOn) this.device.queue.writeBuffer(this.maskBuf, 0, new ArrayBuffer(MASK_UNIFORM_SIZE))
+      this.masksOn = false
+      this.boundMasks = null
+      return
+    }
+    const b = new ArrayBuffer(MASK_UNIFORM_SIZE)
+    const bu = new Uint32Array(b)
+    const bf = new Float32Array(b)
+    const overlayOn = !!ov && prepared.masks.some((m) => m.id === ov.id)
+    bu.set([prepared.masks.length, overlayOn ? ov.mode : 0, prepared.toneLocal ? 1 : 0, 0], 0)
+    if (ov) bf.set([...srgbColourIn(display, ov.colour), ov.opacity], 4)
+    bf.set([mk.params.tempPerUnit, mk.params.tintPerUnit, mk.contrastSpread, mk.params.contrastFulcrum], 8)
+    bf.set(mk.bands.slice(0, 9), 12)
+    const w = mk.weights
+    for (let i = 0; i < 9; i++) bf.set([w.blacks[i], w.shadows[i], w.highlights[i], w.whites[i]].map((x) => x * mk.toneRange), 24 + 4 * i)
+    bf.set(TONE_PINV, 60)
+    this.device.queue.writeBuffer(this.maskBuf, 0, b)
+    this.masksOn = true
+    this.boundMasks = { prepared, tex: src.tex, texMap: src.texMap, lod, fix, exposure: u.exposureGain, rect }
   }
 
   /**
@@ -2252,6 +2315,32 @@ export class DevelopEngine {
   }
 
   /**
+   * What the range masks measure at a point of the photo last drawn (displayed-image uv): the photo after the global white
+   * balance and exposure, before tone and colour edits (linear Rec.2020, PHASE3.md Part 23), the mean of the 3 × 3 pixels
+   * around it drawn at `scale`. For the colour and luminance range pickers.
+   */
+  async sampleMaskInput(u: DisplayUniforms, wb: Vec3, cu: number, cv: number, scale: number): Promise<Vec3> {
+    this.checkAlive()
+    if (!this.scene) throw new Error('No photo processed')
+    const s = Math.min(1, Math.max(1e-4, scale))
+    const plainU: DisplayUniforms = { ...u, masks: undefined, mixerVisualize: 0 }
+    const run = u.detail ? await this.detailFor({ ...plainU, detailMask: false }, this.detailLevelFor(u, Math.log2(1 / s))) : null
+    const src = await this.detailSource(u.geometry, false, u.lens, run, u.spots, false)
+    const size = 3
+    this.writeView(plainU, wb, src, { x: size / 2 - cu * src.w * s, y: size / 2 - cv * src.h * s, w: src.w * s, h: src.h * s }, Math.max(0, Math.log2(1 / s)), NO_INDICATORS, 0, 'srgb')
+    const pixels = await this.readMixer(src.tex, size, size, 6)
+    src.release()
+    const sum: Vec3 = [0, 0, 0]
+    for (let i = 0; i < size * size; i++) for (let c = 0; c < 3; c++) sum[c] += pixels[4 * i + c]
+    return sum.map((v) => v / (size * size)) as Vec3
+  }
+
+  /** Bytes the masks' buffers hold now (Part 23; the GPU benchmark's and memory checks' reports). */
+  get maskBytes(): number {
+    return this.maskStage.bytes
+  }
+
+  /**
    * The whole (cropped) photo at most `maxSize` px on its long edge, linear Rec.2020 before the sigmoid, before and after
    * the Colour Mixer (tests: the GPU against its CPU twin, PHASE3.md Part 15). `scale`: target pixels per photo pixel.
    */
@@ -2287,7 +2376,7 @@ export class DevelopEngine {
   }
 
   /** Draws the prepared view in mode 3, 4 or 5 (before / after the mixer, after Colour Grading) into rgba32float and reads it back. */
-  private async readMixer(tex: GPUTexture, w: number, h: number, mode: 3 | 4 | 5): Promise<Float32Array> {
+  private async readMixer(tex: GPUTexture, w: number, h: number, mode: 3 | 4 | 5 | 6): Promise<Float32Array> {
     const { device } = this
     const target = device.createTexture({ size: [w, h], format: 'rgba32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
     const enc = device.createCommandEncoder()
@@ -2350,8 +2439,11 @@ export class DevelopEngine {
     }
   }
 
-  /** `tile`, `corr`: the Colour Mixer's tile uniform and corrections (an ordinary drawing without). */
-  private displayBindGroup(pipe: GPURenderPipeline, tex: GPUTexture, tile: GPUBuffer = this.mixTileBuf, corr: GPUTexture = this.emptyMixCorr()): GPUBindGroup {
+  /**
+   * `tile`, `corr`: the Colour Mixer's tile uniform and corrections (an ordinary drawing without); `planes`, `maskTile`:
+   * the masks' planes of the tile and where they sit (none without masks).
+   */
+  private displayBindGroup(pipe: GPURenderPipeline, tex: GPUTexture, tile: GPUBuffer = this.mixTileBuf, corr: GPUTexture = this.emptyMixCorr(), planes: GPUBuffer = this.noPlanes, maskTile: GPUBuffer = this.noMaskTile): GPUBindGroup {
     return this.device.createBindGroup({
       layout: pipe.getBindGroupLayout(0),
       entries: [
@@ -2369,6 +2461,9 @@ export class DevelopEngine {
         { binding: 11, resource: { buffer: this.gradeBuf } },
         { binding: 12, resource: (this.boundProof ?? this.emptyProof()).createView() },
         { binding: 13, resource: { buffer: this.proofBuf } },
+        { binding: 14, resource: { buffer: planes } },
+        { binding: 15, resource: { buffer: this.maskBuf } },
+        { binding: 16, resource: { buffer: maskTile } },
       ],
     })
   }
@@ -2398,7 +2493,7 @@ export class DevelopEngine {
    * corrections). `mode` 3 or 4 draws linear Rec.2020 before or after the mixer instead, 5 after Colour Grading too (before the sigmoid; `view` must be
    * rgba32float, `pipe` the mixer's own pipeline). Returns the temporary resources, to destroy once the work is submitted.
    */
-  private encodeDisplay(enc: GPUCommandEncoder, pipe: GPURenderPipeline, view: GPUTextureView, tex: GPUTexture, w: number, h: number, mode: 0 | 3 | 4 | 5 = 0): (GPUTexture | GPUBuffer)[] {
+  private encodeDisplay(enc: GPUCommandEncoder, pipe: GPURenderPipeline, view: GPUTextureView, tex: GPUTexture, w: number, h: number, mode: 0 | 3 | 4 | 5 | 6 = 0): (GPUTexture | GPUBuffer)[] {
     const temps: (GPUTexture | GPUBuffer)[] = []
     try {
       return this.encodeDisplayInto(enc, pipe, view, tex, w, h, mode, temps)
@@ -2408,7 +2503,7 @@ export class DevelopEngine {
     }
   }
 
-  private encodeDisplayInto(enc: GPUCommandEncoder, pipe: GPURenderPipeline, view: GPUTextureView, tex: GPUTexture, w: number, h: number, mode: 0 | 3 | 4 | 5, temps: (GPUTexture | GPUBuffer)[]): (GPUTexture | GPUBuffer)[] {
+  private encodeDisplayInto(enc: GPUCommandEncoder, pipe: GPURenderPipeline, view: GPUTextureView, tex: GPUTexture, w: number, h: number, mode: 0 | 3 | 4 | 5 | 6, temps: (GPUTexture | GPUBuffer)[]): (GPUTexture | GPUBuffer)[] {
     const { device } = this
     const tileBuf = (origin: [number, number], m: number) => {
       const b = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM, mappedAtCreation: true })
@@ -2420,7 +2515,8 @@ export class DevelopEngine {
       return b
     }
     const mixer = this.boundMixer
-    if (!mixer) {
+    const masks = this.boundMasks
+    if (!mixer && !masks) {
       const rp = enc.beginRenderPass({ colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store' }] })
       rp.setPipeline(pipe)
       rp.setBindGroup(0, this.displayBindGroup(pipe, tex, mode ? tileBuf([0, 0], mode) : this.mixTileBuf))
@@ -2428,37 +2524,40 @@ export class DevelopEngine {
       rp.end()
       return temps
     }
-    const plan = filterPlan(mixer.scale, mixer.maxBrightness)
-    const P = plan.pad
     const T = DevelopEngine.MIX_TILE
-    const texW = Math.min(T, w) + 2 * P
-    const texH = Math.min(T, h) + 2 * P
-    const usage = GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
-    const t = (extra = 0) => {
-      const x = device.createTexture({ size: [texW, texH], format: 'rgba32float', usage: usage | extra })
-      temps.push(x)
-      return x
+    const plan = mixer ? filterPlan(mixer.scale, mixer.maxBrightness) : null
+    const P = plan ? plan.pad : 0
+    let mix: { tIn: GPUTexture; tA: GPUTexture; tB: GPUTexture; tC: GPUTexture; tD: GPUTexture; texW: number; texH: number; fBuf: GPUBuffer } | null = null
+    if (plan) {
+      const texW = Math.min(T, w) + 2 * P
+      const texH = Math.min(T, h) + 2 * P
+      const usage = GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+      const t = (extra = 0) => {
+        const x = device.createTexture({ size: [texW, texH], format: 'rgba32float', usage: usage | extra })
+        temps.push(x)
+        return x
+      }
+      const tIn = t(GPUTextureUsage.RENDER_ATTACHMENT)
+      const params = new ArrayBuffer(64)
+      new Int32Array(params).set([texW, texH, plan.rh, plan.rp, plan.rs, plan.rg, plan.rb, 0], 0)
+      new Float32Array(params).set([plan.sh, plan.sp, plan.ss, plan.sg, plan.sb, plan.gradAmp, EPS_HUE, EPS_PARAM], 8)
+      const fBuf = device.createBuffer({ size: params.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+      device.queue.writeBuffer(fBuf, 0, params)
+      temps.push(fBuf)
+      mix = { tIn, tA: t(), tB: t(), tC: t(), tD: t(), texW, texH, fBuf }
     }
-    const tIn = t(GPUTextureUsage.RENDER_ATTACHMENT)
-    const tA = t()
-    const tB = t()
-    const tC = t()
-    const tD = t()
-    const params = new ArrayBuffer(64)
-    new Int32Array(params).set([texW, texH, plan.rh, plan.rp, plan.rs, plan.rg, plan.rb, 0], 0)
-    new Float32Array(params).set([plan.sh, plan.sp, plan.ss, plan.sg, plan.sb, plan.gradAmp, EPS_HUE, EPS_PARAM], 8)
-    const fBuf = device.createBuffer({ size: params.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
-    device.queue.writeBuffer(fBuf, 0, params)
-    temps.push(fBuf)
-    const pipes = (this.mixFilterPipes ??= (() => {
-      const module = device.createShaderModule({ code: colourMixerFilterWgsl + colourMixerWgsl })
-      const make = (entryPoint: string) => device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint } })
-      return { prefilterStats: make('prefilterStats'), prefilterApply: make('prefilterApply'), guideStats: make('guideStats'), guideApply: make('guideApply') }
-    })())
-    const mixIn = this.mixPipe()
+    const pipes = mix
+      ? (this.mixFilterPipes ??= (() => {
+          const module = device.createShaderModule({ code: colourMixerFilterWgsl + colourMixerWgsl })
+          const make = (entryPoint: string) => device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint } })
+          return { prefilterStats: make('prefilterStats'), prefilterApply: make('prefilterApply'), guideStats: make('guideStats'), guideApply: make('guideApply') }
+        })())
+      : null
+    const mixIn = mix ? this.mixPipe() : null
     const lut = (this.boundMixLut ?? this.emptyCurve()).createView()
     const run = (p: GPUComputePipeline, src: GPUTexture[], dst: GPUTexture[], uses: { mx?: boolean; lut?: boolean }) => {
-      const entries: GPUBindGroupEntry[] = [{ binding: 1, resource: { buffer: fBuf } }]
+      const m = mix!
+      const entries: GPUBindGroupEntry[] = [{ binding: 1, resource: { buffer: m.fBuf } }]
       if (uses.mx) entries.push({ binding: 0, resource: { buffer: this.mixBuf } })
       if (uses.lut) entries.push({ binding: 2, resource: lut })
       src.forEach((x, i) => entries.push({ binding: 3 + i, resource: x.createView() }))
@@ -2466,28 +2565,49 @@ export class DevelopEngine {
       const pass = enc.beginComputePass()
       pass.setPipeline(p)
       pass.setBindGroup(0, device.createBindGroup({ layout: p.getBindGroupLayout(0), entries }))
-      pass.dispatchWorkgroups(Math.ceil(texW / 16), Math.ceil(texH / 16))
+      pass.dispatchWorkgroups(Math.ceil(m.texW / 16), Math.ceil(m.texH / 16))
       pass.end()
     }
+    // The drawn image in whole target pixels: the masks' planes are needed only there (outside it is the background).
+    const img: PxRegion | null = masks
+      ? { x0: Math.floor(masks.rect.x), y0: Math.floor(masks.rect.y), x1: Math.ceil(masks.rect.x + masks.rect.w), y1: Math.ceil(masks.rect.y + masks.rect.h) }
+      : null
     let first = true
     for (let ty = 0; ty < h; ty += T) {
       for (let tx = 0; tx < w; tx += T) {
         const origin: [number, number] = [tx - P, ty - P]
-        // The mixer's input around the tile.
-        const a = enc.beginRenderPass({ colorAttachments: [{ view: tIn.createView(), loadOp: 'clear', storeOp: 'store' }] })
-        a.setPipeline(mixIn)
-        a.setBindGroup(0, this.displayBindGroup(mixIn, tex, tileBuf(origin, 1)))
-        a.draw(3)
-        a.end()
-        run(pipes.prefilterStats, [tIn], [tA, tB], {})
-        run(pipes.prefilterApply, [tIn, tA, tB], [tC, tD], { mx: true, lut: true })
-        run(pipes.guideStats, [tC, tD], [tA, tB], {})
-        run(pipes.guideApply, [tC, tD, tA, tB], [tIn], { mx: true })
-        // The tile, drawn with the corrections.
+        let planes = this.noPlanes
+        let maskTile = this.noMaskTile
+        if (masks && img) {
+          // The tile (with the mixer's margin: its input is drawn around the tile) inside the drawn image.
+          let r: PxRegion = { x0: Math.max(img.x0, tx - P), y0: Math.max(img.y0, ty - P), x1: Math.min(img.x1, Math.min(w, tx + T) + P), y1: Math.min(img.y1, Math.min(h, ty + T) + P) }
+          if (r.x1 <= r.x0 || r.y1 <= r.y0) r = { x0: img.x0, y0: img.y0, x1: img.x0 + 1, y1: img.y0 + 1 }
+          planes = this.maskStage.encode(enc, masks, r, temps)
+          maskTile = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM, mappedAtCreation: true })
+          const mr = maskTile.getMappedRange()
+          new Float32Array(mr, 0, 2).set([r.x0, r.y0])
+          new Uint32Array(mr, 8, 2).set([r.x1 - r.x0, r.y1 - r.y0])
+          maskTile.unmap()
+          temps.push(maskTile)
+        }
+        if (mix && pipes && mixIn) {
+          // The mixer's input around the tile.
+          const a = enc.beginRenderPass({ colorAttachments: [{ view: mix.tIn.createView(), loadOp: 'clear', storeOp: 'store' }] })
+          a.setPipeline(mixIn)
+          a.setBindGroup(0, this.displayBindGroup(mixIn, tex, tileBuf(origin, 1), undefined, planes, maskTile))
+          a.draw(3)
+          a.end()
+          run(pipes.prefilterStats, [mix.tIn], [mix.tA, mix.tB], {})
+          run(pipes.prefilterApply, [mix.tIn, mix.tA, mix.tB], [mix.tC, mix.tD], { mx: true, lut: true })
+          run(pipes.guideStats, [mix.tC, mix.tD], [mix.tA, mix.tB], {})
+          run(pipes.guideApply, [mix.tC, mix.tD, mix.tA, mix.tB], [mix.tIn], { mx: true })
+        }
+        // The tile, drawn with the corrections (and the masks' planes).
         const b = enc.beginRenderPass({ colorAttachments: [{ view, loadOp: first ? 'clear' : 'load', storeOp: 'store' }] })
         b.setPipeline(pipe)
         b.setScissorRect(tx, ty, Math.min(T, w - tx), Math.min(T, h - ty))
-        b.setBindGroup(0, this.displayBindGroup(pipe, tex, tileBuf(origin, mode || 2), tIn))
+        const tile = mix ? tileBuf(origin, mode || 2) : mode ? tileBuf([0, 0], mode) : this.mixTileBuf
+        b.setBindGroup(0, this.displayBindGroup(pipe, tex, tile, mix ? mix.tIn : undefined, planes, maskTile))
         b.draw(3)
         b.end()
         first = false
@@ -2591,6 +2711,10 @@ export class DevelopEngine {
     this.proofTex?.tex.destroy()
     this.noProof?.destroy()
     this.proofBuf.destroy()
+    this.maskStage.destroy()
+    this.maskBuf.destroy()
+    this.noPlanes.destroy()
+    this.noMaskTile.destroy()
     this.retouch.destroy()
     this.scene?.destroy()
     this.rawBuf?.destroy()
@@ -2649,4 +2773,9 @@ export function lensUniforms(w: LensWarp | null, camToWorking: Mat3): ArrayBuffe
     f.set(w.vig.slice(0, 16), 128)
   }
   return buf
+}
+
+/** The tone equalizer's mask is needed: a tone slider is set, globally or in a mask (Part 23). */
+function toneWanted(u: DisplayUniforms): boolean {
+  return u.toneEnabled || !!u.masks?.list.some((m) => m.amount > 0 && (['highlights', 'shadows', 'whites', 'blacks'] as const).some((k) => (m.adjust[k] ?? 0) !== 0))
 }

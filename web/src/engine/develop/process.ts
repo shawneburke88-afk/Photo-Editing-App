@@ -66,6 +66,47 @@ export interface ProcessParams {
   bandWeights: BandWeights
   /** Contrast slider → sigmoid contrast: 1.5 × 2^(slider/100 × spread). */
   contrastSpread: number
+  /**
+   * The mask maths (PHASE3.md Part 23). Masks are a new tool, so adding them needed no new version; once released their
+   * maths is part of the version: a change that would alter a saved mask's pixels needs a new one. Both versions so far
+   * share these numbers (an edit made with version 1 and masks uses them with version 1's tone weights).
+   */
+  masks: MaskParams
+}
+
+/** The constants of the mask maths (engine/develop/mask-math.ts explains each). */
+export interface MaskParams {
+  /** Feather 100 = a Gaussian of this fraction of the drawn photo's long edge (σ). */
+  featherMax: number
+  /** Refine 100 = a guided filter of this radius, as a fraction of the long edge. */
+  refineMax: number
+  /** The guided filter's regularisation on the 0…1 log-luminance guide. */
+  refineEps: number
+  /** The linear gradient's erf profile: 0.5 + 0.5·erf(k·s) / erf(k) over s = −1…1 (darktable's sigmoidal gradient). */
+  gradientK: number
+  /** Local Temp and Tint: log2 gain per slider unit on red and blue (Temp), green (Tint). */
+  tempPerUnit: number
+  tintPerUnit: number
+  /** Local Contrast: the grey it pivots on (darktable color balance rgb's fulcrum, 18.45 %). */
+  contrastFulcrum: number
+  /** Colour range tolerance in OkLab ΔE at Refine 0 and 100, and the weight of lightness in the distance. */
+  colourTolMin: number
+  colourTolMax: number
+  colourLightness: number
+}
+
+/** The mask maths of process versions 1 and 2 (masks arrived after both; neither changed it). */
+export const MASKS_V1: MaskParams = {
+  featherMax: 0.02,
+  refineMax: 0.02,
+  refineEps: 1e-3,
+  gradientK: 2,
+  tempPerUnit: 0.005,
+  tintPerUnit: 0.005,
+  contrastFulcrum: 0.1845,
+  colourTolMin: 0.03,
+  colourTolMax: 0.25,
+  colourLightness: 0.5,
 }
 
 export interface ProcessVersion {
@@ -85,6 +126,7 @@ const V1: ProcessParams = {
     whites: [0, 0, 0, 0, 0, 0, 0, 0.35, 1],
   },
   contrastSpread: 0.6,
+  masks: MASKS_V1,
 }
 
 /**

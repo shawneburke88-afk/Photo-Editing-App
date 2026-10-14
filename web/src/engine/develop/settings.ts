@@ -16,6 +16,8 @@ import { normalizeToneCurve, toneCurveGpu, type ToneCurveGpu, type ToneCurveSett
 import { normalizeSpots, type Spot } from './spots'
 import { colourMixerGpu, normalizeColourMixer, type ColourMixerGpu, type ColourMixerSettings } from './colour-mixer'
 import { colourGradingGpu, normalizeColourGrading, type ColourGradingGpu, type ColourGradingSettings } from './colour-grading'
+import { normalizeMasks, type LocalMask } from './masks'
+import type { BandWeights, MaskParams } from './process'
 
 /**
  * The demosaic method (Develop › Advanced). The stored value names the method for the photo's sensor as darktable
@@ -104,7 +106,11 @@ export interface DevelopSettings {
    * such field at all, so they stay exactly as they were (and render byte-identically).
    */
   spots?: Spot[]
-
+  /**
+   * Masks and their local adjustments (masks.ts; PHASE3.md Part 23). Optional: edits without masks have no such field at
+   * all, so they stay exactly as they were (and render byte-identically).
+   */
+  masks?: LocalMask[]
 }
 
 export const DEFAULT_SETTINGS: DevelopSettings = {
@@ -199,6 +205,10 @@ export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined
   const spots = normalizeSpots(s?.spots)
   if (spots) out.spots = spots
   else delete out.spots
+  // Masks: the same (no key unless there are masks; caps and the range/shape rule enforced, masks.ts).
+  const masks = normalizeMasks(s?.masks)
+  if (masks) out.masks = masks
+  else delete out.masks
   return out
 }
 
@@ -252,7 +262,19 @@ export interface DisplayUniforms {
   colourGrading: ColourGradingGpu | null
   /** Remove, Heal and Clone spots; absent when there are none. */
   spots?: Spot[]
+  /** Masks and what the shader needs for their local sliders; absent when there are none. */
+  masks?: MasksGpu
+}
 
+/** The masks of an edit with the process version's numbers their local sliders use (PHASE3.md Part 23). */
+export interface MasksGpu {
+  list: LocalMask[]
+  params: MaskParams
+  /** The global tone equalizer bands (EV), the band weights and range of the process version, the contrast spread. */
+  bands: number[]
+  weights: BandWeights
+  toneRange: number
+  contrastSpread: number
 }
 
 export function displayUniforms(s: DevelopSettings): DisplayUniforms {
@@ -278,5 +300,11 @@ export function displayUniforms(s: DevelopSettings): DisplayUniforms {
     colourMixer: colourMixerGpu(s.colourMixer),
     colourGrading: colourGradingGpu(s.colourGrading),
     ...(s.spots?.length ? { spots: s.spots } : {}),
+    ...(s.masks?.length ? { masks: masksGpu(s, bands) } : {}),
   }
+}
+
+function masksGpu(s: DevelopSettings, bands: number[]): MasksGpu {
+  const p = processParams(s.process)
+  return { list: s.masks!, params: p.masks, bands, weights: p.bandWeights, toneRange: p.toneRange, contrastSpread: p.contrastSpread }
 }

@@ -38,6 +38,19 @@ export interface Indicators {
    * thumbnails, Auto, the background developer), so those never see it.
    */
   proof?: ProofDraw
+  /** The selected mask shown over the photo (docs/PHASE3.md Part 23): Develop's canvas only, a view. */
+  maskOverlay?: MaskOverlayDraw
+}
+
+/** Lightroom's six overlay modes, in its menu's order (Adobe's masking page). */
+export const OVERLAY_MODES = ['Color Overlay', 'Color Overlay on B&W', 'Image on B&W', 'Image on Black', 'Image on White', 'White on Black'] as const
+
+/** A mask overlay to draw: the mask, the mode (1–6 in OVERLAY_MODES' order), its colour (sRGB 0…1) and opacity (0…1). */
+export interface MaskOverlayDraw {
+  id: string
+  mode: number
+  colour: [number, number, number]
+  opacity: number
 }
 
 /** A soft proof to draw: the table (engine/proof/lut.ts) and the warnings shown. */

@@ -11,6 +11,7 @@ import { CURVE_NORMS, DEFAULT_TONE_CURVE, isLinear, REGION_KEYS, REGION_NAMES, w
 import { describeSpots } from '../engine/develop/spots'
 import { bandsOf, describeMixer, describePoints, withColourMixer, withPoints } from '../engine/develop/colour-mixer'
 import { describeGrading, withColourGrading } from '../engine/develop/colour-grading'
+import { appendMasks, describeMasks, withMasksList } from '../engine/develop/masks'
 
 export type PasteKey =
   | 'whiteBalance'
@@ -22,12 +23,13 @@ export type PasteKey =
   | 'lensProfile' | 'lensAmounts' | 'lensCa'
   | 'sharpening' | 'luminanceNoise' | 'colorNoise'
   | 'spots'
+  | 'masks'
   | 'process' | 'baseExposure' | 'toneMapper' | 'highlightReconstruction' | 'demosaic'
 
 export interface PasteItem {
   key: PasteKey
   label: string
-  group: 'White balance' | 'Tone' | 'Presence' | 'Tone Curve' | 'Colour' | 'Detail' | 'Crop' | 'Lens' | 'Remove' | 'Advanced (darktable modules)'
+  group: 'White balance' | 'Tone' | 'Presence' | 'Tone Curve' | 'Colour' | 'Detail' | 'Crop' | 'Lens' | 'Remove' | 'Masks' | 'Advanced (darktable modules)'
   /**
    * Only pasted between photos of the same kind (RAW to RAW, JPEG to JPEG): a RAW's +0.7 EV base exposure or its
    * camera white balance would be wrong on a JPEG, which is already rendered.
@@ -284,6 +286,17 @@ export const PASTE_ITEMS: PasteItem[] = [
     show: (s) => describeSpots(s.spots),
     changed: (a, b) => JSON.stringify(a.spots ?? []) !== JSON.stringify(b.spots ?? []),
   },
+  // Masks (Part 23; owner's decision 7): unticked by default; ticked, the copied masks are ADDED to the photo's own (after
+  // them, with new ids, up to the 64-mask cap), at the same places on the sensor. Range masks measure each photo's own
+  // pixels. Auto Sync never sends them.
+  {
+    key: 'masks',
+    label: 'Masks',
+    group: 'Masks',
+    copy: (to, from) => withMasksList(to, appendMasks(to.masks, from.masks)),
+    show: (s) => describeMasks(s.masks),
+    changed: (a, b) => JSON.stringify(a.masks ?? []) !== JSON.stringify(b.masks ?? []),
+  },
   {
     key: 'process',
     label: 'Process version',
@@ -335,9 +348,13 @@ export const PASTE_GROUPS = [...new Set(PASTE_ITEMS.map((i) => i.group))]
  * items to the user; not copying the crop unless ticked is Lightroom's default as the owner described it
  * (2026-10-12; not checked against Lightroom here), and LightBench's choice either way. The Lens and Detail items are
  * unticked too (LightBench's choice), so copying tone from an edit made before lens corrections or sharpening existed
- * doesn't turn them off on new photos. So are the spots (Part 11): they belong to one photo.
+ * doesn't turn them off on new photos. So are the spots (Part 11): they belong to one photo. And the masks (Part 23; owner's
+ * decision 7).
  */
-export const DEFAULT_PASTE_KEYS: PasteKey[] = PASTE_ITEMS.filter((i) => i.group !== 'Advanced (darktable modules)' && i.group !== 'Crop' && i.group !== 'Lens' && i.group !== 'Detail' && i.group !== 'Remove').map((i) => i.key)
+export const DEFAULT_PASTE_KEYS: PasteKey[] = PASTE_ITEMS.filter((i) => i.group !== 'Advanced (darktable modules)' && i.group !== 'Crop' && i.group !== 'Lens' && i.group !== 'Detail' && i.group !== 'Remove' && i.group !== 'Masks').map((i) => i.key)
+
+/** Items Auto Sync never sends (they belong to one photo): Remove spots (Part 11) and masks (Part 23). */
+export const NOT_AUTO_SYNCED: PasteKey[] = ['spots', 'masks']
 
 /** What a copy carries. */
 export interface Clipboard {
