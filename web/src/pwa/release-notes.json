@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.5.6",
+    "date": "2026-10-14",
+    "newFeatures": [
+      "New GPU benchmark in System Check: times each step of LightBench's processing (demosaic, lens and straighten, noise reduction, sharpening, display, Remove, export, thumbnails) on your own graphics card, with a Quick (about 30 seconds) and a Full mode.",
+      "Copy results gives a Markdown or JSON summary to share. Test images are generated on your computer, nothing is uploaded, and the benchmark waits while Develop or background work is busy."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.5.5",
     "date": "2026-10-13",
     "newFeatures": [
