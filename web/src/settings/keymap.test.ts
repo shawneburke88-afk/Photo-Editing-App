@@ -270,6 +270,22 @@ describe('shortcut sets', () => {
     }
   })
 
+  it('gives soft proofing S and Shift+S in Develop only, leaving the Library’s stack keys and Ctrl+Shift+S alone', () => {
+    for (const set of [LB, LR]) {
+      const map = resolveKeymap(set)
+      expect(matchAction(map, key('s'), DEVELOP)).toBe('develop.softProof')
+      expect(matchAction(map, key('S', { shiftKey: true }), DEVELOP)).toBe('develop.proofGamut')
+      expect(matchAction(map, key('S', { ctrlKey: true, shiftKey: true }), DEVELOP)).toBe('settings.sync')
+      expect(matchAction(map, key('S', { ctrlKey: true, altKey: true, shiftKey: true }), DEVELOP)).toBe('develop.mixerTargetSat')
+      expect(matchAction(map, key('s'), LIBRARY)).toBe('library.stackToggle')
+      expect(matchAction(map, key('S', { shiftKey: true }), LIBRARY)).toBe('library.stackTop')
+      // Not while cropping or with an on-photo tool: those views listen to their own contexts.
+      for (const ctx of [CROP, ['global', 'curve'], ['global', 'mixer'], ['global', 'remove'], ['global', 'guided']] as Context[][]) {
+        expect(matchAction(map, key('s'), ctx)).toBeNull()
+      }
+    }
+  })
+
   it('makes a snapshot with Ctrl+Alt+N in Develop and its on-photo tools, and with Ctrl+N only in the installed app window', () => {
     const tools: Context[][] = [DEVELOP, ['global', 'curve'], ['global', 'mixer'], ['global', 'remove']]
     for (const set of [LB, LR]) {

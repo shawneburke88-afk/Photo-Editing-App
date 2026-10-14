@@ -63,6 +63,10 @@ import { boostedGrading, withColourGrading, type ColourGradingSettings } from '.
 import { DEFAULT_MIXER_UI, type MixerUi } from './mixerUi'
 import { MixerTatLayer, PointPickLayer } from './MixerTatLayer'
 import { CHANNEL_NAMES, BAND_NAMES, MAX_POINTS, newPoint, withColourMixer, withPoints, type ColourMixerSettings, type MixerChannel } from '../engine/develop/colour-mixer'
+import { useProof } from './useProof'
+import { ProofBar } from './ProofBar'
+import { currentDisplaySpace, displaySpaceNote } from '../engine/gpu/display-space'
+import { INTENT_LABELS } from '../engine/proof/settings'
 import { SnapshotPanel } from './SnapshotPanel'
 import { ContextMenu } from './ContextMenu'
 import { menuPoint } from './menuPoint'
@@ -74,7 +78,8 @@ interface Props {
   id: number
   /** Photos selected in the Library along with this one: Sync and Auto Sync apply to them. */
   selected: number[]
-  onNavigate: (id: number) => void
+  /** Opens another photo; `ids` replaces the filmstrip's list (a proof copy joins it next to its original). */
+  onNavigate: (id: number, ids?: number[]) => void
   onEdited: () => void
   onExport: (ids: number[]) => void
   /** Back to the Library (G). */
@@ -262,6 +267,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [selectedSpot, setSelectedSpot] = useState<string | null>(null)
   const [showAllSpots, setShowAllSpots] = useStoredJson<{ on: boolean }>('lightbench.remove.showAll', { on: true })
   const [retouch, setRetouch] = useState<RetouchProgress>({ busy: false })
+  /** Soft proofing (PHASE3.md Part 20): a view, remembered in this browser, never part of the edit. */
+  const proof = useProof()
+  const [proofCopyBusy, setProofCopyBusy] = useState(false)
   const [placing, setPlacing] = useState(false)
   const [spotError, setSpotError] = useState<string | null>(null)
   /**
@@ -542,8 +550,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   // ---- drawing (coalesced so dragging never queues up frames)
   const indicators: Indicators = useMemo(
     // While a drag pushes the tone curve towards black or white, clipping shows on the photo (TONE_CURVE.md §2.5).
-    () => ({ clip: clipSettings, showClip: overlay || (curveDragClip && clipWhileDragging === 1), raw: rawClipSettings, showRaw: rawOverlay }),
-    [clipSettings, overlay, rawClipSettings, rawOverlay, curveDragClip, clipWhileDragging],
+    () => ({ clip: clipSettings, showClip: overlay || (curveDragClip && clipWhileDragging === 1), raw: rawClipSettings, showRaw: rawOverlay, ...(proof.draw ? { proof: proof.draw } : {}) }),
+    [clipSettings, overlay, rawClipSettings, rawOverlay, curveDragClip, clipWhileDragging, proof.draw],
   )
   const latest = useRef({ settings, info, view, before, beforeSettings, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost })
   latest.current = { settings, info, view, before, beforeSettings, indicators, hover, draft, bypass, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost }
@@ -1754,6 +1762,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'develop.sensorClipping': setRawOverlay((o) => !o); break
       // J as in Lightroom, O as in darktable.
       case 'develop.clipping': setOverlay((o) => !o); break
+      // Lightroom Classic: S soft proofing, Shift+S its destination gamut warning (shown with proofing).
+      case 'develop.softProof': proof.set({ ...proof.settings, on: !proof.settings.on }); break
+      case 'develop.proofGamut': proof.set({ ...proof.settings, on: true, destWarning: !(proof.settings.on && proof.settings.destWarning) }); break
       case 'develop.zoom': setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center })); break
       case 'develop.next':
         if (index >= ids.length - 1) return false
@@ -1888,6 +1899,35 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   const strip = useMemo(() => ids.slice(Math.max(0, index - 40), index + 41), [ids, index])
 
+  /**
+   * Create Proof Copy (Lightroom's): a virtual copy of the photo as edited now, named after the proof profile (Lightroom
+   * puts the profile's name in the copy's name), opened next to the original for editing for that output.
+   */
+  async function createProofCopy() {
+    const src = proof.source
+    if (!src || !history) return
+    setProofCopyBusy(true)
+    try {
+      // The copy starts from the edit as it is now: a save still waiting is made first.
+      const run = pendingSave.current
+      pendingSave.current = null
+      if (run) await run()
+      else if (saving.current) await saving.current.catch(() => {})
+      const copy = await catalog.createVirtualCopy(id, `Proof: ${src.label}`)
+      const thumb = await loadThumb(id)
+      if (thumb) await saveThumb(copy, new Uint8Array(await thumb.arrayBuffer()))
+      sidecars.schedule([copy])
+      onEdited()
+      const at = ids.indexOf(id)
+      setSelection(new Set([copy]))
+      onNavigate(copy, [...ids.slice(0, at + 1), copy, ...ids.slice(at + 1)])
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : String(e))
+    } finally {
+      setProofCopyBusy(false)
+    }
+  }
+
   return (
     <div className="develop" style={{ '--left-w': `${leftW}px`, '--right-w': `${rightW}px` } as React.CSSProperties}>
       <aside className="dleft">
@@ -1998,6 +2038,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           <button className="button small" onClick={() => setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center }))} disabled={status.kind !== 'ready'} title={withKey('Zoom', 'develop.zoom')}>
             {view.zoom === 'fit' ? 'Fit' : '100 %'}
           </button>
+          <label className="check small" title={withKey('Soft proofing: preview the photo as a printer, paper or colour space will show it. A view only: the edit and exports don’t change.', 'develop.softProof')}>
+            <input type="checkbox" checked={proof.settings.on} onChange={(e) => proof.set({ ...proof.settings, on: e.target.checked })} />
+            Soft proofing
+          </label>
           <span className="sync-group">
             <button
               className="button small"
@@ -2014,6 +2058,16 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           </span>
           <button className="button small" onClick={() => onExport([id])} title={withKey('Export this photo', 'export')}>Export…</button>
         </div>
+        {proof.settings.on && (
+          <ProofBar
+            proof={proof}
+            screen={currentDisplaySpace()}
+            screenNote={displaySpaceNote()}
+            disabled={status.kind !== 'ready'}
+            onProofCopy={() => void createProofCopy()}
+            copyBusy={proofCopyBusy}
+          />
+        )}
         <div
           className={`dstage ${draft ? 'cropping' : guiding ? 'guiding' : removing ? 'removing' : view.zoom === 'fit' ? 'fit' : 'zoomed'} ${wbPick ? 'wb-picking' : ''}`}
           ref={stageRef}
@@ -2181,6 +2235,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           {wbPick && loupe && <WbLoupe x={loupe.x} y={loupe.y} image={loupe.image} zoom={LOUPE_ZOOM} />}
           {picking && <div className="dbadge pick">Click a photo in the filmstrip to match its look · Esc to cancel</div>}
           {gpuNotice && <div className="dbadge gpu-notice" role="status">{gpuNotice}</div>}
+          {proof.settings.on && proof.source && (
+            <div className="dbadge proof" aria-live="polite">
+              {proof.draw ? `Proof preview: ${proof.source.label} · ${INTENT_LABELS[proof.settings.intent]}${proof.settings.simulatePaper ? ' · paper & ink' : ''}` : 'Building the proof…'}
+            </div>
+          )}
           {autoSync && others.length > 0 && <div className="dbadge sync">Auto Sync: changes also go to {others.length} other {others.length === 1 ? 'photo' : 'photos'}</div>}
         </div>
         <div className="filmstrip" role="listbox" aria-label="Filmstrip">

@@ -28,6 +28,10 @@ import { gpuGate } from '../engine/gpu/gate'
 import { presentChoice } from '../engine/gpu/present'
 import type { DecodeResult } from '../engine/raw/types'
 import { encodeJpeg } from '../export/jpeg-encoder'
+import { DEFAULT_CLIP, DEFAULT_RAW_CLIP, type Indicators } from '../engine/develop/indicators'
+import { clearProofCache, proofLut } from '../engine/proof/client'
+import { builtinIcc } from '../engine/proof/profiles'
+import { proofKey } from '../engine/proof/settings'
 import { GpuProfiler, type PassTime } from './profiler'
 import { commitOf, type AdapterReport, type BenchReport, type BenchRow, type DatasetReport } from './report'
 import { looksQuantized, summarize, sumPasses } from './stats'
@@ -38,7 +42,7 @@ export type BenchMode = 'quick' | 'full'
 /** The stages, in pipeline order (the table's order). */
 export type StageId =
   | 'stageA' | 'stageA3' | 'warp' | 'toneMask' | 'mixer' | 'mixerNoGuide' | 'grading' | 'denoise' | 'sharpen'
-  | 'displayFit' | 'display100' | 'displayFitCurve' | 'display100Curve'
+  | 'displayFit' | 'display100' | 'displayFitCurve' | 'display100Curve' | 'proof' | 'proofLut'
   | 'remove' | 'export' | 'exportAll' | 'jpeg' | 'thumb'
 
 type Kind = 'bayer' | 'xtrans' | 'srgb'
@@ -63,7 +67,7 @@ export interface BenchPlan {
   datasets: DatasetPlan[]
 }
 
-const ALL_RAW: StageId[] = ['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'grading', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'remove', 'export', 'exportAll', 'jpeg', 'thumb']
+const ALL_RAW: StageId[] = ['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'grading', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'proof', 'proofLut', 'remove', 'export', 'exportAll', 'jpeg', 'thumb']
 const STAGES_FOR: Record<BenchMode, Record<Kind, StageId[]>> = {
   quick: {
     bayer: ALL_RAW,
@@ -207,6 +211,23 @@ const COLOUR_GRADING = {
   blending: 50,
   balance: 0,
 }
+/**
+ * Soft proofing (PHASE3.md Part 20): its table for the built-in Adobe RGB (1998)-compatible profile, Relative
+ * Colorimetric with black point compensation (the default), built by the worker the first time (a warm-up) and kept.
+ * A loaded printer profile's table takes longer to build (its tables go through Little CMS); the GPU's work is the same.
+ */
+const PROOF_PROFILE = 'adobe-rgb-compatible'
+const PROOF_OPTIONS = { intent: 'relative', bpc: true, simulatePaper: false } as const
+const proofTable = () => proofLut(`builtin-${PROOF_PROFILE}`, builtinIcc(PROOF_PROFILE), PROOF_OPTIONS)
+/** What Develop passes while proofing: no clipping overlays, both gamut warnings (the most the shader does). */
+const proofIndicators = async (): Promise<Indicators> => ({
+  clip: DEFAULT_CLIP,
+  showClip: false,
+  raw: DEFAULT_RAW_CLIP,
+  showRaw: false,
+  proof: { key: proofKey(`builtin-${PROOF_PROFILE}`, PROOF_OPTIONS), lut: await proofTable(), destWarning: true, screenWarning: true },
+})
+
 const MIXER_PREPASS = one('mixerInput', 'prefilterStats', 'prefilterApply', 'guideStats', 'guideApply')
 
 /** Where the k-th Remove spot goes: spread over the frame, away from the edges and the highlight. */
@@ -307,6 +328,25 @@ export const STAGES: Record<StageId, StageDef> = {
     },
     gpu: CAPTURE,
     note: '8 Richardson–Lucy iterations, two 9-tap passes per blur (the 9 × 9 kernel is no longer in the code); wall includes one redraw',
+  },
+  // Soft proofing (Part 20): per pixel in the display pass, a trilinear lookup in the proof table (65³, a 3D texture)
+  // and the two gamut warnings; the table is built once (cached) and uploaded once.
+  proof: {
+    label: 'Soft proofing on: display pass, fit (both gamut warnings)',
+    settings: (b) => b,
+    run: async (c, s, k) => c.engine.render(displayUniforms(nudged(s, k)), wbOf(c, s), FIT, await proofIndicators()),
+    gpu: one('display'),
+    note: 'one redraw after an Exposure move with an Adobe RGB (1998)-compatible proof; compare with "Display pass, fit, without Tone Curve"; wall includes the read-back copy in compatibility mode',
+  },
+  proofLut: {
+    label: 'Soft proof table: build 65³ with Little CMS (worker)',
+    settings: (b) => b,
+    run: async () => {
+      clearProofCache()
+      await proofTable()
+    },
+    gpu: 'none',
+    note: 'CPU (WebAssembly in a worker): the built-in Adobe RGB (1998)-compatible profile, Relative Colorimetric; a printer profile takes longer; built once per profile and options, then cached',
   },
   displayFit: display(FIT, false),
   display100: display(FULL, false),

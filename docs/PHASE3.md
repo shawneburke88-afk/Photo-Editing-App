@@ -2364,3 +2364,148 @@ Headless Chromium with SwiftShader WebGPU and `?gpu=readback`, Vite dev servers 
 - No limit on the number or size of snapshots (research Q A4); each holds full settings, so many snapshots of a photo with many Remove spots make a larger sidecar.
 - Change detection compares the original's snapshots; a virtual copy's are read when the copy is made from the sidecar (a fresh library), as copies' other fields are, not merged later.
 - A photo with snapshots but no edit whose last snapshot another LightBench deletes leaves a file without LightBench's fields, which reads as "unknown" rather than "none", so that deletion isn't picked up (the snapshot stays).
+
+## Part 20: Soft proofing
+
+**What it does.** Develop can show a photo as a printer and paper, or another colour space, will reproduce it: Lightroom Classic's **soft proofing**.
+- **S** turns it on and off (also the **Soft proofing** checkbox in Develop's toolbar); **Shift+S** shows or hides the **destination gamut warning**.
+- A bar under the toolbar, while proofing: the destination **Profile** (built in, or loaded from disk), **Load profile…** and **Remove profile**, the rendering **Intent**, **Black point compensation**, **Simulate Paper & Ink**, **Screen warning (sRGB)** or **(Display P3)**, **Destination warning** and **Create Proof Copy**; a status line ("Proofing doesn't change exports; the histogram shows …").
+- A badge at the bottom right of the photo, "Proof preview: <profile> · <intent>", and the surround drawn in the proof's paper white.
+- The **histogram follows the proof**: for RGB (and grey) profiles it shows the destination's own values, for CMYK the proofed colours in sRGB.
+
+It is a way of viewing, never part of the edit: proofing changes no setting, no history step, no sidecar, no export and no thumbnail. With it off, every drawing is made exactly as before (byte-identical, below).
+
+This part is numbered 20: Part 19 is the snapshots build.
+
+Owner's decisions (2026-10-14, after [research/SNAPSHOTS_PROOFING_SEARCH.md](research/SNAPSHOTS_PROOFING_SEARCH.md) Part B and its Cowork check, [research/cowork-2026-10-13b/E_SNAPSHOTS_PROOFING_SEARCH.md](research/cowork-2026-10-13b/E_SNAPSHOTS_PROOFING_SEARCH.md)):
+1. **Soft proofing like Lightroom's:** S and Shift+S; a proof bar with profile, intent, Simulate Paper & Ink, a screen gamut warning labelled honestly (sRGB or Display P3: browsers expose no monitor profile), a destination gamut warning, and Create Proof Copy naming the copy after the profile; the histogram follows the proof.
+2. **Colour management:** lcms-wasm (npm, MIT, 1.0.5) in a worker, baking a 3D table for working space → destination (with the paper if simulated) → display; the display shader samples it only while proofing; the warning colour drawn by LightBench's shader; the table cached per profile, intent and options.
+3. **Profiles:** sRGB, an Adobe RGB (1998)-compatible profile and Display P3 built in, from licence-clean sources; printer and paper ICC files loaded from disk, kept locally (OPFS), removable; LUT-based (CMYK, printer) profiles through Little CMS; RGB destinations as Lightroom, CMYK optional.
+4. **Intent:** Relative Colorimetric with black point compensation by default; Perceptual, Saturation and Absolute selectable (Absolute without it).
+5. **Firefox:** no 2D canvas colour space; detected, sRGB with a note.
+6. **Export:** unchanged by proofing; "Export with this profile" only if trivial, otherwise later.
+7. **Storage:** a view state, remembered per browser, not in sidecars.
+
+### What Lightroom does (as far as checked)
+
+| Fact | Source |
+|---|---|
+| **S** "Expand / collapse soft proofing"; **Shift+S** "Hide / unhide Gamut destination warning in Soft Proofing". | Adobe's Lightroom Classic shortcut table (updated 2025-10-29), quoted by Cowork |
+| The histogram while proofing "is based on the icc profile". | Adobe Community expert, 2023 (secondary) |
+| Create Proof Copy puts the proof profile in the virtual copy's Copy Name field. | Adobe Community, 2018, marked correct (secondary) |
+| Lightroom Classic proofs to RGB profiles; CMYK soft proofing was in 6.0 and removed in 6.3. | Adobe Community idea thread (secondary) |
+| Monitor (blue) and destination (red) gamut warnings; Perceptual and Relative intents; Simulate Paper & Ink. | Search summaries of tutorials only (research brief, "[search]") |
+| **Not found:** Adobe's soft-proofing help page (blocked), the official profile list, whether proofing changes Export, the warning colours' exact use, what Simulate Paper & Ink computes. | — |
+
+### How it works
+
+| Step | Detail | Source |
+|---|---|---|
+| Where | In the display shader (`develop-display.wgsl` `fs`), after the develop transform (… sigmoid → Tone Curve) and before the output profile: the pixel's display-referred linear Rec.2020, clamped to 0…1 and encoded with the sRGB curve, is looked up in the proof table (trilinear, eight `textureLoad`s, f32) and replaced by the proofed colour. The rest of the path is unchanged: the Display P3 or sRGB encoding, the clipping indicators (J, which now judge the proofed colours), then the warnings. | Owner's decision 2; the research brief's design |
+| When | Only when `Indicators.proof` is set: Develop passes it for its canvas (pass 0) and its histogram (pass 1). Export, thumbnails, Auto, the background developer, the culling and 100 % renderers, the Tone Curve's and the mixer's own passes never pass it, so they never see the proof. With proofing off the Proof uniform (binding 13) is all zero and a 1×1×1 texture is bound at 12; the shader skips the stage. | Owner's decisions 2 and 6 |
+| The table | `engine/proof/lut.ts`. 65 × 65 × 65 grid points over the encoded working space, as an N × N × 2N `rgba32float` 3D texture (8.8 MB): slices 0…N−1 the proofed colour (encoded linear Rec.2020, sign kept) with the gamut test's ΔE in alpha; slices N…2N−1 the destination's device values (RGB and grey destinations). | LightBench; LightCraft also uses a table (33³) |
+| Proofed colour | Little CMS, float transforms: working space → destination with the chosen intent and black point compensation; the device values clamped to the device's range (a float transform doesn't clamp at a matrix profile's gamut, so without this an sRGB proof would show nothing); destination → linear Rec.2020 with **Relative Colorimetric and black point compensation** (paper white and ink black shown as the screen's), or with **Simulate Paper & Ink**, **Absolute Colorimetric without it** (the paper's white from its media white tag, the ink's black as the tables give it). | LightBench, following Little CMS's proofing transform; with Simulate Paper & Ink on the two agree to 0.00 8-bit levels (proof.test.ts) |
+| Destination gamut test | A colorimetric round trip: the colour → destination (Relative Colorimetric, black point compensation as set, clamped) → Lab, against the colour → Lab; CIE76 ΔE above **2** is outside (`GAMUT_DE`, LightBench's choice). It interpolates smoothly between grid points, unlike Little CMS's own in-or-out gamut check (`cmsFLAGS_GAMUTCHECK`, darktable's way), which it agrees with on 95.5 % of 3000 random colours for the test printer (proof.test.ts). | lcms's gamut check is also a round trip with a threshold; LightCraft's is a round-trip distance |
+| Warnings | Drawn by the display shader (lcms-wasm doesn't export `cmsSetAlarmCodes`): **destination** red, **screen** blue, **both** magenta (LightBench's colours; converted for a Display P3 canvas). The screen warning tests the proofed colour against the canvas's colour space, sRGB or Display P3, with 2/255 of slack for the table's interpolation, and its button says which. | Owner's decision 1; browsers expose only `color-gamut`, no monitor profile (Media Queries 4, via Cowork) |
+| Histogram | Pass 1 with the proof: the destination's device values for RGB and grey profiles (the same histogram and clipping counts as before, on those values), the proofed colour's sRGB for CMYK. | Owner's decision 1 |
+| Surround | The canvas's background shows the proof's paper: white without Simulate Paper & Ink, the paper's colour with it. | The research brief (LightCraft's "paper-white surround") |
+| Worker and cache | `proof.worker.ts` loads lcms-wasm (its `lcms.wasm` through Vite's `?url`) on first use; `client.ts` keeps the last three tables by key (profile hash, intent, black point compensation, Simulate Paper & Ink, size) and builds only on a change; a failed build isn't kept. The warnings aren't part of the key (the shader draws them from the same table). Develop keeps the last table on screen until the new one is ready ("Building the proof…"). | Owner's decision 2 |
+| GPU robustness (Part 14) | The table texture and the uniform belong to the engine: `unload()` frees the table and zeroes the uniform, `destroy()` frees both; a new engine after a lost device uploads the table again from the copy Develop keeps, on its first proofed drawing. The upload and the drawing run inside Develop's render loop, under the foreground gate. `guarded` isn't used on Develop's engine (Part 14's rule); the benchmark's proof rows run inside its `guarded` calls. Building the table is CPU work in the worker. | Part 14 |
+
+### Profiles
+
+| Profile | Source |
+|---|---|
+| **sRGB** | IEC 61966-2-1 primaries, D65 and the sRGB curve (`icc.ts` `SRGB_PROFILE`). |
+| **Adobe RGB (1998)-compatible** | The primaries, D65 and gamma 563/256 published in Adobe's "Adobe RGB (1998) Color Image Encoding" specification (`icc.ts` `ADOBE_RGB_PROFILE`). Named "compatible" and described "LightBench" so it isn't taken for Adobe's file. |
+| **Display P3** | DCI-P3 primaries, D65 and the sRGB curve (`icc.ts` `DISPLAY_P3_PROFILE`). |
+| Working space | Rec.2020 (ITU-R BT.2020 primaries, D65) with the sRGB curve (the table's input) and linear (its output). |
+
+All are written at run time by LightBench's own ICC writer (`icc.ts` `buildIcc`, which Export already uses to embed its profiles): ICC v2.1 matrix/TRC display profiles, colorants D50-adapted with Bradford, parametric curves as 1024-entry tables, copyright "No copyright, use freely". No profile file of anyone else's is shipped. lcms-wasm doesn't export `cmsCreateRGBProfile` or `cmsSaveProfileToMem`, so they couldn't be made with it; instead the built-in sRGB is checked against Little CMS's own `cmsCreate_sRGBProfile` (within 2·10⁻³) and all three against LightBench's matrices (within 2·10⁻³) in `proof.test.ts`.
+
+**Loaded profiles** (`engine/proof/store.ts`): **Load profile…** reads an `.icc`/`.icm` file from disk (never uploaded). The worker checks it (an ICC header; not a device link, abstract or named-colour profile; a colour space of RGB, CMYK, CMY or grey; Little CMS can make transforms to and from it) and reads its description. It is kept in the browser's private storage (OPFS, folder `proof-profiles`, one file per profile named by the first 16 hex digits of its SHA-256, plus `index.json`), listed under "Loaded in this browser" with its colour space, and selected. Loading the same file again keeps one copy. **Remove profile** (asks first) deletes the file and its entry; a removed profile falls back to sRGB. Over 32 MB is refused.
+
+**CMYK works**: Little CMS proofs to CMYK (and CMY) printer profiles as to RGB ones, through their tables (tested with a CMYK test printer, below). Their device values aren't shown in the histogram (it shows the proofed colours instead).
+
+### Settings (`engine/proof/settings.ts`)
+
+| Setting | Default | Note |
+|---|---|---|
+| On | off | S, or the toolbar checkbox |
+| Profile | sRGB | `builtin:<id>` or `user:<hash>` |
+| Intent | Relative Colorimetric | Perceptual, Saturation and Absolute Colorimetric too. Matrix profiles (sRGB, Adobe RGB-compatible, Display P3) have no perceptual or saturation tables, so all intents but Absolute look alike for them (Little CMS's fallback). |
+| Black point compensation | on | Disabled (and not used) with Absolute Colorimetric |
+| Simulate Paper & Ink | off | |
+| Screen warning, Destination warning | off | Shift+S toggles the destination warning, turning proofing on if it was off |
+
+Kept in this browser under `lightbench.proof` (localStorage), read back defensively (`cleanProof`). Not in the catalog's edits, the history, presets, Copy/Paste or sidecars.
+
+### Create Proof Copy
+
+Saves a change still waiting, makes a virtual copy of the photo (Phase 2, Part 6) named **"Proof: <profile name>"** (a second one gets " (2)", as copies do), copies the thumbnail, schedules its sidecar entry, and opens the copy in Develop next to the original in the filmstrip, so the photo can be adjusted for that output while the original stays as it is. Lightroom puts the profile's name in the copy's Copy Name field (secondary source); the "Proof: " prefix is LightBench's.
+
+### Firefox and the screen's colour space
+
+Develop draws in Display P3 on wide-gamut screens (Part 4). MDN's compatibility data lists no 2D canvas `colorSpace` option in Firefox (Cowork), so Display P3 values would be shown as sRGB there. `display-space.ts` now asks the browser itself, `canvasP3Supported()`: a 2D context made with `colorSpace: 'display-p3'` reports it (`getContextAttributes().colorSpace`) or its pixels do (`ImageData.colorSpace`). Where neither does, `currentDisplaySpace()` is sRGB everywhere it is used (Develop, the Library's loupe, culling and Survey canvases, the System Check renderer), and the screen warning's tooltip says why ("…this browser's canvases can't hold it…, so LightBench shows sRGB"). Chrome, Edge and Safari (which report it) are unchanged. Not tried in Firefox here (no Firefox in this environment).
+
+### Export
+
+Proofing never changes Export (nor thumbnails). Export already writes sRGB, Display P3 and Adobe RGB (Part 4's choices), so a built-in proof can be matched there by hand. Converting an export to a **loaded printer profile** would need Little CMS in the export pipeline (and the export's encoders to embed that profile): not trivial, so **left for later** (owner's decision 6), and said in the help.
+
+### Shortcuts added
+
+| Action | Where | Keys (both sets) |
+|---|---|---|
+| Soft proofing on or off | Develop | S |
+| Soft proofing: destination gamut warning | Develop | Shift+S |
+
+S and Shift+S were free in Develop; the Library's S and Shift+S (stacks) are in another view, Ctrl+Shift+S (Sync) and Ctrl+Alt+Shift+S (the mixer's Saturation target) are other chords, and the on-photo tools' contexts (crop, Guided Upright, the curve and mixer targets, the Remove brush) don't have them. `keymap.test.ts` checks this and both sets stay free of conflicts.
+
+### Verified
+
+Headless Chromium 141 with software WebGPU (SwiftShader), the app loaded with `?gpu=readback`, one test at a time. Scripts in `scratchpad/proof/e2e/` (Part 17's `identity.mjs`, Part 16's benchmark script and Part 15's recovery set-up copied and adapted; the originals unchanged). Test files: Nikon D700 `philadelphia.nef`, Nikon D80 `glarus.nef`, Sony ILCE-6300 ARW, `test-srgb.jpg`, and `patches.jpg` (twelve 220 × 193 patches: sRGB primaries and secondaries, skin, dark and light grey, dark green, mid blue, orange; made for this part). The printer profiles are **generated with Little CMS** (the system's liblcms2 2.14 through Python ctypes, `make_printer_icc.py`): a v4 output-class profile, RGB or CMYK, with A2B/B2A CLUTs for a printer-like gamut (smaller than sRGB's in greens and blues, gamma 1.8, ink black about L* 12.5, a paper white darker and warmer than D50). Not a real device.
+
+- **Proofing off is byte-identical to main** (`5307029`, 0.6.0; `identity.mjs`, main served from its own copy of the tree, each run alone). Fourteen edits rendered on main and on this branch, six SHA-256 hashes each (full-size 8-bit export, 1024 px export, 512 px thumbnail, histogram statistics, Develop canvas at fit and at 100 %): **84 of 84 identical**. The edits are Part 17's: D700 process 1 with crop, turn and angle; process 2 with angle; D700 defaults (sharpened); D80 custom white balance; the JPEG unedited, process 2 and process 1; ILCE-6300 with angle; D700 with Remove/Heal/Clone spots, crop, angle and custom white balance; D700 with spots, a tone curve and sharpening; the JPEG with spots, a tone curve and Detail; the JPEG with a `colourMixer` at its defaults; the JPEG with a Colour Mixer; the D700 with a mixer, Point Color, spots, a tone curve and Detail. Part 17's fifteenth edit (the D80 with a `colourGrading` at its defaults) failed in main's run with a storage error ("A requested file or directory could not be found", reading the file from the page's private storage; not investigated); on this branch its six hashes equal the ones Part 17 recorded for it on main `7b8b0f0` (`f34d827d0e1ed7bc…`). In Develop, turning proofing on and off again gave the canvas back to the level (below).
+- **GPU = CPU** (`gpucpu-proof.mjs`). Develop's canvas drawn with the proof table at 100 % (read back, 8-bit sRGB) against Little CMS run **per pixel** in the page (`ProofChain`, lcms-wasm) on the same developed pixels (the export pass's encoded Rec.2020, 16-bit), converted to 8-bit sRGB the same way; 65³ table. Three images (`patches.jpg` with Saturation +40, 960 × 640; `test-srgb.jpg` with Vibrance +20, 1600 × 1072; the D700 cropped to 1070 × 710, +0.3 EV) × sRGB, Display P3, the test printer RGB and CMYK × Relative, Perceptual and Simulate Paper & Ink (Display P3: Relative only): **mean difference 0.005–0.14 levels, at most 7 levels in one channel, under 0.9 % of channels over 1 level; mean ΔE76 0.006–0.20, max ΔE76 2.12** (the test printer CMYK, Perceptual, on the D700). The baseline without the table (the canvas against the same CPU conversion of the 16-bit export pixels) already differs by up to 1.54 ΔE76 (16-bit float in the export pass against 32-bit in the canvas), so most of the maximum isn't the table's. Stated tolerance: mean ≤ 0.5 levels and max ΔE76 ≤ 3, met by all 33 cases.
+
+  | Case (D700 crop) | mean |Δ| (levels) | max |Δ| | channels > 1 level | mean ΔE76 | max ΔE76 |
+  |---|---|---|---|---|---|
+  | proofing off (baseline) | 0.011 | 1 | 0 % | 0.019 | 1.54 |
+  | sRGB, Relative | 0.012 | 4 | 0.001 % | 0.021 | 1.51 |
+  | Display P3, Relative | 0.012 | 1 | 0 % | 0.021 | 1.57 |
+  | test printer RGB, Relative | 0.041 | 5 | 0.001 % | 0.064 | 1.55 |
+  | test printer RGB, Perceptual | 0.11 | 5 | 0.82 % | 0.147 | 1.82 |
+  | test printer RGB, Simulate Paper & Ink | 0.031 | 2 | 0 % | 0.049 | 1.48 |
+  | test printer CMYK, Relative | 0.052 | 5 | 0.01 % | 0.087 | 1.68 |
+  | test printer CMYK, Perceptual | 0.138 | 5 | 0.62 % | 0.201 | 2.11 |
+- **In Develop** (`e2e-proof.mjs`, `patches.jpg`; **29 of 29** on the final code; earlier runs failed only on the script's own waits and on comparing in 8-bit levels, see the sRGB item):
+  - **S** showed the bar and "Proof preview: sRGB · Relative Colorimetric", Relative with black point compensation on and both warnings off. The sRGB photo proofed to sRGB: every patch within **0.87 ΔE76** of the unproofed canvas (in 8-bit values, a near-zero channel of the pure primaries moved by up to 17 levels: the gamut edge's clamp inside grid cells, see Limitations). The surround was white (255, 255, 255).
+  - **Loading** the Little CMS-generated printer profile (the file input) selected it under "Loaded in this browser": saturated blue went from (0, 0, 254) to (9, 86, 236), the dark grey stayed (60, 60, 60); the histogram changed; the status said "Proofing doesn't change exports; the histogram shows LB Test Lustre (generated)'s own values".
+  - **Shift+S** marked red, green, blue, cyan, magenta, yellow, mid blue and orange in red, not the greys or skin; Shift+S again removed it exactly.
+  - **Perceptual** moved saturated blue (9, 86, 236 → 0, 86, 236). **Simulate Paper & Ink**: light grey 230 → (216, 221, 207), dark grey 60 → (64, 66, 61), surround (238, 244, 228).
+  - **Screen warning (sRGB)** with the Adobe RGB (1998)-compatible proof and Saturation +100: ten patches blue (all but the greys); with the destination warning too, magenta.
+  - **Create Proof Copy** made a virtual copy "Proof: LB Test Lustre (generated)" (version 1 of P.JPG in the catalog) and Develop showed it, selected, in the filmstrip.
+  - **Reload:** proofing on, the loaded profile and Relative remembered; blue drawn exactly as before (9, 86, 236). `lightbench.proof` in localStorage held the settings; no edit in the catalog mentions the proof.
+  - **Recovery:** with the destination warning on, Develop's device was destroyed; a new engine drew the proof and the warning again (the blue patch red, the greys unchanged), no error.
+  - **S** again: the canvas equalled the canvas before proofing to the level (max difference 0).
+  - **Remove profile** (confirmed) fell back to sRGB, emptied the list and deleted the `.icc` file from the browser's storage (only `index.json` left).
+  - Screenshots checked by eye: the bar, the destination warning, Simulate Paper & Ink with its paper-coloured surround, the screen warning, the recovered view.
+- **Benchmark** (Part 16's Quick e2e with the proof rows, `e2e-bench-proof.mjs`; `?benchmp=0.3`): **41 of 41**: 22 stage rows, the two soft-proofing rows after the display rows and before Remove, none failed. SwiftShader at 0.3 MP (**says nothing about a real GPU**): "Soft proofing on: display pass, fit (both gamut warnings)" 1557 ms median (GPU 1550 ms, peak 25 MB), against "Display pass, fit, without Tone Curve" 2507 ms in the same run (SwiftShader's noise is larger than the difference); "Soft proof table: build 65³ with Little CMS (worker)" **327 ms** median (318 ms min) for the Adobe RGB-compatible profile, in the worker. After each image's `unload()` 37,016 bytes stayed allocated (Part 17: 36,936): the 64-byte Proof uniform and the 16-byte empty table, which belong to the engine; the 8.8 MB table was freed.
+- **Table build and accuracy** (`proof.test.ts`, Node 22): 33³ in 53–84 ms, 65³ in 0.31–0.54 s, per profile and options (the sRGB profile and the test printer). Against Little CMS per pixel on 4000 random colours, in encoded units: 33³ mean 0.15–0.19, max 1.7–2.1 8-bit levels; 65³ mean 0.04–0.06, max 0.95–1.06.
+- **Unit tests** (`npx vitest run`: **902 tests in 94 files**; main `5307029`: 872 in 91, so 30 new):
+  - `engine/proof/proof.test.ts` (21): the built-in profiles are ICC display profiles Little CMS reads, named as LightBench's; built-in sRGB transforms like Little CMS's own sRGB within 2·10⁻³; the three built-ins agree with `icc.ts`'s matrices within 2·10⁻³; **identity** (the working space as destination: the table within 2·10⁻³ of the identity, nothing out of gamut, paper white 1); **sRGB → sRGB** (sRGB colours back within 0.84 levels, in gamut); **gamut test** on known colours (Rec.2020 primaries out of sRGB, saturated sRGB blue, green and cyan out of the test printer, greys and skin in; Display P3 holds sRGB green but not Rec.2020's); agreement with Little CMS's gamut check (95.5 %) and with its proofing transform with Simulate Paper & Ink (0.00 levels); clipping at an RGB destination's gamut; **intents** (Perceptual differs on saturated colours, not on greys; Saturation and Absolute build); **black point compensation** (shadow detail kept with it, dark greys collapsed into the ink black without); Simulate Paper & Ink (the paper darker and warmer, the ink's black lifted; off: white and black as the screen's); **CMYK** destinations (no device values; close to the same printer driven as RGB); RGB destinations' device values; refusing non-profiles and device links; the 33³/65³ accuracy above; settings defaults and cleaning; Absolute disables black point compensation; **cache keys** differ exactly when the tables would (profile, intent, BPC, paper, size; not the warnings); profile hashes; the grid order.
+  - `engine/proof/store.test.ts` (3): **load and remove** (kept, listed, read back, one copy for the same file, removed with its file, listeners told); refused files keep nothing; built-in profiles resolve without storage.
+  - `engine/gpu/proof-gpu.test.ts` (3): the table uploaded as an N × N × 2N 3D texture once per key, the old one retired; `unload` frees it and zeroes the uniform once; the WGSL Proof struct (64 bytes) at bindings 12 and 13, skipped when off.
+  - `settings/keymap.test.ts` (+1: S and Shift+S in Develop only, the Library's stack keys and Ctrl+Shift+S untouched, not in the on-photo tools' contexts), `engine/gpu/display-space.test.ts` (+1: sRGB and a note where canvases can't hold Display P3), `bench/plan.test.ts` (+1: the proof rows and their place).
+- From a clean `npm ci`: `npx tsc -b`, `npx oxlint` (the two existing warnings), `npx vitest run` and `npm run build` passed. `npm ci` now also prints a deprecation warning for `glob@7.2.3` (a dependency of `tape`, which lcms-wasm lists; not shipped), and the build notes lcms-wasm's Node branch (`import("module")`, `new URL("./", import.meta.url)`), which the browser never runs.
+- **Bundle:** the main chunk grew from 1,116.63 kB (356.25 kB gzipped) to 1,136.19 kB (362.85 kB gzipped): +19.6 kB (+6.6 kB gzipped) for the proof bar, its state, the profile store, the worker client, the shader and engine changes and the built-in profiles' definitions. Little CMS stays out of it: `proof.worker-*.js` 44.19 kB and `lcms-*.wasm` 315.91 kB (118.03 kB gzipped) load only when soft proofing is first used. The service worker precaches them with the rest of the app for offline use (30 files, was 27). `dist` 6,983,488 → 7,365,071 bytes.
+
+### Limitations and unverified
+
+- **Lightroom:** nothing was compared with Lightroom. Its proof maths, warning colours, Simulate Paper & Ink, profile list and Export behaviour aren't public or weren't reachable (Adobe's help page was blocked for Cowork). The "Proof: " prefix and the surround are LightBench's.
+- **Real printer profiles:** none was available; the tests use printer-like profiles generated with Little CMS (and LightBench's own test writer). How long a real printer profile's table takes to build was not measured.
+- **Monitor:** the screen warning tests sRGB or Display P3, not the monitor; the browser maps the canvas to the monitor itself. Not checked on a calibrated wide-gamut monitor or in Firefox (the fallback is unit-tested with a stand-in document).
+- **Interpolation:** the 65³ table differs from Little CMS per pixel by at most about one 8-bit level in the working space's encoding; in sRGB values, a channel near 0 of a colour on the sRGB boundary can move more (17 levels, 0.87 ΔE76, on pure sRGB primaries proofed to sRGB), because the clamp at the gamut's edge falls inside grid cells.
+- **Gamut test:** the 2 ΔE threshold is LightBench's. It agrees with Little CMS's own gamut check on 95.5 % of random colours for the test printer; the colours where they differ weren't examined.
+- **Speed:** the table build was timed in Node and on SwiftShader only; the display pass's extra cost on a real GPU isn't known.
+- Not built: offering a proof copy when an edit starts while proofing (Lightroom does, per search summaries only); before/after against the unproofed photo (Before is proofed too); a monitor profile (impossible in browsers); "Export with this profile" for loaded profiles.

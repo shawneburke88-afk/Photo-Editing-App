@@ -5,6 +5,7 @@
  * These are viewing aids, not edits: they are kept per browser, like darktable's global preferences.
  */
 import type { SensorData } from '../raw/types'
+import type { ProofLut } from '../proof/lut'
 
 export type ClipMode = 'lost' | 'anyrgb' | 'luminance' | 'saturation' | 'gamut'
 export type RawClipMode = 'cfa' | 'solid' | 'false'
@@ -32,6 +33,22 @@ export interface Indicators {
   showClip: boolean
   raw: RawClipSettings
   showRaw: boolean
+  /**
+   * Soft proofing (docs/PHASE3.md Part 20): Develop's canvas and its histogram only. Absent everywhere else (Export,
+   * thumbnails, Auto, the background developer), so those never see it.
+   */
+  proof?: ProofDraw
+}
+
+/** A soft proof to draw: the table (engine/proof/lut.ts) and the warnings shown. */
+export interface ProofDraw {
+  /** The table's cache key (engine/proof/settings.ts `proofKey`): uploaded to the GPU again only when it changes. */
+  key: string
+  lut: Pick<ProofLut, 'size' | 'data' | 'device' | 'paper'>
+  /** Destination gamut warning (Shift+S). */
+  destWarning: boolean
+  /** Screen gamut warning (against the canvas's sRGB or Display P3). */
+  screenWarning: boolean
 }
 
 /**
