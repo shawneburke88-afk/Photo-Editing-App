@@ -13,7 +13,7 @@
 
 import { emptyRect, type PxRect, type Spot } from '../develop/spots'
 import { harmonicFill } from './membrane'
-import { complete, renderCompletion, type Completion } from './completion'
+import { complete, renderCompletion, type Completion, type CompletionInput } from './completion'
 import { chunkOwners, planSpots, rasterize, sourceRect, type SpotPlan } from './plan'
 import { TileImage, tilesOf } from './tiles'
 
@@ -164,8 +164,42 @@ function healChunk(img: TileImage, before: { read: (r: PxRect) => Float32Array }
   blend(img, r, dest, healed, alpha, owner, ci, p.px.opacity)
 }
 
+/** A Remove fill to compute: its cache key, its spot and chunk, and the completion's input. */
+export interface FillJob {
+  key: string
+  spot: number
+  chunk: number
+  /** The spot's number of chunks. */
+  chunks: number
+  input: CompletionInput
+}
+
+/**
+ * The Remove fills `runSpots` would compute for these spots (those not `cached`), with their inputs, so the page can
+ * compute them on several workers (fill-pool.ts) and hand them to `runSpots` ready: the same chunks, in the same
+ * order, with the same inputs as `runSpots`'s own computation (each key once).
+ */
+export function fillJobs(canon: TileImage, spots: Spot[], cached: (key: string) => boolean): FillJob[] {
+  const plans = planSpots(spots, canon.w, canon.h)
+  const jobs: FillJob[] = []
+  const seen = new Set<string>()
+  for (const p of plans) {
+    if (p.px.opacity <= 0 || !p.chunks.length || p.px.mode !== 'remove') continue
+    p.chunks.forEach((c, ci) => {
+      if (!c.key || cached(c.key) || seen.has(c.key)) return
+      seen.add(c.key)
+      jobs.push({ key: c.key, spot: p.index, chunk: ci, chunks: p.chunks.length, input: fillInput(canon, plans, p, ci) })
+    })
+  }
+  return jobs
+}
+
 /** The Remove fill of a chunk, on the canonical scene: the spot and the spots before it in the window are the hole. */
 function computeFill(canon: TileImage, plans: SpotPlan[], p: SpotPlan, ci: number, onProgress: (f: number) => void): Completion {
+  return complete({ ...fillInput(canon, plans, p, ci), onProgress })
+}
+
+function fillInput(canon: TileImage, plans: SpotPlan[], p: SpotPlan, ci: number): CompletionInput {
   const win = p.chunks[ci].window
   const rw = win.x1 - win.x0
   const rh = win.y1 - win.y0
@@ -176,14 +210,13 @@ function computeFill(canon: TileImage, plans: SpotPlan[], p: SpotPlan, ci: numbe
   }
   mark(p)
   for (const q of plans.slice(0, p.index)) if (!emptyRect(q.bounds) && q.bounds.x0 < win.x1 && win.x0 < q.bounds.x1 && q.bounds.y0 < win.y1 && win.y0 < q.bounds.y1) mark(q)
-  return complete({
+  return {
     width: rw,
     height: rh,
     image: canon.read(win),
     hole,
     initial: [p.px.dx, p.px.dy],
-    onProgress,
-  })
+  }
 }
 
 function removeChunk(img: TileImage, p: SpotPlan, ci: number, comp: Completion, mode: 'vote' | 'best') {
