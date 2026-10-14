@@ -1,5 +1,13 @@
 [
   {
+    "version": "0.5.8",
+    "date": "2026-10-14",
+    "newFeatures": [],
+    "bugFixes": [
+      "System Check and Settings now show Adobe's DNG licence notice (\"This product includes DNG technology under license by Adobe.\"), which Adobe's DNG patent licence asks for."
+    ]
+  },
+  {
     "version": "0.5.7",
     "date": "2026-10-14",
     "newFeatures": [
