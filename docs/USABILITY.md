@@ -106,7 +106,7 @@ The right panel is one scrolling stack in workflow order, with Crop & Lens first
 | 4 | **Colour** | Colour mixer (HSL), Colour grading, Point colour | colour equalizer, colour balance rgb | Colour mixer and Point colour (a tab of the mixer, as in Lightroom): **built** (Phase 3, Part 15; [PHASE3.md](PHASE3.md#part-15-colour-mixer-and-point-color)); Colour grading: **built** (Phase 3, Part 17; [PHASE3.md](PHASE3.md#part-17-colour-grading)), its own group after the mixer (jump bar "Grading"), on colour balance rgb |
 | 5 | **Detail** | Sharpening, Noise reduction | diffuse or sharpen / sharpen, denoise (profiled) | Phase 3 |
 | 6 | **Effects** | Vignette, Grain | vignette, grain | Phase 3 |
-| — | **Masks** (own panel) | AI subject/sky, brush, linear, radial, then colour/luminance range refinement | drawn + parametric masks, blending | Phase 3–4 |
+| — | **Masks** (own group, docked in the stack after Remove) | Brush, linear, radial, colour and luminance ranges (Phase 3); AI depth next; AI subject/sky (Phase 4) | darktable's drawn and parametric mask maths, rasterised on the GPU | Manual masks **built** (Phase 3, Part 23; [PHASE3.md](PHASE3.md#part-23-masking)): a docked group rather than Lightroom's floating panel (owner, 2026-10-14), range masks apply to the whole photo |
 
 Every group follows the same rules:
 - **One control per job.** Alternative algorithms (e.g. sigmoid / filmic / AgX for tone mapping) go in a **Method** dropdown inside the group, not in separate modules.

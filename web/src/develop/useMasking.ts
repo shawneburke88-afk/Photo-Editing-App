@@ -148,6 +148,8 @@ export function useMasking(o: Options) {
       setSel({ mask: m.id, comp: m.components[0].id })
     }
     setCreating(null)
+    // A colour range keeps its picker: Shift-click adds samples, a click replaces them (Done or Esc ends it).
+    if (shape.kind === 'colour') setPicking('colour')
   }
 
   function onCreate(shape: LinearShape | RadialShape) {
@@ -194,7 +196,7 @@ export function useMasking(o: Options) {
       } else {
         if (n > MAX_DABS) {
           setDraft(null)
-          return final ? setMessage(capMessage([{ ...newMask([], { kind: 'brush', strokes: [] }), id: 'x' }], { maskId: 'x', addDabs: n })) : undefined
+          return final ? setMessage(`A mask can hold at most ${MAX_DABS.toLocaleString('en')} brush dabs; this stroke would make ${n.toLocaleString('en')}. Use a larger brush.`) : undefined
         }
         const m = { ...newMask(list, { kind: 'brush', strokes: [stroke] }), id: draftMask.current ?? newMaskId() }
         draftMask.current = m.id
@@ -265,7 +267,6 @@ export function useMasking(o: Options) {
     const cur = comp.shape as ColourShape
     if (add && cur.samples.length >= MAX_SAMPLES) return setMessage(`A colour range takes up to ${MAX_SAMPLES} samples (as Lightroom’s).`)
     changeShape(comp.id, { ...cur, samples: add ? [...cur.samples, lab] : [lab] }, `${m.name}: colour sample`)
-    if (!add) setPicking(null)
   }
 
   function changeShape(compId: string, shape: KnownShape, label: string, separate = true) {
