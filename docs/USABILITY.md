@@ -102,7 +102,7 @@ The right panel is one scrolling stack in workflow order, with Crop & Lens first
 |---|---|---|---|---|
 | 1 | **Crop & Lens** | Crop, Straighten, Transform/Upright; Lens profile, Chromatic aberration, Vignetting correction | crop, rotate and perspective (ashift), lens correction (lensfun), CA correction | Crop, straighten, rotate 90° and flip: **built** (Phase 3, Part 1; [PHASE3.md](PHASE3.md)), shown as the **Crop** group; Transform/Upright and lens corrections: later in Phase 3 (the group becomes Crop & Lens) |
 | 2 | **Basic** (open by default) | Auto + look; White balance (preset, **Pick**, Temp, Tint); Tone (Exposure, Contrast, Highlights, Shadows, Whites, Blacks); Presence (Texture, Clarity, Dehaze, Vibrance, Saturation) | temperature, exposure, sigmoid, tone equalizer, colour balance rgb, local contrast, haze removal | Built, except Texture/Clarity/Dehaze and colour balance rgb |
-| 3 | **Tone curve** | Regions (parametric) + point, RGB, Red, Green, Blue | after the sigmoid, as darktable's tone curve sits and its Lightroom importer puts Lightroom's curve; darktable's monotone spline and preserve-colors norms | **Built** (Phase 3, Part 12; [PHASE3.md](PHASE3.md#part-12-the-tone-curve)) |
+| 3 | **Tone curve** | Regions (parametric) + point, RGB, Red, Green, Blue; Auto (contrast, colour, suggestions) | after the sigmoid, as darktable's tone curve sits and its Lightroom importer puts Lightroom's curve; darktable's monotone spline and preserve-colors norms | **Built** (Phase 3, Part 12; [PHASE3.md](PHASE3.md#part-12-the-tone-curve)); Auto row (LightBench's own methods) in Part 21 ([PHASE3.md](PHASE3.md#part-21-section-eyes-and-tone-curve-auto)) |
 | 4 | **Colour** | Colour mixer (HSL), Colour grading, Point colour | colour equalizer, colour balance rgb | Colour mixer and Point colour (a tab of the mixer, as in Lightroom): **built** (Phase 3, Part 15; [PHASE3.md](PHASE3.md#part-15-colour-mixer-and-point-color)); Colour grading: **built** (Phase 3, Part 17; [PHASE3.md](PHASE3.md#part-17-colour-grading)), its own group after the mixer (jump bar "Grading"), on colour balance rgb |
 | 5 | **Detail** | Sharpening, Noise reduction | diffuse or sharpen / sharpen, denoise (profiled) | Phase 3 |
 | 6 | **Effects** | Vignette, Grain | vignette, grain | Phase 3 |
@@ -111,7 +111,7 @@ The right panel is one scrolling stack in workflow order, with Crop & Lens first
 Every group follows the same rules:
 - **One control per job.** Alternative algorithms (e.g. sigmoid / filmic / AgX for tone mapping) go in a **Method** dropdown inside the group, not in separate modules.
 - **"Advanced ▸"** inside each group shows the darktable module's own parameters, so no capability is lost.
-- **One stack with a jump bar** (owner, 2026-10-11, after round 2; replaces the earlier tool-tabs choice): all groups stay in one scrolling list in workflow order. A row of group buttons at the top of the panel jumps to a group and highlights the group in view; nothing is hidden. Panel order is cosmetic; the processing order is fixed (R2 7). _Built in Phase 3, Part 1 with the Crop and Basic groups; groups also close, and each has an on/off eye to see the photo without it ([PHASE3.md](PHASE3.md))._
+- **One stack with a jump bar** (owner, 2026-10-11, after round 2; replaces the earlier tool-tabs choice): all groups stay in one scrolling list in workflow order. A row of group buttons at the top of the panel jumps to a group and highlights the group in view; nothing is hidden. Panel order is cosmetic; the processing order is fixed (R2 7). _Built in Phase 3, Part 1 with the Crop and Basic groups; groups also close, and each has an on/off eye to see the photo without it ([PHASE3.md](PHASE3.md)). Since Part 21 the sections inside the groups have eyes too (white balance, tone, presence, each curve, mixer and Point Color, each grading wheel, sharpening, noise reduction, crop, transform, lens): a section's eye shows the photo with that section as its Reset would set it; the group's eye still hides the whole group and wins over its sections' eyes ([PHASE3.md, Part 21](PHASE3.md#part-21-section-eyes-and-tone-curve-auto))._
 - **Tool search** (owner, 2026-10-11): `/` or Ctrl+F finds a tool by its Lightroom name, LightBench name or darktable name, e.g. "Clarity" → Presence → Clarity (local contrast). It comes late, once most tools exist.
 
 ### Guidance in the interface (owner's request)
@@ -127,7 +127,8 @@ Every group follows the same rules:
 
 ### Interaction rules
 
-- Double-click a slider's name or value to reset it. Every Auto or picker action is one history step.
+- Double-click a slider's name or value to reset it. Every Auto or picker action is one history step. An Auto result with an Amount (a preset, the Tone Curve's Auto) changes its own step while the Amount moves; it adds no steps.
+- Eyes (group and section) only change what is shown: never saved, never in the history, never in Export, and all back on for the next photo.
 - Shortcuts follow Lightroom where one exists (J, W, D, G, P/X/U, 0–5, \\), with darktable's as aliases (O, Shift+O).
 - Units: K, EV, %. Signed sliders centre on 0.
 - The preview is truthful at every zoom. If a preview is approximate, the interface says so.
