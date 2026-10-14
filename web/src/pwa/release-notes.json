@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.5.9",
+    "date": "2026-10-14",
+    "newFeatures": [
+      "New Color Grading in Develop: Shadows, Midtones, Highlights and Global colour wheels, each with a Luminance slider, plus Blending and Balance, built on darktable's color balance rgb. Shift-drag changes saturation only, Ctrl-drag hue only, Alt-drag fine-tunes, and double-click resets a wheel.",
+      "Lightroom's Color Grading and older Split Toning settings are read from and written to its .xmp files.",
+      "Photos edited before look exactly the same; grading only changes a photo once you move a wheel."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.5.7",
     "date": "2026-10-14",
     "newFeatures": [
