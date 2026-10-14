@@ -280,6 +280,12 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 
 .dcenter { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--photo-bg); }
 .dtoolbar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+/* Soft proofing's bar (PHASE3.md Part 20), under the toolbar while proofing. */
+.proofbar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 5px 12px; background: var(--panel); border-bottom: 1px solid var(--line); font-size: 0.85rem; }
+.proofbar .proof-field { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.proofbar select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; font: inherit; max-width: 240px; }
+.proofbar .proof-status { flex: 1 1 200px; min-width: 0; }
+.dbadge.proof { top: auto; bottom: 10px; left: auto; right: 10px; color: var(--text); max-width: calc(50% - 20px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dtitle { margin-right: auto; color: var(--muted); font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .button.on { border-color: var(--accent); color: var(--accent); }
 .dstage { position: relative; flex: 1; min-height: 0; touch-action: none; }

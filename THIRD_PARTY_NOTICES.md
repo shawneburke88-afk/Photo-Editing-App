@@ -19,6 +19,8 @@ following third-party components, each under its own license.
 | [LightCraft](https://github.com/storytold/lightcraft) (commit `701f78e`, `crates/raw/src/color.rs`, `crates/color/src/cct.rs` and `bradford` in `crates/color/src/lib.rs`, translated to TypeScript and modified in `web/src/engine/color/dng.ts`; tests from `color.rs` in `dng.test.ts`) | The DNG colour model: dual-illuminant ColorMatrix/ForwardMatrix interpolation by white balance, camera neutral ⇄ white point, colour temperature of a white point | MIT OR Apache-2.0, used here under the MIT License (text below). Copyright (c) 2026 ArtCraft Team and the LightCraft contributors. |
 | [LibRaw](https://www.libraw.org/) 0.22.1 | Reading camera RAW files | LGPL-2.1 or CDDL-1.0 (shipped as a separate, replaceable `.wasm` file) |
 | [@colorhythm/libraw-wasm](https://github.com/colorhythm/libraw-wasm) | WebAssembly build + bindings for LibRaw | MIT |
+| [lcms-wasm](https://github.com/mattdesl/lcms-wasm) 1.0.5 (npm `lcms-wasm`; `dist/lcms.js` and `dist/lcms.wasm`, shipped unchanged in soft proofing's worker chunk, loaded only when soft proofing is used) | Soft proofing (docs/PHASE3.md Part 20): reading ICC profiles, including printers' LUT-based and CMYK ones, and building the proof table | MIT. Copyright (c) 2024 Matt DesLauriers (text below). Based on yoya's lcms.js. Its npm package lists `tape` (a test runner, MIT) as a dependency: npm installs it, but nothing of it is imported or shipped. |
+| [Little CMS](https://github.com/mm2/Little-CMS) (compiled into lcms-wasm's `lcms.wasm`; lcms-wasm's `lib/constants.js` gives `LCMS_VERSION = 2160`, i.e. 2.16; the exact commit of its `Little-CMS` submodule was not checked) | The colour management engine behind soft proofing | MIT. Copyright (c) 2023 Marti Maria Saguer (licence text of the `lcms2.16` tag, below). lcms-wasm's `build.sh` compiles only `Little-CMS/src/*.c` (the core library; no plugins). |
 | [SQLite](https://sqlite.org/) / [@sqlite.org/sqlite-wasm](https://github.com/sqlite/sqlite-wasm) | Library catalog database | Public domain / Apache-2.0 |
 | [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) 0.1.7 | No longer shipped. LightBench's own service worker (`web/src/pwa/sw.ts`) reproduces its COOP/COEP header logic for cross-origin isolation on GitHub Pages | MIT. Copyright © Guido Zuidhof and contributors. |
 | [React](https://react.dev/) | User interface | MIT |
@@ -72,4 +74,61 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```
+
+## lcms-wasm licence (MIT)
+
+`web/node_modules/lcms-wasm/LICENSE.md` (lcms-wasm 1.0.5), as shipped with its `lcms.js` and `lcms.wasm`:
+
+```
+The MIT License (MIT)
+Copyright (c) 2024 Matt DesLauriers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+## Little CMS licence (MIT)
+
+`LICENSE` of Little CMS at the `lcms2.16` tag (https://github.com/mm2/Little-CMS), the version lcms-wasm reports. The
+npm package doesn't include this file, so it is reproduced here for the Little CMS code inside `lcms.wasm`:
+
+```
+MIT License
+
+Copyright (c) 2023 Marti Maria Saguer
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the 
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to 
+permit persons to whom the Software is furnished to do so, subject
+to the following conditions:
+
+The above copyright notice and this permission notice shall be 
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF 
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE 
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```

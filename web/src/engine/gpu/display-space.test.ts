@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DISPLAY_P3_PROFILE, rec2020ToProfile } from '../color/icc'
-import { currentDisplaySpace, REC2020_TO_DISPLAY_P3, srgbColourIn, watchDisplaySpace } from './display-space'
+import { currentDisplaySpace, displaySpaceNote, REC2020_TO_DISPLAY_P3, srgbColourIn, watchDisplaySpace } from './display-space'
 import developDisplay from './develop-display.wgsl?raw'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -34,6 +34,28 @@ describe('display colour space', () => {
     expect(currentDisplaySpace()).toBe('srgb')
     vi.stubGlobal('matchMedia', undefined)
     expect(currentDisplaySpace()).toBe('srgb')
+  })
+
+  it('falls back to sRGB, with a note, where canvases can’t hold Display P3 (Firefox)', () => {
+    fakeScreen(true)
+    const fakeDocument = (answer: string | undefined, pixels: string | undefined) => ({
+      createElement: () => ({
+        getContext: () => ({ getContextAttributes: () => ({ colorSpace: answer }), getImageData: () => ({ colorSpace: pixels }) }),
+      }),
+    })
+    // Chrome, Edge, Safari: the context reports the colour space it was given.
+    vi.stubGlobal('document', fakeDocument('display-p3', 'display-p3'))
+    expect(currentDisplaySpace()).toBe('display-p3')
+    expect(displaySpaceNote()).toBeNull()
+    // No getContextAttributes colour space, but the pixels say Display P3: supported.
+    vi.stubGlobal('document', fakeDocument(undefined, 'display-p3'))
+    expect(currentDisplaySpace()).toBe('display-p3')
+    // Firefox: the option is ignored, neither says Display P3.
+    vi.stubGlobal('document', fakeDocument(undefined, undefined))
+    expect(currentDisplaySpace()).toBe('srgb')
+    expect(displaySpaceNote()).toMatch(/shows sRGB/)
+    fakeScreen(false)
+    expect(displaySpaceNote()).toBeNull()
   })
 
   it('follows the window to another screen until unwatched', () => {

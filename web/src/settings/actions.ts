@@ -172,6 +172,10 @@ export const ACTIONS: ActionDef[] = [
   { id: 'develop.before', label: 'Before / after', contexts: ['develop', 'curve', 'mixer', 'remove'], keys: ['\\'] },
   { id: 'develop.clipping', label: 'Show clipping', contexts: ['develop', 'curve', 'mixer'], keys: ['J', 'O'], lightroom: ['J'] },
   { id: 'develop.sensorClipping', label: 'Show sensor clipping', contexts: ['develop'], keys: ['Shift+O'] },
+  // Soft proofing (docs/PHASE3.md Part 20): S and Shift+S are Lightroom Classic's keys (Adobe's shortcut table, via the
+  // Cowork verification of 2026-10-13). Develop only: the Library's S and Shift+S (stacks) are in another view.
+  { id: 'develop.softProof', label: 'Soft proofing on or off', contexts: ['develop'], keys: ['S'] },
+  { id: 'develop.proofGamut', label: 'Soft proofing: destination gamut warning', contexts: ['develop'], keys: ['Shift+S'] },
   { id: 'develop.zoom', label: 'Zoom to 100 % and back', contexts: ['develop', 'curve', 'mixer', 'remove'], keys: ['Z'] },
   { id: 'develop.next', label: 'Next photo', contexts: ['develop'], keys: ['ArrowRight'] },
   { id: 'develop.prev', label: 'Previous photo', contexts: ['develop'], keys: ['ArrowLeft'] },
