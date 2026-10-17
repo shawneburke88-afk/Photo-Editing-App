@@ -11,7 +11,7 @@
 // whole group and overrides its sections' eyes. The sections' states are kept while the group is hidden and take
 // effect again when it is shown.
 
-import { DEFAULT_GEOMETRY, type GeometrySettings } from '../engine/develop/geometry'
+import { DEFAULT_GEOMETRY, resetCrop, type GeometrySettings } from '../engine/develop/geometry'
 import type { DevelopSettings } from '../engine/develop/settings'
 import { isIdentityTransform } from '../engine/develop/upright'
 import { LEGACY_LENS } from '../engine/lens/correction'
@@ -70,10 +70,6 @@ interface SectionDef {
 
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
-/** Crop, straighten, rotate and flip at their defaults; Transform and Upright kept. */
-function cropNeutral(g: GeometrySettings): GeometrySettings {
-  return g.transform ? { ...DEFAULT_GEOMETRY, transform: g.transform } : DEFAULT_GEOMETRY
-}
 const cropChanged = (g: GeometrySettings) => g.turns !== 0 || g.mirror || g.angle !== 0 || g.crop.x0 !== 0 || g.crop.y0 !== 0 || g.crop.x1 !== 1 || g.crop.y1 !== 1
 
 /** The geometry without Transform and Upright (what Reset in the Transform section gives). */
@@ -115,7 +111,8 @@ export const SECTIONS: readonly SectionDef[] = [
     chip: 'Crop',
     without: 'its crop, straighten angle, rotation and flips',
     changed: (s) => cropChanged(s.geometry),
-    neutral: (s) => ({ ...s, geometry: cropNeutral(s.geometry) }),
+    // The same as the Crop section's Reset: Transform and Upright kept.
+    neutral: (s) => ({ ...s, geometry: resetCrop(s.geometry) }),
   },
   {
     id: 'crop.transform',
