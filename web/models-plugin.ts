@@ -43,6 +43,23 @@ function aiInfo(): { info: AiInfo; wasmFile: string; modelsDir: string } {
   }
 }
 
+/**
+ * ONNX Runtime's bundle names its WebAssembly file with `new URL("…wasm", import.meta.url)`, which makes Vite copy the
+ * 27 MB file into assets/ (and the service worker would then precache it on every install). LightBench always passes
+ * the bytes itself (`env.wasm.wasmBinary`, from the opt-in download), so that URL is never used: it is replaced by the
+ * bare file name. For the worker build too (vite.config.ts `worker.plugins`).
+ */
+export function ortWasmUnbundled(): Plugin {
+  const re = new RegExp(`new URL\\("${ORT_WASM.replace(/\./g, '\\.')}",import\\.meta\\.url\\)\\.href`, 'g')
+  return {
+    name: 'lightbench-ort-wasm-unbundled',
+    transform(code, id) {
+      if (!id.includes('onnxruntime-web') || !code.includes(ORT_WASM)) return null
+      return { code: code.replace(re, JSON.stringify(ORT_WASM)), map: null }
+    },
+  }
+}
+
 export function aiModels(): Plugin {
   const { info, wasmFile, modelsDir } = aiInfo()
   const served = new Set(info.models.flatMap((m) => (m.source.revision ? m.files.map((f) => servedPath(m, f)) : [])))

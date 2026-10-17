@@ -79,7 +79,8 @@ async function ensure(m: ModelEntry, provider: Provider): Promise<{ key: string;
   const key = `${m.id}:${rec.variant}:${rec.revision}`
   if (loaded && loaded.key === key && loaded.provider === provider) return { key, variant: rec.variant }
   const files = await loadFiles(m)
-  const d = await client().load(key, files.model, files.wasm, provider, threads())
+  // One thread for WebGPU (the GPU does the work; no pthread workers to start), up to 4 for the CPU provider.
+  const d = await client().load(key, files.model, files.wasm, provider, provider === 'wasm' ? threads() : 1)
   loaded = { key, provider, inputShape: d.inputShape }
   return { key, variant: rec.variant }
 }
