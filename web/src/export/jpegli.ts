@@ -1,11 +1,10 @@
-/// <reference lib="webworker" />
 // JPEG encoding with Google's jpegli (WebAssembly), chosen by the benchmark in
-// docs/research/JPEG_ENCODER_BENCHMARK.md. Runs in a worker so exporting never blocks the interface.
+// docs/research/JPEG_ENCODER_BENCHMARK.md. Runs in the export's encoder workers (encoder.worker.ts), so exporting
+// never blocks the interface. The WebAssembly module is loaded on the first encode.
 import createModule from '../vendor/jpegli/jpegli.js'
 import wasmUrl from '../vendor/jpegli/jpegli.wasm?url'
-import { exposeRpc } from '../lib/rpc'
 
-const ready = createModule({ locateFile: () => wasmUrl })
+let ready: ReturnType<typeof createModule> | null = null
 
 export interface JpegliResult {
   bytes: Uint8Array<ArrayBuffer>
@@ -18,8 +17,8 @@ export interface JpegliResult {
  * Encodes 8-bit RGB. With `maxBytes`, searches for the highest quality ≤ `quality` whose file fits, by
  * interpolating log(size) against quality (the benchmark measured 3–7 encodes, mean about 4).
  */
-async function encode(rgb: Uint8Array, width: number, height: number, quality: number, subsampling: 444 | 422 | 420 | 'auto', progressive: number, maxBytes = 0): Promise<JpegliResult> {
-  const m = await ready
+export async function jpegliEncode(rgb: Uint8Array, width: number, height: number, quality: number, subsampling: 444 | 422 | 420 | 'auto', progressive: number, maxBytes = 0): Promise<JpegliResult> {
+  const m = await (ready ??= createModule({ locateFile: () => wasmUrl }))
   const input = m._malloc(rgb.length)
   const sizePtr = m._malloc(4)
   m.HEAPU8.set(rgb, input)
@@ -69,7 +68,3 @@ async function encode(rgb: Uint8Array, width: number, height: number, quality: n
     m._free(sizePtr)
   }
 }
-
-const handlers = { encode }
-export type JpegliApi = typeof handlers
-exposeRpc(handlers)
