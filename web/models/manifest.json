@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "notes": [
+    "LightBench's downloadable AI models (docs/PHASE3.md Part 24). The files are NOT in git: the deploy workflow fetches each pinned file by exact URL (source.repo at source.revision) and checks its byte count and SHA-256 (web/scripts/models.mjs fetch), failing the build on any mismatch, then serves it from LightBench's own GitHub Pages site under models/<id>/<revision 7>/<variant>.onnx.",
+    "While source.revision or a file's sha256 is null the model is not pinned: the workflow skips it with a warning and the app says the model isn't available in that build. Pin it on a machine that can reach huggingface.co with `node web/scripts/models.mjs pin` (it reads the Hugging Face commit, the Git LFS pointers' sha256 and size, downloads each file and checks it against them, and writes this file).",
+    "bytes: as read from the Git LFS pointers of the repository's main branch on 2026-10-13 (docs/research/cowork-2026-10-13b/F_MODEL_DELIVERY.md, F3); `pin` replaces them with the pinned revision's values."
+  ],
+  "models": [
+    {
+      "id": "depth-anything-v2-small",
+      "name": "Depth Anything V2 Small",
+      "task": "depth",
+      "summary": "Estimates how near or far each part of a photo is (relative depth), for the Depth range mask.",
+      "licence": {
+        "id": "Apache-2.0",
+        "url": "https://github.com/DepthAnything/Depth-Anything-V2/blob/main/LICENSE",
+        "statement": "“Depth-Anything-V2-Small model is under the Apache-2.0 license. Depth-Anything-V2-Base/Large/Giant models are under the CC-BY-NC-4.0 license.” (Depth Anything V2 README, commit a561b84)"
+      },
+      "credit": "Lihe Yang, Bingyi Kang, Zilong Huang, Zhen Zhao, Xiaogang Xu, Jiashi Feng and Hengshuang Zhao: “Depth Anything V2” (NeurIPS 2024, arXiv:2406.09414). Code and weights: github.com/DepthAnything/Depth-Anything-V2. ONNX export: Hugging Face onnx-community.",
+      "trainingData": "The model was trained on 595K synthetic images (BlendedMVS, Hypersim, IRS, TartanAir, Virtual KITTI 2) and about 62M real photos labelled by a larger model (BDD100K, Google Landmarks, ImageNet-21K, LSUN, Objects365, Open Images V7, Places365, SA-1B), as listed in the paper’s Table 7. These training sets are named publicly; some of them have non-commercial or research-only terms, for example SA-1B and Virtual KITTI 2. The model’s own licence is Apache-2.0.",
+      "source": {
+        "host": "huggingface",
+        "repo": "onnx-community/depth-anything-v2-small",
+        "revision": null
+      },
+      "input": {
+        "shortSide": 518,
+        "multiple": 14,
+        "mean": [0.485, 0.456, 0.406],
+        "std": [0.229, 0.224, 0.225]
+      },
+      "files": [
+        { "variant": "fp16", "path": "onnx/model_fp16.onnx", "bytes": 49642442, "sha256": null },
+        { "variant": "fp32", "path": "onnx/model.onnx", "bytes": 99060839, "sha256": null }
+      ]
+    }
+  ]
+}

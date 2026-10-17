@@ -42,6 +42,10 @@ struct Pass {
 @group(0) @binding(7) var<storage, read_write> loOut: array<vec4f>;
 @group(0) @binding(8) var<storage, read_write> guide: array<f32>;
 @group(0) @binding(9) var<storage, read_write> planes: array<vec4f>;
+// Depth ranges (PHASE3.md Part 24): the drawn image's uv → sensor uv at (n + 1)² grid points (mask-render.ts
+// `sensorGrid`), and the depth map in the sensor frame (r8unorm, 1 = nearest; depth-map.ts).
+@group(0) @binding(10) var<storage, read> grid: array<vec2f>;
+@group(0) @binding(11) var depthTex: texture_2d<f32>;
 
 const Y2020 = vec3f(0.2627002, 0.6779981, 0.0593017);
 const OKLAB_M2_0 = vec3f(0.2104542553, 0.793617785, -0.0040720468);
@@ -99,6 +103,19 @@ fn guideOf(c: vec3f) -> f32 {
   return clamp((log2(max(dot(Y2020, c), 1.0 / 16384.0)) + 12.0) / 14.0, 0.0, 1.0);
 }
 
+/** Sensor uv of a target pixel: the grid of n × n cells over the drawn image, interpolated bilinearly. */
+fn sensorUv(p: vec2f, n: u32) -> vec2f {
+  let uv = clamp((p - T.t0.zw) / T.t1.xy, vec2f(0.0), vec2f(1.0));
+  let g = uv * f32(n);
+  let c = min(vec2u(floor(g)), vec2u(n - 1u));
+  let f = g - vec2f(c);
+  let w = n + 1u;
+  let i = c.y * w + c.x;
+  let top = mix(grid[i], grid[i + 1u], f.x);
+  let bottom = mix(grid[i + w], grid[i + w + 1u], f.x);
+  return mix(top, bottom, f.y);
+}
+
 /** One component's value at a working texel (mask-math.ts: linearAlpha, radialAlpha, the brush, trapezoid, colourWeight). */
 fn componentValue(i: vec2u) -> f32 {
   let p = targetPx(i);
@@ -148,6 +165,12 @@ fn componentValue(i: vec2u) -> f32 {
         best = max(best, clamp((tol - d) / (0.5 * tol), 0.0, 1.0));
       }
       return best;
+    }
+    case 6u: {
+      // Depth: p0 = the range on 0 (near) … 100 (far); p1.x = 1 for the map itself (the depth-map view), p1.y = grid cells.
+      let near = textureSampleLevel(depthTex, samp, sensorUv(p, u32(P.p1.y)), 0.0).r;
+      if (P.p1.x > 0.5) { return near; }
+      return trapezoid(100.0 * (1.0 - near), P.p0);
     }
     default: { return 0.0; }
   }

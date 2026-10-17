@@ -1816,7 +1816,7 @@ export class DevelopEngine {
     const mk = u.masks
     const ov = pass === 0 && ind.maskOverlay ? ind.maskOverlay : null
     const s = this.sensor!
-    const prepared = mk ? prepareMasks(mk.list, { rawMap: src.rawMap, lens: src.lens, w: src.w, h: src.h, sensor: [s.width, s.height] }, rect, mk.params, ov?.id ?? null) : null
+    const prepared = mk ? prepareMasks(mk.list, { rawMap: src.rawMap, lens: src.lens, w: src.w, h: src.h, sensor: [s.width, s.height] }, rect, mk.params, ov?.id ?? null, !!ov?.depthMap) : null
     if (!mk || !prepared?.masks.length) {
       if (this.masksOn) this.device.queue.writeBuffer(this.maskBuf, 0, new ArrayBuffer(MASK_UNIFORM_SIZE))
       this.masksOn = false

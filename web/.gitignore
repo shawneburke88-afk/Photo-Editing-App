@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# AI model files for the dev server (web/models-plugin.ts); never committed
+models/local/

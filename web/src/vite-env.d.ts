@@ -22,3 +22,6 @@ interface NoiseProfilesInfo {
   licence: string
 }
 declare const __NOISE_PROFILES__: NoiseProfilesInfo
+
+/** The pinned AI models and their runtime this build serves (web/models-plugin.ts; src/ai/manifest.ts). */
+declare const __LB_AI__: import('./ai/manifest').AiInfo
