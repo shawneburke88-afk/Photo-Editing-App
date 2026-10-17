@@ -71,6 +71,11 @@ export function aiModels(): Plugin {
     },
     generateBundle() {
       this.emitFile({ type: 'asset', fileName: info.runtime.wasm.path, source: readFileSync(wasmFile) })
+      // The runtime's licence and the notices of what is compiled into its WebAssembly (from its release tag), beside it;
+      // upgrading ONNX Runtime needs that version's ThirdPartyNotices.txt in models/notices/ (the build fails without it).
+      const dir = info.runtime.wasm.path.replace(/[^/]+$/, '')
+      this.emitFile({ type: 'asset', fileName: `${dir}LICENSE.txt`, source: readFileSync(join(ROOT, 'models/notices/onnxruntime.LICENSE.txt')) })
+      this.emitFile({ type: 'asset', fileName: `${dir}ThirdPartyNotices.txt`, source: readFileSync(join(ROOT, `models/notices/onnxruntime-${info.runtime.version}.ThirdPartyNotices.txt`)) })
     },
   }
 }

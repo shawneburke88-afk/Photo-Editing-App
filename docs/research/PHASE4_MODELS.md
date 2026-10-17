@@ -336,7 +336,20 @@ stored spot already holds everything an AI fill would need (stroke, source, seed
 
 ## Model delivery
 
-**The plan:** download on first use from LightBench's own pinned copy, the way Lensfun data is handled:
+**Owner's decision (2026-10-17), built in PHASE3.md Part 24 with Depth Anything V2 Small, the first downloaded model:**
+the models are served from **LightBench's own GitHub Pages site** (same origin: no CORS question). They are **not in
+git**: the deploy workflow fetches each pinned file by exact URL (`huggingface.co/<repo>/resolve/<commit>/<path>`) into
+`dist/models/` and checks its byte count and SHA-256 (`web/scripts/models.mjs`), failing the build on a mismatch. The
+app downloads a model **once, only after the user agrees** (a dialog with its size, licence and a plain-words
+training-data note), checks the same SHA-256 (compiled into the app from `web/models/manifest.json`), keeps it in Cache
+Storage (`ai-models`, never precached by the service worker), works offline afterwards, and removes it in Settings → AI
+models. One runtime, **ONNX Runtime Web** (MIT, pinned 1.30.0, its native WebGPU provider in a worker), serves it and is
+meant to serve the later models. Devices with `shader-f16` get the fp16 file, others fp32 (F9 below). The manifest is
+not pinned yet: huggingface.co was blocked from the build machine, so the owner pins it with `node web/scripts/models.mjs
+pin` (Part 24, "What the owner must supply"). Pages' limits: 1 GB per site (the two DA-V2 files are about 149 MB), 100 GB
+a month soft bandwidth (about 800 fp32 or 1,300 fp16 first installs a month, runtime included: arithmetic).
+
+**The plan (before the decision):** download on first use from LightBench's own pinned copy, the way Lensfun data is handled:
 - not precached by the service worker;
 - fetched once into Cache Storage under its own cache name;
 - named by the source commit;

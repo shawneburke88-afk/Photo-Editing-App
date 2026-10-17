@@ -105,6 +105,13 @@ export async function fetchModels(manifest, out, from) {
     console.log(`ok ${x.path} ${buf.length} bytes sha256 ${x.file.sha256}`)
   }
   if (bad) throw new Error(`${bad} model file(s) did not match the manifest`)
+  // Each deployed model's licence goes next to it (Apache-2.0 §4(a): recipients get a copy of the licence).
+  for (const m of new Set(files.map((x) => x.model))) {
+    if (!m.licence?.file) continue
+    const dest = join(out, `models/${m.id}/LICENSE.txt`)
+    mkdirSync(dirname(dest), { recursive: true })
+    writeFileSync(dest, readFileSync(join(HERE, '../models', m.licence.file)))
+  }
   if (existsSync(out)) {
     const total = folderBytes(out)
     console.log(`site size ${total} bytes`)

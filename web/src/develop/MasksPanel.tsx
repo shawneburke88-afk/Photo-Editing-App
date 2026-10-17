@@ -327,7 +327,7 @@ function ShapeControls({ m, mask, comp, disabled, showHint }: { m: Masking; mask
         {!l.raster && <p className="small masks-warn">No depth map for this photo yet: this part isn’t shown.</p>}
         <Slider label="Depth: near end" help={MASK_HELP.depthNear} showHint={showHint} value={b} min={0} max={100} step={1} defaultValue={0} format={(v) => `${Math.round(v)}`} disabled={disabled} onChange={(v) => set(Math.round(v), c, smooth)} />
         <Slider label="Depth: far end" help={MASK_HELP.depthFar} showHint={showHint} value={c} min={0} max={100} step={1} defaultValue={30} format={(v) => `${Math.round(v)}`} disabled={disabled} onChange={(v) => set(b, Math.round(v), smooth)} />
-        <Slider label="Feather" help={MASK_HELP.depthFeather} showHint={showHint} value={smooth} min={0} max={50} step={1} defaultValue={20} format={(v) => `${Math.round(v)}`} disabled={disabled} onChange={(v) => set(b, c, Math.round(v))} />
+        <Slider label="Depth feather" help={MASK_HELP.depthFeather} showHint={showHint} value={smooth} min={0} max={50} step={1} defaultValue={20} format={(v) => `${Math.round(v)}`} disabled={disabled} onChange={(v) => set(b, c, Math.round(v))} />
         <div className="crop-tools">
           <button className={`button small touch ${m.picking === 'depth' ? 'on' : ''}`} disabled={disabled || !l.raster} onClick={() => { if (!m.active) m.start(); m.setPicking(m.picking === 'depth' ? null : 'depth') }}>Pick a distance…</button>
           <label className="check small" title={MASK_HELP.depthView.what}>

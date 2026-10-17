@@ -53,7 +53,7 @@ async function load(key: string, model: ArrayBuffer, wasm: ArrayBuffer, provider
   const old = sessions.get(key)
   if (old && old.provider === provider) return describe(old.session)
   if (old) await old.session.release().catch(() => {})
-  const session = await ort.InferenceSession.create(new Uint8Array(model), { executionProviders: [provider], graphOptimizationLevel: 'all' })
+  const session = await ort.InferenceSession.create(new Uint8Array(model), { executionProviders: [provider], graphOptimizationLevel: 'all', logSeverityLevel: 3 })
   sessions.set(key, { session, provider })
   if (provider === 'webgpu') await watchDevice()
   return describe(session)

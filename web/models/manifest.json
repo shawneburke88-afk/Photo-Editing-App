@@ -14,6 +14,7 @@
       "licence": {
         "id": "Apache-2.0",
         "url": "https://github.com/DepthAnything/Depth-Anything-V2/blob/main/LICENSE",
+        "file": "notices/depth-anything-v2.LICENSE.txt",
         "statement": "“Depth-Anything-V2-Small model is under the Apache-2.0 license. Depth-Anything-V2-Base/Large/Giant models are under the CC-BY-NC-4.0 license.” (Depth Anything V2 README, commit a561b84)"
       },
       "credit": "Lihe Yang, Bingyi Kang, Zilong Huang, Zhen Zhao, Xiaogang Xu, Jiashi Feng and Hengshuang Zhao: “Depth Anything V2” (NeurIPS 2024, arXiv:2406.09414). Code and weights: github.com/DepthAnything/Depth-Anything-V2. ONNX export: Hugging Face onnx-community.",
