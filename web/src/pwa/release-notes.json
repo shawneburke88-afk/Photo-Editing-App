@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.6.4",
+    "date": "2026-10-14",
+    "newFeatures": [
+      "Remove uses several processor cores to fill a spot, instead of one. The fills are exactly the same as before, so your edits don't change.",
+      "Exporting several photos is pipelined: while one photo is being saved as a JPEG, PNG or TIFF, the graphics card already develops the next, and several photos are encoded at once. The files are exactly the same as before.",
+      "LightBench's heavy background work shares half of your processor's cores. Work you're waiting for (Remove, Export, opening a folder) goes first; the culling measurements pause while an export runs and continue afterwards.",
+      "Export's Stop button now reads \"Stop after the photos in progress\": photos already developed are still saved."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.6.3",
     "date": "2026-10-14",
     "newFeatures": [

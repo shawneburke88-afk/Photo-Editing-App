@@ -141,7 +141,7 @@ class ExtrasRefresh {
     const progress = () => this.set({ active: { total: todo.length, done } })
     progress()
     const dirs = new Map<string, Promise<FileSystemDirectoryHandle>>()
-    const pool = new ProbePool(WORKERS)
+    const pool = new ProbePool({ priority: 'background', want: WORKERS })
     this.pool = pool
     try {
       for (let i = 0; i < todo.length; i += WORKERS) {

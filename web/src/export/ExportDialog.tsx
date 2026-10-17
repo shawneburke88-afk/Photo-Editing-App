@@ -148,7 +148,7 @@ export function ExportDialog({ ids, onClose }: Props) {
           {error && <p className="error">{error}</p>}
           <div className="dialog-actions">
             {!finished ? (
-              <button className="button" onClick={() => abort.current?.abort()}>Stop after this photo</button>
+              <button className="button" onClick={() => abort.current?.abort()}>Stop after the photos in progress</button>
             ) : (
               <button className="button primary" onClick={onClose}>Done</button>
             )}

@@ -1,50 +1,51 @@
+import { cpuBudget, type CpuPriority } from '../engine/cpu-budget'
+import { WorkerPool } from '../engine/worker-pool'
 import { createRpcClient, type RpcClient } from '../lib/rpc'
 import type { ProbeApi, ProbeResult } from './probe.worker'
 
 export type { ProbeResult }
 
-/** A small pool of probe workers so several photos are read in parallel. */
-export class ProbePool {
-  private workers: { worker: Worker; api: RpcClient<ProbeApi>; busy: boolean }[] = []
-  private queue: { file: File; resolve: (r: ProbeResult) => void; reject: (e: Error) => void }[] = []
+interface ProbeWorker {
+  worker: Worker
+  api: RpcClient<ProbeApi>
+}
 
-  constructor(size = Math.min(6, Math.max(2, Math.floor((navigator.hardwareConcurrency || 4) / 2)))) {
-    for (let i = 0; i < size; i++) {
-      const worker = new Worker(new URL('./probe.worker.ts', import.meta.url), { type: 'module' })
-      this.workers.push({ worker, api: createRpcClient<ProbeApi>(worker), busy: false })
-    }
+/**
+ * A small pool of probe workers so several photos are read in parallel, on the page's CPU budget
+ * (engine/cpu-budget.ts; PHASE3.md, Part 22). Open folder and Import are foreground work: they get half the cores, at
+ * most 6 and at least 2 (as before the budget, so Open folder is never slower), less only while other foreground work
+ * (Remove, Export) shares the budget. The one-time refresh asks as background work. A foreground pool starts its
+ * workers when it is made (Open folder and Import make it when they start reading a folder, so the workers load while
+ * the folder is listed, as before the budget); a background pool makes them on first use.
+ */
+export class ProbePool {
+  private readonly pool: WorkerPool<ProbeWorker>
+
+  constructor(o: { priority?: CpuPriority; want?: number } = {}) {
+    const priority = o.priority ?? 'foreground'
+    this.pool = new WorkerPool<ProbeWorker>({
+      create: () => {
+        const worker = new Worker(new URL('./probe.worker.ts', import.meta.url), { type: 'module' })
+        return { worker, api: createRpcClient<ProbeApi>(worker) }
+      },
+      terminate: (w) => w.worker.terminate(),
+      priority,
+      want: o.want ?? Math.min(6, Math.max(2, cpuBudget.total)),
+      min: priority === 'foreground' ? 2 : 0,
+    })
+    if (priority === 'foreground') this.pool.prestart()
   }
 
   probe(file: File): Promise<ProbeResult> {
-    return new Promise((resolve, reject) => {
-      this.queue.push({ file, resolve, reject })
-      this.pump()
-    })
+    return this.pool.run((w) => w.api.probe(file))
   }
 
   /** Drops queued (not yet started) work, e.g. when the import window closes. */
   clear() {
-    for (const job of this.queue.splice(0)) job.reject(new Error('cancelled'))
-  }
-
-  private pump() {
-    for (const w of this.workers) {
-      if (w.busy) continue
-      const job = this.queue.shift()
-      if (!job) return
-      w.busy = true
-      w.api
-        .probe(job.file)
-        .then(job.resolve, job.reject)
-        .finally(() => {
-          w.busy = false
-          this.pump()
-        })
-    }
+    this.pool.clear()
   }
 
   dispose() {
-    this.clear()
-    for (const w of this.workers) w.worker.terminate()
+    this.pool.dispose()
   }
 }

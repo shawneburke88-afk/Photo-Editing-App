@@ -9,6 +9,9 @@
 // - two workers, a yield between files; it waits while Open folder or the one-time refresh is reading, and while
 //   Develop is drawing (the foreground gate, engine/gpu/gate.ts: the pass itself uses no GPU, but leaves the CPU to
 //   Develop; it waits at most 2 s each time, so it can't be starved);
+// - its workers are background work on the page's CPU budget (engine/cpu-budget.ts; PHASE3.md, Part 22): while Remove,
+//   Export, Open folder or Import use the slots, it measures with fewer workers or none, and goes on when they are done
+//   (a file being measured always finishes; the next waits);
 // - Pause stops after the files being read; Resume (or the next visit) goes on.
 // It writes only `photo_analysis` rows: no thumbnail, rating, flag, edit or sidecar is touched, and nothing is written
 // to sidecars.
@@ -16,6 +19,7 @@
 import type { PhotoAnalysis } from '../catalog/analysis'
 import { getCatalog } from '../catalog/client'
 import { gpuGate } from '../engine/gpu/gate'
+import { WorkerPool } from '../engine/worker-pool'
 import { createRpcClient, type RpcClient } from '../lib/rpc'
 import type { AnalysisApi } from './analysis.worker'
 import { getDirAt, getRootHandle } from '../platform/roots'
@@ -41,52 +45,39 @@ export interface AnalysisFile {
   fileName: string
 }
 
-/** A few analysis workers; queued files can be dropped (Pause). */
+/**
+ * A few analysis workers, background work on the CPU budget (it gets the slots foreground work leaves); queued files
+ * can be dropped (Pause).
+ */
 class AnalysisPool {
-  private workers: { worker: Worker; api: RpcClient<AnalysisApi>; busy: boolean }[] = []
-  private queue: { file: File; resolve: (r: PhotoAnalysis | null) => void; reject: (e: Error) => void }[] = []
+  private readonly pool: WorkerPool<{ worker: Worker; api: RpcClient<AnalysisApi> }>
 
   constructor(size: number) {
-    for (let i = 0; i < size; i++) {
-      const worker = new Worker(new URL('./analysis.worker.ts', import.meta.url), { type: 'module' })
-      this.workers.push({ worker, api: createRpcClient<AnalysisApi>(worker), busy: false })
-    }
-  }
-
-  analyse(file: File): Promise<PhotoAnalysis | null> {
-    return new Promise((resolve, reject) => {
-      this.queue.push({ file, resolve, reject })
-      this.pump()
+    this.pool = new WorkerPool({
+      create: () => {
+        const worker = new Worker(new URL('./analysis.worker.ts', import.meta.url), { type: 'module' })
+        return { worker, api: createRpcClient<AnalysisApi>(worker) }
+      },
+      terminate: (w) => w.worker.terminate(),
+      priority: 'background',
+      want: size,
     })
   }
 
-  clear() {
-    for (const job of this.queue.splice(0)) job.reject(new Error('cancelled'))
+  analyse(file: File): Promise<PhotoAnalysis | null> {
+    return this.pool.run((w) => w.api.analyse(file))
   }
 
-  private pump() {
-    for (const w of this.workers) {
-      if (w.busy) continue
-      const job = this.queue.shift()
-      if (!job) return
-      w.busy = true
-      w.api
-        .analyse(job.file)
-        .then(job.resolve, job.reject)
-        .finally(() => {
-          w.busy = false
-          this.pump()
-        })
-    }
+  clear() {
+    this.pool.clear()
   }
 
   dispose() {
-    this.clear()
-    for (const w of this.workers) w.worker.terminate()
+    this.pool.dispose()
   }
 }
 
-/** Two workers, fewer than Open folder uses, so the pass stays in the background. */
+/** Two workers at most, fewer than Open folder uses, so the pass stays in the background. */
 const WORKERS = 2
 /** Results are stored in batches of this many. */
 const BATCH = 8

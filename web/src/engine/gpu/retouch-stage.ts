@@ -8,6 +8,10 @@
 // resample (lens, perspective, straighten, flip and crop are one warp, Part 1), so they stay on the content when the
 // geometry changes, the photo is still resampled only once, and a Remove fill is computed once, whatever the crop.
 //
+// Remove fills not cached yet are computed on the fill workers, on as many cores as the CPU budget gives (fill-pool.ts;
+// PHASE3.md, Part 22): the retouch worker cuts out their inputs from the canonical scene (`prepare`), the pool computes
+// them, and the retouch worker applies the spots with every fill ready (`run`).
+//
 // What is cached: the Remove fills (match fields) by key (plan.ts), for the photo loaded; the retouched texture for the
 // last spot list and scene. A new spot list makes a new texture (the scene copied, the changed tiles written, the mip
 // chain rebuilt); the old one is destroyed once nothing that is drawing still uses it.
@@ -17,6 +21,7 @@
 import type { Spot } from '../develop/spots'
 import { canonicalTilesNeeded, tilesNeeded } from '../retouch/run'
 import type { Completion } from '../retouch/completion'
+import { computeFills } from '../retouch/fill-pool'
 import { planSpots, pickRegion } from '../retouch/plan'
 import type { RetouchReply, RetouchRequest } from '../retouch/retouch.worker'
 import { tileRect, tilesOf, type HalfTile } from '../retouch/tiles'
@@ -198,9 +203,10 @@ export class RetouchStage {
     await this.readTiles(scene, [...need].filter((i) => !this.tiles.map.has(i)), this.tiles.map)
     const sceneTiles: HalfTile[] = [...need].sort((a, b) => a - b).map((idx) => ({ idx, data: this.tiles.map.get(idx)!.slice() }))
     // Remove fills not computed yet are computed on the canonical scene.
+    const keys = new Set(planSpots(spots, w, h).flatMap((p) => p.chunks.map((c) => c.key).filter((k): k is string => !!k)))
     const missing = canonicalTilesNeeded(spots, w, h, (k) => this.completions.has(k))
-    let canonical: HalfTile[] | null = null
     if (missing.size) {
+      let canonical: HalfTile[]
       const canon = await this.host.canonicalScene()
       if (canon) {
         const map = new Map<number, Uint16Array>()
@@ -214,11 +220,11 @@ export class RetouchStage {
         await this.readTiles(scene, [...missing].filter((i) => !this.tiles.map.has(i)), this.tiles.map)
         canonical = [...missing].map((idx) => ({ idx, data: this.tiles.map.get(idx)!.slice() }))
       }
+      await this.computeFills(w, h, spots, canonical, [...keys].filter((k) => this.completions.has(k)))
     }
-    const keys = new Set(planSpots(spots, w, h).flatMap((p) => p.chunks.map((c) => c.key).filter((k): k is string => !!k)))
     const reply = await this.call(
-      { id: 0, kind: 'run', w, h, spots, tiles: sceneTiles, canonical, completions: [...this.completions].filter(([k]) => keys.has(k)) },
-      [...sceneTiles.map((t) => t.data.buffer as ArrayBuffer), ...(canonical ?? []).map((t) => t.data.buffer as ArrayBuffer)],
+      { id: 0, kind: 'run', w, h, spots, tiles: sceneTiles, canonical: null, completions: [...this.completions].filter(([k]) => keys.has(k)) },
+      sceneTiles.map((t) => t.data.buffer as ArrayBuffer),
       (spot, fraction) => this.publish({ busy: true, spot, fraction }),
     )
     if (reply.kind !== 'run') throw new Error('Retouch: unexpected reply')
@@ -240,6 +246,26 @@ export class RetouchStage {
     if (this.current) this.retire(this.current.tex)
     this.current = { tex, scene, key: job.key }
     this.publish({ busy: this.queue.length > 0 })
+  }
+
+  /**
+   * The Remove fills a spot list still needs, on the fill workers (several at once; the same fills as the retouch
+   * worker's own computation), added to the cache. Progress is reported for the first spot not done.
+   */
+  private async computeFills(w: number, h: number, spots: Spot[], canonical: HalfTile[], cached: string[]) {
+    const prep = await this.call({ id: 0, kind: 'prepare', w, h, spots, canonical, cached }, canonical.map((t) => t.data.buffer as ArrayBuffer))
+    if (prep.kind !== 'prepare') throw new Error('Retouch: unexpected reply')
+    if (!prep.jobs.length) return
+    const done = prep.jobs.map(() => 0)
+    const fills = await computeFills(prep.jobs.map((j) => j.input), (job, f) => {
+      done[job] = f
+      const spot = Math.min(...prep.jobs.filter((_, i) => done[i] < 1).map((j) => j.spot))
+      if (!Number.isFinite(spot)) return
+      const mine = prep.jobs.filter((j) => j.spot === spot)
+      const fraction = (mine[0].chunks - mine.length + mine.reduce((a, j) => a + done[prep.jobs.indexOf(j)], 0)) / mine[0].chunks
+      this.publish({ busy: true, spot, fraction })
+    })
+    prep.jobs.forEach((j, i) => this.completions.set(j.key, fills[i]))
   }
 
   /** Reads scene tiles (RGBA halves) from level 0 of a texture. */
