@@ -29,6 +29,8 @@ import { withColourMixer } from '../engine/develop/colour-mixer'
 import { withColourGrading } from '../engine/develop/colour-grading'
 import { withDetail } from '../engine/detail/settings'
 import { parseLrToneKey, toneFromLightroom } from '../sidecar/lightroomCurve'
+import { fxFromLightroom, parseLrFxKey } from '../sidecar/lightroomEffects'
+import { withEffects, type GlowSettings } from '../engine/develop/effects'
 import { withToneCurve } from '../engine/develop/tone-curve'
 
 export interface BatchJob {
@@ -45,6 +47,11 @@ export interface BatchJob {
   lightroom?: Record<number, string>
   /** Lightroom's tone curve to apply to each photo (sidecar/lightroomCurve.ts `lrToneKey`, by photo id), after the copy. */
   lightroomTone?: Record<number, string>
+  /**
+   * Lightroom's Effects to apply to each photo (sidecar/lightroomEffects.ts: `lrFxKey`, and Glow's read-only fields as
+   * JSON), after the copy.
+   */
+  lightroomFx?: Record<number, { key: string; glow?: string }>
 }
 
 // The history steps of the Lightroom settings read from a sidecar when a photo is added.
@@ -130,11 +137,13 @@ class BatchDeveloper {
       last.clip = mergeClipboards(last.clip, job.clip)
       if (job.lightroom) last.lightroom = { ...last.lightroom, ...job.lightroom }
       if (job.lightroomTone) last.lightroomTone = { ...last.lightroomTone, ...job.lightroomTone }
-    } else if (last && waiting && (job.lightroom || job.lightroomTone) && last.label === job.label && LIGHTROOM_STEPS.includes(job.label)) {
+      if (job.lightroomFx) last.lightroomFx = { ...last.lightroomFx, ...job.lightroomFx }
+    } else if (last && waiting && (job.lightroom || job.lightroomTone || job.lightroomFx) && last.label === job.label && LIGHTROOM_STEPS.includes(job.label)) {
       // Photos added one by one with Lightroom crops or curves: one job for all of them.
       for (const id of job.ids) if (!last.ids.includes(id)) last.ids.push(id)
       if (job.lightroom) last.lightroom = { ...last.lightroom, ...job.lightroom }
       if (job.lightroomTone) last.lightroomTone = { ...last.lightroomTone, ...job.lightroomTone }
+      if (job.lightroomFx) last.lightroomFx = { ...last.lightroomFx, ...job.lightroomFx }
     } else {
       this.queue.push({ ...job, ids: [...job.ids] })
     }
@@ -292,6 +301,10 @@ class BatchDeveloper {
       }
       const tone = parseLrToneKey(job.lightroomTone?.[id])
       if (tone) next = withToneCurve(next, toneFromLightroom(next.toneCurve, tone))
+      // Lightroom's Effects (Part 25), and Glow's read-only fields.
+      const fxJob = job.lightroomFx?.[id]
+      const fxState = parseLrFxKey(fxJob?.key)
+      if (fxState) next = withEffects(next, fxFromLightroom(next.effects, fxState, fxJob?.glow ? (JSON.parse(fxJob.glow) as Partial<GlowSettings>) : undefined))
       if (wantsAuto && engine && info) next = await rerunAuto(engine, { ...next, auto: job.clip.settings.auto }, info)
       return { h, next }
     }

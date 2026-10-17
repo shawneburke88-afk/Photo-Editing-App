@@ -13,7 +13,7 @@ export const CROP_OVERLAYS: { id: CropOverlayKind; label: string }[] = [
 ]
 
 /** Icons for the groups, 16 px, drawn with the text colour. */
-export const GROUP_ICONS: Record<'crop' | 'remove' | 'basic' | 'curve' | 'colour' | 'grading' | 'detail' | 'masks', ReactNode> = {
+export const GROUP_ICONS: Record<'crop' | 'remove' | 'basic' | 'curve' | 'colour' | 'grading' | 'detail' | 'masks' | 'effects', ReactNode> = {
   crop: (
     <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
       <path fill="none" stroke="currentColor" strokeWidth="1.6" d="M4 1v10.5h10.5M1 4.5h10.5V15" />
@@ -65,6 +65,14 @@ export const GROUP_ICONS: Record<'crop' | 'remove' | 'basic' | 'curve' | 'colour
     <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
       <circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" strokeWidth="1.5" />
       <path fill="currentColor" d="M8 1.7a6.3 6.3 0 0 0 0 12.6z" />
+    </svg>
+  ),
+  // A frame darkening towards its corners, with a sparkle: effects (vignette, grain, glow).
+  effects: (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path fill="currentColor" opacity="0.45" d="M1.5 4a1.5 1.5 0 0 1 1.5-1.5h2.2A6.5 6.5 0 0 0 1.5 7z M14.5 12a1.5 1.5 0 0 1-1.5 1.5h-2.2a6.5 6.5 0 0 0 3.7-4.5z" />
+      <path fill="currentColor" d="M8 5l.8 2.2L11 8l-2.2.8L8 11l-.8-2.2L5 8l2.2-.8z" />
     </svg>
   ),
   // A magnifier over a fine grid: detail (sharpening and noise).

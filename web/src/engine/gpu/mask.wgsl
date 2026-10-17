@@ -10,7 +10,7 @@ struct Tile {
   t0: vec4f,       // origin.xy (target px of texel 0, 0), image offset.xy (target px)
   t1: vec4f,       // image size.xy (target px), exposure gain, mip level
   ts: vec4u,       // working width, height; the planes' region inside it: x0, y0
-  ti: vec4u,       // the planes' region: width, height
+  ti: vec4u,       // the planes' region: width, height; vec4f per pixel (3, or 4 with the fourth plane: Part 25)
   texMap0: vec4f,  // the drawn image's uv → the bound texture's uv (as the display shader)
   texMap1: vec4f,
   texMap2: vec4f,
@@ -315,15 +315,20 @@ fn upRefine(@builtin(global_invocation_id) g: vec3u) {
   alpha[k] = clamp(ab.x * guide[k] + ab.y, 0.0, 1.0);
 }
 
-/** The mask's values, weighted by its alpha, added to the planes (three per pixel); the overlay's alpha is set. */
+/**
+ * The mask's values, weighted by its alpha, added to the planes (three per pixel, or four: the fourth, Texture, Clarity,
+ * Dehaze and the Glow amount, comes in `samples[0]`); the overlay's alpha is set.
+ */
 @compute @workgroup_size(16, 16)
 fn accumulate(@builtin(global_invocation_id) g: vec3u) {
   let n = T.ti.xy;
   if (any(g.xy >= n)) { return; }
   let a = alpha[(g.y + T.ts.w) * wsize().x + g.x + T.ts.z];
-  let k = (g.y * n.x + g.x) * 3u;
+  let stride = max(T.ti.z, 3u);
+  let k = (g.y * n.x + g.x) * stride;
   planes[k] += a * P.p0;
   planes[k + 1u] += a * P.p1;
   let o = planes[k + 2u];
   planes[k + 2u] = vec4f(o.xy + a * P.p2.xy, select(o.z, a, P.p2.z != 0.0), o.w);
+  if (stride == 4u) { planes[k + 3u] += a * P.samples[0]; }
 }

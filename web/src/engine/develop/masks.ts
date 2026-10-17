@@ -33,10 +33,16 @@
 /** A point in sensor coordinates: x / sensor width, y / sensor height. */
 export type Pt = [number, number]
 
-/** The local sliders of this build, in the panel's order (Basic's groups: white balance, tone, presence). */
-export const LOCAL_KEYS = ['temperature', 'tint', 'exposure', 'contrast', 'highlights', 'shadows', 'whites', 'blacks', 'saturation', 'vibrance'] as const
+/**
+ * The local sliders of this build, in the panel's order (Basic's groups: white balance, tone, presence; then Effects).
+ * Texture, Clarity, Dehaze and the Glow amount joined with the Effects build (PHASE3.md Part 25; owner's decisions E2 = A
+ * and GL3 = A: only Glow's amount is per mask, as Adobe's Camera Raw has it).
+ */
+export const LOCAL_KEYS = ['temperature', 'tint', 'exposure', 'contrast', 'highlights', 'shadows', 'whites', 'blacks', 'texture', 'clarity', 'dehaze', 'saturation', 'vibrance', 'glow'] as const
 export type LocalKey = (typeof LOCAL_KEYS)[number]
-/** Only non-zero values are stored. Spatial sliders (Texture, Clarity, Dehaze, …) join when their global tools exist. */
+/** The local sliders that read a neighbourhood (the masks' fourth plane, Part 25). */
+export const SPATIAL_KEYS = ['texture', 'clarity', 'dehaze', 'glow'] as const
+/** Only non-zero values are stored. */
 export type LocalAdjust = Partial<Record<LocalKey, number>>
 
 export const LOCAL_LABELS: Record<LocalKey, string> = {
@@ -50,6 +56,10 @@ export const LOCAL_LABELS: Record<LocalKey, string> = {
   blacks: 'Blacks',
   saturation: 'Saturation',
   vibrance: 'Vibrance',
+  texture: 'Texture',
+  clarity: 'Clarity',
+  dehaze: 'Dehaze',
+  glow: 'Glow',
 }
 
 /** Slider ranges: Exposure in EV, the others −100…100 (Lightroom's local ranges as remembered; not checked). */
@@ -64,6 +74,11 @@ export const LOCAL_RANGE: Record<LocalKey, [number, number]> = {
   blacks: [-100, 100],
   saturation: [-100, 100],
   vibrance: [-100, 100],
+  texture: [-100, 100],
+  clarity: [-100, 100],
+  dehaze: [-100, 100],
+  // Camera Raw's mask Glow slider runs −100…+100 (Cowork, EFFECTS_VERIFY item 8); the global amount here is 0…100.
+  glow: [-100, 100],
 }
 
 export type MaskOp = 'add' | 'subtract' | 'intersect'

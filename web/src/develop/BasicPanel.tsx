@@ -6,6 +6,7 @@ import { AutoControls, type AutoProps } from './AutoControls'
 import { HELP } from './help'
 import { Slider } from './Slider'
 import { SectionEye } from './SectionEye'
+import { DEFAULT_CONTRAST_TEXTURE, DEFAULT_DEHAZE_DISTANCE, withEffects, type ContrastTextureAdvanced, type EffectsSettings } from '../engine/develop/effects'
 
 interface Props {
   settings: DevelopSettings
@@ -45,6 +46,11 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, layo
   const set = (label: string, patch: Partial<DevelopSettings>) => onChange(label, { ...s, ...patch })
   const setAdv = (label: string, patch: Partial<DevelopSettings['advanced']>) =>
     onChange(label, { ...s, advanced: { ...s.advanced, ...patch } })
+  // Texture, Clarity and Dehaze (PHASE3.md Part 25) are kept in the edit's effects.
+  const fx: EffectsSettings = s.effects ?? {}
+  const setFx = (label: string, patch: Partial<EffectsSettings>) => onChange(label, withEffects(s, { ...fx, ...patch }))
+  const ct = fx.contrastTexture ?? DEFAULT_CONTRAST_TEXTURE
+  const setCt = (label: string, patch: Partial<ContrastTextureAdvanced>) => setFx(label, { contrastTexture: { ...ct, ...patch } })
 
   const wb = s.whiteBalance
   const shown = wb.mode === 'as-shot' && asShot ? asShot : wb
@@ -134,11 +140,16 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, layo
 
       <section>
         <div className="section-head"><h3>Presence</h3><SectionEye id="basic.presence" /></div>
+        <Slider label="Texture" {...guide('texture')} value={fx.texture ?? 0} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+          onChange={(v) => setFx('Texture', { texture: v })} />
+        <Slider label="Clarity" {...guide('clarity')} value={fx.clarity ?? 0} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+          onChange={(v) => setFx('Clarity', { clarity: v })} />
+        <Slider label="Dehaze" {...guide('dehaze')} value={fx.dehaze ?? 0} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
+          onChange={(v) => setFx('Dehaze', { dehaze: v })} />
         <Slider label="Vibrance" {...guide('vibrance')} value={s.vibrance} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
           onChange={(v) => set('Vibrance', { vibrance: v })} />
         <Slider label="Saturation" {...guide('saturation')} value={s.saturation} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled}
           onChange={(v) => set('Saturation', { saturation: v })} />
-        <p className="muted small">Texture, Clarity and Dehaze arrive with the local-contrast modules (Phase 3).</p>
       </section>
 
       <section className="advanced">
@@ -167,6 +178,20 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, layo
             <Slider label="Preserve hue" value={s.advanced.huePreservation} min={0} max={100} step={1}
               defaultValue={defaults.advanced.huePreservation} format={(v) => `${v.toFixed(0)} %`} disabled={disabled}
               onChange={(v) => setAdv('Sigmoid hue preservation', { huePreservation: v })} />
+            <h4>haze removal</h4>
+            <Slider label="Distance" {...guide('dehazeDistance')} value={fx.dehazeDistance ?? DEFAULT_DEHAZE_DISTANCE} min={0} max={1} step={0.01}
+              defaultValue={DEFAULT_DEHAZE_DISTANCE} format={(v) => v.toFixed(2)} disabled={disabled}
+              onChange={(v) => setFx('Dehaze distance', { dehazeDistance: Math.round(v * 100) / 100 })} />
+            <h4>contrast &amp; texture</h4>
+            <Slider label="Base detail level" {...guide('ctDetailLevel')} value={ct.detailLevel} min={1} max={15} step={0.1}
+              defaultValue={DEFAULT_CONTRAST_TEXTURE.detailLevel} format={(v) => v.toFixed(1)} disabled={disabled}
+              onChange={(v) => setCt('Texture/Clarity detail level', { detailLevel: Math.round(v * 10) / 10 })} />
+            <Slider label="Halo control" {...guide('ctHalo')} value={ct.haloControl} min={-10} max={10} step={0.1}
+              defaultValue={DEFAULT_CONTRAST_TEXTURE.haloControl} format={(v) => v.toFixed(1)} disabled={disabled}
+              onChange={(v) => setCt('Texture/Clarity halo control', { haloControl: Math.round(v * 10) / 10 })} />
+            <Slider label="Noise bias" {...guide('ctNoise')} value={ct.noiseBias} min={0} max={0.05} step={0.0005}
+              defaultValue={DEFAULT_CONTRAST_TEXTURE.noiseBias} format={(v) => v.toFixed(4)} disabled={disabled}
+              onChange={(v) => setCt('Texture/Clarity noise bias', { noiseBias: Math.round(v * 10000) / 10000 })} />
             {kind === 'raw' ? (
               <>
                 <h4>highlight reconstruction</h4>

@@ -13,6 +13,7 @@ import { checkCatalogImage, discardStaged, exportCatalog, removeLeftovers, stage
 import { SCHEMA_VERSION } from './schema'
 import { fromSidecar, readSidecarSnapshots, sortSnapshots, toSidecar, type SidecarSnapshot, type Snapshot } from '../develop/snapshots'
 import { activeSlot, type Slot } from './slot'
+import { newGrainSeed, reseedGrain } from '../engine/develop/effects'
 import type { CollectionInfo, DuplicateKey, FolderNode, LibraryRoot, MetadataKey, NewPhoto, PhotoDetail, PhotoMetadata, PhotoQuery, PhotoRow } from './types'
 
 let db: Database | null = null
@@ -1363,7 +1364,11 @@ function createVirtualCopy(sourceId: number, name?: string): number {
     })
     const id = Number(conn().selectValue('SELECT last_insert_rowid()'))
     const edit = getEdit(sourceId)
-    if (edit) saveEdit(id, edit.settings, edit.history)
+    // A virtual copy gets its own grain pattern (PHASE3.md Part 25; owner's decision G1), in its edit and history alike.
+    if (edit) {
+      const seed = newGrainSeed()
+      saveEdit(id, reseedGrain(edit.settings, seed), reseedGrain(edit.history, seed))
+    }
     conn().exec({ sql: 'INSERT INTO photo_keywords (photo_id, keyword_id) SELECT ?, keyword_id FROM photo_keywords WHERE photo_id = ?', bind: [id, sourceId] })
     const cols = META_KEYS.map((k) => META_COLUMNS[k]).join(', ')
     conn().exec({ sql: `INSERT INTO photo_metadata (photo_id, ${cols}) SELECT ?, ${cols} FROM photo_metadata WHERE photo_id = ?`, bind: [id, sourceId] })

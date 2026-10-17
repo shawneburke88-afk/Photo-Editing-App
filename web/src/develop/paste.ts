@@ -12,11 +12,13 @@ import { describeSpots } from '../engine/develop/spots'
 import { bandsOf, describeMixer, describePoints, withColourMixer, withPoints } from '../engine/develop/colour-mixer'
 import { describeGrading, withColourGrading } from '../engine/develop/colour-grading'
 import { appendMasks, describeMasks, withMasksList } from '../engine/develop/masks'
+import { describeGlow, describeGrain, describePresenceFx, describeVignette, newGrainSeed, withEffects, type EffectsSettings } from '../engine/develop/effects'
 
 export type PasteKey =
   | 'whiteBalance'
   | 'exposure' | 'contrast' | 'highlights' | 'shadows' | 'whites' | 'blacks'
   | 'vibrance' | 'saturation'
+  | 'texture' | 'clarity' | 'dehaze'
   | 'toneCurve'
   | 'colourMixer' | 'pointColor' | 'colourGrading'
   | 'rotate' | 'straighten' | 'crop' | 'upright' | 'transform'
@@ -24,12 +26,13 @@ export type PasteKey =
   | 'sharpening' | 'luminanceNoise' | 'colorNoise'
   | 'spots'
   | 'masks'
+  | 'vignette' | 'grain' | 'glow'
   | 'process' | 'baseExposure' | 'toneMapper' | 'highlightReconstruction' | 'demosaic'
 
 export interface PasteItem {
   key: PasteKey
   label: string
-  group: 'White balance' | 'Tone' | 'Presence' | 'Tone Curve' | 'Colour' | 'Detail' | 'Crop' | 'Lens' | 'Remove' | 'Masks' | 'Advanced (darktable modules)'
+  group: 'White balance' | 'Tone' | 'Presence' | 'Tone Curve' | 'Colour' | 'Detail' | 'Effects' | 'Crop' | 'Lens' | 'Remove' | 'Masks' | 'Advanced (darktable modules)'
   /**
    * Only pasted between photos of the same kind (RAW to RAW, JPEG to JPEG): a RAW's +0.7 EV base exposure or its
    * camera white balance would be wrong on a JPEG, which is already rendered.
@@ -87,6 +90,37 @@ const slider = (key: 'exposure' | 'contrast' | 'highlights' | 'shadows' | 'white
   show: (s) => (key === 'exposure' ? signed(s.exposure, 2, ' EV') : signed(s[key])),
 })
 
+/**
+ * Effects items (Part 25): one part of the effects copied as it is (absent = off). Texture, Clarity and Dehaze carry their
+ * darktable settings (Advanced) along: Dehaze its distance, Texture and Clarity contrast & texture's settings.
+ */
+const fxItem = (key: 'texture' | 'clarity' | 'dehaze' | 'vignette' | 'grain' | 'glow', label: string, group: PasteItem['group'], show: (fx: EffectsSettings | undefined) => string): PasteItem => {
+  const parts = (k: typeof key): (keyof EffectsSettings)[] => (k === 'dehaze' ? ['dehaze', 'dehazeDistance'] : k === 'texture' || k === 'clarity' ? [k, 'contrastTexture'] : [k])
+  const copyFx = (to: EffectsSettings | undefined, from: EffectsSettings | undefined): EffectsSettings => {
+    const out: EffectsSettings = { ...to }
+    for (const p of parts(key)) {
+      if (p === 'contrastTexture' && !from?.[key as 'texture' | 'clarity']) continue
+      if (from?.[p] === undefined) delete out[p]
+      else Object.assign(out, { [p]: JSON.parse(JSON.stringify(from[p])) })
+    }
+    // Grain: each photo keeps its own pattern (its seed), or gets a new one (owner's decision G1: a seed per edit).
+    if (key === 'grain' && out.grain) out.grain = { ...out.grain, seed: to?.grain?.seed ?? newGrainSeed() }
+    return out
+  }
+  return {
+    key,
+    label,
+    group,
+    copy: (to, from) => withEffects(to, copyFx(to.effects, from.effects)),
+    show: (s) => show(s.effects),
+    // The grain's seed is the photo's own: a pasted grain changes only when its settings do.
+    changed: (before, after) => {
+      const strip = (fx: EffectsSettings | undefined) => JSON.stringify(parts(key).map((p) => (p === 'grain' && fx?.grain ? { ...fx.grain, seed: 0 } : fx?.[p] ?? null)))
+      return strip(before.effects) !== strip(after.effects)
+    },
+  }
+}
+
 /** Detail items (Part 13): parts of the Detail settings, copied as they are (absent = off). */
 const detailItem = (key: 'sharpening' | 'luminanceNoise' | 'colorNoise', label: string, copy: (to: DetailSettings, from: DetailSettings) => DetailSettings, show: (d: DetailSettings) => string): PasteItem => ({
   key,
@@ -115,6 +149,9 @@ export const PASTE_ITEMS: PasteItem[] = [
   slider('blacks', 'Blacks', 'Tone'),
   slider('vibrance', 'Vibrance', 'Presence'),
   slider('saturation', 'Saturation', 'Presence'),
+  fxItem('texture', 'Texture', 'Presence', (fx) => describePresenceFx(fx, 'texture')),
+  fxItem('clarity', 'Clarity', 'Presence', (fx) => describePresenceFx(fx, 'clarity')),
+  fxItem('dehaze', 'Dehaze', 'Presence', (fx) => describePresenceFx(fx, 'dehaze')),
   // The whole Tone Curve travels as one item (Lightroom's Copy Settings has one "Tone Curve" box): Regions, the RGB,
   // Red, Green and Blue curves, its Refine Saturation and brightness measure. A photo without a curve copies "none".
   {
@@ -156,6 +193,11 @@ export const PASTE_ITEMS: PasteItem[] = [
     d.noise.luminance === 0 ? 'off' : `${d.noise.luminance}, Detail ${d.noise.luminanceDetail}, Contrast ${d.noise.luminanceContrast} (each photo’s own noise profile)`),
   detailItem('colorNoise', 'Noise reduction: Color', (to, from) => ({ ...to, noise: { ...to.noise, color: from.noise.color, colorDetail: from.noise.colorDetail, colorSmoothness: from.noise.colorSmoothness } }), (d) =>
     d.noise.color === 0 ? 'off' : `${d.noise.color}, Detail ${d.noise.colorDetail}, Smoothness ${d.noise.colorSmoothness} (each photo’s own noise profile)`),
+  // Effects (Part 25): Post-crop Vignetting, Grain and Glow, ticked by default like the colour items (LightBench's choice;
+  // Lightroom's Copy Settings has an Effects group, its defaults not checked here).
+  fxItem('vignette', 'Post-Crop Vignetting', 'Effects', (fx) => describeVignette(fx?.vignette)),
+  fxItem('grain', 'Grain', 'Effects', (fx) => describeGrain(fx?.grain)),
+  fxItem('glow', 'Glow', 'Effects', (fx) => describeGlow(fx?.glow)),
   // Crop items come in this order when pasted: orientation first (the crop rectangle is relative to it), then the
   // angle, then the rectangle (kept inside the photo at the new angle).
   {

@@ -39,9 +39,12 @@ const OP_NAME: Record<MaskOp, string> = { add: 'Add', subtract: 'Subtract', inte
 const LOCAL_GROUPS: { title: string; keys: LocalKey[] }[] = [
   { title: 'White balance', keys: ['temperature', 'tint'] },
   { title: 'Tone', keys: ['exposure', 'contrast', 'highlights', 'shadows', 'whites', 'blacks'] },
-  { title: 'Presence', keys: ['saturation', 'vibrance'] },
+  { title: 'Presence', keys: ['texture', 'clarity', 'dehaze', 'saturation', 'vibrance'] },
+  // Glow: only its amount is per mask (owner's decision GL3; Camera Raw: "the Glow amount can be set independently for each
+  // mask"); its Style, Range, Spread and Warmth are the Effects group's.
+  { title: 'Effects', keys: ['glow'] },
 ]
-const BASIC_HELP: Record<LocalKey, string> = { temperature: 'temp', tint: 'tint', exposure: 'exposure', contrast: 'contrast', highlights: 'highlights', shadows: 'shadows', whites: 'whites', blacks: 'blacks', saturation: 'saturation', vibrance: 'vibrance' }
+const BASIC_HELP: Record<LocalKey, string> = { temperature: 'temp', tint: 'tint', exposure: 'exposure', contrast: 'contrast', highlights: 'highlights', shadows: 'shadows', whites: 'whites', blacks: 'blacks', saturation: 'saturation', vibrance: 'vibrance', texture: 'texture', clarity: 'clarity', dehaze: 'dehaze', glow: 'glowLocal' }
 
 function localHelp(k: LocalKey): ControlHelp {
   const h = HELP[BASIC_HELP[k]]
@@ -52,7 +55,9 @@ function localHelp(k: LocalKey): ControlHelp {
       left: k === 'temperature' ? 'Cooler.' : 'Greener.',
       right: k === 'temperature' ? 'Warmer.' : 'More magenta.',
     }
-  return { ...h, hint: `${h.hint}, in the mask`, what: `${h.what} Here it acts only where the mask is, on top of Basic’s slider (the two add up).` }
+  if (k === 'glow') return h
+  const where = k === 'texture' || k === 'clarity' || k === 'dehaze' ? 'Presence slider' : 'slider'
+  return { ...h, hint: `${h.hint}, in the mask`, what: `${h.what} Here it acts only where the mask is, on top of Basic’s ${where} (the two add up).` }
 }
 
 export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote }: Props) {

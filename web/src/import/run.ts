@@ -17,6 +17,7 @@ import { detailOf, geometryOf, lrDiffers, lrFrame, lrKey, lrState, mixerOf, pars
 import { gradingOf } from '../engine/develop/colour-grading'
 import { batch, lightroomStep } from '../develop/batch'
 import { lrToneDiffers, lrToneKey, lrToneState, parseLrToneKey, sameLrTone, toneCurveOf } from '../sidecar/lightroomCurve'
+import { effectsOf, glowFromLightroom, lrFxDiffers, lrFxKey, lrFxState, parseLrFxKey, sameLrFx } from '../sidecar/lightroomEffects'
 import { defaultsFor, normalizeSettings } from '../engine/develop/settings'
 import { isRawFile } from '../engine/raw/decoder'
 
@@ -167,9 +168,11 @@ async function readLightroomMasks(catalog: Catalog, id: number, r: SidecarRead) 
 async function readLightroomSettings(catalog: Catalog, id: number, r: SidecarRead) {
   const lr = r.lightroom
   const lt = r.lightroomTone
+  const lx = r.lightroomFx
   const hasGeometry = !!lr && !lr.applied && Object.keys(lr.fields).length > 0
   const hasTone = !!lt && !lt.applied && Object.keys(lt.fields).length > 0
-  if (!hasGeometry && !hasTone) return
+  const hasFx = !!lx && !lx.applied && (lx.fields.some((v) => v !== undefined) || Object.keys(lx.glow).length > 0)
+  if (!hasGeometry && !hasTone && !hasFx) return
   const p = await catalog.getPhoto(id)
   if (!p) return
   const kind = isRawFile(p.fileName) ? 'raw' : 'rgb'
@@ -189,13 +192,22 @@ async function readLightroomSettings(catalog: Catalog, id: number, r: SidecarRea
     const marker = parseLrToneKey(lt.marker)
     if ((!r.develop || (marker && !sameLrTone(marker, state))) && lrToneDiffers(toneCurveOf(r.develop), state)) tone = lrToneKey(state)
   }
-  if (!geometry && !tone) return
+  // Lightroom's Effects (Part 25): read at import, by the same rule; Glow's fields (read only) only with no LightBench edit.
+  let fx: { key: string; glow?: string } | null = null
+  if (hasFx) {
+    const state = lrFxState(lx.fields)
+    const marker = parseLrFxKey(lx.marker)
+    const glow = r.develop ? undefined : glowFromLightroom(lx.glow)
+    if ((!r.develop || (marker && !sameLrFx(marker, state))) && (lrFxDiffers(effectsOf(r.develop), state) || glow)) fx = { key: lrFxKey(state), ...(glow ? { glow: JSON.stringify(glow) } : {}) }
+  }
+  if (!geometry && !tone && !fx) return
   batch.run({
-    label: lightroomStep(!!geometry, !!tone),
+    label: lightroomStep(!!geometry || !!fx, !!tone),
     ids: [id],
     clip: { settings: normalizeSettings(null, kind), keys: [], rerunAuto: false, sourceKind: kind, sourceName: p.fileName },
     ...(geometry ? { lightroom: { [id]: geometry } } : {}),
     ...(tone ? { lightroomTone: { [id]: tone } } : {}),
+    ...(fx ? { lightroomFx: { [id]: fx } } : {}),
   })
 }
 

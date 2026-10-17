@@ -12,6 +12,9 @@
 // Masks (PHASE3.md Part 23): with masks, the local sliders (summed over the masks, weighted by their alphas: mask.wgsl
 // makes these planes) act inside `developMasked`, in scene-linear light before the sigmoid; without them (MK.info.x 0)
 // nothing here changes. The mask overlay is drawn last, on Develop's canvas only.
+// Effects (PHASE3.md Part 25; effects-display.wgsl, appended): Dehaze before Exposure, Texture and Clarity after Presence,
+// Glow and Vignette's Highlight Priority before the sigmoid, Vignette's other styles and Grain after the Tone Curve; with
+// none on (FX.flags.x 0) nothing here changes.
 // Soft proofing (PHASE3.md Part 20) replaces the developed colour by the proof table's just before the output profile,
 // on Develop's canvas and in its histogram only; with it off (PF.mode 0) nothing here changes.
 // The clipping indicators are translated from darktable's src/iop/overexposed.c (display clipping:
@@ -103,8 +106,9 @@ struct View {
 @group(0) @binding(13) var<uniform> PF: Proof;
 
 // Masks (PHASE3.md Part 23): the planes of the tile being drawn (three vec4f per target pixel: [exposure, contrast,
-// highlights, shadows], [whites, blacks, saturation, vibrance], [temp, tint, the overlay's alpha, 0]), their parameters,
-// and where the tile's planes sit. All zero (a 64-byte buffer bound) without masks: the stage skipped.
+// highlights, shadows], [whites, blacks, saturation, vibrance], [temp, tint, the overlay's alpha, 0]; a fourth, [texture,
+// clarity, dehaze, glow amount], when a mask sets one of those: Part 25), their parameters, and where the tile's planes
+// sit. All zero (a 64-byte buffer bound) without masks: the stage skipped.
 @group(0) @binding(14) var<storage, read> maskPlanes: array<vec4f>;
 @group(0) @binding(15) var<uniform> MK: Masks;
 @group(0) @binding(16) var<uniform> MKT: MaskTile;
@@ -121,6 +125,10 @@ struct Masks {
 struct MaskTile {
   origin: vec2f,  // target pixel of the planes' first texel
   size: vec2u,
+  stride: u32,    // vec4f per pixel: 3, or 4 when a mask sets Texture, Clarity, Dehaze or Glow (the fourth plane, Part 25)
+  pad0: u32,
+  pad1: u32,
+  pad2: u32,
 }
 
 /** The target pixel whose local values are read (fs and mixerPass set it). */
@@ -141,7 +149,8 @@ struct MixTile {
   mode: u32,      // 0: drawing as usual; 1: the mixer's input for its filter (U*′, V*′, RGB saturation, L*);
                   // 2: drawing a tile with the filter's corrections; 3, 4: linear Rec.2020 before / after the mixer
                   // (before the sigmoid; tests and the mixer's pickers); 5: after the mixer and Colour Grading (tests);
-                  // 6: what the range masks measure (the masks' pickers)
+                  // 6: what the range masks measure (the masks' pickers); Effects (Part 25): 7 Glow's source, 8 Dehaze's
+                  // input, 9 Texture and Clarity's luminance
   pad: u32,
 }
 
@@ -381,16 +390,31 @@ fn applyToneCurve(c: vec3f) -> vec3f {
 /** The develop transform up to the tone mapper: display-referred linear Rec.2020 (before the output profile). */
 fn developRec2020(scene: vec3f, uv: vec2f) -> vec3f {
   let c = developBeforeCurve(scene, uv);
-  if (V.curveFlags != 0u) { return applyToneCurve(c); }
-  return c;
+  if ((FX.flags.x & 24u) == 0u) {
+    if (V.curveFlags != 0u) { return applyToneCurve(c); }
+    return c;
+  }
+  // Effects after the Tone Curve (Part 25): Vignette's Colour Priority or Paint Overlay, then Grain.
+  var o = c;
+  if (V.curveFlags != 0u) { o = applyToneCurve(o); }
+  if ((FX.flags.x & 8u) != 0u && FX.flags.y >= 2u) { o = vignetteDisplay(o, vignetteWeight(uv)); }
+  if ((FX.flags.x & 16u) != 0u) { o = grainApply(o); }
+  return o;
 }
 
 /** The develop transform up to the sigmoid, before the Tone Curve. */
 fn developBeforeCurve(scene: vec3f, uv: vec2f) -> vec3f {
-  var c = developPreSigmoid(scene, uv);
-  if (MX.flags != 0u || MX.visualize != 0u) { c = mixerApply(c); }
-  // Colour Grading after the mixer (darktable: colorequal 41.2, colorbalancergb 41.5); not over the mixer's Visualize view.
-  if (CG.flags != 0u && MX.visualize == 0u) { c = gradeApply(c); }
+  if ((FX.flags.x & 15u) == 0u) {
+    var c = developPreSigmoid(scene, uv);
+    if (MX.flags != 0u || MX.visualize != 0u) { c = mixerApply(c); }
+    // Colour Grading after the mixer (darktable: colorequal 41.2, colorbalancergb 41.5); not over the mixer's Visualize view.
+    if (CG.flags != 0u && MX.visualize == 0u) { c = gradeApply(c); }
+    return sigmoid(c);
+  }
+  // With effects (Part 25): Texture/Clarity, then Glow and Vignette's Highlight Priority gain, before the sigmoid.
+  var c = developPreGlow(scene, uv);
+  if ((FX.flags.x & 4u) != 0u) { c = glowApply(c, uv, clamp(FX.glow0.x + fxLocal().w, 0.0, 1.0)); }
+  if ((FX.flags.x & 8u) != 0u && FX.flags.y == 1u) { c = vignetteScene(c, vignetteWeight(uv)); }
   return sigmoid(c);
 }
 
@@ -409,6 +433,8 @@ fn mixerApply(c: vec3f) -> vec3f {
 fn developPreSigmoid(scene: vec3f, uv: vec2f) -> vec3f {
   if (MK.info.x != 0u) { return developMasked(scene, uv); }
   var c = vec3f(dot(V.wbFix0.xyz, scene), dot(V.wbFix1.xyz, scene), dot(V.wbFix2.xyz, scene));
+  // Dehaze (Part 25) before Exposure, as darktable's haze removal (14.0) before its exposure (21.0).
+  if ((FX.flags.x & 1u) != 0u) { c = dehazeApply(c, FX.dehaze.w); }
   c *= V.exposure;
 
   if (V.toneEnabled == 1u) {
@@ -446,7 +472,22 @@ fn mixerPass(p: vec2f) -> vec4f {
     let sc = textureSampleLevel(img, samp, tuv, V.lod).rgb;
     return vec4f(vec3f(dot(V.wbFix0.xyz, sc), dot(V.wbFix1.xyz, sc), dot(V.wbFix2.xyz, sc)) * V.exposure, 1.0);
   }
-  let c = developPreSigmoid(textureSampleLevel(img, samp, tuv, V.lod).rgb, uv);
+  if (MT.mode == 8u) {
+    // Dehaze's input (Part 25): the scene after the white-balance fix, before Exposure (darktable's haze removal sees it so).
+    let sc = textureSampleLevel(img, samp, tuv, V.lod).rgb;
+    return vec4f(dot(V.wbFix0.xyz, sc), dot(V.wbFix1.xyz, sc), dot(V.wbFix2.xyz, sc), 1.0);
+  }
+  if (MT.mode == 9u) {
+    // Texture and Clarity's input: darktable contrast & texture's luminance, the Euclidean norm / √3 (the noise bias is
+    // added by effects.wgsl).
+    let pc = developPreSigmoid(textureSampleLevel(img, samp, tuv, V.lod).rgb, uv);
+    return vec4f(length(pc) / sqrt(3.0), 0.0, 0.0, 1.0);
+  }
+  if (MT.mode == 7u) {
+    // Glow's source: the photo before Glow (after Colour Grading), drawn small (effects-stage.ts).
+    return vec4f(developPreGlow(textureSampleLevel(img, samp, tuv, V.lod).rgb, uv), 1.0);
+  }
+  let c = developPresence(textureSampleLevel(img, samp, tuv, V.lod).rgb, uv);
   if (MT.mode == 1u) {
     let luv = ucsLuv(c);
     return vec4f(luv.y, luv.z, mixRgbSat(c), luv.x);
@@ -627,7 +668,7 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   fragPos = pos.xy;
   maskPx = pos.xy;
   // The mixer's input is drawn into a tile texture (texel + origin = target pixel); modes 3 and 4 draw the target itself.
-  if (MT.mode == 1u) { return mixerPass(pos.xy + MT.origin); }
+  if (MT.mode == 1u || MT.mode >= 8u) { return mixerPass(pos.xy + MT.origin); }
   if (MT.mode >= 3u) { return mixerPass(pos.xy); }
   let uv = (pos.xy - V.offset) / V.size;
   // The crop tool's view also draws the turned photo's corners in the margin around the frame.
@@ -706,11 +747,11 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
 
 // ---- masks (PHASE3.md Part 23; engine/develop/mask-math.ts is the CPU twin and has the sources)
 
-/** Plane `n` (0–2) of the local values at `maskPx`. */
+/** Plane `n` (0–2, and 3 when there is a fourth plane) of the local values at `maskPx`. */
 fn maskPlane(n: u32) -> vec4f {
   let size = vec2i(MKT.size);
   let ip = clamp(vec2i(floor(maskPx - MKT.origin)), vec2i(0), max(size - 1, vec2i(0)));
-  return maskPlanes[(u32(ip.y) * MKT.size.x + u32(ip.x)) * 3u + n];
+  return maskPlanes[(u32(ip.y) * MKT.size.x + u32(ip.x)) * max(MKT.stride, 3u) + n];
 }
 
 /** Local Temp and Tint: red and blue against each other, green against both, the luminance kept. */
@@ -776,6 +817,8 @@ fn developMasked(scene: vec3f, uv: vec2f) -> vec3f {
   let l1 = maskPlane(1u);
   let l2 = maskPlane(2u);
   var c = vec3f(dot(V.wbFix0.xyz, scene), dot(V.wbFix1.xyz, scene), dot(V.wbFix2.xyz, scene));
+  // Dehaze (Part 25), global + local, before Exposure.
+  if ((FX.flags.x & 1u) != 0u) { c = dehazeApply(c, FX.dehaze.w + fxLocal().z); }
   c *= V.exposure;
   if (l2.x != 0.0 || l2.y != 0.0) { c = localWb(c, l2.x, l2.y); }
   var expo = V.exposure;
