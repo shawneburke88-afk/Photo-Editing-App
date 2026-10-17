@@ -425,6 +425,40 @@ A) Adobe's rule: only the amount per mask (recommended) · B) Every Glow slider 
 
 ---
 
+### Owner's answers (2026-10-17)
+
+Asked as cards, recommendation listed first. **Bold** marks where the owner chose differently from the recommendation.
+
+| Card | Answer |
+|---|---|
+| E1 Order of work | A: Vignette + Grain → Texture/Clarity → Glow → **Dehaze last, merged only after Cowork's claim mapping** (follows from D1) |
+| E2 Local Texture/Clarity/Dehaze | A: in this build (fourth mask plane) |
+| E3 Lightroom fields | A: read at import and write back under Part 7's rules |
+| V1 Highlight Priority | A: scene-linear gain before the sigmoid, plus highlight protection |
+| V2 Export dither | **C: an Export option, off by default** (no automatic dither; old exports unchanged) |
+| V3 Centre offset and shape | A: under Advanced |
+| G1 Grain seed | A: stored per edit, new for a virtual copy |
+| G2 Roughness | A: LightBench's design (weight between darktable's octaves plus a fourth fine octave) |
+| G3 `crs:GrainFrequency` | A: read as Roughness |
+| G4 Colour grain | **B: monochrome by default, plus darktable's RGB (colour) grain under Advanced** |
+| D1 Dehaze method | A: darktable port (D0) with the "no output-edge constraint" rule, merged only after Cowork maps US 9,508,126's full claims |
+| D2 Dehaze position | A: before Exposure |
+| D3 Default distance | A: darktable's 0.2, distance under Advanced |
+| D4 Negative Dehaze | A: allowed (darktable's negative strength) |
+| D5 Dehaze statistics frame | **B: the crop** (re-measured inside the crop, as darktable) |
+| D6 Guided filter | A: full resolution, darktable's exact filter |
+| T1 Engine | A: darktable contrast & texture (EIGF, scene-referred) |
+| T2 Where measured | A: darktable's position, rebuilt per redraw |
+| T3 Band mapping | A: Clarity → coarse + medium, Texture → fine |
+| T4 Mid-tone weighting | **B: LightCraft's mid-tone weight for Clarity** |
+| T5 Radius frame | **B: the crop**, as darktable |
+| T6 Placement | A: Texture, Clarity, Dehaze in Basic → Presence; Vignette, Grain, Glow in a new Effects group |
+| GL1 Glow engine | A: LightBench scene-linear glow (threshold + multi-scale blur + add, before the sigmoid) |
+| GL2 Glow styles | A: Bloom, Diffusion and Halation in v1 |
+| GL3 Glow in masks | A: Amount only per mask |
+
+Notes for the build: with D5/T5 = crop, the effect re-measures when the crop changes (darktable's behaviour), so the "whole photo" pattern of Part 10 does not apply to these two; document it in the UI help. T4's mid-tone weight is LightCraft's (MIT/Apache, credit in THIRD_PARTY_NOTICES as for its other ports).
+
 ## Blocked sources
 
 All tried 2026-10-17. "curl 000" = the agent proxy refused the CONNECT tunnel (HTTP 403 from the gateway). "WebFetch ENOTFOUND" = the fetch tool's DNS lookup failed.
