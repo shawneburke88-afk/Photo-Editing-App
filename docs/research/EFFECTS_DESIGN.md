@@ -459,6 +459,27 @@ Asked as cards, recommendation listed first. **Bold** marks where the owner chos
 
 Notes for the build: with D5/T5 = crop, the effect re-measures when the crop changes (darktable's behaviour), so the "whole photo" pattern of Part 10 does not apply to these two; document it in the UI help. T4's mid-tone weight is LightCraft's (MIT/Apache, credit in THIRD_PARTY_NOTICES as for its other ports).
 
+### After Cowork's patent check (owner, 2026-10-17)
+
+Source: [cowork-2026-10-17-effects/EFFECTS_VERIFY.md](cowork-2026-10-17-effects/EFFECTS_VERIFY.md). Facts only; Google Patents' status fields are its own assumptions, not legal conclusions.
+
+- **US 9,508,126 (Adobe, "Active, expires 2035-03-14"):** claim 1 calculates the transmission from "a fractionally scaled variant … calculated using a scaling factor that is a function of the input digital image", then filters it "using a smoothing function" (claim 7: "one of a mean filter, a median filter and a minimum filter"). In darktable's `hazeremoval.c` the factor is `strength`, a user parameter (default 0.2); no line computes it from the image. darktable filters with box max, box min, then a guided filter.
+- **US 9,305,339 (Adobe, "Active", anticipated 2034-07-01):** every independent claim requires "a trained model". darktable has none.
+- **US 10,367,976 (US Navy, "Active, expires 2037-12-27"):** every independent claim requires a [0,1] conversion, a brightness correction and an airlight averaged across video frames. darktable has none of these.
+- **New: US 9,754,356 (A\*STAR, "Active", anticipated 2034-04-11):** claim 1 recites a guided-filter linear transformation whose pixels are weighted by a variance-based weight, and an initial transmission map from a luminance channel. darktable's `guided_filter` uses a constant `eps` and no per-pixel weight; its transmission uses the RGB minimum, not luminance.
+- **US 8,666,194 (Adobe, "Active, expires 2031-09-06"):** editing frequency content via a displayed sub-image of one band. Claim 1 only partly read.
+- Local Laplacian, guided filter (He/Microsoft), vignette priority modes, Glow: no patent found (not proof of absence).
+- **Glow (Camera Raw 18.6, August 2026):** styles Diffusion, Bloom, Halation; Range, Spread, Warmth global; only the amount per mask. Not in Lightroom Classic 15.6 / Lightroom 9.6. No numeric ranges published. crs names `GlowRange`, `GlowSpread`, `GlowStyle`, `GlowWarmth` from a third-party source only; the amount field's name unknown.
+
+**Owner's decisions:**
+1. **Dehaze goes into the Effects build** (darktable port D0) **with these binding constraints:**
+   - Strength (and distance) are always the user's values: **no automatic or image-adaptive strength** computed from pixel values.
+   - Keep darktable's **standard colour guided filter with a constant eps**: no weighted guided filter (WGIF), no variance-based per-pixel weights, no luminance-channel transmission map.
+   - **No output-side edge or artefact clean-up step** after recovery (from the earlier 9,508,129 / 9,646,364 mapping).
+   - **No trained/learned model** and no multi-frame (video) airlight.
+2. **Texture/Clarity:** global sliders only; **no UI that displays and edits individual frequency bands** (US 8,666,194) without review.
+3. **Glow's Lightroom fields: read at import, never written** until a Lightroom-written sidecar confirms the names. The other effects stay read-and-write (E3). Glow's slider ranges are LightBench's own (Adobe publishes none).
+
 ## Blocked sources
 
 All tried 2026-10-17. "curl 000" = the agent proxy refused the CONNECT tunnel (HTTP 403 from the gateway). "WebFetch ENOTFOUND" = the fetch tool's DNS lookup failed.
