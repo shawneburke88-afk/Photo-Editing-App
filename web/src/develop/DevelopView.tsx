@@ -1,11 +1,11 @@
 import { keyText, useKeymapVersion, useShortcuts, withKey } from '../settings/shortcuts'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { getCatalog } from '../catalog/client'
-import { forgetThumbUrl, loadThumb, saveThumb, thumbUrl } from '../catalog/thumbs'
+import { forgetThumbUrl, holdThumbUrl, loadThumb, saveThumb } from '../catalog/thumbs'
 import type { PhotoDetail } from '../catalog/types'
 import { AUTO_SLIDERS, BUILT_IN_TARGETS, metricsFromStats, solveAuto, statsFromPixels, targetFromMetrics, type AutoKey, type AutoTarget } from '../engine/develop/auto'
 import { defaultsFor, displayUniforms, normalizeSettings, type DevelopSettings } from '../engine/develop/settings'
-import { DEFAULT_GEOMETRY, flip, isIdentityGeometry, rotate90, sameGeometry, setAngle, setAspect, setLocked, swapAspect, type GeometrySettings } from '../engine/develop/geometry'
+import { flip, isIdentityGeometry, resetCrop, rotate90, sameGeometry, setAngle, setAspect, setLocked, swapAspect, type GeometrySettings } from '../engine/develop/geometry'
 import { CURRENT_PROCESS, PROCESS_VERSIONS, processStatus } from '../engine/develop/process'
 import { DevelopEngine, type ImageStats, type RawStageOptions, type ViewState } from '../engine/gpu/develop-engine'
 import { gpuGate } from '../engine/gpu/gate'
@@ -177,7 +177,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [history, setHistory] = useState<History | null>(null)
   const [view, setView] = useState<ViewState>({ zoom: 'fit', center: [0.5, 0.5] })
   const [before, setBefore] = useState(false)
-  const [placeholder, setPlaceholder] = useState<string | null>(null)
+  /** The thumbnail shown while a photo loads, in a URL Develop holds itself (`holdThumbUrl`), for one load of one photo. */
+  const [placeholder, setPlaceholder] = useState<{ key: string; url: string } | null>(null)
   const [timing, setTiming] = useState<{ stage?: number; frame?: number }>({})
   const [stats, setStats] = useState<ImageStats | null>(null)
   const [overlay, setOverlay] = useState(false)
@@ -512,7 +513,6 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     angleBase.current = null
     builtStage.current = null
     dirty.current = false
-    void thumbUrl(id).then((u) => !stale() && setPlaceholder(u))
     let used: DevelopEngine | null = null
     ;(async () => {
       const d = await catalog.getPhoto(id)
@@ -551,6 +551,14 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       if (!stale()) setStatus({ kind: 'error', message: e.message })
     })
   }, [catalog, id, reloads])
+
+  // ---- the placeholder: the photo's thumbnail while it loads. Its URL is Develop's own, not the thumbnail cache's,
+  // which revokes a URL when the thumbnail is replaced (a save) — an <img> given a revoked URL logs ERR_FILE_NOT_FOUND.
+  // It is shown only for the load it was read for, so the render that changes photo already drops the old one, and
+  // the cleanup revokes it after that render.
+  const placeholderKey = `${id}:${reloads}`
+  useEffect(() => holdThumbUrl(id, (url) => setPlaceholder(url ? { key: placeholderKey, url } : null)), [id, placeholderKey])
+  const placeholderUrl = placeholder?.key === placeholderKey ? placeholder.url : null
 
   // A Paste or Sync running in the background just changed the photo shown: show its new settings, unless
   // there are unsaved changes here (then this photo's next save keeps them).
@@ -1179,7 +1187,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         label = e.axis === 'h' ? 'Flip horizontal' : 'Flip vertical'
         break
       case 'reset':
-        next = DEFAULT_GEOMETRY
+        // Crop, straighten, rotate and flip only: Transform and Upright have their own Reset.
+        next = resetCrop(base)
         label = 'Reset crop'
         break
     }
@@ -2271,7 +2280,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           onPointerUp={onPointerUp}
           onPointerLeave={() => setLoupe(null)}
         >
-          {status.kind !== 'ready' && placeholder && <img className="dplaceholder" src={placeholder} alt="" />}
+          {status.kind !== 'ready' && placeholderUrl && <img className="dplaceholder" src={placeholderUrl} alt="" />}
           {curveTarget && !draft && !guiding && !before && status.kind === 'ready' && (
             <CurveTatLayer
               curve={settings.toneCurve}

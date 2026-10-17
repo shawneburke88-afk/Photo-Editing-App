@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_GEOMETRY } from '../engine/develop/geometry'
+import { DEFAULT_GEOMETRY, resetCrop } from '../engine/develop/geometry'
 import { defaultsFor, DEFAULT_RGB_SETTINGS, DEFAULT_SETTINGS, displayUniforms, type DevelopSettings } from '../engine/develop/settings'
 import { DEFAULT_TRANSFORM } from '../engine/develop/upright'
 import { DEFAULT_TONE_CURVE, LINEAR, withToneCurve } from '../engine/develop/tone-curve'
@@ -96,6 +96,8 @@ describe('section eyes: each section is set to what its Reset gives', () => {
     expect(hide('colour.points').colourMixer!.hue).toEqual(edited.colourMixer!.hue)
     expect(hide('grading.shadows').colourGrading!.blending).toBe(70)
     expect(hide('crop.crop').geometry.transform).toEqual(edited.geometry.transform)
+    // The Crop eye shows what the Crop section's Reset gives.
+    expect(hide('crop.crop').geometry).toEqual(resetCrop(edited.geometry))
     expect(hide('crop.transform').geometry.crop).toEqual(edited.geometry.crop)
     expect(hide('detail.sharpen').detail!.noise).toEqual(edited.detail!.noise)
     expect(hide('detail.noise').detail!.sharpen).toEqual(edited.detail!.sharpen)
