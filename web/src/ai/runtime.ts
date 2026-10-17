@@ -46,12 +46,18 @@ function touch() {
   idle = setTimeout(stopRuntime, IDLE_MS)
 }
 
-/** What the GPU offers to models (asked once; in the worker, where the models run). */
+/**
+ * What the GPU offers to models (asked once). Asked here rather than in the worker, so a panel can show it without
+ * starting the runtime; the worker's own adapter is the browser's default one, the same.
+ */
 export function probeGpu(): Promise<GpuProbe> {
-  probed ??= client()
-    .probe()
-    .catch(() => ({ webgpu: false, f16: false, adapter: '' }))
-    .finally(touch)
+  probed ??= (async () => {
+    const gpu = (globalThis.navigator as Navigator & { gpu?: GPU } | undefined)?.gpu
+    const a = gpu ? await gpu.requestAdapter().catch(() => null) : null
+    if (!a) return { webgpu: false, f16: false, adapter: '' }
+    const i = a.info
+    return { webgpu: true, f16: a.features.has('shader-f16'), adapter: [i?.vendor, i?.architecture, i?.device, i?.description].filter(Boolean).join(' ') }
+  })()
   return probed
 }
 

@@ -272,6 +272,8 @@ export const ACTIONS: ActionDef[] = [
   { id: 'develop.maskRadial', label: 'New mask: Radial gradient', contexts: ['develop', 'mask'], keys: ['Shift+M'] },
   { id: 'develop.maskColour', label: 'New mask: Colour range', contexts: ['develop', 'mask'], keys: ['Shift+J'] },
   { id: 'develop.maskLuminance', label: 'New mask: Luminance range', contexts: ['develop', 'mask'], keys: ['Shift+Q'] },
+  // No key: Lightroom's key for its Depth Range was not checked (PHASE3.md Part 24).
+  { id: 'develop.maskDepth', label: 'New mask: Depth range (AI)', contexts: ['develop', 'mask'], keys: [] },
   { id: 'mask.done', label: 'Finish masking', contexts: ['mask'], keys: ['Enter'] },
   { id: 'mask.cancel', label: 'Masking: stop drawing, deselect, or finish', contexts: ['mask'], keys: ['Escape'] },
   { id: 'mask.overlay', label: 'Show or hide the mask overlay', contexts: ['mask'], keys: ['O'] },

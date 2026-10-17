@@ -8,9 +8,11 @@ import type { Vec3 } from '../engine/color/matrix'
 import type { DevelopSettings } from '../engine/develop/settings'
 import { lstar, oklab, REC2020_Y } from '../engine/develop/mask-math'
 import {
-  canAdd, capMessage, dabCount, KIND_LABELS, KIND_SHORT, LOCAL_LABELS, MAX_DABS, MAX_SAMPLES, newComponentId, newMask, newMaskId, refuseReason, withMasksList,
-  type BrushShape, type ColourShape, type KnownShape, type LinearShape, type LocalKey, type LocalMask, type LuminanceShape, type MaskComponent, type MaskOp, type RadialShape, type ShapeKind,
+  canAdd, capMessage, dabCount, existingDepth, KIND_LABELS, KIND_SHORT, LOCAL_LABELS, MAX_DABS, MAX_SAMPLES, needsDepth, newComponentId, newMask, newMaskId, refuseReason, withDepthMap, withMasksList,
+  type BrushShape, type ColourShape, type DepthShape, type KnownShape, type LinearShape, type LocalKey, type LocalMask, type LuminanceShape, type MaskComponent, type MaskOp, type RadialShape, type ShapeKind,
 } from '../engine/develop/masks'
+import { decodeDepth, depthPosition, sampleDepth } from '../engine/develop/depth-map'
+import type { DepthMap } from './useDepth'
 import { useStoredJson } from '../lib/useStoredJson'
 import { DEFAULT_MASK_BRUSH, DEFAULT_OVERLAY, MASK_BRUSH_SIZE, OVERLAY_COLOURS, type MaskBrush, type OverlayPrefs } from './maskUi'
 import type { StrokeInput } from './MaskOverlay'
@@ -31,7 +33,14 @@ interface Options {
   sample: (uv: [number, number]) => Promise<Vec3 | null>
   /** Ends the other on-photo tools when masking starts. */
   onStart: () => void
+  /** The photo's depth map, computed (after asking to download the model, if needed) for a new Depth range (Part 24). */
+  depth: () => Promise<DepthMap | null>
+  /** Displayed-image uv → sensor uv (0…1), for the depth under a click. */
+  toSensorUv: (uv: [number, number]) => [number, number] | null
 }
+
+/** A new Depth range: the nearest 30 % fully, fading out by 50 % (LightBench's choice; Lightroom's default not checked). */
+export const DEFAULT_DEPTH_RANGE: DepthShape['range'] = [0, 0, 30, 50]
 
 const OP_WORD: Record<MaskOp, string> = { add: 'add', subtract: 'subtract', intersect: 'intersect' }
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
@@ -40,7 +49,10 @@ export function useMasking(o: Options) {
   const [active, setActive] = useState(false)
   const [sel, setSel] = useState<{ mask: string | null; comp: string | null }>({ mask: null, comp: null })
   const [creating, setCreating] = useState<Creating | null>(null)
-  const [picking, setPicking] = useState<'colour' | 'luminance' | null>(null)
+  const [picking, setPicking] = useState<'colour' | 'luminance' | 'depth' | null>(null)
+  /** The selected Depth range's map shown instead of the photo (a view, never saved). */
+  const [depthView, setDepthView] = useState(false)
+  const [depthBusy, setDepthBusy] = useState(false)
   /** The masks shown while a stroke is painted or a handle dragged (one history step when it ends). */
   const [draft, setDraft] = useState<LocalMask[] | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -84,6 +96,7 @@ export function useMasking(o: Options) {
     setDraft(null)
     setMessage(null)
     setHidden(new Set())
+    setDepthView(false)
   }, [])
 
   function select(mask: string | null, comp?: string | null) {
@@ -99,6 +112,10 @@ export function useMasking(o: Options) {
     if (cap) return setMessage(cap)
     if (!active) start()
     setMessage(null)
+    if (kind === 'depth') {
+      void newDepth()
+      return
+    }
     if (kind === 'luminance') {
       // A luminance range starts on the brighter half; a click on the photo then centres it on that tone.
       const m = newMask(masks(), { kind: 'luminance', range: [40, 60, 100, 100] })
@@ -121,6 +138,10 @@ export function useMasking(o: Options) {
     if (why) return setMessage(why)
     if (!active) start()
     setMessage(null)
+    if (kind === 'depth') {
+      void addDepth(m.id, op)
+      return
+    }
     if (kind === 'luminance') {
       const c: MaskComponent = { id: newComponentId(), op, invert: false, shape: { kind: 'luminance', range: [40, 60, 100, 100] } }
       updateMask(m.id, `${m.name}: ${OP_WORD[op]} ${KIND_LABELS[kind]}`, (x) => ({ ...x, components: [...x.components, c] }))
@@ -130,6 +151,53 @@ export function useMasking(o: Options) {
     }
     setCreating({ kind, op })
     setPicking(null)
+  }
+
+  /** The photo's depth map: the one its masks already hold, else computed (null: declined or failed). */
+  async function depthMap(): Promise<DepthMap | null> {
+    const have = existingDepth(masks())
+    if (have) return have
+    setDepthBusy(true)
+    try {
+      return await opts.current.depth()
+    } finally {
+      setDepthBusy(false)
+    }
+  }
+
+  /** New Depth range mask (Part 24): the nearest part of the photo; a click on the photo then centres it there. */
+  async function newDepth() {
+    const d = await depthMap()
+    if (!d) return
+    const cap = capMessage(masks(), { addMask: true })
+    if (cap) return setMessage(cap)
+    const m = newMask(masks(), { ...d, kind: 'depth', range: [...DEFAULT_DEPTH_RANGE] })
+    commit(`New mask: ${m.name}`, [...masks(), m])
+    setSel({ mask: m.id, comp: m.components[0].id })
+    setCreating(null)
+    setPicking('depth')
+  }
+
+  async function addDepth(maskId: string, op: MaskOp) {
+    const d = await depthMap()
+    if (!d) return
+    const m = masks().find((x) => x.id === maskId)
+    if (!m) return
+    const why = refuseReason(m, 'depth') ?? capMessage(masks(), { maskId: m.id, addComponent: true })
+    if (why) return setMessage(why)
+    const c: MaskComponent = { id: newComponentId(), op, invert: false, shape: { ...d, kind: 'depth', range: [...DEFAULT_DEPTH_RANGE] } }
+    updateMask(m.id, `${m.name}: ${OP_WORD[op]} ${KIND_LABELS.depth}`, (x) => ({ ...x, components: [...x.components, c] }))
+    setSel({ mask: m.id, comp: c.id })
+    setPicking('depth')
+  }
+
+  /** Depth ranges pasted or from a preset get this photo's depth map (one history step). */
+  async function computeMissingDepth() {
+    const list = masks()
+    if (!list.some(needsDepth)) return
+    const d = await depthMap()
+    if (!d) return
+    commit('Depth map for the Depth ranges', withDepthMap(masks(), d))
   }
 
   /** A component made on the photo (a gradient drawn, a colour picked, a first brush stroke). */
@@ -245,6 +313,20 @@ export function useMasking(o: Options) {
 
   /** A click for a range mask: a colour sample (Shift adds one), or the tone a luminance range centres on. */
   async function onPick(uv: [number, number], add: boolean) {
+    if (picking === 'depth') {
+      // The depth under the click: the range centred on it (±10 on the 0 near … 100 far scale, smoothness 15).
+      const m = masks().find((x) => x.id === sel.mask)
+      const comp = m?.components.find((x) => x.id === sel.comp)
+      const sh = comp?.shape as DepthShape | undefined
+      const s = opts.current.toSensorUv(uv)
+      const px = sh?.kind === 'depth' && sh.raster ? decodeDepth(sh.raster) : null
+      if (!m || !comp || !sh?.raster || !px || !s) return
+      const d = depthPosition(sampleDepth(px, sh.raster.width, sh.raster.height, s[0], s[1]))
+      const range: DepthShape['range'] = [clamp(Math.round(d - 25), 0, 100), clamp(Math.round(d - 10), 0, 100), clamp(Math.round(d + 10), 0, 100), clamp(Math.round(d + 25), 0, 100)]
+      changeShape(comp.id, { ...sh, range }, `${m.name}: depth range`)
+      setPicking(null)
+      return
+    }
     const c = await opts.current.sample(uv)
     if (!c) return
     if (picking === 'luminance' || creating?.kind === 'luminance') {
@@ -282,6 +364,7 @@ export function useMasking(o: Options) {
     active, start, end, resetForPhoto,
     sel, select, creating, setCreating, picking, setPicking, draft, message, setMessage,
     hidden,
+    depthView, setDepthView, depthBusy, computeMissingDepth,
     toggleHidden: (id: string) => setHidden((h) => {
       const n = new Set(h)
       if (n.has(id)) n.delete(id)

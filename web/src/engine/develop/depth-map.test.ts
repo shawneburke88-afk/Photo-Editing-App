@@ -1,4 +1,3 @@
-import { deflateRawSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import { inflateRaw } from '../../lib/inflate'
 import { decodeDepth, DEPTH_ENCODING, depthPosition, encodeDepth, fromBase64, medFilter, medUnfilter, normalizeRaster, quantizeDisparity, sampleDepth, toBase64 } from './depth-map'
@@ -19,22 +18,27 @@ function syntheticDepth(w: number, h: number): Uint8Array {
   return px
 }
 
+async function deflate(b: Uint8Array): Promise<Uint8Array> {
+  const stream = new Blob([b as Uint8Array<ArrayBuffer>]).stream().pipeThrough(new CompressionStream('deflate-raw'))
+  return new Uint8Array(await new Response(stream).arrayBuffer())
+}
+
 describe('inflateRaw', () => {
-  it('decodes what zlib deflates (stored, fixed and dynamic blocks)', () => {
+  it('decodes what the platform deflates (stored, fixed and dynamic blocks)', async () => {
     const rnd = new Uint8Array(70000)
     let s = 7
     for (let i = 0; i < rnd.length; i++) rnd[i] = (s = (s * 1103515245 + 12345) & 0x7fffffff) >> 16
     const text = new TextEncoder().encode('depth '.repeat(5000) + 'LightBench')
-    for (const data of [new Uint8Array(0), rnd, text, syntheticDepth(300, 200)]) {
-      for (const level of [0, 1, 9]) {
-        const z = new Uint8Array(deflateRawSync(data, { level }))
-        expect(inflateRaw(z)).toEqual(data)
-      }
+    // Random bytes come out as stored blocks, short text as a fixed-code block, the rest as dynamic ones.
+    for (const data of [new Uint8Array(0), rnd, new TextEncoder().encode('abc'), text, syntheticDepth(300, 200)]) {
+      expect(inflateRaw(await deflate(data))).toEqual(data)
     }
+    // A stored block written by hand: BFINAL 1, BTYPE 00, LEN 3, NLEN ~3.
+    expect(inflateRaw(new Uint8Array([1, 3, 0, 0xfc, 0xff, 7, 8, 9]))).toEqual(new Uint8Array([7, 8, 9]))
   })
 
-  it('refuses damaged data and too much output', () => {
-    const z = new Uint8Array(deflateRawSync(syntheticDepth(64, 64)))
+  it('refuses damaged data and too much output', async () => {
+    const z = await deflate(syntheticDepth(64, 64))
     expect(() => inflateRaw(z.subarray(0, z.length >> 1))).toThrow()
     expect(() => inflateRaw(new Uint8Array([0xff, 0xff, 0xff]))).toThrow()
     expect(() => inflateRaw(z, 100)).toThrow(/too large/)
