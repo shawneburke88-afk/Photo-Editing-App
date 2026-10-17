@@ -13,11 +13,11 @@ export const AI: AiInfo | null = typeof __LB_AI__ === 'undefined' ? null : __LB_
 export const depthModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'depth') ?? null
 
 /**
- * The CPU fallback (ONNX Runtime's WebAssembly provider) where there is no WebGPU. Off: Depth Anything V2 Small's speed
- * on the CPU could not be measured with the real weights on the build machine; a random-weight model of the same shape
- * took about 20–40 s per photo there (PHASE3.md Part 24, "Timing"), so without WebGPU the panel says it needs WebGPU.
+ * The CPU fallback (ONNX Runtime's WebAssembly provider, up to 4 threads) where there is no WebGPU. On: a random-weight
+ * model in the shape of DA-V2 Small ran in about 3–5 s per photo on 4 threads of the build machine (PHASE3.md Part 24,
+ * "Timing"); the real weights' speed is unmeasured. The panel says when it runs on the CPU.
  */
-export const WASM_FALLBACK = false
+export const WASM_FALLBACK = true
 
 const listeners = new Set<() => void>()
 /** Tells the panels that a model was installed or removed. */

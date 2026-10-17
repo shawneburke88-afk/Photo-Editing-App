@@ -10,6 +10,24 @@ import type { Provider, RuntimeApi } from './runtime.worker'
 
 /** End the worker after this long without a run. */
 export const IDLE_MS = 120_000
+/**
+ * A model run that hasn't finished after this long is given up (the worker, and its GPU device, ended): a lost or hung
+ * device can leave ONNX Runtime waiting forever (seen on SwiftShader with a large model). A real GPU runs DA-V2 Small
+ * in seconds or less.
+ */
+export const RUN_TIMEOUT_MS = 180_000
+
+export class RunTimeoutError extends Error {
+  constructor() {
+    super('run-timeout')
+    this.name = 'RunTimeoutError'
+  }
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([p, new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new RunTimeoutError()), ms)))]).finally(() => clearTimeout(timer))
+}
 
 export interface GpuProbe {
   webgpu: boolean
@@ -80,7 +98,7 @@ async function ensure(m: ModelEntry, provider: Provider): Promise<{ key: string;
   if (loaded && loaded.key === key && loaded.provider === provider) return { key, variant: rec.variant }
   const files = await loadFiles(m)
   // One thread for WebGPU (the GPU does the work; no pthread workers to start), up to 4 for the CPU provider.
-  const d = await client().load(key, files.model, files.wasm, provider, provider === 'wasm' ? threads() : 1)
+  const d = await withTimeout(client().load(key, files.model, files.wasm, provider, provider === 'wasm' ? threads() : 1), RUN_TIMEOUT_MS)
   loaded = { key, provider, inputShape: d.inputShape }
   return { key, variant: rec.variant }
 }
@@ -89,7 +107,7 @@ async function ensure(m: ModelEntry, provider: Provider): Promise<{ key: string;
 export async function runModel(m: ModelEntry, data: Float32Array, dims: number[], provider: Provider = 'webgpu'): Promise<ModelRun> {
   try {
     const { key, variant } = await ensure(m, provider)
-    const r = await client().run(key, data, dims)
+    const r = await withTimeout(client().run(key, data, dims), RUN_TIMEOUT_MS)
     touch()
     return { ...r, provider, variant }
   } catch (e) {
@@ -123,6 +141,7 @@ export async function prepareModel(m: ModelEntry, provider: Provider = 'webgpu')
 /** Words for a runtime failure. */
 export function runtimeMessage(e: unknown): string {
   const s = e instanceof Error ? e.message : String(e)
+  if (/run-timeout/.test(s)) return 'The model didn’t finish within 3 minutes, so it was stopped (the GPU may have been reset, or be too slow). Develop is not affected; try again, or close other tabs using the GPU.'
   if (/gpu-lost/.test(s)) return 'The GPU stopped while the model was running (the browser or the driver reset it). Develop is not affected; try again.'
   if (/requires f16|shader-f16|f16 but the device/i.test(s)) return 'This GPU can’t run the half-precision (fp16) model. Remove it in Settings → AI models and download it again: LightBench then picks the fp32 file for this GPU.'
   if (/out of memory|OOM|allocation/i.test(s)) return 'The GPU ran out of memory while running the model. Close other tabs or apps using the GPU and try again.'

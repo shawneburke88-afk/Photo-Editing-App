@@ -90,4 +90,6 @@ async function release(key?: string) {
 
 const handlers = { probe, load, run, release, version: () => ort.env.versions?.web ?? '' }
 export type RuntimeApi = typeof handlers
-exposeRpc(handlers)
+// ONNX Runtime's WebAssembly threads are workers started from this same script (in a build, its code is in this chunk)
+// with the name "em-pthread…": they run ONNX Runtime's own message loop, which the RPC handler must not replace.
+if (!(self as { name?: string }).name?.startsWith('em-pthread')) exposeRpc(handlers)

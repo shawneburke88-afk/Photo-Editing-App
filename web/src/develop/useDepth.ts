@@ -66,7 +66,7 @@ export function useDepth(renderAsShot: (input: ModelEntry['input']) => Promise<A
         rec = await askFor(model, file)
         if (!rec) return null
       }
-      setStatus('Computing the depth map (once for this photo)…')
+      setStatus(p.provider === 'wasm' ? 'Computing the depth map on the CPU (once for this photo; no WebGPU here, so it takes longer)…' : 'Computing the depth map (once for this photo)…')
       const shot = await renderAsShot(model.input)
       if (!shot) return null
       // The model's GPU work counts as Develop's (Part 14's foreground gate): background work (Export, the batch
