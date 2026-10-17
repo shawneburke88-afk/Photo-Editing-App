@@ -851,14 +851,15 @@ export function boxMinMax(src: Float32Array | Float64Array, w: number, h: number
  * the brightest 5 % of those, and their average colour; and the maximum depth, −1.125 · ln(critical haze level).
  * `rgba` is the photo after the white-balance fix, before Exposure, 4 floats a pixel.
  *
- * `white` is the photo's white level in those values. darktable runs haze removal before its exposure, on data whose white
- * is 1 (a RAW's clipping point; a JPEG's linear values), and its depth assumes that. A RAW in LightBench is the same
- * (white 1), but a JPEG's scene values come from LightBench's inverse tone mapping, whose white is far above 1, so the
- * critical haze level is measured relative to that white (`crit / white`); otherwise a bright JPEG would get a depth ≤ 0
- * and Dehaze would do nothing. The ambient light stays in the photo's own values. Not a strength: the strength is always
- * the user's.
+ * One difference from darktable: its depth measures the critical haze level against 1, so when 5 % of the photo is
+ * brighter than 1 in every channel (a bright sky in a RAW after white balance; any bright JPEG, whose scene values come
+ * from LightBench's inverse tone mapping with white far above 1) the depth is ≤ 0, t_min is 1 and darktable gives up
+ * ("could not calculate ambient light due to image content"): Dehaze would do nothing. Here the level is measured against
+ * max(1, the ambient light's smallest channel). Every pixel averaged into A0 has each channel ≥ the critical level, so
+ * the depth is never negative; while that channel is ≤ 1 it is darktable's depth exactly. This sets how far the removal
+ * may reach (t_min with the user's Distance), never the strength, which is always the user's.
  */
-export function ambientLight(rgba: Float32Array, w: number, h: number, w1: number, white = 1): { a0: Vec3; distanceMax: number } {
+export function ambientLight(rgba: Float32Array, w: number, h: number, w1: number): { a0: Vec3; distanceMax: number } {
   const size = w * h
   const dark0 = new Float32Array(size)
   for (let i = 0; i < size; i++) dark0[i] = Math.min(rgba[4 * i], rgba[4 * i + 1], rgba[4 * i + 2])
@@ -881,7 +882,8 @@ export function ambientLight(rgba: Float32Array, w: number, h: number, w1: numbe
     }
   }
   if (n) for (let c = 0; c < 3; c++) a0[c] /= n
-  return { a0, distanceMax: crit > 0 ? -1.125 * Math.log(crit / white) : Math.log(3.4028234663852886e38) / 2 }
+  const ref = Math.max(1, Math.min(a0[0], a0[1], a0[2]))
+  return { a0, distanceMax: crit > 0 ? -1.125 * Math.log(crit / ref) : Math.log(3.4028234663852886e38) / 2 }
 }
 
 /** Box mean over (2r+1)² of several planes, windows clipped at the edges (darktable `dt_box_mean`: averages what it has). */

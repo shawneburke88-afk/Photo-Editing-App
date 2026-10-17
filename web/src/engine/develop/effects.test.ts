@@ -358,15 +358,22 @@ describe('Dehaze (darktable hazeremoval.c)', () => {
     expect(distanceMax).toBeGreaterThan(0)
   })
 
-  it('the depth is measured relative to the photo’s white (a JPEG’s scene values put white far above 1)', () => {
-    const k = 6
-    const scaled = hazy.map((v, i) => (i % 4 === 3 ? v : v * k))
+  it('the depth is darktable’s while the ambient light is ≤ 1, and stays positive for brighter photos', () => {
     const one = ambientLight(hazy, W, H, 2)
-    const big = ambientLight(scaled, W, H, 2, k)
-    expect(big.distanceMax).toBeCloseTo(one.distanceMax, 4)
-    for (let c = 0; c < 3; c++) expect(big.a0[c]).toBeCloseTo(one.a0[c] * k, 3)
-    // Measured as if white were 1, the brighter values would give a depth ≤ 0, and Dehaze would do nothing.
-    expect(ambientLight(scaled, W, H, 2).distanceMax).toBeLessThan(one.distanceMax)
+    expect(Math.min(...one.a0)).toBeLessThan(1)
+    // darktable's formula, unchanged here: −1.125 · ln(the 95 % dark-channel level).
+    const dark = boxMinMax(Float64Array.from({ length: W * H }, (_, i) => Math.min(hazy[4 * i], hazy[4 * i + 1], hazy[4 * i + 2])), W, H, 2, false)
+    const crit = kthSmallest(Float32Array.from(dark), Math.floor(W * H * 0.95))
+    expect(one.distanceMax).toBeCloseTo(-1.125 * Math.log(crit), 5)
+    // Brighter than 1 everywhere (a JPEG's scene values, a bright RAW sky): darktable's depth would be ≤ 0 (t_min 1:
+    // nothing removed); measured against the ambient light it stays positive, and the same at any brightness above.
+    const scaled = (k: number) => hazy.map((v, i) => (i % 4 === 3 ? v : v * k))
+    const six = ambientLight(scaled(6), W, H, 2)
+    const ten = ambientLight(scaled(10), W, H, 2)
+    expect(-1.125 * Math.log(crit * 6)).toBeLessThan(0)
+    expect(six.distanceMax).toBeGreaterThan(0)
+    expect(ten.distanceMax).toBeCloseTo(six.distanceMax, 4)
+    for (let c = 0; c < 3; c++) expect(six.a0[c]).toBeCloseTo(one.a0[c] * 6, 3)
   })
 
   it('removing the haze brings the hazy side closer to the scene (contrast restored)', () => {
