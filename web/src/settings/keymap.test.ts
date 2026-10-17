@@ -249,6 +249,41 @@ describe('shortcut sets', () => {
     }
   })
 
+  it('gives masking Adobe’s confirmed keys (Shift+W, K, M, Shift+M, Shift+J, Shift+Q, O, Shift+O, Alt+O, H, [ ], { }) and Kost’s N and \'', () => {
+    const MASK: Context[] = ['global', 'mask']
+    for (const set of [LB, LR]) {
+      const map = resolveKeymap(set)
+      for (const ctx of [DEVELOP, MASK]) {
+        expect(matchAction(map, key('W', { shiftKey: true }), ctx)).toBe('develop.masks')
+        expect(matchAction(map, key('k'), ctx)).toBe('develop.maskBrush')
+        expect(matchAction(map, key('m'), ctx)).toBe('develop.maskLinear')
+        expect(matchAction(map, key('M', { shiftKey: true }), ctx)).toBe('develop.maskRadial')
+        expect(matchAction(map, key('J', { shiftKey: true }), ctx)).toBe('develop.maskColour')
+        expect(matchAction(map, key('Q', { shiftKey: true }), ctx)).toBe('develop.maskLuminance')
+      }
+      expect(matchAction(map, key('o'), MASK)).toBe('mask.overlay')
+      expect(matchAction(map, key('O', { shiftKey: true }), MASK)).toBe('mask.overlayColour')
+      expect(matchAction(map, key('o', { altKey: true, code: 'KeyO' }), MASK)).toBe('mask.overlayMode')
+      expect(matchAction(map, key('h'), MASK)).toBe('mask.pins')
+      expect(matchAction(map, key(']', { code: 'BracketRight' }), MASK)).toBe('mask.sizeUp')
+      expect(matchAction(map, key('[', { code: 'BracketLeft' }), MASK)).toBe('mask.sizeDown')
+      expect(matchAction(map, key('}', { shiftKey: true, code: 'BracketRight' }), MASK)).toBe('mask.featherUp')
+      expect(matchAction(map, key('{', { shiftKey: true, code: 'BracketLeft' }), MASK)).toBe('mask.featherDown')
+      expect(matchAction(map, key("'", { code: 'Quote' }), MASK)).toBe('mask.invert')
+      expect(matchAction(map, key('n'), MASK)).toBe('mask.newSame')
+      expect(matchAction(map, key('Escape'), MASK)).toBe('mask.cancel')
+      expect(matchAction(map, key('Delete'), MASK)).toBe('mask.delete')
+      expect(matchAction(map, key('z', { ctrlKey: true }), MASK)).toBe('develop.undo')
+      // Develop keeps O and Shift+O for clipping; the masking keys don't reach the Library.
+      expect(matchAction(map, key('o'), DEVELOP)).toBe(set === LB ? 'develop.clipping' : null)
+      expect(matchAction(map, key('O', { shiftKey: true }), DEVELOP)).toBe('develop.sensorClipping')
+      expect(matchAction(map, key('k'), LIBRARY)).toBeNull()
+    }
+    // The secondary-source keys say so in their names.
+    expect(ACTION_BY_ID.get('mask.invert')!.label).toMatch(/secondary source/)
+    expect(ACTION_BY_ID.get('mask.newSame')!.label).toMatch(/secondary source/)
+  })
+
   it('gives the Remove brush its own keys: Q, [ and ] for the size, Shift+[ and Shift+] for the feather, H, Delete, Esc', () => {
     const REMOVE: Context[] = ['global', 'remove']
     for (const set of [LB, LR]) {

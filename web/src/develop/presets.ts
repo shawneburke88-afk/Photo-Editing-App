@@ -10,6 +10,7 @@ import type { Clipboard, PasteKey } from './paste'
 import { blendToneCurve, withToneCurve } from '../engine/develop/tone-curve'
 import { blendColourMixer, withColourMixer } from '../engine/develop/colour-mixer'
 import { blendColourGrading, withColourGrading } from '../engine/develop/colour-grading'
+import { withMasksList, type LocalMask } from '../engine/develop/masks'
 
 /** What is saved for a preset (in the catalog's `presets` table, as JSON). */
 export interface PresetData {
@@ -130,10 +131,18 @@ export function blendSettings(before: DevelopSettings, after: DevelopSettings, a
   // Colour Grading: each wheel's colour as a vector, its luminance, Blending and Balance from the photo's towards the preset's.
   if (before.colourGrading !== after.colourGrading) out = withColourGrading(out, blendColourGrading(before.colourGrading, after.colourGrading, t))
   if (before.detail || after.detail) out = withDetail(out, blendDetail(before.detail ?? DEFAULT_DETAIL, after.detail ?? DEFAULT_DETAIL, t))
+  // Masks the preset added (Part 23): the Amount scales each one's local sliders, through its own Amount (MASKING.md).
+  if (before.masks !== after.masks) out = withMasksList(out, blendMasks(before.masks, after.masks, t))
   // Keep the sliders' own precision.
   for (const k of ['contrast', 'highlights', 'shadows', 'whites', 'blacks', 'vibrance', 'saturation'] as const) out[k] = Math.round(out[k])
   out.exposure = Math.round(out.exposure * 100) / 100
   return out
+}
+
+/** The photo's own masks as they were, and the preset's (those it added) with their Amount scaled (0–200 %). */
+function blendMasks(before: LocalMask[] | undefined, after: LocalMask[] | undefined, t: number): LocalMask[] | undefined {
+  const own = new Set((before ?? []).map((m) => m.id))
+  return after?.map((m) => (own.has(m.id) ? m : { ...m, amount: Math.round(clamp(m.amount * t, [0, 200])) }))
 }
 
 /**

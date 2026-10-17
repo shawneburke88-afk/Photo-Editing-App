@@ -19,6 +19,7 @@ import { creatorList, joinCreators, METADATA_KEYS } from '../library/metadata'
 import { LR_DETAIL_FIELDS, LR_GRADE_FIELDS, LR_HSL_FIELDS, lrValues, NS_CRS, NS_TIFF, type LrFields, type LrRead, type LrWritePlan } from './lightroom'
 import { lrToneValues, parseLrPoints, type LrToneFields, type LrToneRead, type LrToneWritePlan } from './lightroomCurve'
 import { parseSidecarSnapshots, readSidecarSnapshots, type SidecarSnapshot } from '../develop/snapshots'
+import { parseLrMasks, type XmpValue } from './lightroomMasks'
 
 export const NS = {
   x: 'adobe:ns:meta/',
@@ -475,6 +476,8 @@ export interface SidecarRead {
   snapshots?: SidecarSnapshot[]
   /** The file has `lightbench:Snapshots` but it couldn't be read (left in the file until LightBench's own list changes). */
   snapshotsDamaged?: true
+  /** Lightroom's masks (crs:MaskGroupBasedCorrections) as plain structs, read only (sidecar/lightroomMasks.ts). */
+  lightroomMasks?: { [k: string]: XmpValue }[]
 }
 
 /** Lightroom's tone curve fields, Camera Raw's process version and already-applied flag, and LightBench's marker. */
@@ -614,6 +617,8 @@ export function readXmp(text: string): SidecarRead {
   if (lightroom) out.lightroom = lightroom
   const lightroomTone = readLightroomTone(doc)
   if (lightroomTone) out.lightroomTone = lightroomTone
+  const lrMasks = parseLrMasks(doc)
+  if (lrMasks?.length) out.lightroomMasks = lrMasks
   const develop = getProp(doc, NS.lightbench, 'Develop')
   if (develop) {
     try {

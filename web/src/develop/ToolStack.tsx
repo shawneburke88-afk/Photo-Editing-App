@@ -10,7 +10,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { useStoredJson } from '../lib/useStoredJson'
 import { eyeIcon } from './tools'
 
-export type GroupId = 'crop' | 'remove' | 'basic' | 'curve' | 'colour' | 'grading' | 'detail' | 'effects'
+export type GroupId = 'crop' | 'remove' | 'basic' | 'curve' | 'colour' | 'grading' | 'detail' | 'masks' | 'effects'
 
 export interface ToolGroup {
   id: GroupId

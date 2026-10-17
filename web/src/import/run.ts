@@ -2,6 +2,7 @@
 // thumbnails. Adding a folder where it is (no copying) is Open folder, in library/indexer.ts.
 
 import type { Catalog } from '../catalog/client'
+import { masksFromLightroom } from '../sidecar/lightroomMasks'
 import { photosAdded } from '../library/added'
 import { loadThumb, saveThumb } from '../catalog/thumbs'
 import type { PhotoMeta, PhotoMetadata } from '../catalog/types'
@@ -132,7 +133,28 @@ export async function applySidecar(catalog: Catalog, id: number, text: string, b
   // LightBench's snapshots (docs/PHASE3.md Part 19): read defensively, a damaged list was already left out by readXmp.
   if (r.snapshots?.length) await catalog.saveSnapshots(id, fromSidecar(r.snapshots))
   await readLightroomSettings(catalog, id, r)
+  await readLightroomMasks(catalog, id, r)
   return r
+}
+
+/**
+ * Lightroom's masks (crs:MaskGroupBasedCorrections), read best-effort and labelled experimental (docs/PHASE3.md Part 23):
+ * added by the background developer (which also renders the thumbnail) to a photo without a LightBench edit. Masks
+ * Lightroom keeps in its .acr file can't be read; Develop says when one is there.
+ */
+async function readLightroomMasks(catalog: Catalog, id: number, r: SidecarRead) {
+  if (!r.lightroomMasks?.length || r.develop) return
+  const p = await catalog.getPhoto(id)
+  if (!p) return
+  const read = masksFromLightroom(r.lightroomMasks, lrFrame(p).stored)
+  for (const n of read.notes) console.info(`Lightroom masks of ${p.fileName}: ${n}`)
+  if (!read.masks.length) return
+  const kind = isRawFile(p.fileName) ? 'raw' : 'rgb'
+  batch.run({
+    label: 'Lightroom masks (experimental)',
+    ids: [id],
+    clip: { settings: { ...normalizeSettings(null, kind), masks: read.masks }, keys: ['masks'], rerunAuto: false, sourceKind: kind, sourceName: p.fileName },
+  })
 }
 
 /**

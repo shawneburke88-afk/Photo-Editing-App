@@ -466,3 +466,88 @@ export const CURVE_AUTO_HELP = {
   amount: 'How much of the last Auto or suggestion is applied, from the curve before it (0 %) to the full result (100 %). Changes that history step; adds none. Double-click for 100 %.',
   suggestions: 'The curve presets and the two Auto results, drawn on this photo. Hover to preview on the photo; click to apply (one history step).',
 }
+
+/** Masks (PHASE3.md Part 23): the mask-wide controls and the brush. The local sliders reuse Basic's help. */
+export const MASK_HELP: Record<string, ControlHelp> = {
+  amount: {
+    hint: 'Strength of all this mask’s sliders',
+    what: 'Scales every local slider of this mask together: 100 % is the sliders as set, 50 % half their effect, 200 % double.',
+    left: 'Weaker.',
+    right: 'Stronger (up to twice the sliders’ effect).',
+    pitfalls: 'Its 0–200 % range is an assumption taken from LightCraft; Adobe doesn’t document the range of Lightroom’s mask Amount.',
+  },
+  feather: {
+    hint: 'Softens the whole mask’s edges',
+    what: 'Blurs the whole mask, so its effect fades in and out more gradually. At 100 % the blur reaches about 2 % of the photo’s long side.',
+    left: 'Sharper edges (0: as drawn or picked).',
+    right: 'Softer edges.',
+    engine: 'A Gaussian blur of the mask, as darktable’s mask blur',
+  },
+  refine: {
+    hint: 'Lets edges follow the photo’s edges',
+    what: 'Pulls the mask’s edges towards the edges in the photo (its brightness), so a mask that is roughly painted or picked hugs a skyline or a face. Higher reaches further.',
+    left: 'Off (the mask as drawn or picked).',
+    right: 'Follows the photo’s edges over a wider area.',
+    pitfalls: 'Strong Refine can spill the mask onto areas of similar brightness next to it.',
+    engine: 'A guided filter on the photo’s log luminance, as darktable’s mask feathering',
+  },
+  brushSize: {
+    hint: 'Brush radius, in photo pixels',
+    what: 'How wide the brush paints: its radius in pixels of the full-size photo. [ and ] make it smaller or larger.',
+    left: 'Smaller brush.',
+    right: 'Larger brush.',
+  },
+  brushFeather: {
+    hint: 'Softness of the brush’s edge',
+    what: 'How much of the brush’s radius fades out. Shift+[ and Shift+] change it.',
+    left: 'Harder edge.',
+    right: 'Softer edge.',
+    engine: 'darktable’s brush hardness (feather = 1 − hardness)',
+  },
+  brushFlow: {
+    hint: 'How much each pass adds',
+    what: 'How much each dab of the brush adds to the mask. With low Flow, painting over the same place again builds the mask up gradually.',
+    left: 'Builds up slowly.',
+    right: 'Full strength at once.',
+  },
+  brushDensity: {
+    hint: 'The most the brush builds up to',
+    what: 'The highest the mask can reach with this brush, however often you paint over a place.',
+    left: 'A faint mask at most.',
+    right: 'Up to the full effect.',
+  },
+  radialFeather: {
+    hint: 'How softly the ellipse fades',
+    what: 'How much of the radial gradient fades out towards its edge. 0 % is a hard edge; 100 % fades all the way from the centre.',
+    left: 'Harder edge.',
+    right: 'Softer edge.',
+    engine: 'darktable’s circle falloff (quadratic)',
+  },
+  lumLow: {
+    hint: 'Darkest tone included',
+    what: 'The darkest tone (CIE L*, 0–100, measured after the white balance and exposure) at full effect.',
+    left: 'Includes darker tones.',
+    right: 'Starts at brighter tones.',
+  },
+  lumHigh: {
+    hint: 'Brightest tone included',
+    what: 'The brightest tone (L*) at full effect.',
+    left: 'Ends at darker tones.',
+    right: 'Includes brighter tones.',
+  },
+  lumSmooth: {
+    hint: 'How softly the range fades',
+    what: 'How far beyond the range the effect fades out, in L*.',
+    left: 'A hard cut at the range’s ends.',
+    right: 'A gradual fade.',
+  },
+  colourRefine: {
+    hint: 'How close a colour must be',
+    what: 'How far a colour may be from the samples and still count (a distance in OkLab). Shift-click the photo to add samples (up to five).',
+    left: 'Only colours very close to the samples.',
+    right: 'A wider range of similar colours.',
+  },
+}
+
+/** What the panel says about range masks (owner's decision 12: no patent talk in the interface). */
+export const RANGE_NOTE = 'Range masks apply to the whole photo: a luminance or colour range can’t be combined with a brush or gradient. Make it a separate mask; masks stack.'

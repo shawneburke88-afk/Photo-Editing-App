@@ -408,6 +408,36 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .remove-overlay .spot-pin.source { fill: #5cc8f0; }
 .remove-overlay .spot-pin-group.selected .spot-pin { fill: var(--accent); stroke: #fff; }
 .remove-overlay .spot-progress { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; }
+/* Masks (PHASE3.md Part 23): the overlay's lines, handles and pins (44 px hit areas), and the Masks group. */
+.dstage.masking .dbadge { z-index: 2; pointer-events: none; }
+.mask-overlay .mask-line { fill: none; stroke: #fff; stroke-width: 1.5; filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.9)); }
+.mask-overlay .mask-line.zero { stroke-dasharray: 5 4; }
+.mask-overlay .mask-line.mid { stroke-width: 1; opacity: 0.6; }
+.mask-overlay .hit { fill: transparent; stroke: none; }
+.mask-overlay .mask-handle .dot { fill: #fff; stroke: rgba(0, 0, 0, 0.75); stroke-width: 1.5; }
+.mask-overlay .mask-pin .dot { fill: #fff; stroke: rgba(0, 0, 0, 0.75); stroke-width: 2; }
+.mask-overlay .mask-pin.selected .dot { fill: var(--accent); stroke: #fff; }
+.mask-overlay .mask-brush circle { fill: none; stroke: #fff; stroke-width: 1.5; filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.9)); }
+.mask-overlay .mask-brush circle.inner { stroke-dasharray: 3 3; stroke-width: 1; }
+.mask-overlay .mask-paint { fill: none; stroke: rgba(255, 255, 255, 0.3); stroke-linecap: round; stroke-linejoin: round; }
+.mask-overlay .mask-paint.erase { stroke: rgba(0, 0, 0, 0.3); }
+.masks-panel .touch { min-height: 44px; min-width: 44px; }
+.masks-panel .mask-new { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 4px; margin: 6px 0; }
+.masks-panel .mask-list, .masks-panel .mask-parts { list-style: none; margin: 4px 0; padding: 0; }
+.masks-panel .mask-row { border: 1px solid var(--line, rgba(127, 127, 127, 0.3)); border-radius: 6px; margin-bottom: 4px; }
+.masks-panel .mask-row.selected { border-color: var(--accent); }
+.masks-panel .mask-head { display: flex; align-items: center; gap: 4px; }
+.masks-panel .mask-eye { min-width: 44px; min-height: 44px; }
+.masks-panel .mask-name { flex: 1; display: flex; flex-direction: column; align-items: flex-start; text-align: left; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; padding: 4px; }
+.masks-panel .mask-rename { flex: 1; min-height: 32px; }
+.masks-panel .mask-part { display: flex; align-items: center; gap: 4px; padding: 2px 4px 2px 12px; }
+.masks-panel .mask-part.selected .mask-part-name { color: var(--accent); }
+.masks-panel .mask-part-name { flex: 1; text-align: left; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+.masks-panel .mask-op { min-width: 2.5em; text-align: center; }
+.masks-panel .mask-add, .masks-panel .mask-overlay-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 6px 0; }
+.masks-panel .masks-warn { color: var(--warn, #e0a030); }
+.masks-panel .mask-range-note { margin: 2px 0 6px; }
+.masks-panel .mask-settings { margin-top: 8px; }
 
 @media (max-width: 1100px) {
   .develop { grid-template-columns: 1fr 5px var(--right-w, 280px); }

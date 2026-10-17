@@ -9,6 +9,9 @@
 // The Tone Curve (engine/develop/tone-curve.ts) comes after the sigmoid, on the tones shown (its CPU twin is there).
 // The Colour Mixer and Point Color (colour-mixer.wgsl, appended to this file) come before the sigmoid, after presence;
 // Colour Grading (colour-grading.wgsl, appended after it) after them, still before the sigmoid.
+// Masks (PHASE3.md Part 23): with masks, the local sliders (summed over the masks, weighted by their alphas: mask.wgsl
+// makes these planes) act inside `developMasked`, in scene-linear light before the sigmoid; without them (MK.info.x 0)
+// nothing here changes. The mask overlay is drawn last, on Develop's canvas only.
 // Soft proofing (PHASE3.md Part 20) replaces the developed colour by the proof table's just before the output profile,
 // on Develop's canvas and in its histogram only; with it off (PF.mode 0) nothing here changes.
 // The clipping indicators are translated from darktable's src/iop/overexposed.c (display clipping:
@@ -99,6 +102,30 @@ struct View {
 @group(0) @binding(12) var proofLut: texture_3d<f32>;
 @group(0) @binding(13) var<uniform> PF: Proof;
 
+// Masks (PHASE3.md Part 23): the planes of the tile being drawn (three vec4f per target pixel: [exposure, contrast,
+// highlights, shadows], [whites, blacks, saturation, vibrance], [temp, tint, the overlay's alpha, 0]), their parameters,
+// and where the tile's planes sit. All zero (a 64-byte buffer bound) without masks: the stage skipped.
+@group(0) @binding(14) var<storage, read> maskPlanes: array<vec4f>;
+@group(0) @binding(15) var<uniform> MK: Masks;
+@group(0) @binding(16) var<uniform> MKT: MaskTile;
+
+struct Masks {
+  info: vec4u,               // masks drawn (0 = none), overlay mode (0 off; 1–6 Lightroom's six modes), local tone (1), 0
+  overlay: vec4f,            // overlay colour (in the canvas's colour space), opacity
+  local: vec4f,              // Temp and Tint log2 gain per unit, the contrast spread, the contrast fulcrum
+  bands: array<vec4f, 3>,    // the global tone equalizer bands, EV (9)
+  weights: array<vec4f, 9>,  // band i: the weight of Blacks, Shadows, Highlights, Whites (× the tone range)
+  pinv: array<vec4f, 18>,    // 8 × 9, row-major: linear band gains → the tone equalizer's 8 factors (tone-equalizer.ts)
+}
+
+struct MaskTile {
+  origin: vec2f,  // target pixel of the planes' first texel
+  size: vec2u,
+}
+
+/** The target pixel whose local values are read (fs and mixerPass set it). */
+var<private> maskPx: vec2f;
+
 struct Proof {
   mode: u32,           // 1 = proofing (Develop's canvas and its histogram only)
   size: u32,           // grid points per axis
@@ -113,7 +140,8 @@ struct MixTile {
   origin: vec2f,  // the target pixel of the tile texture's texel (0, 0)
   mode: u32,      // 0: drawing as usual; 1: the mixer's input for its filter (U*′, V*′, RGB saturation, L*);
                   // 2: drawing a tile with the filter's corrections; 3, 4: linear Rec.2020 before / after the mixer
-                  // (before the sigmoid; tests and the mixer's pickers); 5: after the mixer and Colour Grading (tests)
+                  // (before the sigmoid; tests and the mixer's pickers); 5: after the mixer and Colour Grading (tests);
+                  // 6: what the range masks measure (the masks' pickers)
   pad: u32,
 }
 
@@ -379,6 +407,7 @@ fn mixerApply(c: vec3f) -> vec3f {
 
 /** The develop transform up to the sigmoid: white balance fix, exposure, tone equalizer, presence (scene-referred). */
 fn developPreSigmoid(scene: vec3f, uv: vec2f) -> vec3f {
+  if (MK.info.x != 0u) { return developMasked(scene, uv); }
   var c = vec3f(dot(V.wbFix0.xyz, scene), dot(V.wbFix1.xyz, scene), dot(V.wbFix2.xyz, scene));
   c *= V.exposure;
 
@@ -411,6 +440,12 @@ fn mixerPass(p: vec2f) -> vec4f {
   let q = clamp(p, V.offset + 0.5, V.offset + V.size - 0.5);
   let uv = (q - V.offset) / V.size;
   let tuv = applyMap(V.texMap0, V.texMap1, V.texMap2, uv);
+  maskPx = q;
+  if (MT.mode == 6u) {
+    // What the range masks measure (PHASE3.md Part 23): after the white-balance fix and the exposure (the masks' pickers).
+    let sc = textureSampleLevel(img, samp, tuv, V.lod).rgb;
+    return vec4f(vec3f(dot(V.wbFix0.xyz, sc), dot(V.wbFix1.xyz, sc), dot(V.wbFix2.xyz, sc)) * V.exposure, 1.0);
+  }
   let c = developPreSigmoid(textureSampleLevel(img, samp, tuv, V.lod).rgb, uv);
   if (MT.mode == 1u) {
     let luv = ucsLuv(c);
@@ -590,6 +625,7 @@ fn proofDecode(e: vec3f) -> vec3f {
 @fragment
 fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   fragPos = pos.xy;
+  maskPx = pos.xy;
   // The mixer's input is drawn into a tile texture (texel + origin = target pixel); modes 3 and 4 draw the target itself.
   if (MT.mode == 1u) { return mixerPass(pos.xy + MT.origin); }
   if (MT.mode >= 3u) { return mixerPass(pos.xy); }
@@ -664,5 +700,123 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     if (cls == 1u) { out = V.upperColor.rgb; } else if (cls == 2u) { out = V.lowerColor.rgb; }
   }
   if (V.rawMode != 0u) { out = rawOverexposed(sensorUv(uv), out); }
+  if (MK.info.y != 0u) { out = maskOverlay(out); }
   return vec4f(out, 1.0);
+}
+
+// ---- masks (PHASE3.md Part 23; engine/develop/mask-math.ts is the CPU twin and has the sources)
+
+/** Plane `n` (0–2) of the local values at `maskPx`. */
+fn maskPlane(n: u32) -> vec4f {
+  let size = vec2i(MKT.size);
+  let ip = clamp(vec2i(floor(maskPx - MKT.origin)), vec2i(0), max(size - 1, vec2i(0)));
+  return maskPlanes[(u32(ip.y) * MKT.size.x + u32(ip.x)) * 3u + n];
+}
+
+/** Local Temp and Tint: red and blue against each other, green against both, the luminance kept. */
+fn localWb(c: vec3f, t: f32, ti: f32) -> vec3f {
+  let a = t * MK.local.x;
+  let g = ti * MK.local.y;
+  let o = c * vec3f(exp2(a + 0.5 * g), exp2(-g), exp2(-a + 0.5 * g));
+  let y0 = dot(REC2020_Y, c);
+  let y1 = dot(REC2020_Y, o);
+  if (y1 > 1e-9) { return o * (y0 / y1); }
+  return o;
+}
+
+/** Local Contrast, scene-referred (darktable color balance rgb's): Y' = fulcrum·(Y / fulcrum)^γ, the colour's ratios kept. */
+fn localContrast(c: vec3f, k: f32) -> vec3f {
+  let y = dot(REC2020_Y, c);
+  if (!(y > 1e-9)) { return c; }
+  let f = MK.local.w;
+  let y2 = f * pow(y / f, exp2(k * MK.local.z));
+  return c * (y2 / y);
+}
+
+/** The tone equalizer's correction with factors worked out for this pixel (its global and local bands). */
+fn localToneCorrection(lum: f32, l0: vec4f, l1: vec4f) -> f32 {
+  var e: array<f32, 9>;
+  for (var i = 0u; i < 9u; i++) {
+    let w = MK.weights[i];
+    e[i] = exp2(MK.bands[i / 4u][i % 4u] + w.x * l1.y + w.y * l0.w + w.z * l0.z + w.w * l1.x);
+  }
+  let expo = clamp(log2(max(lum, 1e-12)), -8.0, 0.0);
+  var r = 0.0;
+  for (var j = 0u; j < 8u; j++) {
+    var f = 0.0;
+    for (var i = 0u; i < 9u; i++) {
+      let k = j * 9u + i;
+      f += MK.pinv[k / 4u][k % 4u] * e[i];
+    }
+    let d = expo - RBF_CENTRES[j];
+    r += exp(-d * d / 4.0) * f;
+  }
+  return clamp(r, 0.25, 4.0);
+}
+
+/** `guidedMask` with the exposure the statistics are scaled by given (a mask's local exposure joins the global one). */
+fn guidedMaskAt(c: vec3f, uv: vec2f, exposure: f32) -> f32 {
+  let i = max(length(vec3f(dot(V.toMask0.xyz, c), dot(V.toMask1.xyz, c), dot(V.toMask2.xyz, c))), 1.52587890625e-05);
+  let m = maskAt(uv);
+  let avg = m.x * exposure;
+  let variance = m.y * exposure * exposure;
+  let norm = max(avg * i, 1e-6);
+  let v = variance / norm;
+  let a = v / (v + V.maskFeather);
+  let b = avg - a * avg;
+  return max(i * a + b, 1.52587890625e-05);
+}
+
+/**
+ * `developPreSigmoid` with the masks' local sliders: Temp/Tint and Exposure after the global white balance and exposure
+ * (where the range masks measured), the tone bands per pixel, Contrast scene-referred, then Saturation and Vibrance.
+ */
+fn developMasked(scene: vec3f, uv: vec2f) -> vec3f {
+  let l0 = maskPlane(0u);
+  let l1 = maskPlane(1u);
+  let l2 = maskPlane(2u);
+  var c = vec3f(dot(V.wbFix0.xyz, scene), dot(V.wbFix1.xyz, scene), dot(V.wbFix2.xyz, scene));
+  c *= V.exposure;
+  if (l2.x != 0.0 || l2.y != 0.0) { c = localWb(c, l2.x, l2.y); }
+  var expo = V.exposure;
+  if (l0.x != 0.0) {
+    let g = exp2(l0.x);
+    c *= g;
+    expo *= g;
+  }
+  let localTone = l0.z != 0.0 || l0.w != 0.0 || l1.x != 0.0 || l1.y != 0.0;
+  if (localTone || V.toneEnabled == 1u) {
+    var lum: f32;
+    if (V.toneMode == 1u) { lum = guidedMaskAt(c, uv, expo); } else { lum = max((c.x + c.y + c.z) / 3.0, 0.0); }
+    if (localTone) { c *= localToneCorrection(lum, l0, l1); } else { c *= toneCorrection(lum); }
+  }
+  if (l0.y != 0.0) { c = localContrast(c, l0.y); }
+  let sat = V.saturation + l1.z;
+  let vib = V.vibrance + l1.w;
+  if (vib != 0.0 || sat != 0.0) {
+    let y = dot(REC2020_Y, c);
+    let mx = max(c.x, max(c.y, c.z));
+    let mn = min(c.x, min(c.y, c.z));
+    let s = select(0.0, (mx - mn) / mx, mx > 1e-9);
+    let k = max(0.0, (1.0 + sat) * (1.0 + vib * (1.0 - clamp(s, 0.0, 1.0))));
+    c = y + (c - y) * k;
+  }
+  return c;
+}
+
+/** The selected mask shown over the photo, in Lightroom's six modes (names from Adobe's masking page). */
+fn maskOverlay(out: vec3f) -> vec3f {
+  let a = clamp(maskPlane(2u).z, 0.0, 1.0);
+  let g = vec3f(dot(vec3f(0.2126, 0.7152, 0.0722), out));
+  let col = MK.overlay.rgb;
+  let op = MK.overlay.a;
+  switch MK.info.y {
+    case 1u: { return mix(out, col, a * op); }       // Color Overlay
+    case 2u: { return mix(g, col, a * op); }         // Color Overlay on B&W
+    case 3u: { return mix(g, out, a); }              // Image on B&W
+    case 4u: { return out * a; }                     // Image on Black
+    case 5u: { return mix(vec3f(1.0), out, a); }     // Image on White
+    case 6u: { return vec3f(a); }                    // White on Black
+    default: { return out; }
+  }
 }

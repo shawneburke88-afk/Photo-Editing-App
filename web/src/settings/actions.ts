@@ -9,7 +9,7 @@
 import type { Chord } from './chords'
 
 /** Where an action works. A view uses `global` plus one or more of the others (see `VIEWS`). */
-export type Context = 'global' | 'library' | 'cull' | 'cull-one' | 'compare' | 'survey' | 'develop' | 'crop' | 'guided' | 'curve' | 'mixer' | 'remove'
+export type Context = 'global' | 'library' | 'cull' | 'cull-one' | 'compare' | 'survey' | 'develop' | 'crop' | 'guided' | 'curve' | 'mixer' | 'remove' | 'mask'
 
 export const CONTEXT_NAMES: Record<Context, string> = {
   global: 'Everywhere',
@@ -24,6 +24,7 @@ export const CONTEXT_NAMES: Record<Context, string> = {
   curve: 'Develop: tone curve target',
   mixer: 'Develop: colour mixer tool',
   remove: 'Develop: Remove brush',
+  mask: 'Develop: masking',
 }
 
 /** The contexts that are active together. Two actions can't share a key if one view has both. */
@@ -44,6 +45,9 @@ export const VIEWS: Context[][] = [
   ['global', 'mixer'],
   // While the Remove brush is on the photo, Develop listens to 'remove' instead ([ and ] change the brush size).
   ['global', 'remove'],
+  // While masking on the photo (docs/PHASE3.md Part 23), Develop listens to 'mask' instead (O shows the overlay, [ and ]
+  // change the brush size, H the pins, Esc deselects), as Lightroom's keys do in its masking tool.
+  ['global', 'mask'],
 ]
 
 export type PresetId = 'lightbench' | 'lightroom'
@@ -71,7 +75,7 @@ const ONE_OR_COMPARE: Context[] = ['cull-one', 'compare']
 /** Develop, also while cropping. */
 const DEVELOP_ANY: Context[] = ['develop', 'crop']
 /** Develop, also with an on-photo tool open (not while cropping or drawing Guided Upright lines). */
-const SNAPSHOT_CONTEXTS: Context[] = ['develop', 'curve', 'mixer', 'remove']
+const SNAPSHOT_CONTEXTS: Context[] = ['develop', 'curve', 'mixer', 'remove', 'mask']
 
 export const ACTIONS: ActionDef[] = [
   // Everywhere
@@ -174,16 +178,16 @@ export const ACTIONS: ActionDef[] = [
   { id: 'survey.close', label: 'Back to the grid', contexts: ['survey'], keys: ['Escape', 'G', 'N', 'E', 'F'] },
 
   // Develop
-  { id: 'develop.undo', label: 'Undo', contexts: [...DEVELOP_ANY, 'guided', 'curve', 'mixer', 'remove'], keys: ['Ctrl+Z'] },
-  { id: 'develop.redo', label: 'Redo', contexts: [...DEVELOP_ANY, 'guided', 'curve', 'mixer', 'remove'], keys: ['Ctrl+Y', 'Ctrl+Shift+Z'] },
-  { id: 'develop.before', label: 'Before / after', contexts: ['develop', 'curve', 'mixer', 'remove'], keys: ['\\'] },
+  { id: 'develop.undo', label: 'Undo', contexts: [...DEVELOP_ANY, 'guided', 'curve', 'mixer', 'remove', 'mask'], keys: ['Ctrl+Z'] },
+  { id: 'develop.redo', label: 'Redo', contexts: [...DEVELOP_ANY, 'guided', 'curve', 'mixer', 'remove', 'mask'], keys: ['Ctrl+Y', 'Ctrl+Shift+Z'] },
+  { id: 'develop.before', label: 'Before / after', contexts: ['develop', 'curve', 'mixer', 'remove', 'mask'], keys: ['\\'] },
   { id: 'develop.clipping', label: 'Show clipping', contexts: ['develop', 'curve', 'mixer'], keys: ['J', 'O'], lightroom: ['J'] },
   { id: 'develop.sensorClipping', label: 'Show sensor clipping', contexts: ['develop'], keys: ['Shift+O'] },
   // Soft proofing (docs/PHASE3.md Part 20): S and Shift+S are Lightroom Classic's keys (Adobe's shortcut table, via the
   // Cowork verification of 2026-10-13). Develop only: the Library's S and Shift+S (stacks) are in another view.
   { id: 'develop.softProof', label: 'Soft proofing on or off', contexts: ['develop'], keys: ['S'] },
   { id: 'develop.proofGamut', label: 'Soft proofing: destination gamut warning', contexts: ['develop'], keys: ['Shift+S'] },
-  { id: 'develop.zoom', label: 'Zoom to 100 % and back', contexts: ['develop', 'curve', 'mixer', 'remove'], keys: ['Z'] },
+  { id: 'develop.zoom', label: 'Zoom to 100 % and back', contexts: ['develop', 'curve', 'mixer', 'remove', 'mask'], keys: ['Z'] },
   { id: 'develop.next', label: 'Next photo', contexts: ['develop'], keys: ['ArrowRight'] },
   { id: 'develop.prev', label: 'Previous photo', contexts: ['develop'], keys: ['ArrowLeft'] },
   { id: 'develop.whiteBalance', label: 'White balance picker', contexts: ['develop'], keys: ['W'] },
@@ -257,6 +261,31 @@ export const ACTIONS: ActionDef[] = [
   { id: 'remove.modeHeal', label: 'Spot mode: Heal', contexts: ['remove'], keys: [] },
   { id: 'remove.modeClone', label: 'Spot mode: Clone', contexts: ['remove'], keys: [] },
   { id: 'remove.clear', label: 'Delete all spots…', contexts: ['develop', 'remove'], keys: [] },
+
+  // Masks (docs/PHASE3.md Part 23). Shift+W, K, M, Shift+M, Shift+J, Shift+Q, O, Shift+O, Alt+O, H, [ ], Shift+[ / ] and
+  // Alt-drag are in Adobe's Lightroom Classic shortcut table (checked by Cowork, docs/research/cowork-2026-10-13b/
+  // B_MASKING.md item 1f); N and ' are only on Julieanne Kost's blog (an Adobe evangelist: a secondary source), so they
+  // match Lightroom per a secondary source. The same keys in both sets.
+  { id: 'develop.masks', label: 'Masking: show the masks on the photo, or finish', contexts: ['develop', 'mask'], keys: ['Shift+W'] },
+  { id: 'develop.maskBrush', label: 'New mask: Brush', contexts: ['develop', 'mask'], keys: ['K'] },
+  { id: 'develop.maskLinear', label: 'New mask: Linear gradient', contexts: ['develop', 'mask'], keys: ['M'] },
+  { id: 'develop.maskRadial', label: 'New mask: Radial gradient', contexts: ['develop', 'mask'], keys: ['Shift+M'] },
+  { id: 'develop.maskColour', label: 'New mask: Colour range', contexts: ['develop', 'mask'], keys: ['Shift+J'] },
+  { id: 'develop.maskLuminance', label: 'New mask: Luminance range', contexts: ['develop', 'mask'], keys: ['Shift+Q'] },
+  { id: 'mask.done', label: 'Finish masking', contexts: ['mask'], keys: ['Enter'] },
+  { id: 'mask.cancel', label: 'Masking: stop drawing, deselect, or finish', contexts: ['mask'], keys: ['Escape'] },
+  { id: 'mask.overlay', label: 'Show or hide the mask overlay', contexts: ['mask'], keys: ['O'] },
+  { id: 'mask.overlayColour', label: 'Next mask overlay colour', contexts: ['mask'], keys: ['Shift+O'] },
+  { id: 'mask.overlayMode', label: 'Next mask overlay mode', contexts: ['mask'], keys: ['Alt+O'] },
+  { id: 'mask.pins', label: 'Show or hide the mask pins', contexts: ['mask'], keys: ['H'] },
+  { id: 'mask.sizeUp', label: 'Mask brush: larger', contexts: ['mask'], keys: [']'] },
+  { id: 'mask.sizeDown', label: 'Mask brush: smaller', contexts: ['mask'], keys: ['['] },
+  { id: 'mask.featherUp', label: 'Mask brush: softer edge (more feather)', contexts: ['mask'], keys: ['}'] },
+  { id: 'mask.featherDown', label: 'Mask brush: harder edge (less feather)', contexts: ['mask'], keys: ['{'] },
+  { id: 'mask.erase', label: 'Mask brush: erase on or off (Alt-drag erases while held)', contexts: ['mask'], keys: [] },
+  { id: 'mask.invert', label: 'Invert the selected mask (matches Lightroom per a secondary source)', contexts: ['mask'], keys: ["'"] },
+  { id: 'mask.newSame', label: 'New mask of the selected kind (matches Lightroom per a secondary source)', contexts: ['mask'], keys: ['N'] },
+  { id: 'mask.delete', label: 'Delete the selected part of the mask (or the mask)', contexts: ['mask'], keys: ['Delete', 'Backspace'] },
 
   // Develop, while cropping
   { id: 'crop.apply', label: 'Apply the crop', contexts: ['crop'], keys: ['Enter'] },

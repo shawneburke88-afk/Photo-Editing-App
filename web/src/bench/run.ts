@@ -42,7 +42,7 @@ export type BenchMode = 'quick' | 'full'
 
 /** The stages, in pipeline order (the table's order). */
 export type StageId =
-  | 'stageA' | 'stageA3' | 'warp' | 'toneMask' | 'mixer' | 'mixerNoGuide' | 'grading' | 'denoise' | 'sharpen'
+  | 'stageA' | 'stageA3' | 'warp' | 'toneMask' | 'mixer' | 'mixerNoGuide' | 'grading' | 'masksFit' | 'masksExport' | 'denoise' | 'sharpen'
   | 'displayFit' | 'display100' | 'displayFitCurve' | 'display100Curve' | 'proof' | 'proofLut'
   | 'remove' | 'export' | 'exportAll' | 'jpeg' | 'thumb'
 
@@ -68,7 +68,7 @@ export interface BenchPlan {
   datasets: DatasetPlan[]
 }
 
-const ALL_RAW: StageId[] = ['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'grading', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'proof', 'proofLut', 'remove', 'export', 'exportAll', 'jpeg', 'thumb']
+const ALL_RAW: StageId[] = ['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'grading', 'masksFit', 'masksExport', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'proof', 'proofLut', 'remove', 'export', 'exportAll', 'jpeg', 'thumb']
 const STAGES_FOR: Record<BenchMode, Record<Kind, StageId[]>> = {
   quick: {
     bayer: ALL_RAW,
@@ -78,7 +78,7 @@ const STAGES_FOR: Record<BenchMode, Record<Kind, StageId[]>> = {
   full: {
     bayer: ALL_RAW,
     xtrans: ['stageA', 'stageA3', 'displayFit', 'display100', 'export', 'exportAll'],
-    srgb: ['stageA', 'mixer', 'mixerNoGuide', 'grading', 'displayFit', 'display100', 'displayFitCurve', 'export', 'jpeg', 'thumb'],
+    srgb: ['stageA', 'mixer', 'mixerNoGuide', 'grading', 'masksFit', 'displayFit', 'display100', 'displayFitCurve', 'export', 'jpeg', 'thumb'],
   },
 }
 
@@ -229,6 +229,18 @@ const proofIndicators = async (): Promise<Indicators> => ({
   proof: { key: proofKey(`builtin-${PROOF_PROFILE}`, PROOF_OPTIONS), lut: await proofTable(), destWarning: true, screenWarning: true },
 })
 
+/**
+ * Three masks (PHASE3.md Part 23): a brush stroke of 40 dabs, a radial gradient with Feather and Refine, and a luminance
+ * range, each with its own local sliders. Their cost depends on the drawing's size, the number of masks and parts, the
+ * dabs, and Feather and Refine (which run on a reduced grid); not on the slider values.
+ */
+const MASKS = [
+  { id: 'b1', name: 'Brush 1', invert: false, amount: 100, feather: 0, refine: 0, adjust: { exposure: 0.5 }, components: [{ id: 'c1', op: 'add', invert: false, shape: { kind: 'brush', strokes: [{ size: 0.03, feather: 50, flow: 70, density: 100, erase: false, dabs: Array.from({ length: 80 }, (_, i) => (i % 2 ? 0.6 + 0.0005 * i : 0.2 + 0.005 * i)) }] } }] },
+  { id: 'r1', name: 'Radial 1', invert: false, amount: 100, feather: 30, refine: 30, adjust: { shadows: 30, saturation: 20 }, components: [{ id: 'c2', op: 'add', invert: false, shape: { kind: 'radial', center: [0.5, 0.5], rx: 0.25, ry: 0.15, angle: 20, feather: 60 } }] },
+  { id: 'l1', name: 'Luminance range 1', invert: false, amount: 100, feather: 0, refine: 0, adjust: { highlights: -40, temperature: -10 }, components: [{ id: 'c3', op: 'add', invert: false, shape: { kind: 'luminance', range: [50, 70, 100, 100] } }] },
+]
+const MASK_PASSES = (l: string) => l.startsWith('mask:') || l === 'display'
+
 const MIXER_PREPASS = one('mixerInput', 'prefilterStats', 'prefilterApply', 'guideStats', 'guideApply')
 
 /** Where the k-th Remove spot goes: spread over the frame, away from the edges and the highlight. */
@@ -309,6 +321,24 @@ export const STAGES: Record<StageId, StageDef> = {
     run: (c, s, k) => c.engine.render(displayUniforms(nudged(s, k)), wbOf(c, s), FIT),
     gpu: one('display'),
     note: 'one redraw after an Exposure move with all four wheels tinted; compare with "Display pass, fit, without Tone Curve"; wall includes the read-back copy in compatibility mode',
+  },
+  // Masks (Part 23): rasterised per drawing (per 1024 px tile) and read by the display pass.
+  masksFit: {
+    label: 'Masks: 3 masks (brush + radial + luminance), display pass, fit',
+    settings: (b, kind) => edit(kind, { ...b, masks: MASKS } as Partial<DevelopSettings>),
+    run: (c, s, k) => c.engine.render(displayUniforms(nudged(s, k)), wbOf(c, s), FIT),
+    gpu: MASK_PASSES,
+    note: 'one redraw after an Exposure move: the three masks rasterised at the canvas\'s size (Feather and Refine on the radial) and the display pass; compare with "Display pass, fit, without Tone Curve"',
+  },
+  masksExport: {
+    label: 'Masks: 3 masks, export render, full size',
+    settings: (b, kind) => edit(kind, { ...b, masks: MASKS } as Partial<DevelopSettings>),
+    run: async (c, s, k) => {
+      const [w, h] = c.engine.outputSize(s.geometry)
+      c.lastOut = await c.engine.renderOutput(displayUniforms(nudged(s, k)), wbOf(c, s), outputOptions(w, h))
+    },
+    gpu: (l) => MASK_PASSES(l) || l === 'develop',
+    note: 'the export render with the three masks rasterised at full size in 1024 px tiles; compare with "Export render"',
   },
   denoise: {
     label: 'Detail: denoise (profiled, wavelets), full size',
