@@ -1,5 +1,20 @@
 [
   {
+    "version": "0.6.5",
+    "date": "2026-10-17",
+    "newFeatures": [
+      "Masking in Develop: adjust just part of a photo. A new Masks group offers Brush (K), Linear gradient (M), Radial gradient (Shift+M), Colour range (Shift+J) and Luminance range (Shift+Q).",
+      "Each mask has its own Temp, Tint, Exposure, Contrast, Highlights, Shadows, Whites, Blacks, Saturation and Vibrance, plus Feather and Refine. Combine brushes and gradients with Add, Subtract and Intersect, and invert any mask.",
+      "Colour and luminance range masks apply to the whole photo. To limit an adjustment to an area, use a brush or gradient mask.",
+      "See your masks with the overlay (O): Shift+O changes its colour and Alt+O its mode. Brush size is [ and ], feather { and }; hold Alt to erase. Pen pressure can change the brush size or flow (off by default).",
+      "Masks follow the photo when you change the crop, angle, Upright or lens corrections. They are saved in your library and in the photo's .xmp file, kept in snapshots and virtual copies, and included in exports.",
+      "Copy/Paste can include masks (unticked by default); pasted masks are added to the photo's own. Presets can hold gradient and range masks, but not brush strokes.",
+      "Masks made in Lightroom are read from the .xmp file when you import, as an experiment. When Lightroom kept its masks in a separate .acr file, LightBench tells you it can't read them. LightBench doesn't write masks for Lightroom.",
+      "Photos edited before look exactly the same."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.6.3",
     "date": "2026-10-14",
     "newFeatures": [
