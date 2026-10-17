@@ -9,6 +9,7 @@ import { AI, depthModel, providerFor } from '../ai/models'
 import { runtimeMessage } from '../ai/runtime'
 import { installed, type InstalledModel } from '../ai/store'
 import type { DepthShape } from '../engine/develop/masks'
+import { gpuGate } from '../engine/gpu/gate'
 
 export type DepthMap = Omit<DepthShape, 'range'>
 
@@ -68,7 +69,11 @@ export function useDepth(renderAsShot: (input: ModelEntry['input']) => Promise<A
       setStatus('Computing the depth map (once for this photo)…')
       const shot = await renderAsShot(model.input)
       if (!shot) return null
-      const res = await computeDepth(model, shot, p.provider, AI.runtime.version)
+      // The model's GPU work counts as Develop's (Part 14's foreground gate): background work (Export, the batch
+      // developer) waits for it, up to the gate's limit, as it waits for Develop's drawings.
+      const provider = p.provider
+      const version = AI.runtime.version
+      const res = await gpuGate.foreground(() => computeDepth(model, shot, provider, version))
       const run: LastRun = { inferMs: res.inferMs, totalMs: res.totalMs, provider: res.provider, variant: rec.variant, size: res.size, bytes: res.depth.raster.data.length }
       depthTimings.push(run)
       console.info(`Depth map: ${res.size[0]} × ${res.size[1]}, model ${Math.round(res.inferMs)} ms, total ${Math.round(res.totalMs)} ms (${res.provider}, ${rec.variant}), ${res.depth.raster.data.length} characters in the edit`)
