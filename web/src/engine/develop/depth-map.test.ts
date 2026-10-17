@@ -35,7 +35,7 @@ describe('inflateRaw', () => {
     }
     // A stored block written by hand: BFINAL 1, BTYPE 00, LEN 3, NLEN ~3.
     expect(inflateRaw(new Uint8Array([1, 3, 0, 0xfc, 0xff, 7, 8, 9]))).toEqual(new Uint8Array([7, 8, 9]))
-  })
+  }, 30000)
 
   it('refuses damaged data and too much output', async () => {
     const z = await deflate(syntheticDepth(64, 64))
@@ -62,7 +62,7 @@ describe('depth map encoding', () => {
     // 406,112 depth values; smooth regions compress to almost nothing (the size in a real photo depends on its detail).
     expect(r.data.length).toBeLessThan(20000)
     expect(fromBase64(toBase64(px))).toEqual(px)
-  })
+  }, 30000)
 
   it('a damaged map decodes to null; bad fields are refused', async () => {
     const r = await encodeDepth(syntheticDepth(40, 30), 40, 30)

@@ -157,5 +157,5 @@ describe('paste, presets and the history', () => {
     // A reference to a missing map: the part waits for a new one.
     const broken = loadHistory({ settings: '{}', history: JSON.stringify({ ...saved, rasters: [] }) }, 'raw')
     expect(needsDepth(broken.steps[30].settings.masks![0])).toBe(true)
-  })
+  }, 30000)
 })

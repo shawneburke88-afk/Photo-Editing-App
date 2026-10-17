@@ -152,6 +152,12 @@ describe('the on-device store', () => {
     served['http://lb.test/app/models/depth-anything-v2-small/feedfac/fp32.onnx'] = FP32.slice(0, 100)
     await expect(install(info, model, model.files[1], () => {}, undefined, env)).rejects.toThrow(/expected/)
     expect(await installed(model, env)).toBeNull()
+    // Then a good copy: only the model is fetched (the runtime, already checked and kept, isn't again).
+    served['http://lb.test/app/models/depth-anything-v2-small/feedfac/fp32.onnx'] = FP32
+    const before = (env.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length
+    expect((await install(info, model, model.files[1], () => {}, undefined, env)).variant).toBe('fp32')
+    expect((env.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length - before).toBe(1)
+    expect(await installed(model, env)).not.toBeNull()
   })
 
   it('a second variant reuses the runtime and replaces the first; a damaged cache entry is reported', async () => {

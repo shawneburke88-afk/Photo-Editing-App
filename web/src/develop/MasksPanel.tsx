@@ -91,7 +91,7 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, d
               className={`button small touch ${m.creating?.kind === k.kind && !m.creating.op ? 'on' : ''}`}
               disabled={disabled || masks.length >= MAX_MASKS}
               onClick={() => m.newOf(k.kind)}
-              title={withKey(`New ${KIND_LABELS[k.kind].toLowerCase()} mask`, k.action)}
+              title={withKey(k.kind === 'depth' ? `New depth range mask (AI): ${MASK_HELP.depthNew.what}` : `New ${KIND_LABELS[k.kind].toLowerCase()} mask`, k.action)}
             >
               {k.short}
             </button>
