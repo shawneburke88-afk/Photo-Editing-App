@@ -7,7 +7,8 @@ describe('benchmark plan', () => {
     expect(p.datasets.map((d) => [d.id, d.width, d.height])).toEqual([['bayer24', 6000, 4000], ['srgb24', 6000, 4000]])
     expect(p.datasets[0].stages).toEqual(['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'grading', 'masksFit', 'masksExport', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'proof', 'proofLut', 'remove', 'export', 'exportAll', 'jpeg', 'thumb'])
     expect([p.warmup, p.runs, p.scaledTo]).toEqual([1, 3, null])
-    expect(plannedRuns(p)).toBe((21 + 3) * 4)
+    expect(p.datasets[1].stages).toEqual(['stageA', 'displayFit', 'export', 'aiDepth'])
+    expect(plannedRuns(p)).toBe((21 + 4) * 4)
   })
 
   it('Full: 45 MP and X-Trans too, Markesteijn 3-pass, 2 warm-ups and 5 runs', () => {
@@ -76,5 +77,15 @@ describe('benchmark plan', () => {
     expect(p.datasets[0].width * p.datasets[0].height).toBeLessThan(0.52e6)
     expect(p.datasets[0].label).toBe('Bayer 0.50 MP (synthetic, scaled)')
     expect(p.datasets.at(-1)!.label).toBe('Your photo (Bayer RAW, 24.0 MP)')
+  })
+})
+
+describe('AI depth row (PHASE3.md Part 24)', () => {
+  it('times one DA-V2 Small depth map on the sRGB image, never downloading; skipped without the model', async () => {
+    expect(STAGES.aiDepth.label).toBe('AI depth: DA-V2 Small inference')
+    expect(STAGES.aiDepth.gpu).toBe('none')
+    expect(benchPlan('quick').datasets[1].stages.at(-1)).toBe('aiDepth')
+    expect(benchPlan('full').datasets[3].stages.at(-1)).toBe('aiDepth')
+    expect(benchPlan('quick').datasets[0].stages).not.toContain('aiDepth')
   })
 })

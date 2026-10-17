@@ -75,8 +75,26 @@ export function fromBase64(s: string): Uint8Array {
 }
 
 async function deflateRaw(b: Uint8Array): Promise<Uint8Array> {
-  const stream = new Blob([b as Uint8Array<ArrayBuffer>]).stream().pipeThrough(new CompressionStream('deflate-raw'))
-  return new Uint8Array(await new Response(stream).arrayBuffer())
+  const cs = new CompressionStream('deflate-raw')
+  const writer = cs.writable.getWriter()
+  void writer.write(b as Uint8Array<ArrayBuffer>)
+  void writer.close()
+  const reader = cs.readable.getReader()
+  const parts: Uint8Array[] = []
+  let n = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    parts.push(value)
+    n += value.length
+  }
+  const out = new Uint8Array(n)
+  let o = 0
+  for (const p of parts) {
+    out.set(p, o)
+    o += p.length
+  }
+  return out
 }
 
 /** A depth map (255 = nearest) as stored in the edit. */
