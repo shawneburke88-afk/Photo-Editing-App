@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.6.6",
+    "date": "2026-10-17",
+    "newFeatures": [],
+    "bugFixes": [
+      "The Crop section's Reset now resets only the crop, angle, rotation and flip. Upright and the Transform sliders are kept; Transform has its own Reset.",
+      "Develop no longer briefly asks for an old thumbnail after you save and move to another photo (for example after Create Proof Copy), which used to log an error in the browser console."
+    ]
+  },
+  {
     "version": "0.6.5",
     "date": "2026-10-17",
     "newFeatures": [

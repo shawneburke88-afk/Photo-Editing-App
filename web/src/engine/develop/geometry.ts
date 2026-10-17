@@ -60,6 +60,14 @@ export interface GeometrySettings {
 /** Defaults: no crop; the aspect starts locked to the photo's own (LightBench's choice; Lightroom's default not checked). */
 export const DEFAULT_GEOMETRY: GeometrySettings = { turns: 0, mirror: false, angle: 0, crop: UNIT_RECT, aspect: 'original', custom: [3, 2], locked: true }
 
+/**
+ * What the Crop section's Reset gives (and its eye shows): crop, straighten, rotate and flip at their defaults, the
+ * Transform and Upright kept (they have their own Reset; owner's decision, 2026-10-17).
+ */
+export function resetCrop(g: GeometrySettings): GeometrySettings {
+  return g.transform ? { ...DEFAULT_GEOMETRY, transform: g.transform } : DEFAULT_GEOMETRY
+}
+
 export const MAX_ANGLE = 45
 
 const finite = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d)
