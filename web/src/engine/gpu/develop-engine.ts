@@ -1798,6 +1798,17 @@ export class DevelopEngine {
    * small preview pipe in the same way; here every drawing (fit, 100 %, Export) uses the same values, so they agree.
    * Cached per source, frame and white balance. Nothing here sets a strength (owner's binding constraint).
    */
+  /**
+   * The photo's white level in its scene values before Exposure (effects.ts `ambientLight`): 1 for a RAW (its clipping
+   * point), and for a display-referred photo the scene value its inverse tone mapping gives the white (`processRgb`'s cap,
+   * without the default exposure gain).
+   */
+  private sceneWhite(): number {
+    const rgb = this.rgbInput
+    if (!rgb) return 1
+    return inverseLoglogistic(rgb.curve.whiteTarget * 0.9995, rgb.curve) / rgb.gain
+  }
+
   private async dehazeStats(src: Source, wb: Vec3): Promise<void> {
     const fix = this.wbFix(wb)
     const plain = src.plain ? await src.plain() : null
@@ -1846,7 +1857,7 @@ export class DevelopEngine {
         const all = new Float32Array(read.getMappedRange())
         const rgba = new Float32Array(rw * rh * 4)
         for (let y = 0; y < rh; y++) rgba.set(all.subarray((y * bytesPerRow) / 4, (y * bytesPerRow) / 4 + rw * 4), y * rw * 4)
-        const { a0, distanceMax } = ambientLight(rgba, rw, rh, dehazeWindows(k).w1)
+        const { a0, distanceMax } = ambientLight(rgba, rw, rh, dehazeWindows(k).w1, this.sceneWhite())
         this.dehazeCache = { key, a0, distanceMax }
       } finally {
         if (read.mapState === 'mapped') read.unmap()

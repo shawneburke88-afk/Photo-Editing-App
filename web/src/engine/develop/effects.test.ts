@@ -358,6 +358,17 @@ describe('Dehaze (darktable hazeremoval.c)', () => {
     expect(distanceMax).toBeGreaterThan(0)
   })
 
+  it('the depth is measured relative to the photo’s white (a JPEG’s scene values put white far above 1)', () => {
+    const k = 6
+    const scaled = hazy.map((v, i) => (i % 4 === 3 ? v : v * k))
+    const one = ambientLight(hazy, W, H, 2)
+    const big = ambientLight(scaled, W, H, 2, k)
+    expect(big.distanceMax).toBeCloseTo(one.distanceMax, 4)
+    for (let c = 0; c < 3; c++) expect(big.a0[c]).toBeCloseTo(one.a0[c] * k, 3)
+    // Measured as if white were 1, the brighter values would give a depth ≤ 0, and Dehaze would do nothing.
+    expect(ambientLight(scaled, W, H, 2).distanceMax).toBeLessThan(one.distanceMax)
+  })
+
   it('removing the haze brings the hazy side closer to the scene (contrast restored)', () => {
     const { a0 } = ambientLight(hazy, W, H, 2)
     const { plus, minus } = dehazeMapsCpu(hazy, W, H, a0, 2, 3, P.dehazeEps)
