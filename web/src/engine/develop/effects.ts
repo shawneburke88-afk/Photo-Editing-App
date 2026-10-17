@@ -420,7 +420,7 @@ export const decode = (e: number) => (e <= 0.04045 ? e / 12.92 : ((e + 0.055) / 
 
 // ---- Grain (darktable grain.c)
 
-/** darktable's permutation table (Ken Perlin's) and gradient set for the 3D simplex noise. */
+/** darktable's permutation table and gradient set for its 3D simplex noise (grain.c). */
 export const PERMUTATION = [
   151, 160, 137, 91, 90, 15, 131, 13, 201, 95, 96, 53, 194, 233, 7, 225, 140, 36, 103, 30, 69, 142, 8, 99, 37, 240, 21, 10, 23, 190, 6, 148, 247, 120, 234, 75, 0, 26, 197, 62,
   94, 252, 219, 203, 117, 35, 11, 32, 57, 177, 33, 88, 237, 149, 56, 87, 174, 20, 125, 136, 171, 168, 68, 175, 74, 165, 71, 134, 139, 48, 27, 166, 77, 146, 158, 231, 83, 111, 229, 122,
@@ -433,7 +433,7 @@ export const PERMUTATION = [
 const GRAD3: Vec3[] = [[1, 1, 0], [-1, 1, 0], [1, -1, 0], [-1, -1, 0], [1, 0, 1], [-1, 0, 1], [1, 0, -1], [-1, 0, -1], [0, 1, 1], [0, -1, 1], [0, 1, -1], [0, -1, -1]]
 const perm = (i: number) => PERMUTATION[i & 255]
 
-/** darktable's `_simplex_noise` (Stefan Gustavson's 3D simplex noise as darktable ships it), in single precision steps. */
+/** darktable's `_simplex_noise` (grain.c): 3D simplex noise. */
 export function simplex3(xin: number, yin: number, zin: number): number {
   const F3 = 1 / 3
   const G3 = 1 / 6
