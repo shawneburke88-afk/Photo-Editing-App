@@ -65,7 +65,8 @@ export function Slider({ label, value, min, max, step, defaultValue, format, tra
             <dd>{help.right}</dd>
           </dl>
           {help.pitfalls && <p className="tip-warn">{help.pitfalls}</p>}
-          <p className="tip-foot">Double-click or Home to reset{help.engine ? ` · ${help.engine}` : ''}</p>
+          {/* `help.engine` (how it is built) is for the code's readers, not shown (owner's rule: no notes in the UI). */}
+          <p className="tip-foot">Double-click or Home to reset</p>
         </div>
       )}
       <input

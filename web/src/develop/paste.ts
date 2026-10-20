@@ -32,7 +32,7 @@ export type PasteKey =
 export interface PasteItem {
   key: PasteKey
   label: string
-  group: 'White balance' | 'Tone' | 'Presence' | 'Tone Curve' | 'Colour' | 'Detail' | 'Effects' | 'Crop' | 'Lens' | 'Remove' | 'Masks' | 'Advanced (darktable modules)'
+  group: 'White balance' | 'Tone' | 'Presence' | 'Tone Curve' | 'Colour' | 'Detail' | 'Effects' | 'Crop' | 'Lens' | 'Remove' | 'Masks' | 'Advanced'
   /**
    * Only pasted between photos of the same kind (RAW to RAW, JPEG to JPEG): a RAW's +0.7 EV base exposure or its
    * camera white balance would be wrong on a JPEG, which is already rendered.
@@ -342,14 +342,14 @@ export const PASTE_ITEMS: PasteItem[] = [
   {
     key: 'process',
     label: 'Process version',
-    group: 'Advanced (darktable modules)',
+    group: 'Advanced',
     copy: (to, from) => ({ ...to, process: from.process }),
     show: (s) => String(s.process),
   },
   {
     key: 'baseExposure',
     label: 'Base exposure',
-    group: 'Advanced (darktable modules)',
+    group: 'Advanced',
     sameKindOnly: true,
     copy: (to, from) => ({ ...to, advanced: { ...to.advanced, baseExposure: from.advanced.baseExposure } }),
     show: (s) => signed(s.advanced.baseExposure, 2, ' EV'),
@@ -357,7 +357,7 @@ export const PASTE_ITEMS: PasteItem[] = [
   {
     key: 'toneMapper',
     label: 'Tone mapper (sigmoid)',
-    group: 'Advanced (darktable modules)',
+    group: 'Advanced',
     sameKindOnly: true,
     copy: (to, from) => ({
       ...to,
@@ -368,7 +368,7 @@ export const PASTE_ITEMS: PasteItem[] = [
   {
     key: 'highlightReconstruction',
     label: 'Highlight reconstruction',
-    group: 'Advanced (darktable modules)',
+    group: 'Advanced',
     sameKindOnly: true,
     copy: (to, from) => ({ ...to, advanced: { ...to.advanced, highlightReconstruction: from.advanced.highlightReconstruction, highlightClip: from.advanced.highlightClip } }),
     show: (s) => (s.advanced.highlightReconstruction ? `on, clip ${s.advanced.highlightClip.toFixed(2)}` : 'off'),
@@ -376,7 +376,7 @@ export const PASTE_ITEMS: PasteItem[] = [
   {
     key: 'demosaic',
     label: 'Demosaic',
-    group: 'Advanced (darktable modules)',
+    group: 'Advanced',
     sameKindOnly: true,
     copy: (to, from) => ({ ...to, advanced: { ...to.advanced, demosaic: from.advanced.demosaic } }),
     show: (s) => (s.advanced.demosaic === 'markesteijn3' ? 'Markesteijn 3-pass' : s.advanced.demosaic.toUpperCase()),
@@ -393,7 +393,7 @@ export const PASTE_GROUPS = [...new Set(PASTE_ITEMS.map((i) => i.group))]
  * doesn't turn them off on new photos. So are the spots (Part 11): they belong to one photo. And the masks (Part 23; owner's
  * decision 7).
  */
-export const DEFAULT_PASTE_KEYS: PasteKey[] = PASTE_ITEMS.filter((i) => i.group !== 'Advanced (darktable modules)' && i.group !== 'Crop' && i.group !== 'Lens' && i.group !== 'Detail' && i.group !== 'Remove' && i.group !== 'Masks').map((i) => i.key)
+export const DEFAULT_PASTE_KEYS: PasteKey[] = PASTE_ITEMS.filter((i) => i.group !== 'Advanced' && i.group !== 'Crop' && i.group !== 'Lens' && i.group !== 'Detail' && i.group !== 'Remove' && i.group !== 'Masks').map((i) => i.key)
 
 /** Items Auto Sync never sends (they belong to one photo): Remove spots (Part 11) and masks (Part 23). */
 export const NOT_AUTO_SYNCED: PasteKey[] = ['spots', 'masks']

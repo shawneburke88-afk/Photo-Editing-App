@@ -611,7 +611,7 @@ export function describeGrading(g: ColourGradingSettings | undefined): string {
   if (!parts.length && !advancedActive(g.advanced)) return 'no wheel moved'
   if (g.blending !== 50) parts.push(`Blending ${g.blending}`)
   if (g.balance !== 0) parts.push(`Balance ${g.balance > 0 ? '+' : ''}${g.balance}`)
-  if (advancedActive(g.advanced)) parts.push('darktable settings changed')
+  if (advancedActive(g.advanced)) parts.push('Advanced settings changed')
   return parts.join('; ')
 }
 

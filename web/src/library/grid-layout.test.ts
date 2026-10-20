@@ -12,7 +12,7 @@ describe('gridLines', () => {
   })
 
   it('with headings, starts each date on a new line under its heading, with its count', () => {
-    expect(gridLines(rows(at(19, 23), at(19, 1), at(19, 0), at(18), at(0, 0) * 0), 2, true)).toEqual([
+    expect(gridLines(rows(at(19, 23), at(19, 1), at(19, 0), at(18), 0), 2, true)).toEqual([
       { kind: 'head', day: '2026-10-19', count: 3 },
       { kind: 'cells', start: 0, end: 2 },
       { kind: 'cells', start: 2, end: 3 },

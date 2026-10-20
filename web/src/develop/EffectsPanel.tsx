@@ -30,7 +30,6 @@ interface Props {
 
 const int = (v: number) => String(Math.round(v))
 const signed = (v: number) => (v > 0 ? `+${Math.round(v)}` : `${Math.round(v)}`)
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 export function EffectsPanel({ effects, disabled, showHint, onChange }: Props) {
   const fx = effects ?? {}
@@ -75,7 +74,7 @@ export function EffectsPanel({ effects, disabled, showHint, onChange }: Props) {
         <Slider label="Feather" value={v.feather} min={0} max={100} step={1} defaultValue={50} format={int} disabled={vigOff} {...guide('vignetteFeather')} onChange={(x) => setV('Feather', { feather: x })} />
         <Slider label="Highlights" value={v.highlights} min={0} max={100} step={1} defaultValue={0} format={int} disabled={highlightsOff} {...guide('vignetteHighlights')} onChange={(x) => setV('Highlights', { highlights: x })} />
         <button className="adv-toggle" aria-expanded={vigAdv} onClick={() => setVigAdv((a) => !a)}>
-          {vigAdv ? '▾' : '▸'} Advanced (darktable vignetting)
+          {vigAdv ? '▾' : '▸'} Advanced
         </button>
         {vigAdv && (
           <div className="adv-body">
@@ -98,7 +97,7 @@ export function EffectsPanel({ effects, disabled, showHint, onChange }: Props) {
         <Slider label="Size" value={g.size} min={0} max={100} step={1} defaultValue={25} format={int} disabled={disabled || g.amount === 0} {...guide('grainSize')} onChange={(x) => setG('Size', { size: x })} />
         <Slider label="Roughness" value={g.roughness} min={0} max={100} step={1} defaultValue={50} format={int} disabled={disabled || g.amount === 0} {...guide('grainRoughness')} onChange={(x) => setG('Roughness', { roughness: x })} />
         <button className="adv-toggle" aria-expanded={grainAdv} onClick={() => setGrainAdv((a) => !a)}>
-          {grainAdv ? '▾' : '▸'} Advanced (darktable grain)
+          {grainAdv ? '▾' : '▸'} Advanced
         </button>
         {grainAdv && (
           <div className="adv-body">
@@ -129,7 +128,6 @@ export function EffectsPanel({ effects, disabled, showHint, onChange }: Props) {
         <Slider label="Range" value={gl.range} min={0} max={100} step={1} defaultValue={50} format={int} disabled={disabled} {...guide('glowRange')} onChange={(x) => setGl('Range', { range: x })} />
         <Slider label="Spread" value={gl.spread} min={0} max={100} step={1} defaultValue={50} format={int} disabled={disabled} {...guide('glowSpread')} onChange={(x) => setGl('Spread', { spread: x })} />
         <Slider label="Warmth" value={gl.warmth} min={-100} max={100} step={1} defaultValue={0} format={signed} disabled={disabled} {...guide('glowWarmth')} onChange={(x) => setGl('Warmth', { warmth: x })} />
-        {same(gl, DEFAULT_GLOW) ? null : <p className="muted small">Glow’s slider ranges are LightBench’s own: Adobe publishes none for Camera Raw’s Glow.</p>}
       </section>
     </div>
   )

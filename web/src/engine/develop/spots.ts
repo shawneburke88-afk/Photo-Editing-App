@@ -21,8 +21,8 @@ export type SpotMode = 'remove' | 'heal' | 'clone'
 /** The modes, in the order the panel shows them. An AI mode (Phase 4) will be one more entry. */
 export const SPOT_MODES: { id: SpotMode; label: string; help: string }[] = [
   { id: 'remove', label: 'Remove', help: 'Fills the spot from its surroundings (patch-based, no AI): texture is gathered from around the spot and blended in.' },
-  { id: 'heal', label: 'Heal', help: 'Copies the texture of the source and blends it into the colour and brightness around the spot (darktable’s heal).' },
-  { id: 'clone', label: 'Clone', help: 'Copies the source exactly (darktable’s clone).' },
+  { id: 'heal', label: 'Heal', help: 'Copies the texture of the source and blends it into the colour and brightness around the spot.' },
+  { id: 'clone', label: 'Clone', help: 'Copies the source exactly.' },
 ]
 
 export interface Spot {

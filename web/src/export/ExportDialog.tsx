@@ -201,7 +201,7 @@ export function ExportDialog({ ids, onClose }: Props) {
               <>
                 <input type="text" value={s.template} onChange={(e) => set({ template: e.target.value })} aria-label="File name template" />
                 <details className="muted small">
-                  <summary>Variables (darktable syntax)</summary>
+                  <summary>Variables</summary>
                   <ul className="vars">
                     {TEMPLATE_VARIABLES.map(([v, d]) => <li key={v}><code>{v}</code> {d}</li>)}
                   </ul>

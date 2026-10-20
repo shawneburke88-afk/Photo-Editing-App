@@ -73,7 +73,7 @@ export function TransformPanel({ transform, focal, busy, message, summary, guidi
         {!busy && !guiding && lightroomNote(transform) && (
           <p className={`small crop-note ${transform?.lightroom === 'guided' ? 'upright-warn' : 'muted'}`} data-note="lightroom">{lightroomNote(transform)}</p>
         )}
-        {focal === null && <p className="muted small crop-note" title="darktable rotate and perspective assumes 28 mm when the file gives no focal length">No focal length in the file: assuming 28 mm.</p>}
+        {focal === null && <p className="muted small crop-note" title="Upright and the Transform sliders need the lens’s focal length; 28 mm is assumed when the file gives none">No focal length in the file: assuming 28 mm.</p>}
         {SLIDERS.map((s) => (
           <Slider
             key={s.key}

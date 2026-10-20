@@ -2705,7 +2705,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   disabled={status.kind !== 'ready'}
                   showHint={hintsPref === 1}
                   acr={acr}
-                  lightroomNote={settings.masks?.some((x) => x.id.startsWith('lr')) ? 'Some masks were read from Lightroom’s settings in the .xmp (experimental: Lightroom’s mask format isn’t documented, so their look is approximate, and parts LightBench can’t read were left out).' : null}
+                  lightroomNote={settings.masks?.some((x) => x.id.startsWith('lr')) ? 'Some masks were read from Lightroom’s settings in the .xmp (experimental: their look is approximate, and parts that couldn’t be read were left out).' : null}
                 />
               ),
             },

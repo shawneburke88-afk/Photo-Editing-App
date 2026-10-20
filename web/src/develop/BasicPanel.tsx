@@ -155,18 +155,18 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, layo
 
       <section className="advanced">
         <button className="adv-toggle" onClick={() => setAdvanced(!advanced)} aria-expanded={advanced}>
-          {advanced ? '▾' : '▸'} Advanced (darktable modules)
+          {advanced ? '▾' : '▸'} Advanced
         </button>
         {advanced && (
           <div className="adv-body">
             <p className="muted small">
-              The sliders above drive these darktable modules. Change them for finer control; double-click any slider to reset it.
+              The settings behind the sliders above, for finer control. Double-click any slider to reset it.
             </p>
-            <h4>exposure</h4>
+            <h4>Exposure</h4>
             <Slider label="Base exposure" value={s.advanced.baseExposure} min={-2} max={3} step={0.05}
               defaultValue={defaults.advanced.baseExposure} format={ev} disabled={disabled}
               onChange={(v) => setAdv('Base exposure', { baseExposure: v })} />
-            <h4>sigmoid</h4>
+            <h4>Tone mapping</h4>
             <Slider label="Skew" value={s.advanced.skew} min={-1} max={1} step={0.01}
               defaultValue={defaults.advanced.skew} disabled={disabled}
               onChange={(v) => setAdv('Sigmoid skew', { skew: v })} />
@@ -179,11 +179,11 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, layo
             <Slider label="Preserve hue" value={s.advanced.huePreservation} min={0} max={100} step={1}
               defaultValue={defaults.advanced.huePreservation} format={(v) => `${v.toFixed(0)} %`} disabled={disabled}
               onChange={(v) => setAdv('Sigmoid hue preservation', { huePreservation: v })} />
-            <h4>haze removal</h4>
+            <h4>Dehaze</h4>
             <Slider label="Distance" {...guide('dehazeDistance')} value={fx.dehazeDistance ?? DEFAULT_DEHAZE_DISTANCE} min={0} max={1} step={0.01}
               defaultValue={DEFAULT_DEHAZE_DISTANCE} format={(v) => v.toFixed(2)} disabled={disabled}
               onChange={(v) => setFx('Dehaze distance', { dehazeDistance: Math.round(v * 100) / 100 })} />
-            <h4>contrast &amp; texture</h4>
+            <h4>Texture and Clarity</h4>
             <Slider label="Base detail level" {...guide('ctDetailLevel')} value={ct.detailLevel} min={1} max={15} step={0.1}
               defaultValue={DEFAULT_CONTRAST_TEXTURE.detailLevel} format={(v) => v.toFixed(1)} disabled={disabled}
               onChange={(v) => setCt('Texture/Clarity detail level', { detailLevel: Math.round(v * 10) / 10 })} />
@@ -195,7 +195,7 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, layo
               onChange={(v) => setCt('Texture/Clarity noise bias', { noiseBias: Math.round(v * 10000) / 10000 })} />
             {kind === 'raw' ? (
               <>
-                <h4>highlight reconstruction</h4>
+                <h4>Highlight reconstruction</h4>
                 <label className="adv-row">
                   Method
                   <select value={s.advanced.highlightReconstruction ? 'opposed' : 'clip'} disabled={disabled}
@@ -207,7 +207,7 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, layo
                 <Slider label="Clipping threshold" value={s.advanced.highlightClip} min={0.5} max={1.5} step={0.005}
                   defaultValue={defaults.advanced.highlightClip} format={(v) => v.toFixed(3)} disabled={disabled}
                   onChange={(v) => setAdv('Highlight clipping threshold', { highlightClip: v })} />
-                <h4>demosaic</h4>
+                <h4>Demosaicing</h4>
                 {layout === 'linear' ? (
                   <p className="muted small">Linear DNG: the file is already demosaiced (three colours per pixel).</p>
                 ) : (
@@ -218,7 +218,7 @@ export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, layo
                     <select value={layout !== 'xtrans' && s.advanced.demosaic === 'markesteijn3' ? 'rcd' : s.advanced.demosaic} disabled={disabled}
                       onChange={(e) => setAdv('Demosaic', { demosaic: e.target.value as DemosaicMethod })}>
                       <option value="rcd">{layout === 'xtrans' ? 'Markesteijn 1-pass' : 'RCD'}</option>
-                      {layout === 'xtrans' && <option value="markesteijn3" title="darktable's Markesteijn 3-pass: three refinement passes and eight directions instead of one and four. Several times slower to develop and about twice the GPU memory.">Markesteijn 3-pass (slower)</option>}
+                      {layout === 'xtrans' && <option value="markesteijn3" title="Three refinement passes and eight directions instead of one and four. Several times slower to develop and about twice the GPU memory.">Markesteijn 3-pass (slower)</option>}
                       <option value="bilinear">{layout === 'xtrans' ? 'linear (fast preview)' : 'bilinear (fast preview)'}</option>
                     </select>
                   </label>

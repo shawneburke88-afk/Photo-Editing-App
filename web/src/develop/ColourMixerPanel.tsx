@@ -275,22 +275,21 @@ export function ColourMixerPanel(p: Props) {
       </label>
       {advanced && (
         <div className="curve-advanced mixer-advanced">
-          <label className="check small" title="darktable’s “use guided filter” (on by default): the corrections are smoothed within each area of similar colour, with an edge guard for brightness, so noisy or textured colours change evenly and edges don’t get halos. Off: every pixel is changed by its own hue only (faster).">
+          <label className="check small" title="On by default: the corrections are smoothed within each area of similar colour, with an edge guard for brightness, so noisy or textured colours change evenly and edges don’t get halos. Off: every pixel is changed by its own hue only (faster).">
             <input type="checkbox" checked={adv.guided} disabled={disabled} onChange={(e) => setAdv('guided filter', { guided: e.target.checked })} /> Use guided filter
           </label>
           <Slider label="Saturation threshold" value={adv.threshold * 100} min={0} max={30} step={0.1} defaultValue={DEFAULT_ADVANCED.threshold * 100} format={(v) => `${v.toFixed(1)} %`} disabled={disabled || !adv.guided}
-            help={{ hint: 'Below it, colours count as grey', what: 'darktable’s saturation threshold: how saturated a colour must be before the bands change it fully (with the guided filter). The default 10 % puts the turning point at 6 % saturation.', left: 'Paler colours are changed too.', right: 'Only stronger colours are changed.', engine: 'darktable colour equalizer: saturation threshold' }}
+            help={{ hint: 'Below it, colours count as grey', what: 'How saturated a colour must be before the bands change it fully (with the guided filter). The default 10 % puts the turning point at 6 % saturation.', left: 'Paler colours are changed too.', right: 'Only stronger colours are changed.', engine: 'darktable colour equalizer: saturation threshold' }}
             showHint={p.showHint} onChange={(v) => setAdv('saturation threshold', { threshold: v / 100 })} />
           <Slider label="Threshold contrast" value={adv.contrast * 100} min={-100} max={100} step={1} defaultValue={0} format={(v) => `${Math.round(v)} %`} disabled={disabled || !adv.guided}
-            help={{ hint: 'How sharp the threshold is', what: 'darktable’s contrast of the saturation weight: how suddenly the change fades in around the threshold.', left: 'A softer fade.', right: 'A sharper cut-off.', engine: 'darktable colour equalizer: contrast' }}
+            help={{ hint: 'How sharp the threshold is', what: 'How suddenly the change fades in around the threshold.', left: 'A softer fade.', right: 'A sharper cut-off.', engine: 'darktable colour equalizer: contrast' }}
             showHint={p.showHint} onChange={(v) => setAdv('threshold contrast', { contrast: v / 100 })} />
           <Slider label="White level" value={adv.whiteLevel} min={-2} max={2} step={0.05} defaultValue={DEFAULT_ADVANCED.whiteLevel} format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(2)} EV`} disabled={disabled}
-            help={{ hint: 'Where the colour space’s white sits', what: 'darktable’s white level: the brightness the perceptual colour space treats as white. It changes how lightness and saturation are measured, and so how strongly bright colours are changed.', left: 'Brighter colours count as white sooner.', right: 'More headroom above white.', engine: 'darktable colour equalizer: white level (+1 EV by default)' }}
+            help={{ hint: 'Where the colour space’s white sits', what: 'The brightness the perceptual colour space treats as white. It changes how lightness and saturation are measured, and so how strongly bright colours are changed.', left: 'Brighter colours count as white sooner.', right: 'More headroom above white.', engine: 'darktable colour equalizer: white level (+1 EV by default)' }}
             showHint={p.showHint} onChange={(v) => setAdv('white level', { whiteLevel: v })} />
           <Slider label="Band placement" value={adv.placement} min={-23} max={23} step={0.5} defaultValue={0} format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)}°`} disabled={disabled}
-            help={{ hint: 'Turns all eight bands', what: 'darktable’s node placement: turns the centre of every band by the same angle of hue, e.g. to catch a sky that sits between Aqua and Blue.', left: 'Every band towards the one before it.', right: 'Every band towards the one after it.', engine: 'darktable colour equalizer: node placement' }}
+            help={{ hint: 'Turns all eight bands', what: 'Turns the centre of every band by the same angle of hue, e.g. to catch a sky that sits between Aqua and Blue.', left: 'Every band towards the one before it.', right: 'Every band towards the one after it.', engine: 'darktable colour equalizer: node placement' }}
             showHint={p.showHint} onChange={(v) => setAdv('band placement', { placement: v })} />
-          <p className="small muted">Band centres: Lightroom’s are not published; LightBench uses LightCraft’s guess (sRGB hues 0, 30, 60, 120, 180, 225, 270 and 315°) in darktable’s colour space. The filter radii are darktable’s defaults.</p>
           <button className="button small" disabled={disabled || !m.advanced} onClick={() => p.onChange('Colour mixer: Advanced reset', { ...m, advanced: undefined }, true)}>Reset Advanced</button>
         </div>
       )}

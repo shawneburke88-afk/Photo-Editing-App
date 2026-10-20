@@ -109,7 +109,7 @@ export function FolderCheck() {
       status={status}
       intro={
         supported
-          ? 'Lightroom-style libraries need to read your photo folders where they are. Choose a folder of photos (a memory card works too). LightBench only reads it unless you run the write test.'
+          ? 'LightBench’s library reads your photo folders where they are. Choose a folder of photos (a memory card works too). LightBench only reads it unless you run the write test.'
           : 'This browser cannot open folders directly. LightBench would import copies of your photos into browser storage instead. Use Chrome or Edge for the full experience.'
       }
     >
