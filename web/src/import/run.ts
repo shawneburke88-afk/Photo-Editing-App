@@ -257,6 +257,8 @@ export async function runImport(
     }
   }
   const added = new Map<number, number>()
+  /** Photos whose sidecar put them in a stack already: their twin joins that stack at the end instead. */
+  const sidecarStacked = new Set<number>()
   // Which file of RAW+JPEG twins on the card owns `NAME.xmp` (sidecar/naming.ts).
   const owners = stemOwners(ordered.map((it) => it.file))
 
@@ -302,9 +304,10 @@ export async function runImport(
         const xmpText = sidecar?.text ?? item.xmp
         const read = xmpText ? await applySidecar(catalog, id, xmpText, !!sidecar?.borrowed) : null
         await applyEmbedded(catalog, id, read, item.camera, item.iptcKeywords)
+        if (read?.stack && !sidecar?.borrowed) sidecarStacked.add(index)
         const other = twin.get(index)
         const otherId = other === undefined ? undefined : added.get(other)
-        if (otherId !== undefined) {
+        if (otherId !== undefined && other !== undefined && !sidecarStacked.has(index) && !sidecarStacked.has(other)) {
           // A failed stack doesn't fail the photo: it is in the library either way.
           const raw = isRawFile(item.file.name) ? id : otherId
           await catalog.createStack([id, otherId], raw).then((touched) => sidecars.schedule(touched), (err) => console.warn('RAW+JPEG stacking failed', err))
