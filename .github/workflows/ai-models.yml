@@ -1,0 +1,178 @@
+name: AI models
+
+# Pins and checks LightBench's AI model files on GitHub's servers, which can reach huggingface.co (docs/PHASE3.md
+# Part 24, "Pinning and checking the models"). Run it by hand: Actions → "AI models" → Run workflow → "Use workflow
+# from" the branch that has the AI models code (e.g. lightbench/depth-mask) → task. GitHub lists a manually run workflow
+# only when it is on the default branch, so this same file is also on main, where it finds no AI models code and stops
+# cleanly; run from another branch, that branch's copy runs.
+#
+#   pin-and-check  web/scripts/models.mjs pin (the Hugging Face commit, or `revision`; each file's Git LFS pointer; the
+#                  download checked against it), then the real-model check (web/scripts/models-check.mjs), then commits
+#                  web/models/manifest.json, and nothing else, to the branch it ran on (only if it changed and the
+#                  check passed).
+#   check          only the real-model check, of the files the branch's manifest pins (downloaded from Hugging Face).
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "pin-and-check: pin web/models/manifest.json, check the real model and commit the manifest to this branch. check: only check the files the manifest pins."
+        type: choice
+        options:
+          - pin-and-check
+          - check
+        default: pin-and-check
+        required: true
+      revision:
+        description: "Optional, pin-and-check only: the 40-digit Hugging Face commit to pin (empty: the model repository's current main)"
+        type: string
+        default: ""
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ai-models-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  models:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TASK: ${{ inputs.task }}
+      REVISION: ${{ inputs.revision }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Look for the AI models code
+        id: code
+        run: |
+          echo "branch ${GITHUB_REF_NAME} at $(git rev-parse --short HEAD), task ${TASK}"
+          if [ -f web/scripts/models.mjs ] && [ -f web/scripts/models-check.mjs ] && [ -f web/models/manifest.json ]; then
+            echo "found web/scripts/models.mjs, web/scripts/models-check.mjs and web/models/manifest.json"
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run this workflow on a branch that contains the AI models code"
+            echo "(this branch has no web/scripts/models.mjs or models-check.mjs: choose the branch under \"Use workflow from\", e.g. lightbench/depth-mask)"
+            {
+              echo "## AI models"
+              echo
+              echo "Nothing done: run this workflow on a branch that contains the AI models code (**Use workflow from**, e.g. \`lightbench/depth-mask\`). \`${GITHUB_REF_NAME}\` has none."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check the inputs
+        if: steps.code.outputs.present == 'true'
+        run: |
+          if [ "${GITHUB_REF_TYPE}" != "branch" ]; then
+            echo "::error::run this workflow from a branch (it commits the pinned manifest back to it), not ${GITHUB_REF_TYPE} ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+          case "${TASK}" in
+            pin-and-check|check) ;;
+            *) echo "::error::unknown task '${TASK}' (pin-and-check or check)"; exit 1 ;;
+          esac
+          if [ -n "${REVISION}" ]; then
+            if ! [[ "${REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::revision must be a 40-digit lower-case commit hash, got '${REVISION}'"
+              exit 1
+            fi
+            if [ "${TASK}" != "pin-and-check" ]; then
+              echo "::warning::revision is used only by pin-and-check; check uses the commit the manifest pins"
+            fi
+          fi
+          {
+            echo "## AI models: ${TASK}"
+            echo
+            echo "Branch \`${GITHUB_REF_NAME}\` at \`$(git rev-parse --short HEAD)\`${REVISION:+, revision \`${REVISION}\`}."
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-node@v4
+        if: steps.code.outputs.present == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        if: steps.code.outputs.present == 'true'
+        working-directory: web
+        run: npm ci
+
+      - name: Pin
+        if: steps.code.outputs.present == 'true' && inputs.task == 'pin-and-check'
+        working-directory: web
+        run: |
+          echo "manifest before:"
+          node scripts/models.mjs show
+          args=(pin --save "${RUNNER_TEMP}/models")
+          if [ -n "${REVISION}" ]; then args+=(--revision "${REVISION}"); fi
+          node scripts/models.mjs "${args[@]}"
+          echo "manifest after:"
+          node scripts/models.mjs show
+          git diff --stat -- models/manifest.json
+          {
+            echo "### Pinned"
+            echo
+            node scripts/models.mjs show --markdown
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check the real model
+        if: steps.code.outputs.present == 'true'
+        working-directory: web
+        run: |
+          if [ "${TASK}" = "pin-and-check" ]; then
+            # The files pin just downloaded and checked against their Git LFS pointers.
+            node scripts/models-check.mjs --files "${RUNNER_TEMP}/models"
+          else
+            # Downloaded from the pinned Hugging Face URLs.
+            node scripts/models-check.mjs
+          fi
+
+      - name: Check the pinned manifest with the deploy step and the app's tests
+        if: steps.code.outputs.present == 'true' && inputs.task == 'pin-and-check'
+        working-directory: web
+        run: |
+          # The deploy workflow's own step, from the files already here (no second download).
+          node scripts/models.mjs fetch --out "${RUNNER_TEMP}/site" --from "${RUNNER_TEMP}/models"
+          # The tests and types that read web/models/manifest.json.
+          npx tsc -b
+          npx vitest run src/ai scripts
+
+      - name: Commit the pinned manifest
+        if: steps.code.outputs.present == 'true' && inputs.task == 'pin-and-check'
+        run: |
+          if git diff --quiet -- web/models/manifest.json; then
+            echo "web/models/manifest.json unchanged: nothing to commit"
+            echo "web/models/manifest.json is unchanged: nothing committed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          rev=$(node -p 'require("./web/models/manifest.json").models.map((m) => m.source.revision).join(", ")')
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/models/manifest.json
+          git commit --quiet -F - <<EOF
+          AI models: pin Depth Anything V2 Small to ${rev}
+
+          Pinned and checked by the "AI models" workflow (run ${GITHUB_RUN_ID}): the
+          revision, and each file's size and SHA-256 from its Git LFS pointer, checked
+          against the download and run through the app's own preprocessing in Node.
+
+          Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+          Claude-Session: https://claude.ai/code/session_0181RBB2b9F97WCBoqXW1yHb
+          EOF
+          git show --stat --format='committed %h %s' HEAD
+          if ! git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"; then
+            echo "the branch moved while this ran: rebasing the manifest commit onto it"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
+          fi
+          echo "pushed $(git rev-parse --short HEAD) to ${GITHUB_REF_NAME}"
+          echo "Committed \`$(git rev-parse --short HEAD)\` (web/models/manifest.json only) to \`${GITHUB_REF_NAME}\`." >> "$GITHUB_STEP_SUMMARY"
