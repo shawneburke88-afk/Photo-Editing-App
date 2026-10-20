@@ -18,7 +18,7 @@ interface Props {
   onCompare: () => void
   onSurvey: () => void
   /** Stack commands, for the Stacks menu. */
-  stacks: { stack: () => void; unstack: () => void; auto: () => void; expandAll: () => void; collapseAll: () => void; canStack: boolean }
+  stacks: { stack: () => void; unstack: () => void; auto: () => void; pairs: () => void; expandAll: () => void; collapseAll: () => void; canStack: boolean }
   /** Culling helpers (docs/PHASE3.md Part 18), for the Culling menu. */
   culling: { suggest: () => void; selectBest: () => void; analysed: { done: number; total: number } | null }
   cellSize: number
@@ -108,7 +108,7 @@ export function FilterBar({ value, onChange, view, onView, onCull, onCompare, on
   )
 }
 
-function StacksMenu({ stack, unstack, auto, expandAll, collapseAll, canStack }: Props['stacks']) {
+function StacksMenu({ stack, unstack, auto, pairs, expandAll, collapseAll, canStack }: Props['stacks']) {
   const [open, setOpen] = useState(false)
   const item = (label: string, keys: string, fn: () => void, disabled = false) => (
     <button role="menuitem" disabled={disabled} onClick={() => { setOpen(false); fn() }}>
@@ -126,6 +126,7 @@ function StacksMenu({ stack, unstack, auto, expandAll, collapseAll, canStack }: 
           {item('Stack selected photos', 'Ctrl+G', stack, !canStack)}
           {item('Unstack', 'Ctrl+Shift+G', unstack)}
           {item('Auto-stack by capture time…', '', auto)}
+          {item('Stack RAW + JPEG pairs', '', pairs)}
           {item('Expand all stacks', '', expandAll)}
           {item('Collapse all stacks', '', collapseAll)}
         </div>

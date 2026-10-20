@@ -514,6 +514,17 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
     refresh()
   }
 
+  /** Stacks RAW+JPEG twins among the selected photos, or among all photos shown (e.g. ones imported unstacked). */
+  async function stackPairsShown() {
+    const picked = targets()
+    const ids = picked.length > 1 ? picked : (await catalog.queryPhotos({ ...shownQuery, ungrouped: true })).map((r) => r.id)
+    const touched = await catalog.stackRawJpegPairs(ids)
+    sidecars.schedule(touched)
+    refresh()
+    const stacks = new Set(touched).size / 2
+    showNotice(stacks ? `Stacked ${Math.round(stacks).toLocaleString()} RAW + JPEG ${Math.round(stacks) === 1 ? 'pair' : 'pairs'}.` : 'No unstacked RAW + JPEG pairs found.')
+  }
+
   async function unstackSelected() {
     sidecars.schedule(await catalog.unstack(targets()))
     refresh()
@@ -952,6 +963,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
                 stack: () => void stackSelected(),
                 unstack: () => void unstackSelected(),
                 auto: () => setAutoStacking(true),
+                pairs: () => void stackPairsShown(),
                 expandAll: () => void catalog.setStackExpanded(null, true).then(refresh),
                 collapseAll: () => void catalog.setStackExpanded(null, false).then(refresh),
                 canStack: targets().length > 1,

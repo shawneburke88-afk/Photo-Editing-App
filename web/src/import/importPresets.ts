@@ -11,6 +11,8 @@ export interface ImportPresetData {
   backup: boolean
   /** Also import JPEGs shot alongside RAW files. */
   includePaired: boolean
+  /** Stack those JPEGs under their RAWs (missing in presets saved before the option: on). */
+  stackPairs?: boolean
   /** Develop preset for new photos ('' = none). */
   developPreset: string
   /** Metadata preset for new photos ('' = none). */
