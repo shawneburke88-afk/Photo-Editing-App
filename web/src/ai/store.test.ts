@@ -60,7 +60,7 @@ async function fixture() {
 }
 
 describe('the pinned manifest (web/models/manifest.json)', () => {
-  it('is well formed, names the model, licence and training data, and is not pinned yet (no invented hashes)', () => {
+  it('is well formed, names the model, licence and training data, and is pinned all or nothing (no invented hashes)', () => {
     const m = parseManifest(shipped)
     const d = m.models[0]
     expect(d.id).toBe('depth-anything-v2-small')
@@ -68,12 +68,22 @@ describe('the pinned manifest (web/models/manifest.json)', () => {
     expect(d.trainingData).toMatch(/SA-1B/)
     expect(d.trainingData).toMatch(/Virtual KITTI 2/)
     expect(d.trainingData).toMatch(/non-commercial or research-only/)
-    expect(d.files.map((f) => [f.variant, f.bytes])).toEqual([['fp16', 49642442], ['fp32', 99060839]])
-    // Until the owner pins a revision and its hashes, nothing is offered or deployed.
-    expect(d.source.revision).toBeNull()
-    expect(d.files.every((f) => f.sha256 === null)).toBe(true)
-    expect(modelPinned(d)).toBe(false)
-    expect(chooseFile(d, { f16: true })).toBeNull()
+    expect(d.files.map((f) => [f.variant, f.path])).toEqual([['fp16', 'onnx/model_fp16.onnx'], ['fp32', 'onnx/model.onnx']])
+    if (d.source.revision === null) {
+      // Until the owner pins a revision and its hashes, nothing is offered or deployed. The sizes are Cowork's reading
+      // of the Git LFS pointers on main.
+      expect(d.files.map((f) => f.bytes)).toEqual([49642442, 99060839])
+      expect(d.files.every((f) => f.sha256 === null)).toBe(true)
+      expect(modelPinned(d)).toBe(false)
+      expect(chooseFile(d, { f16: true })).toBeNull()
+    } else {
+      // Pinned by `scripts/models.mjs pin` (the "AI models" workflow; Part 24): a commit, and every file's size and
+      // SHA-256 from its Git LFS pointer at that commit, checked against the download.
+      expect(d.source.revision).toMatch(/^[0-9a-f]{40}$/)
+      for (const f of d.files) expect(f.sha256).toMatch(/^[0-9a-f]{64}$/)
+      expect(chooseFile(d, { f16: true })?.variant).toBe('fp16')
+      expect(chooseFile(d, { f16: false })?.variant).toBe('fp32')
+    }
     // Each file is under GitHub's 100 MiB file size limit, and the pair far under Pages' 1 GB site limit.
     for (const f of d.files) expect(f.bytes).toBeLessThan(100 * 2 ** 20)
   })
@@ -185,7 +195,8 @@ describe('the on-device store', () => {
 
   it('an unpinned model can’t be installed (and nothing is fetched)', async () => {
     const { info, fetchMock, env } = await fixture()
-    const m = parseManifest(shipped).models[0]
+    const shippedModel = parseManifest(shipped).models[0]
+    const m: ModelEntry = { ...shippedModel, source: { ...shippedModel.source, revision: null }, files: shippedModel.files.map((f) => ({ ...f, sha256: null })) }
     await expect(install(info, m, m.files[0], () => {}, undefined, env)).rejects.toThrow(/isn’t available/)
     expect(fetchMock).not.toHaveBeenCalled()
   })

@@ -8,6 +8,9 @@
 //       --from DIR reads the files from DIR (same layout as under dist/models/) instead of downloading: a dry run.
 //   node scripts/models.mjs verify --dir DIR
 //       Checks files laid out as under dist/models/ against the manifest (no network).
+//   node scripts/models.mjs show [--markdown]
+//       Prints each model's source commit and files (sizes and SHA-256), as plain lines or a Markdown table (the
+//       "AI models" workflow's log and summary).
 //   node scripts/models.mjs pin [--revision COMMIT] [--save DIR]
 //       For the owner, on a machine that can reach huggingface.co: takes the repository's current commit (or the one
 //       given), reads each file's Git LFS pointer (its sha256 and size) at that commit, downloads the file, checks it
@@ -140,7 +143,23 @@ export function verifyModels(manifest, dir) {
   return bad
 }
 
-async function pin(manifest, revision, save) {
+/** The manifest's pins, as plain lines or Markdown. */
+export function describePins(manifest, markdown = false) {
+  const out = []
+  for (const m of manifest.models) {
+    if (markdown) {
+      out.push(`\`${m.source.repo}\` @ \`${m.source.revision ?? 'not pinned'}\``, '', '| file | path | bytes | SHA-256 |', '|---|---|---|---|')
+      for (const f of m.files) out.push(`| ${f.variant} | \`${f.path}\` | ${f.bytes} | ${f.sha256 ? `\`${f.sha256}\`` : 'not pinned'} |`)
+      out.push('')
+    } else {
+      out.push(`${m.id}: ${m.source.repo} @ ${m.source.revision ?? 'not pinned'}`)
+      for (const f of m.files) out.push(`  ${f.variant} ${f.path} ${f.bytes} bytes sha256 ${f.sha256 ?? 'not pinned'}`)
+    }
+  }
+  return out.join('\n')
+}
+
+async function pin(manifest, revision, save, path = MANIFEST) {
   for (const m of manifest.models) {
     let rev = revision
     if (!rev) {
@@ -171,12 +190,13 @@ async function pin(manifest, revision, save) {
     }
     m.source.revision = rev
   }
-  writeFileSync(MANIFEST, `${JSON.stringify(manifest, null, 2)}\n`)
-  console.log(`wrote ${MANIFEST}`)
+  writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`)
+  console.log(`wrote ${path}`)
 }
 
 async function main(args) {
-  const manifest = JSON.parse(readFileSync(arg(args, '--manifest') ?? MANIFEST, 'utf8'))
+  const path = arg(args, '--manifest') ?? MANIFEST
+  const manifest = JSON.parse(readFileSync(path, 'utf8'))
   const cmd = args[0]
   if (cmd === 'fetch') {
     const out = arg(args, '--out')
@@ -186,10 +206,12 @@ async function main(args) {
     const dir = arg(args, '--dir')
     if (!dir) throw new Error('verify needs --dir DIR')
     if (verifyModels(manifest, dir)) process.exit(1)
+  } else if (cmd === 'show') {
+    console.log(describePins(manifest, args.includes('--markdown')))
   } else if (cmd === 'pin') {
-    await pin(manifest, arg(args, '--revision'), arg(args, '--save'))
+    await pin(manifest, arg(args, '--revision'), arg(args, '--save'), path)
   } else {
-    throw new Error('usage: models.mjs fetch --out DIR [--from DIR] | verify --dir DIR | pin [--revision COMMIT] [--save DIR]')
+    throw new Error('usage: models.mjs fetch --out DIR [--from DIR] | verify --dir DIR | show [--markdown] | pin [--revision COMMIT] [--save DIR]')
   }
 }
 

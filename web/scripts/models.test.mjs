@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { check, fetchModels, folderBytes, parsePointer, plan, sha256, verifyModels } from './models.mjs'
+import { check, describePins, fetchModels, folderBytes, parsePointer, plan, sha256, verifyModels } from './models.mjs'
 
 const REV = 'feedface'.repeat(5)
 const fp32 = Buffer.from('a stand-in, not a model '.repeat(40))
@@ -26,6 +26,13 @@ describe('scripts/models.mjs', () => {
     expect(check(fp32, f)).toBeNull()
     expect(check(fp32.subarray(1), f)).toMatch(/bytes/)
     expect(check(Buffer.from(fp32).fill(1, 0, 1), f)).toMatch(/SHA-256/)
+  })
+
+  it('describes the pins for the workflow log and summary', () => {
+    const lines = describePins(manifest()).split('\n')
+    expect(lines[0]).toBe(`depth-anything-v2-small: onnx-community/depth-anything-v2-small @ ${REV}`)
+    expect(lines[2]).toBe('  fp16 onnx/model_fp16.onnx 10 bytes sha256 not pinned')
+    expect(describePins(manifest(), true)).toContain(`| fp32 | \`onnx/model.onnx\` | ${fp32.length} | \`${sha256(fp32)}\` |`)
   })
 
   it('reads Git LFS pointers', () => {
