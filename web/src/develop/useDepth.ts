@@ -8,6 +8,7 @@ import { chooseFile, modelPinned, type ModelEntry, type ModelFile, type Variant 
 import { AI, depthModel, providerFor } from '../ai/models'
 import { runtimeMessage } from '../ai/runtime'
 import { installed, type InstalledModel } from '../ai/store'
+import { diagnostics } from '../diagnostics/recorder'
 import type { DepthShape } from '../engine/develop/masks'
 import { gpuGate } from '../engine/gpu/gate'
 
@@ -67,8 +68,10 @@ export function useDepth(renderAsShot: (input: ModelEntry['input']) => Promise<A
         if (!rec) return null
       }
       setStatus(p.provider === 'wasm' ? 'Computing the depth map on the CPU (once for this photo; no WebGPU here, so it takes longer)…' : 'Computing the depth map (once for this photo)…')
+      const r0 = performance.now()
       const shot = await renderAsShot(model.input)
       if (!shot) return null
+      const renderMs = performance.now() - r0
       // The model's GPU work counts as Develop's (Part 14's foreground gate): background work (Export, the batch
       // developer) waits for it, up to the gate's limit, as it waits for Develop's drawings.
       const provider = p.provider
@@ -76,9 +79,12 @@ export function useDepth(renderAsShot: (input: ModelEntry['input']) => Promise<A
       const res = await gpuGate.foreground(() => computeDepth(model, shot, provider, version))
       const run: LastRun = { inferMs: res.inferMs, totalMs: res.totalMs, provider: res.provider, variant: rec.variant, size: res.size, bytes: res.depth.raster.data.length }
       depthTimings.push(run)
+      // Diagnostics (PHASE3.md "Diagnostics"): the run's durations and where it ran; no pixels or names.
+      diagnostics.log('ai-depth', { model: model.id, variant: rec.variant, provider: res.provider, size: res.size, renderMs: Math.round(renderMs), loadMs: Math.round(res.loadMs), inferMs: Math.round(res.inferMs), totalMs: Math.round(res.totalMs), bytes: run.bytes })
       console.info(`Depth map: ${res.size[0]} × ${res.size[1]}, model ${Math.round(res.inferMs)} ms, total ${Math.round(res.totalMs)} ms (${res.provider}, ${rec.variant}), ${res.depth.raster.data.length} characters in the edit`)
       return res.depth
     } catch (e) {
+      diagnostics.log('ai-depth', { error: e instanceof Error ? `${e.name}: ${e.message}`.slice(0, 300) : String(e).slice(0, 300) })
       if (e instanceof Fp16InvalidError) {
         setError(`${e.message} The fp32 file works on every GPU: download it instead (Settings → AI models, Remove, then Download), or try again to be asked.`)
         // The next attempt asks for the fp32 file.

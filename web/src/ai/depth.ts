@@ -142,7 +142,8 @@ export class Fp16InvalidError extends Error {
 
 export interface DepthResult {
   depth: Omit<DepthShape, 'range'> & { raster: RasterData }
-  /** Milliseconds: the model run alone, and everything after the rendering. */
+  /** Milliseconds: loading the model into the runtime (0 when it was already loaded), the model run alone, and everything after the rendering. */
+  loadMs: number
   inferMs: number
   totalMs: number
   provider: Provider
@@ -153,6 +154,7 @@ export interface DepthResult {
 export async function computeDepth(m: ModelEntry, shot: AsShot, provider: Provider, runtimeVersion: string): Promise<DepthResult> {
   const t0 = performance.now()
   const fixed = await prepareModel(m, provider)
+  const loadMs = performance.now() - t0
   const [mw, mh] = modelSize(shot.width, shot.height, m.input, fixed)
   const tensor = toTensor(shot.rgba, shot.width, shot.height, mw, mh, m.input.mean, m.input.std)
   const r = await runModel(m, tensor, [1, 3, mh, mw], provider)
@@ -176,6 +178,7 @@ export async function computeDepth(m: ModelEntry, shot: AsShot, provider: Provid
       runtime: `onnxruntime-web ${runtimeVersion} ${r.provider}`,
       raster,
     },
+    loadMs,
     inferMs: r.ms,
     totalMs: performance.now() - t0,
     provider: r.provider,
