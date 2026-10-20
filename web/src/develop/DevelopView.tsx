@@ -80,6 +80,9 @@ import { cleanName, makeSnapshot, sortSnapshots, uniqueName, type Snapshot } fro
 import { snapshotsChanged } from './snapshotStore'
 import { useMasking } from './useMasking'
 import { MaskOverlay } from './MaskOverlay'
+import { diagnostics } from '../diagnostics/recorder'
+import { PhotoNumbers, photoSummary, settingsChange } from '../diagnostics/anon'
+import { adapterName, looksIntegrated } from '../diagnostics/pcinfo'
 import { MasksPanel } from './MasksPanel'
 import { MASK_BRUSH_SIZE, OVERLAY_COLOURS } from './maskUi'
 import { presetMasks, withMasksList, type LocalMask } from '../engine/develop/masks'
@@ -102,6 +105,10 @@ interface Props {
 type Status = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string }
 
 let decoder: RawDecoder | null = null
+/** Photos as the diagnostics log names them: a number per session (diagnostics/anon.ts). */
+const photoNumbers = new PhotoNumbers()
+/** Adapters whose "integrated graphics" notice was dismissed (remembered in this browser). */
+const ADAPTER_NOTICE_KEY = 'lightbench.adapterNoticeDismissed'
 
 const sameStage = (a: RawStageOptions | null, b: RawStageOptions) =>
   !!a && a.highlightMode === b.highlightMode && a.highlightClip === b.highlightClip && a.demosaic === b.demosaic &&
@@ -304,6 +311,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [engineGen, setEngineGen] = useState(0)
   /** A short notice after the engine was made again. */
   const [gpuNotice, setGpuNotice] = useState<string | null>(null)
+  /** The adapter's name when it looks like integrated graphics and its notice wasn't dismissed. */
+  const [adapterNotice, setAdapterNotice] = useState<string | null>(null)
   /** The photo decoded last, kept to upload it again to a new engine after a lost device. */
   const decodedRef = useRef<{ id: number; decoded: DecodeResult } | null>(null)
   /** An engine is being made (the photo's load waits for it). */
@@ -427,10 +436,22 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         }
         engineRef.current = e
         engineCreating.current = false
+        if (engineGen) diagnostics.log('engine-recovery', { stage: 'new engine', restored: !!restored })
+        if (looksIntegrated(e.adapter)) {
+          const name = adapterName(e.adapter)
+          let dismissed = ''
+          try {
+            dismissed = localStorage.getItem(ADAPTER_NOTICE_KEY) ?? ''
+          } catch {
+            // Storage blocked: shown each time.
+          }
+          if (dismissed !== name) setAdapterNotice(name)
+        }
         stageRef.current?.prepend(e.canvas)
         stopLost = e.onLost(() => {
           if (!alive) return
           setGpuNotice('The graphics card was reset, so Develop restarted it. Your edit is safe.')
+          diagnostics.log('engine-recovery', { stage: 'device lost' })
           setEngineGen((g) => g + 1)
         })
         setEngineError('')
@@ -545,6 +566,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       if (stale()) return
       builtStage.current = opts
       setTiming({ stage: ms })
+      if (diagnostics.enabled) {
+        const px = r.sensor ?? r.rgb
+        diagnostics.log('photo', { ...photoSummary(photoNumbers.number(id), { make: r.info.make, model: r.info.model, raw: kind !== 'rgb', width: px?.width, height: px?.height }), rawStageMs: Math.round(ms) })
+      }
       setInfo(sensorInfo)
       setHistory(h)
       setStatus({ kind: 'ready' })
@@ -2018,6 +2043,24 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     return u >= 0 && u < 1 && v >= 0 && v < 1 ? [u, v] : null
   }
 
+  // ---- diagnostics (off by default; Settings → Diagnostics): history steps with what changed, the view's zoom and
+  // the tools open. Nothing is computed when it is off.
+  const loggedSettings = useRef<{ id: number; s: DevelopSettings } | null>(null)
+  useEffect(() => {
+    if (!history || !diagnostics.enabled) return
+    const step = history.steps[history.index]
+    const prev = loggedSettings.current
+    loggedSettings.current = { id, s: step.settings }
+    if (!prev || prev.id !== id) return
+    if (prev.s !== step.settings) diagnostics.log('edit', { step: step.label, index: history.index, changes: settingsChange(prev.s, step.settings) })
+  }, [history, id])
+  useEffect(() => {
+    diagnostics.log('view', { zoom: view.zoom })
+  }, [view.zoom])
+  useEffect(() => {
+    diagnostics.log('tools', { wbPicker: wbPick, crop: !!draft, guided: guiding, remove: removing, masks: masking.active, before })
+  }, [wbPick, draft, guiding, removing, masking.active, before])
+
   // ---- white balance picker (darktable temperature.c spot picker + a Lightroom-style loupe)
   const LOUPE_PIXELS = 15
   const LOUPE_ZOOM = 10
@@ -2481,6 +2524,26 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           {wbPick && loupe && <WbLoupe x={loupe.x} y={loupe.y} image={loupe.image} zoom={LOUPE_ZOOM} />}
           {picking && <div className="dbadge pick">Click a photo in the filmstrip to match its look · Esc to cancel</div>}
           {gpuNotice && <div className="dbadge gpu-notice" role="status">{gpuNotice}</div>}
+          {adapterNotice && (
+            <div className="adapter-notice" role="status">
+              <span>
+                LightBench is running on {adapterNotice}. If this computer has a faster graphics card, set your browser to “High performance” in Windows Settings → System → Display → Graphics, then restart the browser.
+              </span>
+              <button
+                className="button small"
+                onClick={() => {
+                  try {
+                    localStorage.setItem(ADAPTER_NOTICE_KEY, adapterNotice)
+                  } catch {
+                    // Storage blocked: hidden for this visit.
+                  }
+                  setAdapterNotice(null)
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
           {proof.settings.on && proof.source && (
             <div className="dbadge proof" aria-live="polite">
               {proof.draw ? `Proof preview: ${proof.source.label} · ${INTENT_LABELS[proof.settings.intent]}${proof.settings.simulatePaper ? ' · paper & ink' : ''}` : 'Building the proof…'}

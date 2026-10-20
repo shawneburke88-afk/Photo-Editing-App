@@ -26,6 +26,7 @@ import { planSpots, pickRegion } from '../retouch/plan'
 import type { RetouchReply, RetouchRequest } from '../retouch/retouch.worker'
 import { tileRect, tilesOf, type HalfTile } from '../retouch/tiles'
 import { clipRect, spotBounds, spotPixels } from '../develop/spots'
+import { Retirement } from './retire'
 
 export interface RetouchHost {
   device: GPUDevice
@@ -72,8 +73,8 @@ export class RetouchStage {
   private current: { tex: GPUTexture; scene: GPUTexture; key: string } | null = null
   private queue: Job[] = []
   private running = false
-  private leases = 0
-  private retired: GPUTexture[] = []
+  /** Drawings using a texture of this stage, and replaced textures waiting for them (retire.ts). */
+  private readonly retirement = new Retirement()
   private readonly dead = new WeakSet<GPUTexture>()
   private readonly listeners = new Set<(p: RetouchProgress) => void>()
   /** The spots last asked for (kept when the scene is rebuilt). */
@@ -131,17 +132,8 @@ export class RetouchStage {
     if (wait && !ready()) throw new Error('The photo changed while its spots were being applied')
     const c = this.current && this.current.scene === scene ? this.current : null
     const tex = c ? c.tex : scene
-    this.leases++
-    let done = false
-    const release = () => {
-      if (done) return
-      done = true
-      clearTimeout(timer)
-      this.leases--
-      this.flushRetired()
-    }
-    // A drawing that failed before releasing doesn't keep old textures forever.
-    const timer = setTimeout(release, 20000)
+    // Ends by itself after 20 s: a drawing that failed before releasing doesn't keep old textures forever.
+    const release = this.retirement.lease()
     return { tex, key: c ? c.key : '', release }
   }
 
@@ -349,20 +341,12 @@ export class RetouchStage {
   }
 
   private retire(tex: GPUTexture) {
-    this.retired.push(tex)
-    this.flushRetired()
-  }
-
-  private flushRetired() {
-    if (this.leases > 0) return
-    for (const t of this.retired) t.destroy()
-    this.retired = []
+    this.retirement.retire(tex)
   }
 
   destroy() {
     this.reset()
-    this.leases = 0
-    this.flushRetired()
+    this.retirement.destroyAll()
     this.worker?.terminate()
     this.worker = null
   }

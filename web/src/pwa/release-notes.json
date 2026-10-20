@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.6.8",
+    "date": "2026-10-20",
+    "newFeatures": [
+      "Settings → Diagnostics: turn on \"Record diagnostics\" to keep a log of what you do and how the app and graphics card respond. The log survives a crash or power-off; use \"Export diagnostics…\" to save it and share it. It never includes file names, folders or photos, and nothing is recorded while it's off.",
+      "Settings → Diagnostics shows which graphics card LightBench is using. If it's running on integrated Intel graphics, Develop shows a one-time tip on how to switch your browser to the faster graphics card in Windows."
+    ],
+    "bugFixes": [
+      "The white balance picker no longer reprocesses the whole full-size photo just to draw its magnifier, which made it slow and used a lot of graphics memory. Picked values are unchanged.",
+      "Images replaced while you edit are now freed as soon as the drawings using them finish, instead of waiting for a moment when nothing is drawing."
+    ]
+  },
+  {
     "version": "0.6.7",
     "date": "2026-10-19",
     "newFeatures": [
