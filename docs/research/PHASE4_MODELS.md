@@ -346,11 +346,12 @@ Storage (`ai-models`, never precached by the service worker), works offline afte
 models. One runtime, **ONNX Runtime Web** (MIT, pinned 1.30.0, its native WebGPU provider in a worker), serves it and is
 meant to serve the later models. Devices with `shader-f16` get the fp16 file, others fp32 (F9 below). The manifest is
 not pinned yet: huggingface.co was blocked from the build machine, so the owner pins it with `node web/scripts/models.mjs
-pin` (Part 24, "What the owner must supply"). Owner's choice (2026-10-19): it is pinned and checked by the **"AI models" GitHub
-Action** (`.github/workflows/ai-models.yml`, run by hand from the Actions tab with "Use workflow from" the branch with
-the AI code). The Action runs `pin`, then a real-model check in Node through the app's own preprocessing
-(`web/scripts/models-check.mjs`), then commits the manifest (PHASE3.md Part 24, "Pinning and checking the models"). Pages' limits: 1 GB per site (the two DA-V2 files are about 149 MB), 100 GB
-a month soft bandwidth (about 800 fp32 or 1,300 fp16 first installs a month, runtime included: arithmetic).
+pin` (Part 24, "What the owner must supply"). Owner's choice (2026-10-19): it is pinned and checked by the **"AI
+models" GitHub Action** (`.github/workflows/ai-models.yml`, run by hand from the Actions tab with "Use workflow from" the
+branch with the AI code). The Action runs `pin`, then a real-model check in Node through the app's own preprocessing
+(`web/scripts/models-check.mjs`), then commits the manifest (PHASE3.md Part 24, "Pinning and checking the models").
+Pages' limits: 1 GB per site (the two DA-V2 files are about 149 MB), 100 GB a month soft bandwidth (about 800 fp32 or
+1,300 fp16 first installs a month, runtime included: arithmetic).
 
 **The plan (before the decision):** download on first use from LightBench's own pinned copy, the way Lensfun data is handled:
 - not precached by the service worker;
