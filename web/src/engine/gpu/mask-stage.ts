@@ -41,8 +41,9 @@ const ENTRIES: Entry[] = ['component', 'invertMask', 'guideInit', 'down', 'downG
 const TILE_SIZE = 208
 const PASS_SIZE = 176
 const SLOT = 256
-/** Bytes per pixel of the planes the display shader reads (three vec4f). */
+/** Bytes per pixel of the planes the display shader reads (three vec4f; four with Texture, Clarity, Dehaze or Glow). */
 export const PLANE_BYTES = 48
+export const planeStride = (p: PreparedMasks) => (p.spatial ? 4 : 3)
 
 interface Op {
   entry: Entry
@@ -102,28 +103,30 @@ export class MaskStage {
     this.dummyTex = device.createTexture({ size: [1, 1], format: 'r16float', usage: GPUTextureUsage.TEXTURE_BINDING })
   }
 
-  private buffer(name: 'alpha' | 'guide' | 'lo0' | 'lo1' | 'planes', bytes: number): GPUBuffer {
+  private buffer(name: 'alpha' | 'guide' | 'lo0' | 'lo1' | 'planes', bytes: number, temps: (GPUBuffer | GPUTexture)[]): GPUBuffer {
     const need = Math.max(64, Math.ceil(bytes / 256) * 256)
     const b = this.bufs[name]
     if (b && b.size >= need) return b
-    // Destroying is deferred by WebGPU until work already submitted with it is done.
-    b?.destroy()
+    // Work recorded with the old one may not be submitted yet (Part 25: a drawing's Glow source draws a smaller copy of
+    // it first): it is destroyed with the drawing's temporaries.
+    if (b) temps.push(b)
     const nb = this.device.createBuffer({ label: `mask:${name}`, size: need, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC })
     this.bufs[name] = nb
     return nb
   }
 
-  private brushTarget(w: number, h: number): GPUTexture {
+  private brushTarget(w: number, h: number, temps: (GPUBuffer | GPUTexture)[]): GPUTexture {
     const t = this.brushTex
     if (t && t.width >= w && t.height >= h) return t
-    t?.destroy()
+    if (t) temps.push(t)
     this.brushTex = this.device.createTexture({ label: 'mask:brush', size: [Math.max(w, t?.width ?? 0), Math.max(h, t?.height ?? 0)], format: 'r16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING })
     return this.brushTex
   }
 
   /**
    * Encodes the masks over `region` (whole target pixels) into the planes buffer it returns (row-major over the region,
-   * three vec4f per pixel). Temporary buffers go into `temps` (destroy them once the work is submitted).
+   * three vec4f per pixel, four when `planeStride` says so). Temporary buffers go into `temps` (destroy them once the work
+   * is submitted).
    */
   encode(enc: GPUCommandEncoder, draw: MaskDraw, region: PxRegion, temps: (GPUBuffer | GPUTexture)[]): GPUBuffer {
     this.setup()
@@ -143,12 +146,14 @@ export class MaskStage {
     const ww = region.x1 + margin - ox
     const wh = region.y1 + margin - oy
     const n = ww * wh
-    const planes = this.buffer('planes', rw * rh * PLANE_BYTES)
-    enc.clearBuffer(planes, 0, Math.ceil((rw * rh * PLANE_BYTES) / 4) * 4)
+    const stride = planeStride(draw.prepared)
+    const bytes = rw * rh * 16 * stride
+    const planes = this.buffer('planes', bytes, temps)
+    enc.clearBuffer(planes, 0, Math.ceil(bytes / 4) * 4)
     if (!masks.length) return planes
-    const alpha = this.buffer('alpha', n * 4)
+    const alpha = this.buffer('alpha', n * 4, temps)
     const needGuide = masks.some((m) => m.guide)
-    const guide = needGuide ? this.buffer('guide', n * 4) : null
+    const guide = needGuide ? this.buffer('guide', n * 4, temps) : null
     let loPixels = 0
     for (const m of masks) {
       const f = featherPlan(m.sigma)
@@ -156,9 +161,9 @@ export class MaskStage {
       if (f) loPixels = Math.max(loPixels, Math.ceil(ww / f.d) * Math.ceil(wh / f.d))
       if (r) loPixels = Math.max(loPixels, Math.ceil(ww / r.d) * Math.ceil(wh / r.d))
     }
-    const lo0 = loPixels ? this.buffer('lo0', loPixels * 16) : null
-    const lo1 = loPixels ? this.buffer('lo1', loPixels * 16) : null
-    const brush = masks.some((m) => m.components.some((c) => c.dabs)) ? this.brushTarget(ww, wh) : null
+    const lo0 = loPixels ? this.buffer('lo0', loPixels * 16, temps) : null
+    const lo1 = loPixels ? this.buffer('lo1', loPixels * 16, temps) : null
+    const brush = masks.some((m) => m.components.some((c) => c.dabs)) ? this.brushTarget(ww, wh, temps) : null
 
     // The tile's uniform.
     const tile = new ArrayBuffer(TILE_SIZE)
@@ -166,7 +171,7 @@ export class MaskStage {
     const tu = new Uint32Array(tile)
     const r = draw.rect
     tf.set([ox, oy, r.x, r.y, r.w, r.h, draw.exposure, draw.lod], 0)
-    tu.set([ww, wh, region.x0 - ox, region.y0 - oy, rw, rh, 0, 0], 8)
+    tu.set([ww, wh, region.x0 - ox, region.y0 - oy, rw, rh, stride, 0], 8)
     const row = (m: Mat3, at: number) => tf.set([m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0], at)
     row(draw.texMap, 16)
     row(draw.fix, 28)

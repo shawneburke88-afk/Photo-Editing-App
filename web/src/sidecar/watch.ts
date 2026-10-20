@@ -166,7 +166,7 @@ export async function readChanges(ids: number[]): Promise<Answer> {
       snapshotsChanged.emit(id)
     }
     await catalog.recordSidecar(id, located.file.lastModified, located.file.size, JSON.stringify(p.record))
-    if (p.develop || p.geometry || p.toneCurve) {
+    if (p.develop || p.geometry || p.toneCurve || p.effects) {
       // LightBench settings from another LightBench are pasted whole; Lightroom's crop, orientation, Transform and tone
       // curve are then applied on top (its Upright solved again on the photo).
       const kind = isRawFile(src.photo.fileName) ? 'raw' : 'rgb'
@@ -178,6 +178,7 @@ export async function readChanges(ids: number[]): Promise<Answer> {
           : { settings: normalizeSettings(null, kind), keys: [], rerunAuto: false, sourceKind: kind, sourceName: located.name },
         ...(p.geometry ? { lightroom: { [id]: p.geometry } } : {}),
         ...(p.toneCurve ? { lightroomTone: { [id]: p.toneCurve } } : {}),
+        ...(p.effects ? { lightroomFx: { [id]: { key: p.effects } } } : {}),
       })
     }
     done.push(id)

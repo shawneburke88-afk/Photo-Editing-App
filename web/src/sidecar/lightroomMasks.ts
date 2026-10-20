@@ -82,9 +82,14 @@ const LOCAL_FIELDS: [string, keyof LocalAdjust, number][] = [
   ['LocalSaturation', 'saturation', 100],
   ['LocalTemperature', 'temperature', 100],
   ['LocalTint', 'tint', 100],
+  // Part 25: LocalTexture and LocalDehaze are ExifTool's names (Cowork, B_MASKING 4a); LocalClarity2012 is assumed by analogy
+  // with the global Clarity2012 (UNVERIFIED). Their scale is the same guess as the others'.
+  ['LocalTexture', 'texture', 100],
+  ['LocalClarity2012', 'clarity', 100],
+  ['LocalDehaze', 'dehaze', 100],
 ]
 /** Local sliders LightBench doesn't have yet: their presence is reported. */
-const LATER_FIELDS = ['LocalTexture', 'LocalClarity2012', 'LocalDehaze', 'LocalSharpness', 'LocalLuminanceNoise', 'LocalMoire', 'LocalDefringe', 'LocalHue', 'LocalToningHue', 'LocalToningSaturation']
+const LATER_FIELDS = ['LocalSharpness', 'LocalLuminanceNoise', 'LocalMoire', 'LocalDefringe', 'LocalHue', 'LocalToningHue', 'LocalToningSaturation']
 
 /** GUESS (LightCraft): MaskBlendMode 0 add, 1 subtract, 2 intersect. ExifTool doesn't decode it. */
 const BLEND: Record<number, MaskOp> = { 0: 'add', 1: 'subtract', 2: 'intersect' }
@@ -113,7 +118,7 @@ export function masksFromLightroom(corrections: { [k: string]: XmpValue }[], sto
       const v = num(c[field])
       if (v !== undefined && v !== 0) adjust[key] = Math.round(v * scale * 100) / 100
     }
-    if (LATER_FIELDS.some((f) => (num(c[f]) ?? 0) !== 0)) notes.add(`${name}: sliders LightBench doesn’t have in masks yet (Texture, Clarity, Dehaze, …) were left out.`)
+    if (LATER_FIELDS.some((f) => (num(c[f]) ?? 0) !== 0)) notes.add(`${name}: sliders LightBench doesn’t have in masks yet (Sharpness, Noise, Moiré, …) were left out.`)
     const components: MaskComponent[] = []
     let dabs = 0
     list(c.CorrectionMasks).forEach((mv, k) => {

@@ -7,6 +7,7 @@ import { DEFAULT_COLOUR_MIXER, withColourMixer, withPoints } from '../engine/dev
 import { DEFAULT_GRADING, withColourGrading } from '../engine/develop/colour-grading'
 import { DEFAULT_DETAIL, RAW_DETAIL, RAW_DETAIL_HIGH_ISO, withDetail } from '../engine/detail/settings'
 import { DEFAULT_LENS, LEGACY_LENS } from '../engine/lens/correction'
+import { DEFAULT_GLOW, DEFAULT_GRAIN, DEFAULT_VIGNETTE, withEffects } from '../engine/develop/effects'
 import { applyEyes, eyeShown, eyeTitle, hiddenNames, hideSections, NO_GROUP_EYES, SECTIONS, wbHidden, withoutBasic, type SectionContext, type SectionId } from './sectionEyes'
 
 const raw: SectionContext = { defaults: defaultsFor('raw', 200), lensApplied: true }
@@ -43,6 +44,15 @@ const edited: DevelopSettings = (() => {
   s = withColourMixer(s, { ...DEFAULT_COLOUR_MIXER, hue: [10, 0, 0, 0, 0, 0, 0, 0], saturation: [0, 30, 0, 0, 0, -20, 0, 0], points: [point], advanced: { guided: true, threshold: 0.2, contrast: 0, whiteLevel: 1, placement: 0 } })
   s = withColourGrading(s, { ...DEFAULT_GRADING, shadows: { hue: 200, sat: 40, lum: 0 }, midtones: { hue: 120, sat: 0, lum: 10 }, highlights: { hue: 40, sat: 30, lum: 0 }, global: { hue: 30, sat: 10, lum: 0 }, blending: 70, balance: -20 })
   s = withDetail(s, { sharpen: { amount: 80, radius: 1.4, detail: 40, masking: 20 }, noise: { ...DEFAULT_DETAIL.noise, luminance: 30, color: 25 } })
+  s = withEffects(s, {
+    texture: 20,
+    clarity: -15,
+    dehaze: 30,
+    dehazeDistance: 0.5,
+    vignette: { ...DEFAULT_VIGNETTE, amount: -40 },
+    grain: { ...DEFAULT_GRAIN, amount: 30, seed: 77 },
+    glow: { ...DEFAULT_GLOW, amount: 25, style: 'halation' },
+  })
   return { ...s, spots: [{ id: 's1', mode: 'remove', points: [[0.3, 0.4]], size: 0.01, feather: 0.5, opacity: 1, offset: [0.05, 0], seed: 1 }] }
 })()
 
@@ -59,7 +69,7 @@ const reset: Record<SectionId, (s: DevelopSettings, c: SectionContext) => Develo
   'crop.lens': (s) => ({ ...s, lens: LEGACY_LENS }),
   'basic.wb': (s, c) => ({ ...s, whiteBalance: c.defaults.whiteBalance }),
   'basic.tone': (s) => ({ ...s, exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 }),
-  'basic.presence': (s) => ({ ...s, vibrance: 0, saturation: 0 }),
+  'basic.presence': (s) => withEffects({ ...s, vibrance: 0, saturation: 0 }, { ...s.effects, texture: undefined, clarity: undefined, dehaze: undefined }),
   'curve.regions': (s) => withToneCurve(s, { ...s.toneCurve!, regions: DEFAULT_TONE_CURVE.regions }),
   'curve.rgb': (s) => withToneCurve(s, { ...s.toneCurve!, rgb: LINEAR }),
   'curve.red': (s) => withToneCurve(s, { ...s.toneCurve!, red: LINEAR }),
@@ -73,6 +83,9 @@ const reset: Record<SectionId, (s: DevelopSettings, c: SectionContext) => Develo
   'grading.global': (s) => withColourGrading(s, { ...s.colourGrading!, global: { hue: 0, sat: 0, lum: 0 } }),
   'detail.sharpen': (s, c) => withDetail(s, { ...s.detail!, sharpen: c.defaults.detail!.sharpen }),
   'detail.noise': (s) => withDetail(s, { ...s.detail!, noise: DEFAULT_DETAIL.noise }),
+  'effects.vignette': (s) => withEffects(s, { ...s.effects, vignette: undefined }),
+  'effects.grain': (s) => withEffects(s, { ...s.effects, grain: undefined }),
+  'effects.glow': (s) => withEffects(s, { ...s.effects, glow: undefined }),
 }
 
 describe('section eyes: each section is set to what its Reset gives', () => {
@@ -101,6 +114,9 @@ describe('section eyes: each section is set to what its Reset gives', () => {
     expect(hide('crop.transform').geometry.crop).toEqual(edited.geometry.crop)
     expect(hide('detail.sharpen').detail!.noise).toEqual(edited.detail!.noise)
     expect(hide('detail.noise').detail!.sharpen).toEqual(edited.detail!.sharpen)
+    // Presence's eye hides Texture, Clarity and Dehaze, not their darktable settings or the Effects group.
+    expect(hide('basic.presence').effects).toEqual({ dehazeDistance: 0.5, vignette: edited.effects!.vignette, grain: edited.effects!.grain, glow: edited.effects!.glow })
+    expect(hide('effects.grain').effects!.vignette).toEqual(edited.effects!.vignette)
   })
 
   it('all of a group\'s sections hidden equal the group at its defaults (curve, mixer, wheels)', () => {
@@ -167,6 +183,9 @@ describe('group eyes and section eyes together', () => {
     expect(applyEyes(edited, { ...NO_GROUP_EYES, curve: true }, new Set(), raw).toneCurve).toBeUndefined()
     expect(applyEyes(edited, { ...NO_GROUP_EYES, detail: true }, new Set(), raw).detail).toBeUndefined()
     expect(applyEyes(edited, { ...NO_GROUP_EYES, remove: true }, new Set(), raw).spots).toBeUndefined()
+    // Effects (Part 25): its eye hides Vignette, Grain and Glow; Basic's eye hides Texture, Clarity and Dehaze.
+    expect(applyEyes(edited, { ...NO_GROUP_EYES, effects: true }, new Set(), raw).effects).toEqual({ texture: 20, clarity: -15, dehaze: 30, dehazeDistance: 0.5 })
+    expect(applyEyes(edited, { ...NO_GROUP_EYES, basic: true }, new Set(), raw).effects!.texture).toBeUndefined()
     const crop = applyEyes(edited, { ...NO_GROUP_EYES, crop: true }, new Set(), raw)
     expect(crop.geometry).toEqual(DEFAULT_GEOMETRY)
     expect(crop.lens).toEqual(LEGACY_LENS)

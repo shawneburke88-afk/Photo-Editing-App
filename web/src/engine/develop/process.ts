@@ -72,6 +72,103 @@ export interface ProcessParams {
    * share these numbers (an edit made with version 1 and masks uses them with version 1's tone weights).
    */
   masks: MaskParams
+  /**
+   * The Effects maths (PHASE3.md Part 25): Post-crop Vignette, Grain, Texture, Clarity, Dehaze and Glow. They are new
+   * tools, off by default, so adding them needed no new version; once released their maths is part of the version (a
+   * change that would alter a saved edit's pixels needs a new one). Both versions so far share these numbers.
+   */
+  effects: EffectsParams
+}
+
+/** The constants of the Effects maths (engine/develop/effects.ts explains each and names its source). */
+export interface EffectsParams {
+  /** Texture and Clarity (darktable contrast & texture): slider ±100 → darktable gain ±this (coarse + medium; fine). */
+  clarityGain: number
+  textureGain: number
+  /** Clarity's mid-tone weight (LightCraft): 1 − floor at this log2 distance from grey … (see effects.ts `midtoneWeight`). */
+  midGrey: number
+  midWidth: number
+  midFloor: number
+  /** Dehaze (darktable haze removal): the guided filter's constant regularisation (darktable √0.025, squared). */
+  dehazeEps: number
+  /** The long edge (px) of the rendering the ambient light and the maximum depth are measured on. */
+  dehazeRefSize: number
+  /** Vignette: Amount → darktable brightness (darktable's Lightroom importer table, `lr2dt_vignette_gain`). */
+  vignetteAmount: readonly (readonly [number, number])[]
+  /** Midpoint 0…100 → the fall-off's middle (distance units: 1 at the frame's edge), base + span × Midpoint/100. */
+  vignetteMidBase: number
+  vignetteMidSpan: number
+  /** Feather 0…100 → the fall-off's width: max(min, span × Feather/100). */
+  vignetteWidthMin: number
+  vignetteWidthSpan: number
+  /** Highlight Priority: brightness ±1 = ±this many EV at the corners (scene-linear, before the sigmoid). */
+  vignetteEv: number
+  /** Roundness −100: darktable's shape × (1 − this) (squarer). */
+  vignetteSquare: number
+  /** Highlights protection: scene EV above grey (Highlight Priority) and display luminance (Colour Priority) ramps. */
+  vignetteProtectEv: readonly [number, number]
+  vignetteProtectDisplay: readonly [number, number]
+  /** Grain: darktable's octaves (`_simplex_2d_noise`), LightBench's fourth, finer octave for Roughness. */
+  grainFreqs: readonly [number, number, number, number]
+  grainAmps: readonly [number, number, number, number]
+  /** Roughness ±50 tilts the octaves' amplitudes by 2^(±1 × (octave − 1)). */
+  grainTilt: number
+  /** Size 25 → darktable's default coarseness 1600; ±37.5 doubles or halves it. */
+  grainCoarseness: number
+  grainSizePerDoubling: number
+  /** Amount → darktable strength (its importer's table: 25 → 20, 50 → 40, 100 → 80). */
+  grainStrengthPerAmount: number
+  /** darktable's GRAIN_LIGHTNESS_STRENGTH_SCALE and GRAIN_RGB_STRENGTH_SCALE. */
+  grainLightnessScale: number
+  grainRgbScale: number
+  /** Glow: the blur scales as fractions of the long edge, and the soft threshold's half width (EV). */
+  glowSigmas: readonly number[]
+  glowSoft: number
+  /** The threshold (EV above grey) at Range 0 and 100: Bloom and Halation, Diffusion. */
+  glowThreshold: readonly [number, number]
+  glowThresholdDiffusion: readonly [number, number]
+  /** Bloom's and Halation's gains, Diffusion's largest mix. */
+  glowBloomGain: number
+  glowHalationGain: number
+  glowDiffusionMix: number
+  /** Warmth ±100 → the tint's red and blue gains 2^(±this). */
+  glowWarmth: number
+}
+
+/** The Effects maths of process versions 1 and 2 (the tools arrived after both; neither changed it). */
+export const EFFECTS_V1: EffectsParams = {
+  clarityGain: 1,
+  textureGain: 1,
+  midGrey: 0.18,
+  midWidth: 3.2,
+  midFloor: 0.35,
+  dehazeEps: 0.025,
+  dehazeRefSize: 1024,
+  vignetteAmount: [[-100, -1], [-50, -0.7], [0, 0], [50, 0.5], [100, 1]],
+  vignetteMidBase: 0.25,
+  vignetteMidSpan: 1.05,
+  vignetteWidthMin: 0.02,
+  vignetteWidthSpan: 1.2,
+  vignetteEv: 3,
+  vignetteSquare: 0.6,
+  vignetteProtectEv: [0.5, 3],
+  vignetteProtectDisplay: [0.35, 0.9],
+  grainFreqs: [0.491, 0.9441, 1.728, 3.1104],
+  grainAmps: [0.234, 0.785, 1.215, 0.91125],
+  grainTilt: 1,
+  grainCoarseness: 1600,
+  grainSizePerDoubling: 37.5,
+  grainStrengthPerAmount: 0.8,
+  grainLightnessScale: 0.15,
+  grainRgbScale: 0.25,
+  glowSigmas: [0.0025, 0.005, 0.01, 0.02, 0.04],
+  glowSoft: 1,
+  glowThreshold: [3.5, 0],
+  glowThresholdDiffusion: [1, -4],
+  glowBloomGain: 1,
+  glowHalationGain: 1.5,
+  glowDiffusionMix: 0.6,
+  glowWarmth: 0.6,
 }
 
 /** The constants of the mask maths (engine/develop/mask-math.ts explains each). */
@@ -127,6 +224,7 @@ const V1: ProcessParams = {
   },
   contrastSpread: 0.6,
   masks: MASKS_V1,
+  effects: EFFECTS_V1,
 }
 
 /**

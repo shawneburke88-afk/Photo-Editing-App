@@ -20,9 +20,10 @@ import { bandsActive, DEFAULT_COLOUR_MIXER, withColourMixer, withPoints } from '
 import { WHEEL_KEYS, withColourGrading, type WheelKey } from '../engine/develop/colour-grading'
 import { DEFAULT_DETAIL, withDetail } from '../engine/detail/settings'
 import { withMasksList } from '../engine/develop/masks'
+import { grainActive, glowActive, vignetteActive, withEffects, type EffectsSettings } from '../engine/develop/effects'
 
 /** The groups that have section eyes (Remove keeps its single eye). */
-export type SectionGroup = 'crop' | 'basic' | 'curve' | 'colour' | 'grading' | 'detail'
+export type SectionGroup = 'crop' | 'basic' | 'curve' | 'colour' | 'grading' | 'detail' | 'effects'
 
 export type SectionId =
   | 'crop.crop'
@@ -44,6 +45,9 @@ export type SectionId =
   | 'grading.global'
   | 'detail.sharpen'
   | 'detail.noise'
+  | 'effects.vignette'
+  | 'effects.grain'
+  | 'effects.glow'
 
 /** What a section's visibility depends on besides the settings. */
 export interface SectionContext {
@@ -69,6 +73,16 @@ interface SectionDef {
 }
 
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+
+/** The effects without some of their parts (Part 25; each part's Reset). */
+function withoutFx(s: DevelopSettings, keys: (keyof EffectsSettings)[]): DevelopSettings {
+  if (!s.effects) return s
+  const fx = { ...s.effects }
+  for (const k of keys) delete fx[k]
+  return withEffects(s, fx)
+}
+/** Basic's Presence part of the effects: Texture, Clarity, Dehaze (their darktable settings under Advanced stay). */
+export const PRESENCE_FX: (keyof EffectsSettings)[] = ['texture', 'clarity', 'dehaze']
 
 const cropChanged = (g: GeometrySettings) => g.turns !== 0 || g.mirror || g.angle !== 0 || g.crop.x0 !== 0 || g.crop.y0 !== 0 || g.crop.x1 !== 1 || g.crop.y1 !== 1
 
@@ -158,9 +172,9 @@ export const SECTIONS: readonly SectionDef[] = [
     group: 'basic',
     label: 'Presence',
     chip: 'Presence',
-    without: 'Vibrance and Saturation',
-    changed: (s, c) => s.vibrance !== c.defaults.vibrance || s.saturation !== c.defaults.saturation,
-    neutral: (s, c) => ({ ...s, vibrance: c.defaults.vibrance, saturation: c.defaults.saturation }),
+    without: 'Texture, Clarity, Dehaze, Vibrance and Saturation',
+    changed: (s, c) => s.vibrance !== c.defaults.vibrance || s.saturation !== c.defaults.saturation || !!(s.effects?.texture || s.effects?.clarity || s.effects?.dehaze),
+    neutral: (s, c) => withoutFx({ ...s, vibrance: c.defaults.vibrance, saturation: c.defaults.saturation }, PRESENCE_FX),
   },
   {
     id: 'curve.regions',
@@ -218,6 +232,34 @@ export const SECTIONS: readonly SectionDef[] = [
     changed: (s) => !sameJson((s.detail ?? DEFAULT_DETAIL).noise, DEFAULT_DETAIL.noise),
     neutral: (s) => withDetail(s, { ...(s.detail ?? DEFAULT_DETAIL), noise: DEFAULT_DETAIL.noise }),
   },
+  // The Effects group (Part 25): each tool's eye hides it (a view only, as every eye).
+  {
+    id: 'effects.vignette',
+    group: 'effects',
+    label: 'Vignette',
+    chip: 'Vignette',
+    without: 'the post-crop vignette',
+    changed: (s) => vignetteActive(s.effects),
+    neutral: (s) => withoutFx(s, ['vignette']),
+  },
+  {
+    id: 'effects.grain',
+    group: 'effects',
+    label: 'Grain',
+    chip: 'Grain',
+    without: 'grain',
+    changed: (s) => grainActive(s.effects),
+    neutral: (s) => withoutFx(s, ['grain']),
+  },
+  {
+    id: 'effects.glow',
+    group: 'effects',
+    label: 'Glow',
+    chip: 'Glow',
+    without: 'glow',
+    changed: (s) => glowActive(s.effects),
+    neutral: (s) => withoutFx(s, ['glow']),
+  },
 ]
 
 const BY_ID = new Map(SECTIONS.map((d) => [d.id, d]))
@@ -235,13 +277,18 @@ export interface GroupEyes {
   detail: boolean
   /** The Masks group's eye (Part 23): the photo without its masks. Each mask also has its own eye (a view only). */
   masks: boolean
+  /** The Effects group's eye (Part 25): the photo without its Vignette, Grain and Glow. */
+  effects: boolean
 }
-export const NO_GROUP_EYES: GroupEyes = { crop: false, remove: false, basic: false, curve: false, colour: false, grading: false, detail: false, masks: false }
+export const NO_GROUP_EYES: GroupEyes = { crop: false, remove: false, basic: false, curve: false, colour: false, grading: false, detail: false, masks: false, effects: false }
 
-/** The Basic group's settings at their defaults (its eye): white balance, tone and presence; Advanced stays. */
+/**
+ * The Basic group's settings at their defaults (its eye): white balance, tone and presence (Texture, Clarity and Dehaze
+ * included); Advanced stays.
+ */
 export function withoutBasic(s: DevelopSettings, d: DevelopSettings): DevelopSettings {
   const { whiteBalance, exposure, contrast, highlights, shadows, whites, blacks, vibrance, saturation } = d
-  return { ...s, whiteBalance, exposure, contrast, highlights, shadows, whites, blacks, vibrance, saturation }
+  return withoutFx({ ...s, whiteBalance, exposure, contrast, highlights, shadows, whites, blacks, vibrance, saturation }, PRESENCE_FX)
 }
 
 function withoutSpots(s: DevelopSettings): DevelopSettings {
@@ -265,6 +312,7 @@ export function applyEyes(s: DevelopSettings, groups: GroupEyes, hidden: Readonl
   if (groups.remove) out = withoutSpots(out)
   if (groups.masks && out.masks) out = withMasksList(out, undefined)
   if (groups.detail && out.detail) out = { ...out, detail: undefined }
+  if (groups.effects) out = withoutFx(out, ['vignette', 'grain', 'glow'])
   if (groups.crop) out = { ...out, geometry: DEFAULT_GEOMETRY, lens: LEGACY_LENS }
   return out
 }

@@ -17,7 +17,8 @@ import { normalizeSpots, type Spot } from './spots'
 import { colourMixerGpu, normalizeColourMixer, type ColourMixerGpu, type ColourMixerSettings } from './colour-mixer'
 import { colourGradingGpu, normalizeColourGrading, type ColourGradingGpu, type ColourGradingSettings } from './colour-grading'
 import { normalizeMasks, type LocalMask } from './masks'
-import type { BandWeights, MaskParams } from './process'
+import type { BandWeights, EffectsParams, MaskParams } from './process'
+import { normalizeEffects, type EffectsSettings } from './effects'
 
 /**
  * The demosaic method (Develop › Advanced). The stored value names the method for the photo's sensor as darktable
@@ -111,6 +112,12 @@ export interface DevelopSettings {
    * all, so they stay exactly as they were (and render byte-identically).
    */
   masks?: LocalMask[]
+  /**
+   * Texture, Clarity and Dehaze (Basic → Presence), Post-crop Vignette, Grain and Glow (Effects; effects.ts, PHASE3.md
+   * Part 25). Optional: edits without effects have no such field at all, so they stay exactly as they were (and render
+   * byte-identically).
+   */
+  effects?: EffectsSettings
 }
 
 export const DEFAULT_SETTINGS: DevelopSettings = {
@@ -209,6 +216,10 @@ export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined
   const masks = normalizeMasks(s?.masks)
   if (masks) out.masks = masks
   else delete out.masks
+  // Effects: the same (no key unless one differs from its default).
+  const fx = normalizeEffects(s?.effects)
+  if (fx) out.effects = fx
+  else delete out.effects
   return out
 }
 
@@ -264,6 +275,8 @@ export interface DisplayUniforms {
   spots?: Spot[]
   /** Masks and what the shader needs for their local sliders; absent when there are none. */
   masks?: MasksGpu
+  /** The Effects and the process version's numbers for them; absent when the edit has none (nothing changes then). */
+  effects?: { fx: EffectsSettings; params: EffectsParams }
 }
 
 /** The masks of an edit with the process version's numbers their local sliders use (PHASE3.md Part 23). */
@@ -301,6 +314,7 @@ export function displayUniforms(s: DevelopSettings): DisplayUniforms {
     colourGrading: colourGradingGpu(s.colourGrading),
     ...(s.spots?.length ? { spots: s.spots } : {}),
     ...(s.masks?.length ? { masks: masksGpu(s, bands) } : {}),
+    ...(s.effects ? { effects: { fx: s.effects, params: processParams(s.process).effects } } : {}),
   }
 }
 

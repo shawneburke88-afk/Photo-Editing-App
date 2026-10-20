@@ -1,6 +1,6 @@
 [
   {
-    "version": "0.6.7",
+    "version": "0.6.8",
     "date": "2026-10-20",
     "newFeatures": [
       "Settings → Diagnostics: turn on \"Record diagnostics\" to keep a log of what you do and how the app and graphics card respond. The log survives a crash or power-off; use \"Export diagnostics…\" to save it and share it. It never includes file names, folders or photos, and nothing is recorded while it's off.",
@@ -10,6 +10,19 @@
       "The white balance picker no longer reprocesses the whole full-size photo just to draw its magnifier, which made it slow and used a lot of graphics memory. Picked values are unchanged.",
       "Images replaced while you edit are now freed as soon as the drawings using them finish, instead of waiting for a moment when nothing is drawing."
     ]
+  },
+  {
+    "version": "0.6.7",
+    "date": "2026-10-19",
+    "newFeatures": [
+      "Texture, Clarity and Dehaze in Basic → Presence. Texture brings out fine detail, Clarity the larger structures (mostly in the mid-tones), and Dehaze removes or adds haze. They're built on darktable's contrast & texture and haze removal. Clarity and Dehaze measure the cropped photo, so their look can shift a little when you re-crop.",
+      "A new Effects group: Post-crop vignette (Highlight Priority, Color Priority or Paint Overlay, with the centre and shape under Advanced), Grain (Amount, Size, Roughness; colour grain under Advanced) and Glow (Bloom, Diffusion or Halation, with Range, Spread and Warmth).",
+      "Masks can now use Texture, Clarity and Dehaze, and set how much Glow they get.",
+      "Export has a new \"Dither JPEGs\" option (off by default) that hides banding in smooth gradients such as vignettes.",
+      "Lightroom's Texture, Clarity, Dehaze, vignette and grain settings are read from and written to its .xmp files. Lightroom's Glow style and sliders are read but left switched off (the field for its amount isn't known yet), and Glow is never written back.",
+      "Photos edited before look exactly the same; effects only change a photo once you move a slider."
+    ],
+    "bugFixes": []
   },
   {
     "version": "0.6.6",
