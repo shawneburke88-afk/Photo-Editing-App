@@ -36,6 +36,8 @@ import { useCullPrefs } from './cull-badges'
 import { SuggestRejectsDialog } from './SuggestRejectsDialog'
 import { applyRejects, undoRejects, type AppliedRejects } from './reject-suggestions'
 import { Grid } from './Grid'
+import { gridLines, verticalNeighbour } from './grid-layout'
+import { useStoredJson } from '../lib/useStoredJson'
 import { IndexProgress } from './IndexProgress'
 import { extrasRefresh } from './refresh'
 import { RefreshProgress } from './RefreshProgress'
@@ -105,6 +107,10 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
   const [detail, setDetail] = useState<PhotoDetail | null>(null)
   const [view, setView] = useState<'grid' | 'loupe'>('grid')
   const [cellSize, setCellSize] = useState(170)
+  /** View options: date headings between days (when sorted by capture time), and the date on each card. */
+  const [datePrefs, setDatePrefs] = useStoredJson('lightbench.library.dates', { headings: true, cards: false })
+  const byCapture = (filters.sort ?? 'captureDesc') === 'captureDesc' || filters.sort === 'captureAsc'
+  const gridDates = { headings: datePrefs.headings && byCapture, cards: datePrefs.cards }
   const [importing, setImporting] = useState(false)
   const [backupMode, setBackupMode] = useState<'backup' | 'restore' | null>(null)
   const [culling, setCulling] = useState<{ rows: PhotoRow[]; start: number; layout?: CullLayout; candidate?: number } | null>(null)
@@ -753,8 +759,14 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
       case 'settings.sync': void openCopy('sync'); break
       case 'library.next': move(1); break
       case 'library.prev': move(-1); break
-      case 'library.down': move(view === 'grid' ? cols : 1); break
-      case 'library.up': move(view === 'grid' ? -cols : -1); break
+      case 'library.down':
+      case 'library.up': {
+        const dir = id === 'library.down' ? 1 : -1
+        // With date headings, lines can be short: the same column of the next line of photos.
+        if (view === 'grid' && gridDates.headings && idx >= 0) move(verticalNeighbour(gridLines(rows, cols, true), idx, dir) - idx)
+        else move(view === 'grid' ? dir * cols : dir)
+        break
+      }
       case 'library.first': move(-rows.length); break
       case 'library.last': move(rows.length); break
       case 'photo.rate0': case 'photo.rate1': case 'photo.rate2': case 'photo.rate3': case 'photo.rate4': case 'photo.rate5':
@@ -971,6 +983,8 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
               culling={{ suggest: () => void openSuggest(), selectBest: () => void selectBest(), analysed: analysedCount }}
               cellSize={cellSize}
               onCellSize={setCellSize}
+              dates={{ ...datePrefs, byCapture }}
+              onDates={(d) => setDatePrefs({ ...datePrefs, ...d })}
               shown={rows.length}
             />
             {view === 'grid' || !detail ? (
@@ -982,6 +996,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
                   selected={selected}
                   focus={focus}
                   cellSize={cellSize}
+                  dates={gridDates}
                   onClick={clickCell}
                   onOpen={(id) => { setFocus(id); setView('loupe') }}
                   onToggleStack={(id) => void toggleStack(id)}

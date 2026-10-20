@@ -23,13 +23,16 @@ interface Props {
   culling: { suggest: () => void; selectBest: () => void; analysed: { done: number; total: number } | null }
   cellSize: number
   onCellSize: (n: number) => void
+  /** View options for dates; `byCapture`: sorted by capture time (headings show only then). */
+  dates: { headings: boolean; cards: boolean; byCapture: boolean }
+  onDates: (d: Partial<{ headings: boolean; cards: boolean }>) => void
   shown: number
   /** Whether a selected folder's subfolders are included (undefined when no folder is selected). */
   subfolders?: boolean
   onSubfolders: (on: boolean) => void
 }
 
-export function FilterBar({ value, onChange, view, onView, onCull, onCompare, onSurvey, stacks, culling, cellSize, onCellSize, shown, subfolders, onSubfolders }: Props) {
+export function FilterBar({ value, onChange, view, onView, onCull, onCompare, onSurvey, stacks, culling, cellSize, onCellSize, dates, onDates, shown, subfolders, onSubfolders }: Props) {
   const set = (patch: Partial<Filters>) => onChange({ ...value, ...patch })
   return (
     <div className="filterbar">
@@ -95,6 +98,7 @@ export function FilterBar({ value, onChange, view, onView, onCull, onCompare, on
           <button className="kw-x" onClick={() => set({ keyword: undefined })} aria-label="Clear keyword filter">×</button>
         </span>
       )}
+      <ViewMenu dates={dates} onDates={onDates} />
       <StacksMenu {...stacks} />
       <CullingMenu {...culling} />
       <span className="muted small grow">{shown.toLocaleString()} photos</span>
@@ -103,6 +107,30 @@ export function FilterBar({ value, onChange, view, onView, onCull, onCompare, on
           Size
           <input type="range" min={110} max={320} value={cellSize} onChange={(e) => onCellSize(Number(e.target.value))} />
         </label>
+      )}
+    </div>
+  )
+}
+
+/** View options: dates in the grid. */
+function ViewMenu({ dates, onDates }: Pick<Props, 'dates' | 'onDates'>) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="coll-menu view-menu">
+      <button className="button small" onClick={() => setOpen(!open)} aria-expanded={open} title="What the grid shows">
+        View ▾
+      </button>
+      {open && (
+        <div className="menu" role="menu" onMouseLeave={() => setOpen(false)} onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}>
+          <label className="menu-check" title={dates.byCapture ? 'A heading for each day, with its number of photos' : 'Shown when the photos are sorted by capture time (Newest or Oldest first)'}>
+            <input type="checkbox" role="menuitemcheckbox" checked={dates.headings} onChange={(e) => onDates({ headings: e.target.checked })} />
+            <span>Date headings{dates.byCapture ? '' : ' (when sorted by date)'}</span>
+          </label>
+          <label className="menu-check" title="The capture date at the bottom right of each photo">
+            <input type="checkbox" role="menuitemcheckbox" checked={dates.cards} onChange={(e) => onDates({ cards: e.target.checked })} />
+            <span>Date on each photo</span>
+          </label>
+        </div>
       )}
     </div>
   )
