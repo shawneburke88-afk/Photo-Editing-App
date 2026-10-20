@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { check, describePins, fetchModels, folderBytes, parsePointer, plan, sha256, verifyModels } from './models.mjs'
+import { check, describePins, fetchModels, formatManifest, MANIFEST, folderBytes, parsePointer, plan, sha256, verifyModels } from './models.mjs'
 
 const REV = 'feedface'.repeat(5)
 const fp32 = Buffer.from('a stand-in, not a model '.repeat(40))
@@ -33,6 +33,18 @@ describe('scripts/models.mjs', () => {
     expect(lines[0]).toBe(`depth-anything-v2-small: onnx-community/depth-anything-v2-small @ ${REV}`)
     expect(lines[2]).toBe('  fp16 onnx/model_fp16.onnx 10 bytes sha256 not pinned')
     expect(describePins(manifest(), true)).toContain(`| fp32 | \`onnx/model.onnx\` | ${fp32.length} | \`${sha256(fp32)}\` |`)
+  })
+
+  it('pin keeps the manifest\'s layout, so only the pinned values change', () => {
+    const text = readFileSync(MANIFEST, 'utf8')
+    expect(`${formatManifest(JSON.parse(text))}\n`).toBe(text)
+    const m = JSON.parse(text)
+    m.models[0].source.revision = REV
+    for (const f of m.models[0].files) f.sha256 = 'ab'.repeat(32)
+    const before = text.split('\n')
+    const after = `${formatManifest(m)}\n`.split('\n')
+    expect(after).toHaveLength(before.length)
+    expect(after.filter((l, i) => l !== before[i]).map((l) => l.trim().slice(0, 25))).toEqual(['"revision": "feedfacefeed', '{ "variant": "fp16", "pat', '{ "variant": "fp32", "pat'])
   })
 
   it('reads Git LFS pointers', () => {

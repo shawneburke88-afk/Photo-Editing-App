@@ -143,6 +143,24 @@ export function verifyModels(manifest, dir) {
   return bad
 }
 
+const inline = (x) =>
+  Array.isArray(x) ? `[${x.map(inline).join(', ')}]` : x && typeof x === 'object' ? `{ ${Object.entries(x).map(([k, v]) => `${JSON.stringify(k)}: ${inline(v)}`).join(', ')} }` : JSON.stringify(x)
+const scalars = (x) => Object.values(x).every((v) => v === null || typeof v !== 'object')
+
+/**
+ * The manifest as JSON in its hand-written layout (so pinning changes only the pinned values): two-space indents, short
+ * lists of plain values on one line, and each plain object in a list (a file) on one line.
+ */
+export function formatManifest(x, ind = '', inList = false) {
+  if (x === null || typeof x !== 'object') return JSON.stringify(x)
+  const one = inline(x)
+  if (scalars(x) && (Array.isArray(x) ? one.length <= 100 : inList)) return one
+  const next = `${ind}  `
+  const items = Array.isArray(x) ? x.map((v) => next + formatManifest(v, next, true)) : Object.entries(x).map(([k, v]) => `${next}${JSON.stringify(k)}: ${formatManifest(v, next)}`)
+  if (!items.length) return Array.isArray(x) ? '[]' : '{}'
+  return Array.isArray(x) ? `[\n${items.join(',\n')}\n${ind}]` : `{\n${items.join(',\n')}\n${ind}}`
+}
+
 /** The manifest's pins, as plain lines or Markdown. */
 export function describePins(manifest, markdown = false) {
   const out = []
@@ -190,7 +208,7 @@ async function pin(manifest, revision, save, path = MANIFEST) {
     }
     m.source.revision = rev
   }
-  writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`)
+  writeFileSync(path, `${formatManifest(manifest)}\n`)
   console.log(`wrote ${path}`)
 }
 
