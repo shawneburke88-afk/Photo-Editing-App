@@ -184,7 +184,7 @@ export function ioReport(inputs, outputs) {
     if (i.name !== 'pixel_values') notes.push(`first input is "${i.name}", not "pixel_values" (the app uses the first input whatever its name)`)
     if (i.type !== 'float32') problems.push(`first input is ${i.type}, not float32 (the app feeds float32)`)
     const s = i.shape ?? []
-    if (s.length !== 4 || (typeof s[1] === 'number' && s[1] !== 3) || (typeof s[0] === 'number' && s[0] !== 1)) problems.push(`first input is ${shapeText(s)}, not [1, 3, H, W]`)
+    if (s.length !== 4 || (typeof s[1] === 'number' && s[1] !== 3) || (s[3] === 3 && s[1] !== 3) || (typeof s[0] === 'number' && s[0] !== 1)) problems.push(`first input is ${shapeText(s)}, not [1, 3, H, W]`)
     else if (typeof s[2] === 'number' && typeof s[3] === 'number') notes.push(`fixed input size ${s[3]} × ${s[2]} (the app then uses it)`)
   }
   if (!o) problems.push('no output')
@@ -273,7 +273,13 @@ async function main(args) {
   const summaryFile = arg(args, '--summary') ?? process.env.GITHUB_STEP_SUMMARY
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
   const failures = []
+  const warnings = []
   const md = []
+  const gha = !!process.env.GITHUB_ACTIONS
+  const warn = (msg) => {
+    warnings.push(msg)
+    console.log(gha ? `::warning::${msg}` : `WARNING ${msg}`)
+  }
   const fail = (msg) => {
     failures.push(msg)
     console.log(`FAIL ${msg}`)
@@ -399,7 +405,7 @@ async function main(args) {
       if (ow !== mw || oh !== mh) console.log(`note: output map ${ow} x ${oh} for a ${mw} x ${mh} input`)
       if (st.nonFinite) {
         if (f.variant === 'fp32') fail(`${m.id} fp32: non-finite output`)
-        else console.log(`WARNING fp16 gave non-finite values on the CPU backend (ORT issue #26732 seen on GPUs); the app would tell the user to use fp32`)
+        else warn(`${m.id} fp16 gave ${st.nonFinite} non-finite values on ONNX Runtime's CPU backend (ORT issue #26732 is the GPU case); the app tells the user to use fp32 when this happens`)
         continue
       }
       const q = app.quantizeDisparity(data)
@@ -433,10 +439,14 @@ async function main(args) {
     md.push(...summaryTable(cols), '')
   }
 
-  console.log(failures.length ? `\nRESULT: ${failures.length} problem(s):\n${failures.map((f) => `  - ${f}`).join('\n')}` : '\nRESULT: all checks passed')
+  console.log(failures.length ? `\nRESULT: ${failures.length} problem(s):\n${failures.map((f) => `  - ${f}`).join('\n')}` : `\nRESULT: all checks passed${warnings.length ? ` (${warnings.length} warning(s))` : ''}`)
+  if (gha && failures.length) console.log(`::error::AI model check: ${failures.length} problem(s), the first: ${failures[0]}`)
   if (summaryFile) {
     const head = ['## AI model check', '', `Node ${process.version}, onnxruntime-web ${ort.env.versions?.web ?? '?'} (WebAssembly CPU backend), ${threads} thread(s). Test photo: synthetic, ${rw} × ${rh} (a ${PHOTO.sensor.join(' × ')} photo as Develop renders it), through the app's own preprocessing and depth-map encoding.`, '']
-    const tail = failures.length ? [`**${failures.length} problem(s):**`, '', ...failures.map((f) => `- ${f}`), ''] : ['**All checks passed.**', '']
+    const tail = [
+      ...(failures.length ? [`**${failures.length} problem(s):**`, '', ...failures.map((f) => `- ${f}`), ''] : ['**All checks passed.**', '']),
+      ...(warnings.length ? ['Warnings:', '', ...warnings.map((w) => `- ${w}`), ''] : []),
+    ]
     appendFileSync(summaryFile, [...head, ...md, ...tail].join('\n') + '\n')
   }
   return failures.length ? 1 : 0
