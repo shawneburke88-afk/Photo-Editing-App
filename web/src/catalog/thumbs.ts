@@ -53,6 +53,33 @@ export async function thumbUrl(photoId: number): Promise<string | null> {
   return url
 }
 
+/**
+ * A photo's thumbnail in an object URL of the caller's own, for an image shown for a while outside the grid (Develop's
+ * placeholder): the cache's URLs above are revoked when a thumbnail is replaced (`forgetThumbUrl`, after a save) or the
+ * cache is full, and an `<img>` given one later fails (`ERR_FILE_NOT_FOUND`). `show` gets the URL once it is read. The
+ * returned function stops it: a read still running is dropped; a URL already shown is taken back (`show(null)`) and
+ * revoked. Call it once the URL is off the page (React: an effect's cleanup, after the render that stopped showing it).
+ */
+export function holdThumbUrl(photoId: number, show: (url: string | null) => void, load: (id: number) => Promise<Blob | null> = loadThumb): () => void {
+  let url: string | null = null
+  let stopped = false
+  void load(photoId).then(
+    (blob) => {
+      if (stopped || !blob) return
+      url = URL.createObjectURL(blob)
+      show(url)
+    },
+    () => {},
+  )
+  return () => {
+    stopped = true
+    if (!url) return
+    show(null)
+    URL.revokeObjectURL(url)
+    url = null
+  }
+}
+
 /** Fires `thumbchange` (detail = photo id) when a thumbnail is replaced, so visible ones reload. */
 export const thumbEvents = new EventTarget()
 

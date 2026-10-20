@@ -46,7 +46,9 @@ export type BenchMode = 'quick' | 'full'
 
 /** The stages, in pipeline order (the table's order). */
 export type StageId =
-  | 'stageA' | 'stageA3' | 'warp' | 'toneMask' | 'mixer' | 'mixerNoGuide' | 'grading' | 'masksFit' | 'masksExport' | 'denoise' | 'sharpen'
+  | 'stageA' | 'stageA3' | 'warp' | 'toneMask' | 'mixer' | 'mixerNoGuide' | 'grading' | 'masksFit' | 'masksExport'
+  | 'vignetteFit' | 'vignetteExport' | 'grainFit' | 'grainExport' | 'tcFit' | 'tcExport' | 'dehazeFit' | 'dehazeExport' | 'glowFit' | 'glowExport'
+  | 'denoise' | 'sharpen'
   | 'displayFit' | 'display100' | 'displayFitCurve' | 'display100Curve' | 'proof' | 'proofLut'
   | 'remove' | 'export' | 'exportAll' | 'jpeg' | 'thumb' | 'aiDepth'
 
@@ -72,7 +74,9 @@ export interface BenchPlan {
   datasets: DatasetPlan[]
 }
 
-const ALL_RAW: StageId[] = ['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'grading', 'masksFit', 'masksExport', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'proof', 'proofLut', 'remove', 'export', 'exportAll', 'jpeg', 'thumb']
+/** The Effects rows (Part 25): each tool at fit and in the full-size export. */
+const EFFECT_ROWS: StageId[] = ['vignetteFit', 'vignetteExport', 'grainFit', 'grainExport', 'tcFit', 'tcExport', 'dehazeFit', 'dehazeExport', 'glowFit', 'glowExport']
+const ALL_RAW: StageId[] = ['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'grading', 'masksFit', 'masksExport', ...EFFECT_ROWS, 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'proof', 'proofLut', 'remove', 'export', 'exportAll', 'jpeg', 'thumb']
 const STAGES_FOR: Record<BenchMode, Record<Kind, StageId[]>> = {
   quick: {
     bayer: ALL_RAW,
@@ -82,7 +86,7 @@ const STAGES_FOR: Record<BenchMode, Record<Kind, StageId[]>> = {
   full: {
     bayer: ALL_RAW,
     xtrans: ['stageA', 'stageA3', 'displayFit', 'display100', 'export', 'exportAll'],
-    srgb: ['stageA', 'mixer', 'mixerNoGuide', 'grading', 'masksFit', 'displayFit', 'display100', 'displayFitCurve', 'export', 'jpeg', 'thumb', 'aiDepth'],
+    srgb: ['stageA', 'mixer', 'mixerNoGuide', 'grading', 'masksFit', 'vignetteFit', 'grainFit', 'tcFit', 'dehazeFit', 'glowFit', 'displayFit', 'display100', 'displayFitCurve', 'export', 'jpeg', 'thumb', 'aiDepth'],
   },
 }
 
@@ -245,12 +249,49 @@ const MASKS = [
 ]
 const MASK_PASSES = (l: string) => l.startsWith('mask:') || l === 'display'
 
+/**
+ * The Effects (Part 25): one tool each, at values that run all of its work (the cost doesn't depend on the values).
+ * Dehaze's ambient light is measured once per photo, crop and white balance (cached: not in these rows' runs).
+ */
+const FX_ROWS: Record<'vignette' | 'grain' | 'tc' | 'dehaze' | 'glow', { name: string; fx: object; what: string }> = {
+  vignette: { name: 'Post-crop vignette (Highlight Priority)', fx: { vignette: { amount: -40, midpoint: 50, roundness: 0, feather: 50, highlights: 30, style: 'highlight', centerX: 0, centerY: 0, shape: 1 } }, what: 'per pixel in the display pass' },
+  grain: { name: 'Grain', fx: { grain: { amount: 40, size: 25, roughness: 70, seed: 12345, colour: false, midtonesBias: 100 } }, what: 'per pixel in the display pass (21 noise samples a pixel when zoomed out, darktable\'s lattice)' },
+  tc: { name: 'Texture + Clarity', fx: { texture: 40, clarity: 30 }, what: 'darktable contrast & texture\'s pyramid around each 1024 px tile (its luminance drawn, then the EIGF levels), then the display pass' },
+  dehaze: { name: 'Dehaze', fx: { dehaze: 40 }, what: 'darktable haze removal\'s two maps around each tile (box min/max and the colour guided filter in 512 px chunks), then the display pass' },
+  glow: { name: 'Glow (Bloom)', fx: { glow: { amount: 50, style: 'bloom', range: 60, spread: 50, warmth: 0 } }, what: 'Glow\'s source (the drawing again at most 1024 px long), its threshold and five blurs, then the display pass' },
+}
+const FX_PASSES = (l: string) => l.startsWith('effects:') || l === 'display' || l === 'develop' || l === 'mixerInput' || l === 'effectsInput'
+const fxStages = (): Partial<Record<StageId, StageDef>> => {
+  const out: Partial<Record<StageId, StageDef>> = {}
+  for (const [k, r] of Object.entries(FX_ROWS)) {
+    out[`${k}Fit` as StageId] = {
+      label: `Effects: ${r.name}, display pass, fit`,
+      settings: (b, kind) => edit(kind, { ...b, effects: r.fx }),
+      run: (c, s, n) => c.engine.render(displayUniforms(nudged(s, n)), wbOf(c, s), FIT),
+      gpu: FX_PASSES,
+      note: `one redraw after an Exposure move: ${r.what}; compare with "Display pass, fit, without Tone Curve"`,
+    }
+    out[`${k}Export` as StageId] = {
+      label: `Effects: ${r.name}, export render, full size`,
+      settings: (b, kind) => edit(kind, { ...b, effects: r.fx }),
+      run: async (c, s, n) => {
+        const [w, h] = c.engine.outputSize(s.geometry)
+        c.lastOut = await c.engine.renderOutput(displayUniforms(nudged(s, n)), wbOf(c, s), outputOptions(w, h))
+      },
+      gpu: FX_PASSES,
+      note: `the export render: ${r.what}; compare with "Export render"`,
+    }
+  }
+  return out
+}
+
 const MIXER_PREPASS = one('mixerInput', 'prefilterStats', 'prefilterApply', 'guideStats', 'guideApply')
 
 /** Where the k-th Remove spot goes: spread over the frame, away from the edges and the highlight. */
 const spotAt = (k: number): [number, number] => [0.15 + 0.5 * ((k * 0.6180339) % 1), 0.45 + 0.4 * ((k * 0.3819660) % 1)]
 
 export const STAGES: Record<StageId, StageDef> = {
+  ...(fxStages() as Record<'vignetteFit' | 'vignetteExport' | 'grainFit' | 'grainExport' | 'tcFit' | 'tcExport' | 'dehazeFit' | 'dehazeExport' | 'glowFit' | 'glowExport', StageDef>),
   stageA: {
     label: 'Stage A: RAW → scene (process)',
     settings: (b) => b,

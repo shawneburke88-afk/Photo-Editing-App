@@ -1,11 +1,11 @@
 import { keyText, useKeymapVersion, useShortcuts, withKey } from '../settings/shortcuts'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { getCatalog } from '../catalog/client'
-import { forgetThumbUrl, loadThumb, saveThumb, thumbUrl } from '../catalog/thumbs'
+import { forgetThumbUrl, holdThumbUrl, loadThumb, saveThumb } from '../catalog/thumbs'
 import type { PhotoDetail } from '../catalog/types'
 import { AUTO_SLIDERS, BUILT_IN_TARGETS, metricsFromStats, solveAuto, statsFromPixels, targetFromMetrics, type AutoKey, type AutoTarget } from '../engine/develop/auto'
 import { defaultsFor, displayUniforms, normalizeSettings, type DevelopSettings } from '../engine/develop/settings'
-import { DEFAULT_GEOMETRY, flip, isIdentityGeometry, rotate90, sameGeometry, setAngle, setAspect, setLocked, swapAspect, type GeometrySettings } from '../engine/develop/geometry'
+import { DEFAULT_GEOMETRY, flip, isIdentityGeometry, resetCrop, rotate90, sameGeometry, setAngle, setAspect, setLocked, swapAspect, type GeometrySettings } from '../engine/develop/geometry'
 import { CURRENT_PROCESS, PROCESS_VERSIONS, processStatus } from '../engine/develop/process'
 import { DevelopEngine, type ImageStats, type RawStageOptions, type ViewState } from '../engine/gpu/develop-engine'
 import { gpuGate } from '../engine/gpu/gate'
@@ -64,6 +64,8 @@ import { DEFAULT_MIXER_UI, type MixerUi } from './mixerUi'
 import { MixerTatLayer, PointPickLayer } from './MixerTatLayer'
 import { CHANNEL_NAMES, BAND_NAMES, MAX_POINTS, newPoint, withColourMixer, withPoints, type ColourMixerSettings, type MixerChannel } from '../engine/develop/colour-mixer'
 import { applyEyes, eyeShown, hiddenNames, NO_GROUP_EYES, wbHidden, type SectionGroup, type SectionId } from './sectionEyes'
+import { EffectsPanel } from './EffectsPanel'
+import { effectsGroupOn, withEffects } from '../engine/develop/effects'
 import { SectionEyeContext, type SectionEyes } from './sectionEyeContext'
 import { CurveAuto } from './CurveAuto'
 import { useCurveAuto } from './useCurveAuto'
@@ -80,6 +82,9 @@ import { useMasking } from './useMasking'
 import { renderSize, useDepth } from './useDepth'
 import { ModelDialog } from '../ai/ModelDialog'
 import { MaskOverlay } from './MaskOverlay'
+import { diagnostics } from '../diagnostics/recorder'
+import { PhotoNumbers, photoSummary, settingsChange } from '../diagnostics/anon'
+import { adapterName, looksIntegrated } from '../diagnostics/pcinfo'
 import { MasksPanel } from './MasksPanel'
 import { MASK_BRUSH_SIZE, OVERLAY_COLOURS } from './maskUi'
 import { presetMasks, withMasksList, type LocalMask } from '../engine/develop/masks'
@@ -102,6 +107,10 @@ interface Props {
 type Status = { kind: 'loading' } | { kind: 'ready' } | { kind: 'error'; message: string }
 
 let decoder: RawDecoder | null = null
+/** Photos as the diagnostics log names them: a number per session (diagnostics/anon.ts). */
+const photoNumbers = new PhotoNumbers()
+/** Adapters whose "integrated graphics" notice was dismissed (remembered in this browser). */
+const ADAPTER_NOTICE_KEY = 'lightbench.adapterNoticeDismissed'
 
 const sameStage = (a: RawStageOptions | null, b: RawStageOptions) =>
   !!a && a.highlightMode === b.highlightMode && a.highlightClip === b.highlightClip && a.demosaic === b.demosaic &&
@@ -136,6 +145,7 @@ interface Bypass {
   grading: boolean
   detail: boolean
   masks: boolean
+  effects: boolean
 }
 
 /** Settings without their spots (the field left out, as in edits that never had any). */
@@ -179,7 +189,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [history, setHistory] = useState<History | null>(null)
   const [view, setView] = useState<ViewState>({ zoom: 'fit', center: [0.5, 0.5] })
   const [before, setBefore] = useState(false)
-  const [placeholder, setPlaceholder] = useState<string | null>(null)
+  /** The thumbnail shown while a photo loads, in a URL Develop holds itself (`holdThumbUrl`), for one load of one photo. */
+  const [placeholder, setPlaceholder] = useState<{ key: string; url: string } | null>(null)
   const [timing, setTiming] = useState<{ stage?: number; frame?: number }>({})
   const [stats, setStats] = useState<ImageStats | null>(null)
   const [overlay, setOverlay] = useState(false)
@@ -302,6 +313,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [engineGen, setEngineGen] = useState(0)
   /** A short notice after the engine was made again. */
   const [gpuNotice, setGpuNotice] = useState<string | null>(null)
+  /** The adapter's name when it looks like integrated graphics and its notice wasn't dismissed. */
+  const [adapterNotice, setAdapterNotice] = useState<string | null>(null)
   /** The photo decoded last, kept to upload it again to a new engine after a lost device. */
   const decodedRef = useRef<{ id: number; decoded: DecodeResult } | null>(null)
   /** An engine is being made (the photo's load waits for it). */
@@ -425,10 +438,22 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         }
         engineRef.current = e
         engineCreating.current = false
+        if (engineGen) diagnostics.log('engine-recovery', { stage: 'new engine', restored: !!restored })
+        if (looksIntegrated(e.adapter)) {
+          const name = adapterName(e.adapter)
+          let dismissed = ''
+          try {
+            dismissed = localStorage.getItem(ADAPTER_NOTICE_KEY) ?? ''
+          } catch {
+            // Storage blocked: shown each time.
+          }
+          if (dismissed !== name) setAdapterNotice(name)
+        }
         stageRef.current?.prepend(e.canvas)
         stopLost = e.onLost(() => {
           if (!alive) return
           setGpuNotice('The graphics card was reset, so Develop restarted it. Your edit is safe.')
+          diagnostics.log('engine-recovery', { stage: 'device lost' })
           setEngineGen((g) => g + 1)
         })
         setEngineError('')
@@ -514,7 +539,6 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     angleBase.current = null
     builtStage.current = null
     dirty.current = false
-    void thumbUrl(id).then((u) => !stale() && setPlaceholder(u))
     let used: DevelopEngine | null = null
     ;(async () => {
       const d = await catalog.getPhoto(id)
@@ -544,6 +568,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       if (stale()) return
       builtStage.current = opts
       setTiming({ stage: ms })
+      if (diagnostics.enabled) {
+        const px = r.sensor ?? r.rgb
+        diagnostics.log('photo', { ...photoSummary(photoNumbers.number(id), { make: r.info.make, model: r.info.model, raw: kind !== 'rgb', width: px?.width, height: px?.height }), rawStageMs: Math.round(ms) })
+      }
       setInfo(sensorInfo)
       setHistory(h)
       setStatus({ kind: 'ready' })
@@ -553,6 +581,14 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       if (!stale()) setStatus({ kind: 'error', message: e.message })
     })
   }, [catalog, id, reloads])
+
+  // ---- the placeholder: the photo's thumbnail while it loads. Its URL is Develop's own, not the thumbnail cache's,
+  // which revokes a URL when the thumbnail is replaced (a save) — an <img> given a revoked URL logs ERR_FILE_NOT_FOUND.
+  // It is shown only for the load it was read for, so the render that changes photo already drops the old one, and
+  // the cleanup revokes it after that render.
+  const placeholderKey = `${id}:${reloads}`
+  useEffect(() => holdThumbUrl(id, (url) => setPlaceholder(url ? { key: placeholderKey, url } : null)), [id, placeholderKey])
+  const placeholderUrl = placeholder?.key === placeholderKey ? placeholder.url : null
 
   // A Paste or Sync running in the background just changed the photo shown: show its new settings, unless
   // there are unsaved changes here (then this photo's next save keeps them).
@@ -830,14 +866,15 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   )
   /**
    * The AI Depth range (PHASE3.md Part 24): the photo rendered as shot for the depth model (the edit's tones and colours;
-   * no crop, angle, perspective, flips, lens correction or masks; the camera's orientation), and its uv → sensor map.
+   * no crop, angle, perspective, flips, lens correction, masks or effects (Part 25: Texture, Clarity, Dehaze, vignette,
+   * grain, Glow); the camera's orientation), and its uv → sensor map.
    */
   const depth = useDepth(async (input) => {
     const engine = engineRef.current
     const x = latest.current
     const inf = x.info
     if (!engine || !inf) return null
-    const s: DevelopSettings = withMasksList({ ...x.settings, geometry: DEFAULT_GEOMETRY, lens: { ...x.settings.lens, enabled: false }, detail: undefined }, undefined)
+    const s: DevelopSettings = withMasksList({ ...x.settings, geometry: DEFAULT_GEOMETRY, lens: { ...x.settings.lens, enabled: false }, detail: undefined, effects: undefined }, undefined)
     const g = engine.geometry(DEFAULT_GEOMETRY)
     const img = await gpuGate.foreground(() => engine.renderImage(displayUniforms(s), multipliers(s, inf), renderSize(g.size[0], g.size[1], input)))
     return { rgba: img.data, width: img.width, height: img.height, uvToSensor: g.uvToSensor, sensor: sensorSize() }
@@ -1206,7 +1243,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         label = e.axis === 'h' ? 'Flip horizontal' : 'Flip vertical'
         break
       case 'reset':
-        next = DEFAULT_GEOMETRY
+        // Crop, straighten, rotate and flip only: Transform and Upright have their own Reset.
+        next = resetCrop(base)
         label = 'Reset crop'
         break
     }
@@ -1250,6 +1288,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       { id: 'grading', name: 'Colour Grading', off: bypass.grading },
       { id: 'detail', name: 'Detail', off: bypass.detail && detailOn(settings.detail) },
       { id: 'masks', name: 'Masks', off: bypass.masks && !!settings.masks?.length },
+      { id: 'effects', name: 'Effects', off: bypass.effects && effectsGroupOn(settings.effects) },
     ],
     sectionsOff,
   ).concat(bypass.masks ? [] : (settings.masks ?? []).filter((x) => masking.hidden.has(x.id)).map((x) => `mask ${x.name}`))
@@ -2034,6 +2073,24 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     return u >= 0 && u < 1 && v >= 0 && v < 1 ? [u, v] : null
   }
 
+  // ---- diagnostics (off by default; Settings → Diagnostics): history steps with what changed, the view's zoom and
+  // the tools open. Nothing is computed when it is off.
+  const loggedSettings = useRef<{ id: number; s: DevelopSettings } | null>(null)
+  useEffect(() => {
+    if (!history || !diagnostics.enabled) return
+    const step = history.steps[history.index]
+    const prev = loggedSettings.current
+    loggedSettings.current = { id, s: step.settings }
+    if (!prev || prev.id !== id) return
+    if (prev.s !== step.settings) diagnostics.log('edit', { step: step.label, index: history.index, changes: settingsChange(prev.s, step.settings) })
+  }, [history, id])
+  useEffect(() => {
+    diagnostics.log('view', { zoom: view.zoom })
+  }, [view.zoom])
+  useEffect(() => {
+    diagnostics.log('tools', { wbPicker: wbPick, crop: !!draft, guided: guiding, remove: removing, masks: masking.active, before })
+  }, [wbPick, draft, guiding, removing, masking.active, before])
+
   // ---- white balance picker (darktable temperature.c spot picker + a Lightroom-style loupe)
   const LOUPE_PIXELS = 15
   const LOUPE_ZOOM = 10
@@ -2300,7 +2357,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           onPointerUp={onPointerUp}
           onPointerLeave={() => setLoupe(null)}
         >
-          {status.kind !== 'ready' && placeholder && <img className="dplaceholder" src={placeholder} alt="" />}
+          {status.kind !== 'ready' && placeholderUrl && <img className="dplaceholder" src={placeholderUrl} alt="" />}
           {curveTarget && !draft && !guiding && !before && status.kind === 'ready' && (
             <CurveTatLayer
               curve={settings.toneCurve}
@@ -2497,6 +2554,26 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           {wbPick && loupe && <WbLoupe x={loupe.x} y={loupe.y} image={loupe.image} zoom={LOUPE_ZOOM} />}
           {picking && <div className="dbadge pick">Click a photo in the filmstrip to match its look · Esc to cancel</div>}
           {gpuNotice && <div className="dbadge gpu-notice" role="status">{gpuNotice}</div>}
+          {adapterNotice && (
+            <div className="adapter-notice" role="status">
+              <span>
+                LightBench is running on {adapterNotice}. If this computer has a faster graphics card, set your browser to “High performance” in Windows Settings → System → Display → Graphics, then restart the browser.
+              </span>
+              <button
+                className="button small"
+                onClick={() => {
+                  try {
+                    localStorage.setItem(ADAPTER_NOTICE_KEY, adapterNotice)
+                  } catch {
+                    // Storage blocked: hidden for this visit.
+                  }
+                  setAdapterNotice(null)
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
           {proof.settings.on && proof.source && (
             <div className="dbadge proof" aria-live="polite">
               {proof.draw ? `Proof preview: ${proof.source.label} · ${INTENT_LABELS[proof.settings.intent]}${proof.settings.simulatePaper ? ' · paper & ink' : ''}` : 'Building the proof…'}
@@ -2801,6 +2878,23 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   zoomedOut={view.zoom === 'fit' || (typeof view.zoom === 'number' && view.zoom < 1)}
                   onChange={(label, detail) => change(label, withDetail(settings, detail))}
                   onMaskPreview={setMaskPreview}
+                />
+              ),
+            },
+            {
+              id: 'effects',
+              label: 'Effects',
+              title: 'Effects',
+              icon: GROUP_ICONS.effects,
+              bypass: effectsGroupOn(settings.effects) || bypass.effects
+                ? { off: bypass.effects, onToggle: () => setBypass((b) => ({ ...b, effects: !b.effects })), title: bypass.effects ? 'Show the vignette, grain and glow again' : 'Show the photo without its post-crop vignette, grain and glow (nothing is changed)' }
+                : undefined,
+              content: (
+                <EffectsPanel
+                  effects={settings.effects}
+                  disabled={status.kind !== 'ready'}
+                  showHint={hintsPref === 1}
+                  onChange={(label, fx) => change(label, withEffects(settings, fx))}
                 />
               ),
             },

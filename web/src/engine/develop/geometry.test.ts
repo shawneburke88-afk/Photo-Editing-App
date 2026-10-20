@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { isWithinImage, rectCenter, rectHeight, rectWidth } from './crop'
 import {
-  applyMap, DEFAULT_GEOMETRY, flip, frameSize, isIdentityGeometry, levelAngle, lockedRatio, normalizeGeometry, pasteCrop, resolveGeometry,
+  applyMap, DEFAULT_GEOMETRY, flip, frameSize, isIdentityGeometry, levelAngle, lockedRatio, normalizeGeometry, pasteCrop, resetCrop, resolveGeometry,
   rotate90, setAngle, setAspect, setLocked, swapAspect, withOrientation, type GeometrySettings,
 } from './geometry'
+import { DEFAULT_TRANSFORM } from './upright'
 
 const SW = 600
 const SH = 400
@@ -234,5 +235,20 @@ describe('pasting a crop', () => {
     const turned = setAngle(DEFAULT_GEOMETRY, 15, SW, SH)
     const full = pasteCrop(turned, g({ locked: false }), SW, SH)
     expect(isWithinImage({ rect: full.crop, angle: 15 }, SW, SH)).toBe(true)
+  })
+})
+
+describe('resetCrop (the Crop section\'s Reset)', () => {
+  it('resets crop, straighten, rotate and flip, and keeps Transform and Upright', () => {
+    const transform = { ...DEFAULT_TRANSFORM, vertical: 25 }
+    const edited = g({ turns: 1, mirror: true, angle: 3, crop: { x0: 0.1, y0: 0.2, x1: 0.8, y1: 0.9 }, aspect: '1:1', locked: false, transform })
+    const out = resetCrop(edited)
+    expect(out).toEqual({ ...DEFAULT_GEOMETRY, transform })
+    expect(out.transform).toBe(transform)
+  })
+
+  it('without a Transform it is the default geometry (as before)', () => {
+    expect(resetCrop(g({ angle: -4, turns: 2 }))).toBe(DEFAULT_GEOMETRY)
+    expect('transform' in resetCrop(g({ angle: 1 }))).toBe(false)
   })
 })

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DevelopEngine } from './develop-engine'
+import { Retirement } from './retire'
 import { MIXER_UNIFORM_SIZE } from '../develop/colour-mixer'
 
 // The Colour Mixer's GPU resources under Part 14's rules (PHASE3.md, Part 15): `unload` frees the photo's mixer
@@ -13,8 +14,7 @@ function bareEngine(device: unknown) {
   const f = engine as unknown as Record<string, unknown>
   f.device = device
   f.lost = false
-  f.drawing = false
-  f.retired = []
+  f.retirement = new Retirement()
   f.retouch = { reset: vi.fn(), forget: vi.fn() }
   f.scene = null
   f.sceneGen = 0

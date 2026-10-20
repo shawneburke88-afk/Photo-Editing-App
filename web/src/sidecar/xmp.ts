@@ -18,6 +18,7 @@ import type { MetadataKey, PhotoMetadata } from '../catalog/types'
 import { creatorList, joinCreators, METADATA_KEYS } from '../library/metadata'
 import { LR_DETAIL_FIELDS, LR_GRADE_FIELDS, LR_HSL_FIELDS, lrValues, NS_CRS, NS_TIFF, type LrFields, type LrRead, type LrWritePlan } from './lightroom'
 import { lrToneValues, parseLrPoints, type LrToneFields, type LrToneRead, type LrToneWritePlan } from './lightroomCurve'
+import { LR_FX_FIELDS, LR_GLOW_FIELDS, lrFxValues, type LrFxRead, type LrFxWritePlan } from './lightroomEffects'
 import { parseSidecarSnapshots, readSidecarSnapshots, type SidecarSnapshot } from '../develop/snapshots'
 import { parseLrMasks, type XmpValue } from './lightroomMasks'
 
@@ -72,6 +73,8 @@ export interface SidecarData {
   lightroom?: LrWritePlan
   /** Lightroom's tone curve fields to write (sidecar/lightroomCurve.ts `planToneWrite`); as `lightroom`. */
   lightroomTone?: LrToneWritePlan
+  /** Lightroom's Effects fields to write (sidecar/lightroomEffects.ts `planFxWrite`; never Glow's); as `lightroom`. */
+  lightroomFx?: LrFxWritePlan
   /**
    * The photo's snapshots (docs/PHASE3.md Part 19), in LightBench's own namespace as JSON (`lightbench:Snapshots`, like
    * `lightbench:Develop`; Lightroom's own snapshot field is undocumented and never written). An empty list removes the
@@ -393,7 +396,9 @@ export function writeXmp(existing: string | null, data: SidecarData, now = new D
     lrToneValues(tone).every(({ local, value }) =>
       Array.isArray(value) ? JSON.stringify(getBag(doc, NS_CRS, local)) === JSON.stringify(value) : getProp(doc, NS_CRS, local) === value,
     )
-  if (existing !== null && keywordsSame && collectionsSame && metadataSame && lrSame && toneSame && wanted.every(([ns, , local, value]) => getProp(doc, ns, local) === value)) return null
+  const fxw = data.lightroomFx
+  const fxSame = !fxw || lrFxValues(fxw).every(({ local, value }) => getProp(doc, NS_CRS, local) === value)
+  if (existing !== null && keywordsSame && collectionsSame && metadataSame && lrSame && toneSame && fxSame && wanted.every(([ns, , local, value]) => getProp(doc, ns, local) === value)) return null
 
   for (const [ns, , local] of wanted) removeProp(doc, ns, local)
   removeProp(doc, NS.xmp, 'MetadataDate')
@@ -429,6 +434,11 @@ export function writeXmp(existing: string | null, data: SidecarData, now = new D
   if (tone?.marker !== undefined) {
     removeProp(doc, NS.lightbench, 'LightroomToneCurve')
     setProp(desc, NS.lightbench, 'lightbench', 'LightroomToneCurve', tone.marker)
+  }
+  if (fxw && !fxSame) for (const { local, value } of lrFxValues(fxw)) setInPlace(doc, NS_CRS, 'crs', local, value)
+  if (fxw?.marker !== undefined) {
+    removeProp(doc, NS.lightbench, 'LightroomEffects')
+    setProp(desc, NS.lightbench, 'lightbench', 'LightroomEffects', fxw.marker)
   }
   // XMP: MetadataDate records when the metadata last changed.
   setProp(desc, NS.xmp, 'xmp', 'MetadataDate', now.toISOString().replace(/\.\d{3}Z$/, 'Z'))
@@ -472,6 +482,8 @@ export interface SidecarRead {
   lightroom?: LrRead
   /** Lightroom's tone curve fields (sidecar/lightroomCurve.ts), when the file has any. */
   lightroomTone?: LrToneRead
+  /** Lightroom's Effects fields and Glow's (sidecar/lightroomEffects.ts), when the file has any. */
+  lightroomFx?: LrFxRead
   /** LightBench's snapshots (`lightbench:Snapshots`), when the file has a readable list (damaged ones are ignored). */
   snapshots?: SidecarSnapshot[]
   /** The file has `lightbench:Snapshots` but it couldn't be read (left in the file until LightBench's own list changes). */
@@ -506,6 +518,25 @@ function readLightroomTone(doc: Document): LrToneRead | undefined {
   if (!Object.keys(fields).length && marker === undefined && !processVersion) return undefined
   const applied = getProp(doc, NS_CRS, 'AlreadyApplied')?.trim().toLowerCase() === 'true'
   return { fields, processVersion, applied, ...(marker !== undefined ? { marker } : {}) }
+}
+
+/** Lightroom's Effects fields (Glow's as text), Camera Raw's process version and already-applied flag, LightBench's marker. */
+function readLightroomFx(doc: Document): LrFxRead | undefined {
+  const num = (local: string) => {
+    const v = getProp(doc, NS_CRS, local)
+    return v !== null && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : undefined
+  }
+  const fields = LR_FX_FIELDS.map((name) => num(name))
+  const glow: LrFxRead['glow'] = {}
+  for (const name of LR_GLOW_FIELDS) {
+    const v = getProp(doc, NS_CRS, name)
+    if (v !== null && v.trim() !== '') glow[name] = v
+  }
+  const marker = getProp(doc, NS.lightbench, 'LightroomEffects') ?? undefined
+  const processVersion = getProp(doc, NS_CRS, 'ProcessVersion') !== null
+  if (fields.every((v) => v === undefined) && !Object.keys(glow).length && marker === undefined && !processVersion) return undefined
+  const applied = getProp(doc, NS_CRS, 'AlreadyApplied')?.trim().toLowerCase() === 'true'
+  return { fields, glow, processVersion, applied, ...(marker !== undefined ? { marker } : {}) }
 }
 
 /** Lightroom's geometry fields, Camera Raw's process version and already-applied flag, and LightBench's marker. */
@@ -617,6 +648,8 @@ export function readXmp(text: string): SidecarRead {
   if (lightroom) out.lightroom = lightroom
   const lightroomTone = readLightroomTone(doc)
   if (lightroomTone) out.lightroomTone = lightroomTone
+  const lightroomFx = readLightroomFx(doc)
+  if (lightroomFx) out.lightroomFx = lightroomFx
   const lrMasks = parseLrMasks(doc)
   if (lrMasks?.length) out.lightroomMasks = lrMasks
   const develop = getProp(doc, NS.lightbench, 'Develop')

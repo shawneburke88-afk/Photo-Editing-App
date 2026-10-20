@@ -16,11 +16,14 @@ import { onShortcutKey, useKeymapVersion, useShortcuts, withKey } from './settin
 import { settings, stepScale } from './settings/store'
 import { SystemCheck } from './syscheck/SystemCheck'
 import { ExportDialog } from './export/ExportDialog'
+import { MemoryReadout } from './diagnostics/MemoryReadout'
+import { diagnostics } from './diagnostics/recorder'
 
 type Module = 'library' | 'develop' | 'export' | 'syscheck'
 
 export default function App() {
   const [module, setModule] = useState<Module>(() => (location.hash === '#syscheck' ? 'syscheck' : 'library'))
+  useEffect(() => diagnostics.log('module', { module }), [module])
   const [focus, setFocus] = useState<{ id: number | null; ids: number[]; targets: number[] }>({ id: null, ids: [], targets: [] })
   const [exporting, setExporting] = useState<number[] | null>(null)
   /** The photo being developed, the filmstrip, and the photos selected with it (for Sync). */
@@ -167,6 +170,7 @@ export default function App() {
       <BatchProgress />
       {exporting && <ExportDialog ids={exporting} onClose={() => setExporting(null)} />}
       <UpdateNotice />
+      <MemoryReadout />
       {panel?.kind === 'settings' && <SettingsDialog section={panel.section} onClose={() => setPanel(null)} />}
       {panel?.kind === 'shortcuts' && <ShortcutList onClose={() => setPanel(null)} onSettings={() => setPanel({ kind: 'settings', section: 'keyboard' })} />}
       {panel?.kind === 'commands' && <CommandSearch onClose={() => setPanel(null)} />}

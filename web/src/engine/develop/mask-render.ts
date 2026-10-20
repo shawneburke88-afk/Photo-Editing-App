@@ -55,7 +55,8 @@ export interface PreparedMask {
   eps: number
   /**
    * The weighted local values, as the planes hold them: [exposure EV, contrast, highlights, shadows], [whites, blacks,
-   * saturation, vibrance] (−1…1 each, × Amount), [temperature, tint (slider units × Amount), overlay 1/0, 0].
+   * saturation, vibrance] (−1…1 each, × Amount), [temperature, tint (slider units × Amount), overlay 1/0, 0], and the
+   * fourth plane (Part 25): [texture, clarity, dehaze, glow amount] (−1…1 each, × Amount).
    */
   values: number[]
   /** It reads the photo (a range component) or the guide (Refine). */
@@ -67,6 +68,8 @@ export interface PreparedMasks {
   masks: PreparedMask[]
   /** A mask sets Highlights, Shadows, Whites or Blacks (the shader then works out the tone bands per pixel). */
   toneLocal: boolean
+  /** A mask sets Texture, Clarity, Dehaze or Glow: the planes have a fourth vec4 a pixel (Part 25). */
+  spatial: boolean
   /** With a Depth range: the drawn image's uv → sensor uv on a (n + 1) × (n + 1) grid (`sensorGrid`). */
   grid?: { n: number; uv: Float32Array }
 }
@@ -207,6 +210,7 @@ export function maskValues(mask: LocalMask, overlay: boolean): number[] {
     v('exposure', 1), v('contrast', 0.01), v('highlights', 0.01), v('shadows', 0.01),
     v('whites', 0.01), v('blacks', 0.01), v('saturation', 0.01), v('vibrance', 0.01),
     v('temperature', 1), v('tint', 1), overlay ? 1 : 0, 0,
+    v('texture', 0.01), v('clarity', 0.01), v('dehaze', 0.01), v('glow', 0.01),
   ]
 }
 
@@ -219,7 +223,8 @@ export function maskValues(mask: LocalMask, overlay: boolean): number[] {
 export function prepareMasks(masks: LocalMask[] | undefined, m: ShownMap, r: TargetRect, p: MaskParams, overlayId: string | null = null, depthView = false): PreparedMasks {
   const out: PreparedMask[] = []
   let toneLocal = false
-  if (!masks?.length) return { masks: out, toneLocal }
+  let spatial = false
+  if (!masks?.length) return { masks: out, toneLocal, spatial }
   const key = drawKey(m, r)
   const long = Math.max(r.w, r.h)
   for (const mask of masks) {
@@ -232,13 +237,14 @@ export function prepareMasks(masks: LocalMask[] | undefined, m: ShownMap, r: Tar
     if (overlay && depthView) {
       const d = components.find((c) => c.kind === KIND_CODE.depth)
       if (d) {
-        out.push({ id: mask.id, invert: false, components: [{ ...d, op: OP_CODE.add, invert: false, p1: [1, GRID_CELLS, 0, 0] }], sigma: 0, rho: 0, eps: p.refineEps, values: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0], image: false, guide: false })
+        out.push({ id: mask.id, invert: false, components: [{ ...d, op: OP_CODE.add, invert: false, p1: [1, GRID_CELLS, 0, 0] }], sigma: 0, rho: 0, eps: p.refineEps, values: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0], image: false, guide: false })
         continue
       }
     }
     if (!components.length) continue
     const values = maskValues(mask, overlay)
     if (values[2] || values[3] || values[4] || values[5]) toneLocal = true
+    if (values[12] || values[13] || values[14] || values[15]) spatial = true
     const rho = (mask.refine / 100) * p.refineMax * long
     out.push({
       id: mask.id,
@@ -253,5 +259,5 @@ export function prepareMasks(masks: LocalMask[] | undefined, m: ShownMap, r: Tar
     })
   }
   const depth = out.some((x) => x.components.some((c) => c.depth))
-  return depth ? { masks: out, toneLocal, grid: { n: GRID_CELLS, uv: sensorGrid(m) } } : { masks: out, toneLocal }
+  return depth ? { masks: out, toneLocal, spatial, grid: { n: GRID_CELLS, uv: sensorGrid(m) } } : { masks: out, toneLocal, spatial }
 }

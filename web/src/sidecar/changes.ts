@@ -20,6 +20,7 @@ import { creatorList, EMPTY_METADATA, joinCreators, METADATA_KEYS } from '../lib
 import { detailOf, geometryOf, lrKey, lrState, mixerOf, sameLrKey, toLightroom, type LrFrame } from './lightroom'
 import { gradingOf } from '../engine/develop/colour-grading'
 import { lrToneKey, lrToneState, sameLrToneKey, toneCurveOf, toneToLightroom } from './lightroomCurve'
+import { effectsOf, fxToLightroom, lrFxKey, lrFxState, sameLrFxKey } from './lightroomEffects'
 import type { SidecarRead } from './xmp'
 import { fromSidecar, mergeSnapshots, parseSnapshotsKey, snapshotsKey, toSidecar, type SidecarSnapshot } from '../develop/snapshots'
 
@@ -47,6 +48,11 @@ export interface SidecarFields {
    */
   toneCurve?: string
   /**
+   * Lightroom's Effects fields (sidecar/lightroomEffects.ts `lrFxKey`; Glow's aren't compared: read only at import).
+   * Undefined in records made before LightBench read them: then they aren't compared.
+   */
+  effects?: string
+  /**
    * LightBench's snapshots (develop/snapshots.ts `snapshotsKey`: the sidecar form as JSON). Undefined in records made
    * before snapshots existed, and when the file doesn't say (no LightBench fields at all, or a damaged list): then it
    * isn't compared.
@@ -55,7 +61,7 @@ export interface SidecarFields {
 }
 
 /** A field that can differ: the rating, flag, label, keywords, develop settings, Lightroom's geometry or tone curve, or one metadata field. */
-export type FieldKey = 'rating' | 'flag' | 'color' | 'keywords' | 'develop' | 'geometry' | 'toneCurve' | 'snapshots' | MetadataKey
+export type FieldKey = 'rating' | 'flag' | 'color' | 'keywords' | 'develop' | 'geometry' | 'toneCurve' | 'effects' | 'snapshots' | MetadataKey
 
 /** What the catalog remembers about a photo's sidecar file. */
 export interface SidecarState {
@@ -112,6 +118,7 @@ export function fieldsFromRead(r: SidecarRead, frame?: LrFrame): SidecarFields {
   if (frame) {
     out.geometry = lrKey(lrState(r.lightroom && !r.lightroom.applied ? r.lightroom.fields : undefined, frame))
     out.toneCurve = lrToneKey(lrToneState(r.lightroomTone && !r.lightroomTone.applied ? r.lightroomTone.fields : undefined))
+    out.effects = lrFxKey(lrFxState(r.lightroomFx && !r.lightroomFx.applied ? r.lightroomFx.fields : undefined))
   }
   return out
 }
@@ -129,6 +136,7 @@ export function fieldsFromCatalog(c: { rating: number; flag: number; color: numb
   if (frame) {
     out.geometry = geometryKey(c.develop, frame)
     out.toneCurve = lrToneKey(toneToLightroom(toneCurveOf(c.develop)))
+    out.effects = lrFxKey(fxToLightroom(effectsOf(c.develop)))
   }
   return out
 }
@@ -141,6 +149,7 @@ export function parseFields(json: string | null): SidecarFields | null {
     const out: SidecarFields = { ...f, metadata: normalMetadata(f.metadata) }
     if (typeof out.geometry !== 'string') delete out.geometry
     if (typeof out.toneCurve !== 'string') delete out.toneCurve
+    if (typeof out.effects !== 'string') delete out.effects
     if (typeof out.snapshots !== 'string') delete out.snapshots
     return out
   } catch {
@@ -168,6 +177,7 @@ export function diffFields(a: SidecarFields, b: SidecarFields): FieldKey[] {
   // Lightroom's geometry counts only when both sides know it (old records don't).
   if (a.geometry !== undefined && b.geometry !== undefined && !sameLrKey(a.geometry, b.geometry)) out.push('geometry')
   if (a.toneCurve !== undefined && b.toneCurve !== undefined && !sameLrToneKey(a.toneCurve, b.toneCurve)) out.push('toneCurve')
+  if (a.effects !== undefined && b.effects !== undefined && !sameLrFxKey(a.effects, b.effects)) out.push('effects')
   // Snapshots likewise (records made before they existed don't know them).
   if (a.snapshots !== undefined && b.snapshots !== undefined && a.snapshots !== b.snapshots) out.push('snapshots')
   return out
@@ -207,6 +217,8 @@ const withGeometry = (base: SidecarFields, theirs: SidecarFields): SidecarFields
   if (out.geometry === undefined) out = { ...out, geometry: theirs.geometry }
   // The same for Lightroom's tone curve, which records made before LightBench read it don't have.
   if (out.toneCurve === undefined && theirs.toneCurve !== undefined) out = { ...out, toneCurve: theirs.toneCurve }
+  // And for its Effects fields (Part 25).
+  if (out.effects === undefined && theirs.effects !== undefined) out = { ...out, effects: theirs.effects }
   return out
 }
 
@@ -263,6 +275,8 @@ export interface ReadPatch {
   geometry?: string
   /** Lightroom's tone curve (lrToneKey) to apply to the photo, when Lightroom changed it. */
   toneCurve?: string
+  /** Lightroom's Effects (lrFxKey) to apply to the photo, when Lightroom changed them. */
+  effects?: string
   /** The photo's snapshots after the merge (develop/snapshots.ts `mergeSnapshots`), when another LightBench changed them. */
   snapshots?: SidecarSnapshot[]
   /** The sidecar's fields, to remember as the new base. */
@@ -293,6 +307,7 @@ export function mergeForRead(recorded: SidecarFields | null, ours: SidecarFields
   if (changed.has('develop') && theirs.develop && theirs.develop !== ours.develop) patch.develop = theirs.develop
   if (changed.has('geometry') && theirs.geometry && !sameLrKey(theirs.geometry, ours.geometry)) patch.geometry = theirs.geometry
   if (changed.has('toneCurve') && theirs.toneCurve && !sameLrToneKey(theirs.toneCurve, ours.toneCurve)) patch.toneCurve = theirs.toneCurve
+  if (changed.has('effects') && theirs.effects && !sameLrFxKey(theirs.effects, ours.effects)) patch.effects = theirs.effects
   if (changed.has('snapshots') && theirs.snapshots !== ours.snapshots) {
     // By snapshot: the other app's additions, changes and deletions; LightBench's own new ones stay.
     const merged = mergeSnapshots(parseSnapshotsKey(base.snapshots) ?? [], parseSnapshotsKey(ours.snapshots) ?? [], parseSnapshotsKey(theirs.snapshots) ?? [])
