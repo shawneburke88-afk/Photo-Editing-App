@@ -5,9 +5,9 @@ describe('benchmark plan', () => {
   it('Quick: the 24 MP Bayer image through every stage, the sRGB image in part; 1 warm-up and 3 runs', () => {
     const p = benchPlan('quick')
     expect(p.datasets.map((d) => [d.id, d.width, d.height])).toEqual([['bayer24', 6000, 4000], ['srgb24', 6000, 4000]])
-    expect(p.datasets[0].stages).toEqual(['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'grading', 'masksFit', 'masksExport', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'proof', 'proofLut', 'remove', 'export', 'exportAll', 'jpeg', 'thumb'])
+    expect(p.datasets[0].stages).toEqual(['stageA', 'warp', 'toneMask', 'mixer', 'mixerNoGuide', 'grading', 'masksFit', 'masksExport', 'vignetteFit', 'vignetteExport', 'grainFit', 'grainExport', 'tcFit', 'tcExport', 'dehazeFit', 'dehazeExport', 'glowFit', 'glowExport', 'denoise', 'sharpen', 'displayFit', 'display100', 'displayFitCurve', 'display100Curve', 'proof', 'proofLut', 'remove', 'export', 'exportAll', 'jpeg', 'thumb'])
     expect([p.warmup, p.runs, p.scaledTo]).toEqual([1, 3, null])
-    expect(plannedRuns(p)).toBe((21 + 3) * 4)
+    expect(plannedRuns(p)).toBe((31 + 3) * 4)
   })
 
   it('Full: 45 MP and X-Trans too, Markesteijn 3-pass, 2 warm-ups and 5 runs', () => {
@@ -58,6 +58,20 @@ describe('benchmark plan', () => {
     const stages = benchPlan('quick').datasets[0].stages
     expect(stages.indexOf('masksFit')).toBe(stages.indexOf('grading') + 1)
     expect(stages.indexOf('masksExport')).toBe(stages.indexOf('masksFit') + 1)
+  })
+
+  it('Effects rows (Part 25): each tool at fit and in the full-size export, after the masks', async () => {
+    const { defaultsFor, displayUniforms } = await import('../engine/develop/settings')
+    for (const k of ['vignette', 'grain', 'tc', 'dehaze', 'glow']) {
+      const fit = STAGES[`${k}Fit` as keyof typeof STAGES]
+      const s = fit.settings(defaultsFor('raw', 400), 'bayer')
+      expect(displayUniforms(s).effects?.fx).toBeTruthy()
+      expect((fit.gpu as (l: string) => boolean)('effects:tcBlend')).toBe(true)
+      expect(STAGES[`${k}Export` as keyof typeof STAGES].label).toMatch(/export render, full size/)
+    }
+    const stages = benchPlan('quick').datasets[0].stages
+    expect(stages.indexOf('vignetteFit')).toBe(stages.indexOf('masksExport') + 1)
+    expect(stages.indexOf('glowExport')).toBe(stages.indexOf('vignetteFit') + 9)
   })
 
   it('Soft proofing rows: the display pass with a proof, and the table’s build on the CPU, after the display rows', () => {

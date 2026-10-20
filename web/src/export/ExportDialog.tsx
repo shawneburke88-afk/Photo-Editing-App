@@ -390,6 +390,15 @@ export function ExportDialog({ ids, onClose }: Props) {
               </label>
             </fieldset>
           )}
+          {s.format === 'jpeg' && (
+            <fieldset>
+              <legend>Smooth gradients</legend>
+              <label className="check" title="Adds triangular noise of ±1 step before the JPEG is encoded, against steps in smooth vignettes and skies. Off by default: LightBench’s encoder benchmark found no measurable effect in JPEGs at quality 85–95, so it may help only at the highest qualities; it can make files larger.">
+                <input type="checkbox" checked={!!s.ditherJpeg} onChange={(e) => set({ ditherJpeg: e.target.checked })} />
+                <span>Dither JPEGs <span className="muted small">— against steps in smooth vignettes and skies (off by default).</span></span>
+              </label>
+            </fieldset>
+          )}
         </div>
         {error && <p className="error import-error">{error}</p>}
         <div className="dialog-actions">

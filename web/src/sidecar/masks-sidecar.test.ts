@@ -56,7 +56,7 @@ const LR_SYNTHETIC = `<x:xmpmeta xmlns:x="adobe:ns:meta/">
    <crs:MaskGroupBasedCorrections>
     <rdf:Seq>
      <rdf:li>
-      <rdf:Description crs:What="Correction" crs:CorrectionAmount="1" crs:CorrectionActive="true" crs:CorrectionName="Sky" crs:LocalExposure2012="-0.25" crs:LocalHighlights2012="-0.4" crs:LocalClarity2012="0.2">
+      <rdf:Description crs:What="Correction" crs:CorrectionAmount="1" crs:CorrectionActive="true" crs:CorrectionName="Sky" crs:LocalExposure2012="-0.25" crs:LocalHighlights2012="-0.4" crs:LocalClarity2012="0.2" crs:LocalSharpness="0.3">
        <crs:CorrectionMasks>
         <rdf:Seq>
          <rdf:li crs:What="Mask/Gradient" crs:MaskValue="1" crs:MaskBlendMode="0" crs:MaskInverted="false" crs:ZeroX="0.5" crs:ZeroY="0.5" crs:FullX="0.5" crs:FullY="0.1"/>
@@ -112,7 +112,8 @@ describe('Lightroom’s masks (experimental, read only; synthetic sidecar)', () 
   it('reads gradients, brush dabs and luminance ranges, with the local sliders, as LightBench masks', () => {
     expect(out.masks.map((m) => m.name)).toEqual(['Sky', 'Face', 'Range only'])
     const [sky, face, range] = out.masks
-    expect(sky.adjust).toEqual({ exposure: -1, highlights: -40 })
+    // Clarity (Part 25) is read now; Sharpness, which LightBench lacks in masks, is left out.
+    expect(sky.adjust).toEqual({ exposure: -1, highlights: -40, clarity: 20 })
     expect(sky.components.map((c) => c.shape.kind)).toEqual(['linear'])
     expect(sky.components[0].shape).toEqual({ kind: 'linear', full: [0.5, 0.1], zero: [0.5, 0.5] })
     expect(face.amount).toBe(50)
@@ -134,7 +135,7 @@ describe('Lightroom’s masks (experimental, read only; synthetic sidecar)', () 
   it('leaves out (and says so) a range intersected with a gradient, AI masks, sliders it lacks and inactive masks', () => {
     expect(out.notes.join('\n')).toMatch(/range part combined with a brush or gradient/)
     expect(out.notes.join('\n')).toMatch(/AI mask/)
-    expect(out.notes.join('\n')).toMatch(/Texture, Clarity/)
+    expect(out.notes.join('\n')).toMatch(/Sharpness, Noise/)
     expect(out.notes.join('\n')).toMatch(/Inactive/)
   })
 

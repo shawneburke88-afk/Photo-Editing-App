@@ -18,6 +18,7 @@ import { externalChanges, inspectSidecar, locateSidecar } from './external'
 import { detailOf, geometryOf, lrFrame, mixerOf, planLightroomWrite } from './lightroom'
 import { gradingOf } from '../engine/develop/colour-grading'
 import { planToneWrite, toneCurveOf } from './lightroomCurve'
+import { effectsOf, planFxWrite } from './lightroomEffects'
 import { sidecarFor } from './naming'
 import { readXmp, writeXmp } from './xmp'
 
@@ -138,6 +139,8 @@ class SidecarSync {
     const lightroom = planLightroomWrite(read?.lightroom, read?.develop ? geometryOf(read.develop) : null, geometryOf(src.settings), frame, detailOf(read?.develop), detailOf(src.settings), mixerOf(read?.develop), mixerOf(src.settings), gradingOf(read?.develop), gradingOf(src.settings))
     // Lightroom's tone curve, by the same rules (lightroomCurve.ts).
     const lightroomTone = planToneWrite(read?.lightroomTone, toneCurveOf(read?.develop), toneCurveOf(src.settings))
+    // Lightroom's Effects fields (Texture, Clarity, Dehaze, vignette, grain; never Glow's), by the same rules.
+    const lightroomFx = planFxWrite(read?.lightroomFx, effectsOf(read?.develop), effectsOf(src.settings))
     // Snapshots (docs/PHASE3.md Part 19). While the record doesn't know them (made before snapshots existed, or taken
     // silently from an older file), snapshots in the file that the catalog doesn't have are taken into the library
     // first, so rewriting the file doesn't drop snapshots another LightBench wrote. A damaged list stays in the file
@@ -157,7 +160,7 @@ class SidecarSync {
     try {
       text = writeXmp(existing, {
         rating: photo.rating, flag: photo.flag, color: photo.color, develop: src.settings, keywords, collections: src.collections, stack: src.stack,
-        versions: src.versions, metadata, lightroom, lightroomTone, snapshots: read?.snapshotsDamaged && !snapshots.length ? undefined : snapshots,
+        versions: src.versions, metadata, lightroom, lightroomTone, lightroomFx, snapshots: read?.snapshotsDamaged && !snapshots.length ? undefined : snapshots,
       })
     } catch (e) {
       throw new Error(`${where}: ${e instanceof Error ? e.message : e}`, { cause: e })

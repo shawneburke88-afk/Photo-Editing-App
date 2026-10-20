@@ -59,6 +59,13 @@ export interface ExportSettings {
    * removing banding there; it had no effect in JPEGs, so JPEGs are never dithered).
    */
   dither: boolean
+  /**
+   * The same dither for 8-bit JPEGs too (PHASE3.md Part 25; owner's decision V2 = C: an Export option, off by default, so
+   * no export changes unless it is ticked). Against steps in smooth vignettes and skies; the encoder benchmark measured no
+   * effect of dither in JPEGs at quality 85–95 (docs/research/JPEG_ENCODER_BENCHMARK.md), so it may matter only at the
+   * highest qualities.
+   */
+  ditherJpeg: boolean
   metadata: MetadataOptions
   /** File name template (darktable syntax), without extension. */
   template: string
@@ -67,6 +74,12 @@ export interface ExportSettings {
   /** Subfolder created inside the destination ('' = none). */
   subfolder: string
   conflict: Conflict
+}
+
+/** The export's dither amplitude (output steps): PNG/TIFF 8-bit by their option, JPEG only when its own option is ticked. */
+export function exportDither(s: Pick<ExportSettings, 'format' | 'dither' | 'ditherJpeg'>, bits: 8 | 16): number {
+  if (bits !== 8) return 0
+  return s.format === 'jpeg' ? (s.ditherJpeg ? 1 : 0) : s.dither ? 1 : 0
 }
 
 /**
@@ -85,6 +98,7 @@ export const DEFAULT_EXPORT: ExportSettings = {
   ppi: DEFAULT_PPI,
   sharpen: DEFAULT_OUTPUT_SHARPENING,
   dither: true,
+  ditherJpeg: false,
   metadata: DEFAULT_METADATA,
   template: '$(FILE.NAME)',
   destination: 'folder',
@@ -233,7 +247,7 @@ export async function runExport(
                 toOutput: rec2020ToProfile(space.profile),
                 trc: outputTrc(space.profile),
                 bits,
-                dither: s.dither && s.format !== 'jpeg' && bits === 8 ? 1 : 0,
+                dither: exportDither(s, bits),
                 // The scale actually used (floor rounding included), so screen sharpening follows the pixel size.
                 sharpen: sharpenParams(s.sharpen, Math.min(width / iw, height / ih), ppi),
               })

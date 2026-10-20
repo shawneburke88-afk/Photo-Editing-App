@@ -64,6 +64,8 @@ import { DEFAULT_MIXER_UI, type MixerUi } from './mixerUi'
 import { MixerTatLayer, PointPickLayer } from './MixerTatLayer'
 import { CHANNEL_NAMES, BAND_NAMES, MAX_POINTS, newPoint, withColourMixer, withPoints, type ColourMixerSettings, type MixerChannel } from '../engine/develop/colour-mixer'
 import { applyEyes, eyeShown, hiddenNames, NO_GROUP_EYES, wbHidden, type SectionGroup, type SectionId } from './sectionEyes'
+import { EffectsPanel } from './EffectsPanel'
+import { effectsGroupOn, withEffects } from '../engine/develop/effects'
 import { SectionEyeContext, type SectionEyes } from './sectionEyeContext'
 import { CurveAuto } from './CurveAuto'
 import { useCurveAuto } from './useCurveAuto'
@@ -134,6 +136,7 @@ interface Bypass {
   grading: boolean
   detail: boolean
   masks: boolean
+  effects: boolean
 }
 
 /** Settings without their spots (the field left out, as in edits that never had any). */
@@ -1232,6 +1235,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       { id: 'grading', name: 'Colour Grading', off: bypass.grading },
       { id: 'detail', name: 'Detail', off: bypass.detail && detailOn(settings.detail) },
       { id: 'masks', name: 'Masks', off: bypass.masks && !!settings.masks?.length },
+      { id: 'effects', name: 'Effects', off: bypass.effects && effectsGroupOn(settings.effects) },
     ],
     sectionsOff,
   ).concat(bypass.masks ? [] : (settings.masks ?? []).filter((x) => masking.hidden.has(x.id)).map((x) => `mask ${x.name}`))
@@ -2780,6 +2784,23 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   zoomedOut={view.zoom === 'fit' || (typeof view.zoom === 'number' && view.zoom < 1)}
                   onChange={(label, detail) => change(label, withDetail(settings, detail))}
                   onMaskPreview={setMaskPreview}
+                />
+              ),
+            },
+            {
+              id: 'effects',
+              label: 'Effects',
+              title: 'Effects',
+              icon: GROUP_ICONS.effects,
+              bypass: effectsGroupOn(settings.effects) || bypass.effects
+                ? { off: bypass.effects, onToggle: () => setBypass((b) => ({ ...b, effects: !b.effects })), title: bypass.effects ? 'Show the vignette, grain and glow again' : 'Show the photo without its post-crop vignette, grain and glow (nothing is changed)' }
+                : undefined,
+              content: (
+                <EffectsPanel
+                  effects={settings.effects}
+                  disabled={status.kind !== 'ready'}
+                  showHint={hintsPref === 1}
+                  onChange={(label, fx) => change(label, withEffects(settings, fx))}
                 />
               ),
             },

@@ -97,11 +97,23 @@ describe('a mask follows its content through the geometry', () => {
 describe('prepared masks', () => {
   it('weight the local values by Amount, mark the overlay and say when tone works per pixel', () => {
     const m = mask([radial], { amount: 50, adjust: { exposure: 2, shadows: 40, temperature: -20 } })
-    expect(maskValues(m, true)).toEqual([1, 0, 0, 0.2, 0, 0, 0, 0, -10, 0, 1, 0])
+    expect(maskValues(m, true)).toEqual([1, 0, 0, 0.2, 0, 0, 0, 0, -10, 0, 1, 0, 0, 0, 0, 0])
     const { m: map, r } = drawing(DEFAULT_GEOMETRY)
     const p = prepareMasks([m], map, r, MASKS_V1)
     expect(p.toneLocal).toBe(true)
+    expect(p.spatial).toBe(false)
     expect(prepareMasks([mask([radial])], map, r, MASKS_V1).toneLocal).toBe(false)
+  })
+
+  it('local Texture, Clarity, Dehaze and Glow go in a fourth plane (Part 25), weighted by Amount', () => {
+    const m = mask([radial], { amount: 50, adjust: { texture: 40, clarity: -20, dehaze: 60, glow: 100 } })
+    expect(maskValues(m, false).slice(12)).toEqual([0.2, -0.1, 0.3, 0.5])
+    expect(maskValues(m, false).slice(0, 12).every((v) => v === 0)).toBe(true)
+    const { m: map, r } = drawing(DEFAULT_GEOMETRY)
+    const p = prepareMasks([m], map, r, MASKS_V1)
+    expect(p.spatial).toBe(true)
+    expect(p.toneLocal).toBe(false)
+    expect(p.masks).toHaveLength(1)
   })
 
   it('leave out masks without an effect (unless shown with the overlay) and masks from a newer LightBench', () => {
