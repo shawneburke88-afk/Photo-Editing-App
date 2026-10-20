@@ -68,7 +68,7 @@ export function folderBytes(dir) {
   return n
 }
 
-async function download(url, tries = 3) {
+export async function download(url, tries = 3) {
   for (let i = 1; ; i++) {
     try {
       const r = await fetch(url, { redirect: 'follow' })
