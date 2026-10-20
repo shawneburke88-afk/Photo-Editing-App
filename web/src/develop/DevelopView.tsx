@@ -322,7 +322,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   /** The noise profile and sharpening radius the last render used, for the Detail group. */
   const [noiseProfile, setNoiseProfile] = useState<ProfileChoice | null>(null)
   const [sharpenRadius, setSharpenRadius] = useState<RadiusChoice | null>(null)
-  const [reveal, setReveal] = useState<{ id: GroupId; n: number } | null>(null)
+  const [reveal, setReveal] = useState<{ id: GroupId; n: number; ifClosed?: boolean } | null>(null)
   // Sublabels next to each slider: 1 = shown, 2 = hidden (tooltips are always available on hover).
   const [hintsPref, setHintsPref] = useStoredNumber('lightbench.develop.hints', 1)
   /**
@@ -1843,6 +1843,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   })
   // While the Colour Mixer's targeted adjustment tool or Point Color's picker is on, Develop listens to 'mixer'.
   const mixerTool = !!mixerTarget || pointPick
+  // Groups start closed (ToolStack): a tool started with its shortcut opens its group, so its controls are in view.
+  const toolGroup: GroupId | null = removing ? 'remove' : masking.active ? 'masks' : curveTarget ? 'curve' : mixerTool ? 'colour' : wbPick ? 'basic' : guiding ? 'crop' : null
+  useEffect(() => {
+    if (toolGroup) setReveal({ id: toolGroup, n: Date.now(), ifClosed: true })
+  }, [toolGroup])
   useShortcuts(['mixer'], !pasting && !draft && !guiding && mixerTool, (cmd) => {
     switch (cmd) {
       case 'develop.mixerTargetHue': startMixerTarget(mixerTarget === 'hue' ? null : 'hue'); break

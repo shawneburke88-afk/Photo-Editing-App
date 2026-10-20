@@ -5,6 +5,9 @@
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .section-head h3 { margin: 2px 0 8px; }
 .section-head .section-eye { margin: -4px 0 4px; }
+.section-toggle { display: flex; align-items: baseline; gap: 6px; flex: 1; background: none; border: 0; color: inherit; font: inherit; padding: 0; text-align: left; cursor: pointer; }
+.section-toggle .tool-group-caret { width: 10px; }
+.section-toggle .section-summary { margin-left: auto; }
 .dpanel-head .section-eye { align-self: center; margin: -4px 0 4px auto; }
 .dpanel-head .section-eye + * { margin-left: 6px; }
 .section-eyes { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 2px; }

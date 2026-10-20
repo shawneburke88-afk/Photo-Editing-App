@@ -10,6 +10,7 @@
 // Home resets; changes are announced.
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { openSections, useOpen } from './panelState'
 import {
   DEFAULT_GRADING,
   DEFAULT_GRADING_ADVANCED,
@@ -199,7 +200,7 @@ export function ColourGradingPanel(p: Props) {
   const { disabled } = p
   const g = p.grading ?? DEFAULT_GRADING
   const adv = g.advanced ?? DEFAULT_GRADING_ADVANCED
-  const [advanced, setAdvanced] = useState(false)
+  const [advanced, setAdvanced] = useOpen(openSections, 'grading.advanced')
   const [announce, setAnnounce] = useState('')
   const live = useId()
   const set = (patch: Partial<ColourGradingSettings>) => ({ ...g, ...patch })

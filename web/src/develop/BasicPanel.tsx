@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { openSections, useOpen } from './panelState'
 import { HIGHEST_TEMPERATURE, LOWEST_TEMPERATURE } from '../engine/color/temperature'
 import { sliderFromTint, tintFromSlider, type DemosaicMethod, type DevelopSettings, type SourceKind } from '../engine/develop/settings'
 import type { SensorLayout } from '../engine/raw/types'
@@ -41,7 +41,8 @@ const toMired = (k: number) => -1e6 / k
 const fromMired = (m: number) => Math.round(-1e6 / m)
 
 export function BasicPanel({ settings: s, asShot, onChange, disabled, kind, layout, defaults, auto, pickingWb, onPickWb, hints, onHints }: Props) {
-  const [advanced, setAdvanced] = useState(false)
+  // Advanced starts closed; opening it is remembered (panelState.ts).
+  const [advanced, setAdvanced] = useOpen(openSections, 'basic.advanced')
   const guide = (key: string) => ({ help: HELP[key], showHint: hints })
   const set = (label: string, patch: Partial<DevelopSettings>) => onChange(label, { ...s, ...patch })
   const setAdv = (label: string, patch: Partial<DevelopSettings['advanced']>) =>

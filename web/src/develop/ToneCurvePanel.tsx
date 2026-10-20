@@ -9,6 +9,7 @@
 // are the handles under the graph.
 
 import { useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { openSections, useOpen } from './panelState'
 import type { ImageStats } from '../engine/gpu/develop-engine'
 import {
   CURVE_NORMS,
@@ -149,7 +150,7 @@ export function ToneCurvePanel(p: Props) {
   const dragRef = useRef<Drag | null>(null)
   const [pointer, setPointer] = useState<[number, number] | null>(null)
   const [bandFor, setBandFor] = useState<RegionKey | null>(null)
-  const [advanced, setAdvanced] = useState(false)
+  const [advanced, setAdvanced] = useOpen(openSections, 'curve.advanced')
   const [announce, setAnnounce] = useState('')
   const live = useId()
   const sel = selected && selected.channel === channel && pts && selected.index < pts.length ? selected.index : null

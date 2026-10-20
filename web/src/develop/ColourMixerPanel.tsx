@@ -7,6 +7,7 @@
 // The maths is in engine/develop/colour-mixer.ts.
 
 import { useEffect, useRef, useState } from 'react'
+import { openSections, useOpen } from './panelState'
 import {
   BAND_NAMES,
   bandCss,
@@ -87,7 +88,7 @@ export function ColourMixerPanel(p: Props) {
   const { ui, disabled } = p
   const m = p.mixer ?? DEFAULT_COLOUR_MIXER
   const adv = m.advanced ?? DEFAULT_ADVANCED
-  const [advanced, setAdvanced] = useState(false)
+  const [advanced, setAdvanced] = useOpen(openSections, 'colour.advanced')
   const [ranges, setRanges] = useState(false)
   // Visualize: Alt held while dragging a band slider (Lightroom), or the checkbox for the band last moved.
   const [visualize, setVisualize] = useState(false)

@@ -2,7 +2,7 @@
 // Reset; darktable's own settings under Advanced. Texture, Clarity and Dehaze live in Basic → Presence (USABILITY.md row 2;
 // owner's decision T6). The maths and its sources: engine/develop/effects.ts.
 
-import { useState } from 'react'
+import { openSections, useOpen } from './panelState'
 import {
   DEFAULT_GLOW,
   DEFAULT_GRAIN,
@@ -37,8 +37,8 @@ export function EffectsPanel({ effects, disabled, showHint, onChange }: Props) {
   const v = fx.vignette ?? DEFAULT_VIGNETTE
   const g = fx.grain ?? DEFAULT_GRAIN
   const gl = fx.glow ?? DEFAULT_GLOW
-  const [vigAdv, setVigAdv] = useState(false)
-  const [grainAdv, setGrainAdv] = useState(false)
+  const [vigAdv, setVigAdv] = useOpen(openSections, 'effects.vignetteAdvanced')
+  const [grainAdv, setGrainAdv] = useOpen(openSections, 'effects.grainAdvanced')
   const guide = (key: string) => ({ help: HELP[key], showHint })
   const setV = (label: string, patch: Partial<VignetteSettings>) => onChange(`Vignette: ${label}`, { ...fx, vignette: { ...v, ...patch } })
   // Grain that starts gets its own seed (a new pattern per photo; a virtual copy gets another).
