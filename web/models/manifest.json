@@ -22,7 +22,7 @@
       "source": {
         "host": "huggingface",
         "repo": "onnx-community/depth-anything-v2-small",
-        "revision": null
+        "revision": "4472b7362082ad9968fee890ca0f1e5aca36b93d"
       },
       "input": {
         "shortSide": 518,
@@ -31,8 +31,8 @@
         "std": [0.229, 0.224, 0.225]
       },
       "files": [
-        { "variant": "fp16", "path": "onnx/model_fp16.onnx", "bytes": 49642442, "sha256": null },
-        { "variant": "fp32", "path": "onnx/model.onnx", "bytes": 99060839, "sha256": null }
+        { "variant": "fp16", "path": "onnx/model_fp16.onnx", "bytes": 49642442, "sha256": "2df6223f206b5164e21f664ace61dabeb9bb6a49b8b5a3e00510b4807d0f5b04" },
+        { "variant": "fp32", "path": "onnx/model.onnx", "bytes": 99060839, "sha256": "afb6a5c28f3b6bf1618c6e43f02073ef9dfdc70e937502d51603e57b0a1df10c" }
       ]
     }
   ]
