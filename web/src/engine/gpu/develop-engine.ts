@@ -69,6 +69,37 @@ import { presentMode, type PresentMode } from './present'
 import { MaskStage, type MaskDraw, type PxRegion } from './mask-stage'
 import { prepareMasks } from '../develop/mask-render'
 import { toneEqualizerPinv } from '../color/tone-equalizer'
+import { DeviceMemory, Retirement } from './retire'
+
+/** The graphics adapter an engine's device belongs to (`GPUDevice.adapterInfo`), for diagnostics and notices. */
+export interface AdapterSummary {
+  vendor: string
+  architecture: string
+  device: string
+  description: string
+  fallback: boolean
+}
+
+/** An engine event for the diagnostics log (diagnostics/recorder.ts). */
+export interface EngineEvent {
+  op: string
+  ms?: number
+  error?: string
+  mem?: ReturnType<DevelopEngine['memoryStats']>
+  info?: Record<string, unknown>
+}
+
+/**
+ * Where engine events go: null (the default, diagnostics off) means nothing is timed or recorded. The work itself is
+ * the same either way.
+ */
+let engineTrace: ((e: EngineEvent) => void) | null = null
+export function setEngineTrace(fn: ((e: EngineEvent) => void) | null) {
+  engineTrace = fn
+}
+
+/** Engines not yet destroyed (Develop's, the Library's, the batch developer's): the memory readout sums them. */
+export const liveEngines = new Set<DevelopEngine>()
 
 export type { PresentMode } from './present'
 
@@ -451,14 +482,22 @@ export class DevelopEngine {
   private readonly retouch: RetouchStage
   /** The RAW stage the scene was built with, and the photo's canonical one (as shot, defaults), for Remove fills. */
   private builtStage: RawStageOptions | null = null
-  /** Drawings in progress, and cached textures waiting for them to end before they are destroyed. */
-  private drawing = 0
-  private retired: GPUTexture[] = []
+  /** Drawings in progress (leases), and replaced cached textures waiting for them to end (retire.ts). */
+  private readonly retirement = new Retirement()
+  /** The bytes of the textures and buffers this engine's device holds (an estimate; retire.ts). */
+  private readonly memory: DeviceMemory
+  /** The graphics adapter this engine runs on. */
+  readonly adapter: AdapterSummary
   private canonicalStage: RawStageOptions | null = null
 
   private constructor(device: GPUDevice, mode: PresentMode) {
     this.device = device
+    this.memory = new DeviceMemory(device)
     this.mode = mode
+    const ai = (device as GPUDevice & { adapterInfo?: GPUAdapterInfo & { isFallbackAdapter?: boolean } }).adapterInfo
+    this.adapter = { vendor: ai?.vendor ?? '', architecture: ai?.architecture ?? '', device: ai?.device ?? '', description: ai?.description ?? '', fallback: !!ai?.isFallbackAdapter }
+    liveEngines.add(this)
+    engineTrace?.({ op: 'engine-created', info: { mode, ...this.adapter } })
     this.canvas = document.createElement('canvas')
     this.canvas.className = 'develop-canvas'
     this.format = mode === 'canvas' ? navigator.gpu.getPreferredCanvasFormat() : 'rgba8unorm'
@@ -480,10 +519,14 @@ export class DevelopEngine {
       this.gpuCtx.configure({ device, format: this.format, alphaMode: 'opaque', colorSpace: space })
       if (this.lastRender && !this.lost) void this.render(...this.lastRender).catch(() => {})
     })
-    device.addEventListener('uncapturederror', (e) => console.error('WebGPU error:', (e as GPUUncapturedErrorEvent).error.message))
+    device.addEventListener('uncapturederror', (e) => {
+      console.error('WebGPU error:', (e as GPUUncapturedErrorEvent).error.message)
+      engineTrace?.({ op: 'gpu-error', error: (e as GPUUncapturedErrorEvent).error.message })
+    })
     void device.lost.then((info) => {
       this.lost = true
       if (this.destroyed) return
+      engineTrace?.({ op: 'device-lost', error: `${info.reason}: ${info.message}` })
       if (info.reason !== 'destroyed') console.error('WebGPU device lost:', info.message)
       for (const fn of [...this.lostListeners]) fn(info.message)
     })
@@ -1005,29 +1048,25 @@ export class DevelopEngine {
 
   /**
    * A drawing in progress (from choosing its source to submitting its work): cached textures replaced meanwhile are
-   * destroyed only after it ends. Returns the function that ends it (also called by itself after 20 s, so a drawing
-   * that failed never keeps old textures).
+   * destroyed only after it ends (and the other drawings open when they were replaced; retire.ts). Returns the
+   * function that ends it (also called by itself after 20 s, so a drawing that failed never keeps old textures).
    */
   private lease(): () => void {
-    this.drawing++
-    let done = false
-    const end = () => {
-      if (done) return
-      done = true
-      clearTimeout(timer)
-      this.drawing--
-      if (!this.drawing) {
-        for (const t of this.retired) t.destroy()
-        this.retired = []
-      }
-    }
-    const timer = setTimeout(end, 20000)
-    return end
+    return this.retirement.lease()
   }
 
   private retireTex(t: GPUTexture) {
-    if (this.drawing) this.retired.push(t)
-    else t.destroy()
+    this.retirement.retire(t)
+  }
+
+  /**
+   * GPU memory as this engine sees it: the bytes of the textures and buffers its device holds (estimated from their
+   * sizes and formats), the replaced textures still waiting for drawings to end, and the drawings open. The browser
+   * cannot see the driver's real use, nor other programs'.
+   */
+  memoryStats(): { textureBytes: number; textures: number; bufferBytes: number; retired: number; retiredBytes: number; leases: number } {
+    const r = this.retirement.pending
+    return { textureBytes: this.memory.textureBytes, textures: this.memory.textures, bufferBytes: this.memory.bufferBytes, retired: r.count, retiredBytes: r.bytes, leases: this.retirement.leases }
   }
 
   /**
@@ -2202,11 +2241,18 @@ export class DevelopEngine {
   /**
    * Renders a size×size crop at 100 % (one image pixel per output pixel) centred on a point in
    * displayed-image uv, for the white balance picker's loupe.
+   *
+   * The Detail stage is shown only when its full-size result is already there (the view at 100 %, or an edit with
+   * spots, which needs it anyway): the loupe never starts a full-size Detail run of its own (at 24 MP about 100 ms and
+   * 1.5 GB at its peak, Part 16) on every pointer move after a new white balance. The picker samples the scene without
+   * Detail, as before.
    */
   async renderLoupe(u: DisplayUniforms, wb: Vec3, cu: number, cv: number, size: number): Promise<ImageData> {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
-    const src = await this.detailSource(u.geometry, false, u.lens, await this.detailFor(u, 0), u.spots)
+    const run = await this.detailFor(u, 0)
+    const ready = !!run && (!!u.spots?.length || this.detailCache.some((d) => d.key === run.key && d.gen === this.sceneGen))
+    const src = await this.detailSource(u.geometry, false, u.lens, ready ? run : null, u.spots)
     const maskSrc = await this.toneSource(u, src)
     const { w: iw, h: ih } = src
     const cx = Math.floor(cu * iw) + 0.5
@@ -2691,13 +2737,14 @@ export class DevelopEngine {
 
   destroy() {
     this.destroyed = true
+    liveEngines.delete(this)
     this.lostListeners.clear()
     this.unwatchDisplay()
     this.lastRender = null
     this.rgbInput?.texture.destroy()
     this.warp?.tex.destroy()
     this.lensOnly?.tex.destroy()
-    for (const t of this.retired) t.destroy()
+    this.retirement.destroyAll()
     for (const m of this.maskCache) m.tex.destroy()
     this.dropDetail()
     this.detailStage?.destroy()
@@ -2721,6 +2768,31 @@ export class DevelopEngine {
     this.viewBuf.destroy()
     this.viewLensBuf.destroy()
     this.device.destroy()
+  }
+}
+
+// Diagnostics (PHASE3.md, "Diagnostics"): with a trace set, these report their duration and the engine's GPU memory
+// when they end (or fail). Without one, they are called straight through.
+for (const name of ['process', 'render', 'renderImage', 'renderStats', 'renderCurveInput', 'renderLoupe', 'renderOutput', 'sampleScene', 'detailed'] as const) {
+  const proto = DevelopEngine.prototype as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>
+  const work = proto[name]
+  proto[name] = function (this: DevelopEngine, ...a: unknown[]) {
+    if (!engineTrace) return work.apply(this, a)
+    const t0 = performance.now()
+    const done = (e?: unknown) => {
+      const error = e === undefined ? undefined : e instanceof GpuWorkError ? `GpuWorkError(${e.kind}): ${e.message}` : String(e)
+      engineTrace?.({ op: name, ms: Math.round((performance.now() - t0) * 10) / 10, error, mem: this.memoryStats() })
+    }
+    return work.apply(this, a).then(
+      (r) => {
+        done()
+        return r
+      },
+      (e: unknown) => {
+        done(e ?? 'error')
+        throw e
+      },
+    )
   }
 }
 
