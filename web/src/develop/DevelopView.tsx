@@ -523,6 +523,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         stopErrors = e.onGpuError((kind, message) => {
           if (alive) gpuTrouble(kind, message)
         })
+        // Lost while it was being made or the photo restored (before onLost could tell): start again.
+        if (e.isLost) gpuTrouble('lost', 'lost while starting')
         setEngineError('')
         setEngineReady((n) => n + 1)
         if (engineGen) {

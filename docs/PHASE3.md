@@ -2,6 +2,40 @@
 
 See [PLAN.md](PLAN.md#phase-3--editing-depth) for the whole phase and [USABILITY.md](USABILITY.md) for the decisions behind it. Phase 3 adds darktable's editing tools behind Lightroom-style controls. It starts with the groundwork they need: process versions, so that rendering changes never alter existing edits, and the Develop tool stack that the new tools join, with Crop as its first group.
 
+**Contents.** One file for the whole phase, in the order the parts were built; use the links to jump.
+
+- [Part 1: Process versions, the tool stack, and Crop](#part-1-process-versions-the-tool-stack-and-crop)
+- [Part 2: Lens corrections](#part-2-lens-corrections)
+- [Part 3: Transform and Upright](#part-3-transform-and-upright)
+- [Part 4: Extras — twin sidecars, preview colour, GPS, IPTC, Display P3, JPEG Tint](#part-4-extras--twin-sidecars-preview-colour-gps-iptc-display-p3-jpeg-tint)
+- [Part 5: Phone DNGs (linear DNG) and Fujifilm X-Trans](#part-5-phone-dngs-linear-dng-and-fujifilm-x-trans)
+- [Part 6: Rating keys, and a one-time refresh of older photos](#part-6-rating-keys-and-a-one-time-refresh-of-older-photos)
+- [Part 7: Lightroom's crop, straighten, orientation, Transform and Upright in sidecars](#part-7-lightrooms-crop-straighten-orientation-transform-and-upright-in-sidecars)
+- [Part 8: Output sharpening on Export](#part-8-output-sharpening-on-export)
+- [Part 9: Lens and X-Trans follow-ups, and a keyboard test fix](#part-9-lens-and-x-trans-follow-ups-and-a-keyboard-test-fix)
+- [Part 10: The tone equalizer as darktable's defaults (process version 2)](#part-10-the-tone-equalizer-as-darktables-defaults-process-version-2)
+- [Part 11: The Remove brush — Remove, Heal and Clone without AI](#part-11-the-remove-brush--remove-heal-and-clone-without-ai)
+- [Part 12: The Tone Curve](#part-12-the-tone-curve)
+- [Part 13: Detail — sharpening and noise reduction](#part-13-detail--sharpening-and-noise-reduction)
+- [Part 14: GPU robustness](#part-14-gpu-robustness)
+- [Part 15: Colour Mixer and Point Color](#part-15-colour-mixer-and-point-color)
+- [Part 16: GPU benchmark](#part-16-gpu-benchmark)
+- [Part 17: Colour Grading](#part-17-colour-grading)
+- [Part 18: Culling helpers](#part-18-culling-helpers)
+- [Part 19: Snapshots](#part-19-snapshots)
+- [Part 20: Soft proofing](#part-20-soft-proofing)
+- [Part 21: Section eyes and Tone Curve Auto](#part-21-section-eyes-and-tone-curve-auto)
+- [Part 22: CPU budget, multi-core Remove and overlapped export](#part-22-cpu-budget-multi-core-remove-and-overlapped-export)
+- [Part 23: Masking](#part-23-masking)
+- [Part 24: AI Depth range mask and model delivery](#part-24-ai-depth-range-mask-and-model-delivery)
+- [Part 25: Effects](#part-25-effects)
+- Since Part 25:
+  - [Diagnostics (flight recorder)](#diagnostics-flight-recorder)
+  - [Develop groups start collapsed (owner, 2026-10-19)](#develop-groups-start-collapsed-owner-2026-10-19)
+  - [Import speed (owner, 2026-10-20)](#import-speed-owner-2026-10-20)
+  - [Zoom levels (owner, 2026-10-19)](#zoom-levels-owner-2026-10-19)
+  - [Hardening and cleanup (owner, 2026-10-21)](#hardening-and-cleanup-owner-2026-10-21)
+
 ## Part 1: Process versions, the tool stack, and Crop
 
 **What it does.** Three things. Every edit now records which version of LightBench's rendering it uses (its **process version**), so later rendering changes never silently change an existing edit. Develop's right panel is now **one scrolling stack of tool groups** in workflow order with a **jump bar**. Its new first group is **Crop**: crop, straighten, rotate 90° and flip, on the photo and in the panel, Lightroom-style.
