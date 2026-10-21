@@ -66,8 +66,20 @@ self.addEventListener('fetch', (event) => {
   const request = event.request
   // As coi-serviceworker: these requests can't be answered by a service worker.
   if (request.cache === 'only-if-cached' && request.mode !== 'same-origin') return
+  // AI Remove's model downloads and update check (PHASE3.md Part 26): CORS requests to Hugging Face, 1.24 GB with
+  // Range requests, kept by the app itself. Left to the browser, untouched (they need no isolation headers).
+  if (isHuggingFace(request.url)) return
   event.respondWith(respond(request).then(isolate))
 })
+
+function isHuggingFace(u: string): boolean {
+  try {
+    const h = new URL(u).hostname
+    return h === 'huggingface.co' || h.endsWith('.huggingface.co') || h.endsWith('.hf.co')
+  } catch {
+    return false
+  }
+}
 
 async function respond(request: Request): Promise<Response> {
   const url = new URL(request.url)
