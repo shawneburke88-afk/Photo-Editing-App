@@ -10,11 +10,19 @@
 //   - Remove (LightBench's): the patch-based fill (completion.ts) computed once on the photo's canonical scene, its
 //     pixels taken from the scene as it is now, then healed into the surroundings like Heal (the same harmonic
 //     correction, so a later white balance change or a seam between two strokes doesn't show), then blended.
+//   - AI Remove (PHASE3.md Part 26): the patch the model generated, stored with the spot (ai-patch.ts), healed into
+//     the surroundings the same way as Remove's fill (so it follows a later white balance or exposure change and
+//     leaves no seam) and blended by the brush's feather and opacity. A spot without a patch (not generated yet, or
+//     damaged) changes nothing.
 
-import { emptyRect, type PxRect, type Spot } from '../develop/spots'
+import { clipRect, emptyRect, type PxRect, type Spot } from '../develop/spots'
+import { decodePatch, patchRectPx, samplePatch } from '../develop/ai-patch'
 import { harmonicFill } from './membrane'
 import { complete, renderCompletion, type Completion, type CompletionInput } from './completion'
 import { chunkOwners, planSpots, rasterize, sourceRect, type SpotPlan } from './plan'
+
+/** Pixels kept around an AI Remove spot in its patch (ai/inpaint.ts RING; the heal reads the difference there). */
+const AI_RING = 4
 import { TileImage, tilesOf } from './tiles'
 
 export interface RunOptions {
@@ -34,6 +42,10 @@ export function runSpots(img: TileImage, spots: Spot[], o: RunOptions): Map<stri
   const computed = new Map<string, Completion>()
   for (const p of plans) {
     if (p.px.opacity <= 0 || !p.chunks.length) continue
+    if (p.px.mode === 'ai') {
+      aiSpot(img, p)
+      continue
+    }
     // Clone and Heal read their source from the image as it was before this spot.
     const before = p.px.mode === 'remove' ? null : snapshot(img, p)
     p.chunks.forEach((c, ci) => {
@@ -57,12 +69,59 @@ export function runSpots(img: TileImage, spots: Spot[], o: RunOptions): Map<stri
 export function tilesNeeded(spots: Spot[], w: number, h: number): Set<number> {
   const out = new Set<number>()
   for (const p of planSpots(spots, w, h)) {
+    if (p.px.mode === 'ai') {
+      const r = aiRect(p, w, h)
+      if (r) tilesOf(r, w, h, out)
+      continue
+    }
     for (const c of p.chunks) {
       tilesOf(c.window, w, h, out)
       if (p.px.mode !== 'remove') tilesOf(sourceRect(c.window, p.px.dx, p.px.dy, w, h), w, h, out)
     }
   }
   return out
+}
+
+/** The pixels an AI Remove spot works on: its patch's rectangle (the spot and its ring), or null without a patch. */
+function aiRect(p: SpotPlan, w: number, h: number): PxRect | null {
+  const ai = p.spot.ai
+  if (!ai) return null
+  const r = patchRectPx(ai, w, h)
+  const out = clipRect({ x0: Math.floor(r.x0), y0: Math.floor(r.y0), x1: Math.ceil(r.x1), y1: Math.ceil(r.y1) }, w, h)
+  return emptyRect(out) ? null : out
+}
+
+/**
+ * An AI Remove spot: its stored patch over its rectangle, healed into the pixels around the spot as they are now (the
+ * log-ratio between photo and patch on the ring, made harmonic over the spot, as Remove's fill), then blended by the
+ * brush's alpha × opacity.
+ */
+function aiSpot(img: TileImage, p: SpotPlan) {
+  const ai = p.spot.ai
+  const r = aiRect(p, img.w, img.h)
+  if (!ai || !r) return
+  const patch = decodePatch(ai)
+  if (!patch) return
+  const rw = r.x1 - r.x0
+  const rh = r.y1 - r.y0
+  const runs = p.chunks.map((c) => c.points)
+  const alpha = rasterize(p.px, runs, r)
+  const reach = rasterize({ ...p.px, radius: p.px.radius + AI_RING, feather: 0 }, runs, r)
+  const cur = img.read(r)
+  const fill = new Float32Array(rw * rh * 3)
+  for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) samplePatch(patch, ai, img.w, img.h, r.x0 + x, r.y0 + y, fill, (y * rw + x) * 3)
+  const unknown = new Uint8Array(rw * rh)
+  const diff = new Float32Array(rw * rh * 3)
+  for (let i = 0; i < unknown.length; i++) {
+    if (alpha[i] > 0) unknown[i] = 1
+    else if (reach[i] > 0) for (let c = 0; c < 3; c++) diff[i * 3 + c] = lg(cur[i * 3 + c]) - lg(fill[i * 3 + c])
+  }
+  harmonicFill(rw, rh, unknown, diff, 3)
+  const out = new Float32Array(rw * rh * 3)
+  for (let i = 0; i < out.length; i++) out[i] = ex(lg(fill[i]) + diff[i])
+  const owner = new Int16Array(rw * rh)
+  for (let i = 0; i < owner.length; i++) owner[i] = alpha[i] > 0 ? 0 : -1
+  blend(img, r, cur, out, alpha, owner, 0, p.px.opacity)
 }
 
 /** The canonical tiles the Remove fills not in `cached` need. */

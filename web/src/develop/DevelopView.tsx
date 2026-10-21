@@ -1498,7 +1498,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     }
     if (engineRef.current !== engine) return
     const now = latest.current.settings.spots ?? []
-    const name = { remove: 'Remove', heal: 'Heal', clone: 'Clone' }[spot.mode]
+    const name = { remove: 'Remove', heal: 'Heal', clone: 'Clone', ai: 'AI Remove' }[spot.mode]
     changeSpots(`${name} spot ${now.length + 1}`, [...now, spot])
     setSelectedSpot(spot.id)
   }
@@ -1526,7 +1526,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       what === 'mode' ? { mode: value as SpotMode }
         : what === 'size' ? { size: Math.round((Math.min(SIZE_RANGE[1], Math.max(SIZE_RANGE[0], v)) / Math.min(sw, sh)) * 1e6) / 1e6 }
           : { [what]: Math.min(1, Math.max(what === 'opacity' ? 0.01 : 0, v / 100)) }
-    const label = what === 'mode' ? `Spot ${i + 1}: ${{ remove: 'Remove', heal: 'Heal', clone: 'Clone' }[value as SpotMode]}` : `Spot ${i + 1}: ${what}`
+    const label = what === 'mode' ? `Spot ${i + 1}: ${{ remove: 'Remove', heal: 'Heal', clone: 'Clone', ai: 'AI Remove' }[value as SpotMode]}` : `Spot ${i + 1}: ${what}`
     changeSpots(label, list.map((x, k) => (k === i ? { ...x, ...patch } : x)))
   }
   function deleteSpot() {

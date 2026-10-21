@@ -16,13 +16,16 @@
 // (`_brush_ramer_douglas_peucker`, epsilon² = 0.01 × border² at its default smoothing); LightBench does the same and
 // keeps the simplified line as a polyline (darktable fits Bézier curves through it).
 
-export type SpotMode = 'remove' | 'heal' | 'clone'
+import { normalizeAiFill, type AiFill } from './ai-patch'
 
-/** The modes, in the order the panel shows them. An AI mode (Phase 4) will be one more entry. */
+export type SpotMode = 'remove' | 'heal' | 'clone' | 'ai'
+
+/** The modes, in the order the panel shows them. AI Remove (PHASE3.md Part 26) is the optional AI mode. */
 export const SPOT_MODES: { id: SpotMode; label: string; help: string }[] = [
   { id: 'remove', label: 'Remove', help: 'Fills the spot from its surroundings (patch-based, no AI): texture is gathered from around the spot and blended in.' },
   { id: 'heal', label: 'Heal', help: 'Copies the texture of the source and blends it into the colour and brightness around the spot.' },
   { id: 'clone', label: 'Clone', help: 'Copies the source exactly.' },
+  { id: 'ai', label: 'AI Remove', help: 'Fills the spot with new detail that an AI model draws to match its surroundings, on this computer. Best for objects; needs WebGPU and a one-time download (about 1.24 GB). The result is kept with the edit.' },
 ]
 
 export interface Spot {
@@ -47,6 +50,8 @@ export interface Spot {
    * so the seed changes nothing today. Kept so the stored format stays the same and for a future (AI) mode.
    */
   seed: number
+  /** AI Remove: the generated patch, its model version and seed (ai-patch.ts). Absent until generated. */
+  ai?: AiFill
 }
 
 export const MAX_SPOTS = 500
@@ -78,6 +83,11 @@ export function normalizeSpot(s: unknown): Spot | null {
     opacity: q(clamp(finite(o.opacity) ? o.opacity : 1, 0, 1)),
     offset: [q(clamp(off[0], -2, 2)), q(clamp(off[1], -2, 2))],
     seed: finite(o.seed) ? Math.abs(Math.floor(o.seed)) % 2 ** 31 : 1,
+    // Only AI Remove spots carry a patch (other spots stay exactly as they were stored).
+    ...(mode === 'ai' && o.ai ? (() => {
+      const ai = normalizeAiFill(o.ai)
+      return ai ? { ai } : {}
+    })() : {}),
   }
 }
 
