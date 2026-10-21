@@ -747,6 +747,50 @@ export const MASK_HELP: Record<string, ControlHelp> = {
     left: '',
     right: '',
   },
+  // Object select (PHASE3.md Part 27).
+  objectNew: {
+    hint: 'Select something by pointing at it',
+    what: 'Point at something in the photo to see what would be selected, then click to make it a mask. Shift-click adds to the selection, Alt-click removes from it, and a drag selects what is inside a box. An AI model (SAM 2.1) runs on this computer; the first time, LightBench asks before downloading it. The selection is kept in the edit and .xmp, so it looks the same everywhere without the model.',
+    left: '',
+    right: '',
+    pitfalls: 'Brush, Linear and Radial parts can add to or take away from a selection (+ Add, − Subtract, ∩ Intersect); Feather and Refine soften or follow its edge.',
+  },
+  objectAdd: {
+    hint: 'Add the tapped spot to the selection',
+    what: 'Adds what is at the tapped spot to the selected object (the same as Shift-click).',
+    left: '',
+    right: '',
+  },
+  objectRemove: {
+    hint: 'Remove the tapped spot from the selection',
+    what: 'Removes what is at the tapped spot from the selected object (the same as Alt-click).',
+    left: '',
+    right: '',
+  },
+  objectSelectHere: {
+    hint: 'Select what was tapped',
+    what: 'Makes a new selection of what is at the tapped spot (the same as a click).',
+    left: '',
+    right: '',
+  },
+  objectCompute: {
+    hint: 'Make the waiting selections for this photo',
+    what: 'Object selections that came from another photo or a preset keep where they were made, not their result. This runs the AI model on this photo at the same places, as one step you can undo.',
+    left: '',
+    right: '',
+  },
+  objectRecompute: {
+    hint: 'Make this selection again',
+    what: 'Runs the AI model again at the same points on this photo and replaces the selection, as one step you can undo.',
+    left: '',
+    right: '',
+  },
+  objectPick: {
+    hint: 'Refine the selection on the photo',
+    what: 'Turns the picker on again for the selected object: Shift-click adds, Alt-click removes, a click selects something new.',
+    left: '',
+    right: '',
+  },
 }
 
 /** What the panel says about range masks (owner's decision 12: no patent talk in the interface). */
