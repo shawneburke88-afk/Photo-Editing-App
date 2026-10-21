@@ -1,5 +1,20 @@
 [
   {
+    "version": "0.6.9",
+    "date": "2026-10-21",
+    "newFeatures": [
+      "Library: when sorted by capture time, each day gets a heading (e.g. \"Sunday, 19 October 2026 · 48 photos\") that stays at the top while you scroll. A new View menu turns the headings off, or shows the date on each photo.",
+      "Import window: click a date to see only its photos, Ctrl-click to add more dates, Shift-click for a range. Each date shows how many of its photos are ticked, e.g. (12 / 48).",
+      "Import window: a \"Stack each JPEG under its RAW\" option (on by default), and Stacks › \"Stack RAW + JPEG pairs\" to stack pairs that are already in your library.",
+      "Develop: every group starts closed, and Advanced sections too. LightBench remembers which groups you open. Shortcuts and the jump bar still open their group.",
+      "Clearer labels throughout: settings are described by what they do, without references to other apps."
+    ],
+    "bugFixes": [
+      "RAW files had their capture time shifted by your time zone's offset from UTC, so they could sort away from their JPEGs, appear under another date, or be copied into the next day's folder. Capture times are now read correctly, and RAWs already in your library are corrected once when the library is upgraded.",
+      "RAW + JPEG pairs are now stacked as soon as both files are imported (an interrupted import used to leave them unstacked), and pairs imported at different times are stacked too."
+    ]
+  },
+  {
     "version": "0.6.8",
     "date": "2026-10-20",
     "newFeatures": [
