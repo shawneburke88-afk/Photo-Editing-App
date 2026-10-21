@@ -300,6 +300,11 @@ async function main(args) {
   console.log(`test photo: synthetic ${rw} x ${rh} (a ${PHOTO.sensor.join(' x ')} photo as Develop renders it for the model), sha256 ${sha256(Buffer.from(rgba.buffer)).slice(0, 16)}`)
 
   for (const m of manifest.models) {
+    if (m.task !== 'depth') {
+      // AI Remove's Moebius has its own check (scripts/moebius-check.mjs, the workflow's moebius-check task).
+      console.log(`\n== ${m.id}: skipped here (checked by scripts/moebius-check.mjs)`)
+      continue
+    }
     console.log(`\n== ${m.id} (${m.source.repo} @ ${m.source.revision ?? 'not pinned'})`)
     md.push(`### ${m.name}`, '', `\`${m.source.repo}\` @ \`${m.source.revision ?? 'not pinned'}\``, '')
     const cols = []

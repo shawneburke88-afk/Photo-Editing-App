@@ -13,7 +13,7 @@ import { applyMap } from '../engine/develop/geometry'
 import { invert, type Mat3 } from '../engine/color/matrix'
 import { encodeDepth, quantizeDisparity, type RasterData } from '../engine/develop/depth-map'
 import type { DepthShape } from '../engine/develop/masks'
-import type { ModelEntry } from './manifest'
+import type { DepthInput, ModelEntry } from './manifest'
 import { prepareModel, runModel } from './runtime'
 import type { Provider } from './runtime.worker'
 
@@ -29,14 +29,14 @@ function multipleOf(x: number, k: number, min: number): number {
  * that needs the larger scale reaches `shortSide`), each side a multiple of `multiple`. A model file with fixed sizes
  * gets those.
  */
-export function modelSize(w: number, h: number, input: ModelEntry['input'], fixed: [number, number] | null = null): [number, number] {
+export function modelSize(w: number, h: number, input: DepthInput, fixed: [number, number] | null = null): [number, number] {
   if (fixed) return [fixed[1], fixed[0]]
   const s = Math.max(input.shortSide / w, input.shortSide / h)
   return [multipleOf(s * w, input.multiple, input.shortSide), multipleOf(s * h, input.multiple, input.shortSide)]
 }
 
 /** The size Develop should render the photo at: its long edge for `modelSize`, a little larger for a clean resize. */
-export function renderSize(w: number, h: number, input: ModelEntry['input']): number {
+export function renderSize(w: number, h: number, input: DepthInput): number {
   const [mw, mh] = modelSize(w, h, input)
   return Math.min(Math.max(w, h), Math.ceil(Math.max(mw, mh) * 1.5))
 }
@@ -155,8 +155,9 @@ export async function computeDepth(m: ModelEntry, shot: AsShot, provider: Provid
   const t0 = performance.now()
   const fixed = await prepareModel(m, provider)
   const loadMs = performance.now() - t0
-  const [mw, mh] = modelSize(shot.width, shot.height, m.input, fixed)
-  const tensor = toTensor(shot.rgba, shot.width, shot.height, mw, mh, m.input.mean, m.input.std)
+  const input = m.input!
+  const [mw, mh] = modelSize(shot.width, shot.height, input, fixed)
+  const tensor = toTensor(shot.rgba, shot.width, shot.height, mw, mh, input.mean, input.std)
   const r = await runModel(m, tensor, [1, 3, mh, mw], provider)
   const oh = r.dims[r.dims.length - 2]
   const ow = r.dims[r.dims.length - 1]
