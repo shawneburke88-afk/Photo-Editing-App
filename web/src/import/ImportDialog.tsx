@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { NewPhotosPreset } from '../develop/PresetSelect'
 import { newPhotosPreset, setNewPhotosPreset } from '../develop/presetStore'
 import { getCatalog } from '../catalog/client'
@@ -7,11 +7,17 @@ import { newPhotosMetadataPreset, setNewPhotosMetadataPreset } from '../library/
 import { loadHandle, saveHandle } from '../platform/handle-store'
 import { ensurePermission } from '../platform/roots'
 import { deleteImportPreset, importPresetFolders, loadImportPresets, saveImportPreset, type ImportPreset } from './importPresets'
-import { dateFolder, dateString, extensionOf, findRawJpegPairs, renamedFile, type RenameTemplate } from './plan'
+import { dateFolder, dateString, extensionOf, rawJpegTwins, renamedFile, type RenameTemplate } from './plan'
 import { ProbePool } from './probe'
-import { findAtDestination, photoTime, runImport, type ImportItem, type ImportProgress } from './run'
+import { findAtDestination, photoTime, type ImportItem } from './run'
 import { scanSource, type ScannedFile } from './scan'
 import { clickDate, dateCounts } from './dates'
+import { importSession } from './session'
+import { ImportProgressView } from './ImportStatus'
+import { diagnostics } from '../diagnostics/recorder'
+
+const subscribeSession = (fn: () => void) => importSession.subscribe(fn)
+const sessionSnapshot = () => importSession.status
 
 interface Candidate {
   file: ScannedFile
@@ -48,8 +54,8 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
   /** The dates whose photos are shown (empty: all dates). */
   const [shownDays, setShownDays] = useState<ReadonlySet<string>>(new Set())
   const dayAnchor = useRef<string | null>(null)
-  const [progress, setProgress] = useState<ImportProgress | null>(null)
-  const [finished, setFinished] = useState(false)
+  const session = useSyncExternalStore(subscribeSession, sessionSnapshot)
+  const progress = session.progress
   const [presets, setPresets] = useState<ImportPreset[]>([])
   /** The import preset in use; cleared when an option is changed by hand. */
   const [presetId, setPresetId] = useState<number | null>(null)
@@ -58,7 +64,6 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
   const [presetNote, setPresetNote] = useState('')
   const lastClicked = useRef<number | null>(null)
   const poolRef = useRef<ProbePool | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
   const candsRef = useRef<Candidate[]>([])
   candsRef.current = cands
   const destRef = useRef(dest)
@@ -115,6 +120,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
     dayAnchor.current = null
     setScanning(1)
     let files: ScannedFile[]
+    const listStart = performance.now()
     try {
       files = await scanSource(dir, setScanning)
     } catch (e) {
@@ -128,13 +134,33 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
       return
     }
     setCands(files.map((file) => ({ file, status: 'reading', inCatalog: false, atDestination: false, selected: true, touched: false })))
-    readAll(files)
+    readAll(files, performance.now() - listStart)
   }
 
   /** Reads metadata + thumbnails in parallel, applying results to the grid in small batches. */
-  function readAll(files: ScannedFile[]) {
+  function readAll(files: ScannedFile[], listMs: number) {
     const pool = new ProbePool()
     poolRef.current = pool
+    // Timings for Diagnostics (import/timing.ts): listing the card, then reading every photo's metadata and preview.
+    const started = performance.now()
+    let left = files.length
+    let probeMs = 0
+    let bytes = 0
+    let raws = 0
+    let failed = 0
+    const probed = (ms: number, size: number, ok: boolean, raw: boolean) => {
+      probeMs += ms
+      bytes += size
+      if (raw) raws++
+      if (!ok) failed++
+      if (--left === 0) {
+        const wallMs = performance.now() - started
+        diagnostics.log('import-scan', {
+          files: files.length, raws, jpegs: files.length - raws, failed, bytes, listMs: Math.round(listMs), probeWallMs: Math.round(wallMs),
+          probeSumMs: Math.round(probeMs), mbPerS: wallMs > 0 ? Math.round((bytes / 1e6 / (wallMs / 1000)) * 10) / 10 : 0,
+        })
+      }
+    }
     let batch: Map<ScannedFile, Partial<Candidate>> = new Map()
     let timer: ReturnType<typeof setTimeout> | null = null
     const flush = async () => {
@@ -161,16 +187,26 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
       timer ??= setTimeout(() => void flush(), 150)
     }
     for (const f of files) {
+      let size = 0
+      let t0 = 0
+      const raw = !/\.jpe?g$/i.test(f.name)
       void f.handle
         .getFile()
-        .then((file) => pool.probe(file))
+        .then((file) => {
+          size = file.size
+          // From when it is handed to the pool (includes the wait for a free worker).
+          t0 = performance.now()
+          return pool.probe(file)
+        })
         .then((r) => {
+          probed(performance.now() - t0, size, true, raw)
           const thumbUrl = r.thumb ? URL.createObjectURL(new Blob([r.thumb], { type: 'image/jpeg' })) : undefined
           batch.set(f, { status: 'ready', item: { file: f, meta: r.meta, thumb: r.thumb, xmp: r.xmp, camera: r.camera, iptcKeywords: r.iptcKeywords }, thumbUrl })
           schedule()
         })
         .catch((e: Error) => {
           if (e.message === 'cancelled') return
+          probed(t0 ? performance.now() - t0 : 0, size, false, raw)
           batch.set(f, { status: 'error', error: e.message })
           schedule()
         })
@@ -266,10 +302,11 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
   }
 
   /** JPEGs shot alongside a RAW (same name; once read, the same capture time too). */
-  const paired = useMemo(
-    () => findRawJpegPairs(cands.map((c) => ({ dir: c.file.dir, name: c.file.name, capturedAt: c.item?.meta.capturedAt ?? 0 }))),
+  const twinOf = useMemo(
+    () => rawJpegTwins(cands.map((c) => ({ dir: c.file.dir, name: c.file.name, capturedAt: c.item?.meta.capturedAt ?? 0 }))),
     [cands],
   )
+  const paired = useMemo(() => new Set(twinOf.keys()), [twinOf])
   const dayOf = (c: Candidate) => (c.item ? dateString(photoTime(c.item.meta)) : null)
   const importable = (c: Candidate, i: number) => c.status === 'ready' && (includePaired || !paired.has(i))
   const listed = (i: number) => includePaired || !paired.has(i)
@@ -335,7 +372,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
     .reduce<ImportItem | undefined>((a, b) => (!a || photoTime(b.meta) < photoTime(a.meta) ? b : a), undefined)
   const exampleName = example ? renamedFile(rename, example.file.name, photoTime(example.meta), 0) : ''
 
-  const canImport = selected.length > 0 && reading === 0 && !!dest && (!backupOn || !!backup)
+  const canImport = selected.length > 0 && reading === 0 && !!dest && (!backupOn || !!backup) && !session.running
 
   async function startImport() {
     if (!source) return
@@ -350,61 +387,21 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
       setError('LightBench needs permission to save into the backup folder.')
       return
     }
-    const abort = new AbortController()
-    abortRef.current = abort
-    const items = selected.map((c) => c.item!)
-    try {
-      await runImport(
-        catalog,
-        items,
-        { source, destination: dest, rename, backup: backupOn ? (backup ?? undefined) : undefined, stackPairs },
-        setProgress,
-        abort.signal,
-      )
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    }
-    setFinished(true)
+    // RAW only: the JPEG twins of the RAWs being imported go along, so the import leaves them out and counts them.
+    const rawOnly = !includePaired
+    const chosen = new Set(cands.filter((c, i) => c.selected && importable(c, i)))
+    const twins = rawOnly ? cands.filter((c, i) => paired.has(i) && c.status === 'ready' && chosen.has(cands[twinOf.get(i)!])) : []
+    const items = [...chosen, ...twins].map((c) => c.item!)
+    await importSession.start(
+      catalog,
+      items,
+      { source, destination: dest, rename, backup: backupOn ? (backup ?? undefined) : undefined, stackPairs, rawOnly },
+    )
     onImported()
   }
 
-  if (progress) {
-    const pct = progress.total ? Math.round((progress.done / progress.total) * 100) : 0
-    return (
-      <div className="dialog-backdrop">
-        <div className="dialog import-progress" role="dialog" aria-label="Importing">
-          <h2>{finished ? 'Import finished' : 'Importing…'}</h2>
-          <div className="progress"><div className="progress-bar" style={{ width: `${pct}%` }} /></div>
-          <p>
-            {progress.done} of {progress.total} photos
-            {progress.current && <span className="muted"> · {progress.current}</span>}
-          </p>
-          {finished && (
-            <ul className="summary">
-              <li>{progress.imported} imported</li>
-              {progress.skipped > 0 && <li>{progress.skipped} were already in the library</li>}
-              {progress.failed.length > 0 && <li className="error">{progress.failed.length} failed</li>}
-            </ul>
-          )}
-          {progress.failed.length > 0 && (
-            <details>
-              <summary>Show problems</summary>
-              <ul className="small">
-                {progress.failed.map((f) => <li key={f.name}>{f.name}: {f.error}</li>)}
-              </ul>
-            </details>
-          )}
-          {error && <p className="error">{error}</p>}
-          <div className="dialog-actions">
-            {finished ? (
-              <button className="button primary" onClick={onClose}>Go to library</button>
-            ) : (
-              <button className="button" onClick={() => abortRef.current?.abort()}>Stop after this photo</button>
-            )}
-          </div>
-        </div>
-      </div>
-    )
+  if (progress || session.running || session.error) {
+    return <ImportProgressView onClose={onClose} />
   }
 
   return (
@@ -590,15 +587,19 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
               <fieldset>
                 <legend>RAW + JPEG</legend>
                 <label className="check">
-                  <input type="checkbox" checked={includePaired} onChange={(e) => { setIncludePaired(e.target.checked); edited() }} />
-                  Also import the {pairedCount === 1 ? 'JPEG' : `${pairedCount} JPEGs`} shot alongside RAW files
+                  <input type="checkbox" checked={!includePaired} onChange={(e) => { setIncludePaired(!e.target.checked); edited() }} />
+                  RAW only (skip JPEGs that have a RAW twin)
                 </label>
                 <label className="check">
                   <input type="checkbox" checked={stackPairs} disabled={!includePaired} onChange={(e) => { setStackPairs(e.target.checked); edited() }} />
                   Stack each JPEG under its RAW
                 </label>
                 <p className="muted small">
-                  {stackPairs ? 'The library shows one photo per shot; open the stack to see the JPEG.' : 'The RAW and the JPEG show as separate photos.'}
+                  {!includePaired
+                    ? `The ${pairedCount === 1 ? 'JPEG' : `${pairedCount} JPEGs`} shot alongside RAW files stay on the card.`
+                    : stackPairs
+                      ? 'The RAWs are copied first and show in the library at once; each JPEG then joins its RAW’s stack. The library shows one photo per shot; open the stack to see the JPEG.'
+                      : 'The RAW and the JPEG show as separate photos.'}
                 </p>
               </fieldset>
             )}

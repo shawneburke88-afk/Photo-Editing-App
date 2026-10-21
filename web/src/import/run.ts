@@ -1,16 +1,18 @@
 // Executes an import from a card: copies files (plus an optional backup), adds them to the catalog, saves
-// thumbnails. Adding a folder where it is (no copying) is Open folder, in library/indexer.ts.
+// thumbnails; the rest is applied in the background (import/details.ts). Adding a folder where it is (no copying) is
+// Open folder, in library/indexer.ts.
 
 import type { Catalog } from '../catalog/client'
 import { masksFromLightroom } from '../sidecar/lightroomMasks'
-import { photosAdded } from '../library/added'
 import { loadThumb, saveThumb } from '../catalog/thumbs'
 import type { PhotoMeta, PhotoMetadata } from '../catalog/types'
 import { getDirAt, resolveRoot } from '../platform/roots'
-import { copyVerified } from './copy'
+import { CHUNK_BYTES, copyVerified } from './copy'
 import { dateFolder, joinPath, renamedFile, type RenameTemplate } from './plan'
-import { pairTwins } from '../catalog/stacks'
-import { sidecars } from '../sidecar/sync'
+import { captureOrder, planImport, rawOnly, runOrdered } from './schedule'
+import { ImportTiming, roundTimes, summaryLine, timed, type StepTimes } from './timing'
+import { cpuBudget } from '../engine/cpu-budget'
+import { diagnostics } from '../diagnostics/recorder'
 import type { ScannedFile } from './scan'
 import { fullSidecarName, sidecarCandidates, stemOwners, stemSidecarName } from '../sidecar/naming'
 import { readXmp, type SidecarRead } from '../sidecar/xmp'
@@ -42,6 +44,14 @@ export interface ImportOptions {
   backup?: FileSystemDirectoryHandle
   /** Stack each JPEG shot alongside a RAW under its RAW (default on). */
   stackPairs?: boolean
+  /** RAW only: leave each JPEG that has a RAW twin on the card (default off). */
+  rawOnly?: boolean
+  /** With stacking: copy the JPEG twins after all the RAWs (default on). */
+  rawFirst?: boolean
+  /** Photos copied at once (default: COPY_WORKERS, from the CPU budget). */
+  workers?: number
+  /** Called after each photo is added to the library (the Library refreshes). */
+  onAdded?: () => void
 }
 
 export interface ImportProgress {
@@ -51,6 +61,12 @@ export interface ImportProgress {
   skipped: number
   failed: { name: string; error: string }[]
   current: string
+  /** JPEGs with a RAW twin left on the card (RAW only). */
+  rawOnlySkipped: number
+  /** Photos in the first pass: all but the JPEG twins when RAW first applies, else `total`. */
+  firstPass: number
+  /** When finished: "1,500 photos, 38 GB in 6 min 12 s · copying 71 % · …" (timing.ts). */
+  summary: string
 }
 
 /** Capture time for folder naming, falling back to the file's modified time. */
@@ -110,27 +126,40 @@ export async function findSidecar(dir: FileSystemDirectoryHandle, photoName: str
   return null
 }
 
+/** How a sidecar is applied to a photo already in the library (Import's background details, import/details.ts). */
+export interface ApplyOptions {
+  /** Leave the sidecar's stack out: Import applies it as the photo is added (runImport). */
+  skipStack?: boolean
+  /**
+   * The photo as it is now. A rating, flag or label the person already gave it, or an edit, wins over the sidecar's
+   * (they may cull the RAWs while the import is still copying); a photo nobody touched gets exactly the sidecar's.
+   */
+  current?: { rating: number; flag: number; color: number; edited: boolean }
+}
+
 /**
  * Applies what a sidecar says (ratings, flag, label, keywords, metadata, collections, stack, virtual copies,
  * LightBench edits and snapshots) to a newly imported photo. A `borrowed` sidecar (the RAW twin's) gives only stars, flag, label,
  * keywords and metadata: its edits, virtual copies, stack and collections are the RAW's.
  */
-export async function applySidecar(catalog: Catalog, id: number, text: string, borrowed = false): Promise<SidecarRead> {
+export async function applySidecar(catalog: Catalog, id: number, text: string, borrowed = false, o: ApplyOptions = {}): Promise<SidecarRead> {
   const r = readXmp(text)
+  const cur = o.current
   if (r.metadata) await catalog.setMetadata([id], r.metadata)
-  if (r.rating !== undefined) await catalog.setRating([id], r.rating)
-  if (r.flag !== undefined) await catalog.setFlag([id], r.flag)
-  if (r.color !== undefined) await catalog.setColor([id], r.color)
+  if (r.rating !== undefined && !cur?.rating) await catalog.setRating([id], r.rating)
+  if (r.flag !== undefined && !cur?.flag) await catalog.setFlag([id], r.flag)
+  if (r.color !== undefined && !cur?.color) await catalog.setColor([id], r.color)
   if (r.keywords?.length) await catalog.addKeywords([id], r.keywords)
   if (borrowed) return r
   if (r.collections?.length) await catalog.addToCollectionsByName(id, r.collections)
-  if (r.stack) await catalog.joinStackByUid(id, r.stack.uid, r.stack.top)
+  if (r.stack && !o.skipStack) await catalog.joinStackByUid(id, r.stack.uid, r.stack.top)
   if (r.versions?.length) {
     // Virtual copies come back with the original's thumbnail until they are developed again.
     const made = await catalog.restoreVersions(id, r.versions)
     const thumb = made.length ? await loadThumb(id) : null
     if (thumb) for (const v of made) await saveThumb(v, new Uint8Array(await thumb.arrayBuffer()))
   }
+  if (cur?.edited) return r
   if (r.develop) {
     const history = JSON.stringify({ steps: [{ label: 'From sidecar', settings: JSON.parse(r.develop) }], index: 0 })
     await catalog.saveEdit(id, r.develop, history)
@@ -224,6 +253,61 @@ export async function applyEmbedded(catalog: Catalog, id: number, read: SidecarR
   if (camera) await catalog.fillMetadata([id], camera)
 }
 
+/** What Import leaves for the background details (import/details.ts), kept in the catalog with the photo (JSON). */
+export interface ImportDetails {
+  /** The sidecar read on the card. `borrowed`: the RAW twin's `NAME.xmp` (library fields only). */
+  sidecar?: { text: string; borrowed: boolean }
+  /** XMP embedded in a JPEG, used when there is no sidecar. */
+  xmp?: string
+  camera?: Partial<PhotoMetadata>
+  iptcKeywords?: string[]
+  /** Stack RAW+JPEG twins (the import's option): also with twins imported earlier or elsewhere, by name and time. */
+  pair?: boolean
+  /**
+   * The twin of this import added before this photo, stacked with it as it was added: `pair` a new stack of the two
+   * (`thisOnTop`: this photo is the RAW), `join` this photo joined the stack the twin's sidecar made.
+   */
+  stackWith?: { id: number; how: 'pair' | 'join'; thisOnTop: boolean }
+}
+
+/** How many photos are copied at once: up to 3, at least 2 (foreground work on the CPU budget, engine/cpu-budget.ts). */
+export const COPY_WORKERS = { want: 3, min: 2 }
+
+/** `?importWorkers=N` (testing and measurements): copy N photos at once instead. */
+function workersOverride(): number | null {
+  try {
+    const n = Number(new URLSearchParams(globalThis.location?.search ?? '').get('importWorkers'))
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : null
+  } catch {
+    return null
+  }
+}
+
+interface Copied {
+  ok: boolean
+  error?: string
+  fileName?: string
+  folder?: string
+  sidecar?: FoundSidecar | null
+  bytes: number
+  t: StepTimes
+}
+
+const message = (err: unknown) => (err instanceof Error ? err.message : String(err))
+
+/**
+ * Imports photos from a card (owner's decisions of 2026-10-20, docs/PHASE3.md "Import speed"):
+ * - a few photos are copied at once (schedule.ts), each copy (and backup copy) read back and checked (copy.ts), and
+ *   added to the library in a fixed order with its camera preview as thumbnail, its sidecar's stack and its RAW+JPEG
+ *   twin's stack; names, numbering (`-1`), folders and sidecars are those of the import one at a time;
+ * - RAW first: with RAW+JPEG stacking on, the JPEG twins are copied after every RAW, each joining its RAW's stack;
+ * - RAW only (`rawOnly`): JPEGs with a RAW twin are left on the card and counted;
+ * - the rest (the sidecar's ratings, keywords, edits…, the camera's metadata, pairing with twins imported earlier,
+ *   the develop and metadata presets for new photos) is applied afterwards in the background (import/details.ts),
+ *   from what is kept with each photo in the catalog, so it resumes after the tab is closed;
+ * - every step is timed (timing.ts) and logged to Diagnostics.
+ * The import is finished when every file is copied, checked and in the library.
+ */
 export async function runImport(
   catalog: Catalog,
   items: ImportItem[],
@@ -231,8 +315,11 @@ export async function runImport(
   onProgress: (p: ImportProgress) => void,
   signal?: AbortSignal,
 ): Promise<ImportProgress> {
-  const ordered = [...items].sort((a, b) => photoTime(a.meta) - photoTime(b.meta) || a.file.name.localeCompare(b.file.name))
-  const progress: ImportProgress = { done: 0, total: ordered.length, imported: 0, skipped: 0, failed: [], current: '' }
+  const started = performance.now()
+  const stackPairs = opts.stackPairs !== false
+  const split = opts.rawOnly ? rawOnly(items, (it) => ({ dir: it.file.dir, name: it.file.name, capturedAt: it.meta.capturedAt })) : { kept: items, skipped: [] }
+  const ordered = captureOrder(split.kept, (it) => photoTime(it.meta), (it) => it.file.name)
+  const progress: ImportProgress = { done: 0, total: ordered.length, imported: 0, skipped: 0, failed: [], current: '', rawOnlySkipped: split.skipped.length, firstPass: ordered.length, summary: '' }
 
   const target = opts.destination
   const { rootId, subPath } = await resolveRoot(catalog, target)
@@ -245,91 +332,167 @@ export async function runImport(
     backupDir = await opts.backup.getDirectoryHandle(name, { create: true })
   }
 
-  // RAW+JPEG pairs, by their names on the card (renaming may give them different numbers) and capture times
-  // (catalog/stacks.ts). Each pair is stacked as soon as both are in the library, so a stopped or interrupted import
-  // keeps the stacks it made; twins imported earlier are paired at the end.
-  const stackPairs = opts.stackPairs !== false
-  const twin = new Map<number, number>()
-  if (stackPairs) {
-    for (const [r, j] of pairTwins(ordered.map((it) => ({ group: it.file.dir, name: it.file.name, capturedAt: it.meta.capturedAt })))) {
-      twin.set(r, j)
-      twin.set(j, r)
-    }
-  }
-  const added = new Map<number, number>()
-  /** Photos whose sidecar put them in a stack already: their twin joins that stack at the end instead. */
-  const sidecarStacked = new Set<number>()
   // Which file of RAW+JPEG twins on the card owns `NAME.xmp` (sidecar/naming.ts).
   const owners = stemOwners(ordered.map((it) => it.file))
+  const isOwner = (it: ImportItem) => owners.has(`${it.file.dir}/${it.file.name}`)
+  const planned = ordered.map((it, index) => ({
+    dir: it.file.dir,
+    name: it.file.name,
+    capturedAt: it.meta.capturedAt,
+    folder: dateFolder(photoTime(it.meta)),
+    wanted: renamedFile(opts.rename, it.file.name, it.meta.capturedAt || it.meta.fileModified, index),
+    owner: isOwner(it),
+  }))
+  // RAW+JPEG pairs, by their names on the card (renaming may give them different numbers) and capture times
+  // (catalog/stacks.ts). Each pair is stacked as soon as both are in the library, so a stopped or interrupted import
+  // keeps the stacks it made; twins imported earlier are paired by the background details.
+  const plan = planImport(planned, { stackPairs, rawFirst: opts.rawFirst !== false, backup: !!backupDir })
+  progress.firstPass = plan.phase.filter((ph) => ph === 1).length
+  const added = new Map<number, number>()
+  /** Photos whose sidecar put them in a stack already: their twin joins that stack instead. */
+  const sidecarStacked = new Set<number>()
+  const timing = new ImportTiming()
 
-  for (const [index, item] of ordered.entries()) {
-    if (signal?.aborted) break
-    progress.current = item.file.name
-    onProgress({ ...progress })
+  const dirs = new Map<string, Promise<FileSystemDirectoryHandle>>()
+  const destDir = (folder: string) => {
+    let d = dirs.get(folder)
+    if (!d) {
+      d = getDirAt(target, folder, true)
+      dirs.set(folder, d)
+      d.catch(() => dirs.delete(folder))
+    }
+    return d
+  }
+  const sourceDirs = new Map<string, Promise<FileSystemDirectoryHandle | null>>()
+  const sourceDir = (dir: string) => {
+    let d = sourceDirs.get(dir)
+    if (!d) sourceDirs.set(dir, (d = getDirAt(opts.source, dir).catch(() => null)))
+    return d
+  }
+
+  /** Copies one photo (and its sidecar, and the backups): runs a few at a time. */
+  const copyOne = async (index: number): Promise<Copied> => {
+    const item = ordered[index]
+    const { folder, wanted } = planned[index]
+    const t: StepTimes = {}
+    let bytes = 0
     try {
       // An existing sidecar (from Lightroom, darktable, or LightBench itself) carries ratings, labels and edits.
-      const sourceDir = await getDirAt(opts.source, item.file.dir).catch(() => null)
-      const sidecar = sourceDir ? await findSidecar(sourceDir, item.file.name, owners.has(`${item.file.dir}/${item.file.name}`)) : null
-      const folder = dateFolder(photoTime(item.meta))
-      const dir = await getDirAt(target, folder, true)
+      const src = await sourceDir(item.file.dir)
+      const sidecar = src ? await timed(t, 'sidecar', () => findSidecar(src, item.file.name, isOwner(item))) : null
+      const dir = await destDir(folder)
       const file = await item.file.handle.getFile()
-      const wanted = renamedFile(opts.rename, item.file.name, item.meta.capturedAt || item.meta.fileModified, index)
+      bytes = file.size
       // Each copy is read back and compared with the card (copy.ts); a mismatch fails this photo.
-      const copy = await copyVerified(dir, wanted, file)
+      const copy = await copyVerified(dir, wanted, file, undefined, CHUNK_BYTES, t)
       const fileName = copy.name
-      if (backupDir) await copyVerified(backupDir, item.file.name, file, copy.digest)
+      if (backupDir) {
+        const bd = backupDir
+        await timed(t, 'backup', () => copyVerified(bd, item.file.name, file, copy.digest))
+      }
       if (sidecar && !sidecar.borrowed) {
         // The sidecar travels with the photo, renamed to match it (in the same naming style). An existing one there
         // is kept. A borrowed one is the RAW's, which travels with the RAW.
-        const stem = sidecar.name.toLowerCase() === stemSidecarName(item.file.name).toLowerCase()
-        const name = stem ? stemSidecarName(fileName) : fullSidecarName(fileName)
-        const exists = await dir.getFileHandle(name).then(() => true, () => false)
-        if (!exists) {
-          const w = await (await dir.getFileHandle(name, { create: true })).createWritable()
-          await w.write(sidecar.text)
-          await w.close()
-        }
-        if (backupDir) await copyVerified(backupDir, sidecar.name, new File([sidecar.text], sidecar.name))
-      }
-      const folderPath = joinPath(subPath, folder)
-      const [id] = await catalog.addPhotos([
-        { ...item.meta, fileName, rootId, folderPath, originalName: item.file.name },
-      ])
-      if (id === null) {
-        progress.skipped++
-      } else {
-        progress.imported++
-        added.set(index, id)
-        if (item.thumb) await saveThumb(id, item.thumb)
-        const xmpText = sidecar?.text ?? item.xmp
-        const read = xmpText ? await applySidecar(catalog, id, xmpText, !!sidecar?.borrowed) : null
-        await applyEmbedded(catalog, id, read, item.camera, item.iptcKeywords)
-        if (read?.stack && !sidecar?.borrowed) sidecarStacked.add(index)
-        const other = twin.get(index)
-        const otherId = other === undefined ? undefined : added.get(other)
-        if (otherId !== undefined && other !== undefined && !sidecarStacked.has(index) && !sidecarStacked.has(other)) {
-          // A failed stack doesn't fail the photo: it is in the library either way.
-          const raw = isRawFile(item.file.name) ? id : otherId
-          await catalog.createStack([id, otherId], raw).then((touched) => sidecars.schedule(touched), (err) => console.warn('RAW+JPEG stacking failed', err))
+        await timed(t, 'sidecar', async () => {
+          const stem = sidecar.name.toLowerCase() === stemSidecarName(item.file.name).toLowerCase()
+          const name = stem ? stemSidecarName(fileName) : fullSidecarName(fileName)
+          const exists = await dir.getFileHandle(name).then(() => true, () => false)
+          if (!exists) {
+            const w = await (await dir.getFileHandle(name, { create: true })).createWritable()
+            await w.write(sidecar.text)
+            await w.close()
+          }
+        })
+        if (backupDir) {
+          const bd = backupDir
+          await timed(t, 'backup', () => copyVerified(bd, sidecar.name, new File([sidecar.text], sidecar.name)))
         }
       }
+      return { ok: true, fileName, folder, sidecar, bytes, t }
     } catch (err) {
-      progress.failed.push({ name: item.file.name, error: err instanceof Error ? err.message : String(err) })
+      return { ok: false, error: message(err), bytes, t }
+    }
+  }
+
+  /** Adds a copied photo to the library: one at a time, in the planned order. */
+  const commit = async (index: number, r: Copied) => {
+    const item = ordered[index]
+    progress.current = item.file.name
+    const t = r.t
+    let outcome = 'failed'
+    if (!r.ok) {
+      progress.failed.push({ name: item.file.name, error: r.error ?? 'failed' })
+    } else {
+      try {
+        const sidecar = r.sidecar
+        // The sidecar's stack is applied with the photo (its twin may join it at once); the rest in the background.
+        const own = sidecar && !sidecar.borrowed ? readXmp(sidecar.text) : null
+        const ownStack = own?.stack
+        const other = plan.twin.get(index)
+        const otherId = other === undefined ? undefined : added.get(other)
+        const pairNow = otherId !== undefined && other !== undefined && !ownStack && !sidecarStacked.has(other)
+        const raw = isRawFile(item.file.name)
+        const details: ImportDetails = {
+          ...(sidecar ? { sidecar: { text: sidecar.text, borrowed: sidecar.borrowed } } : item.xmp ? { xmp: item.xmp } : {}),
+          ...(item.camera ? { camera: item.camera } : {}),
+          ...(item.iptcKeywords?.length ? { iptcKeywords: item.iptcKeywords } : {}),
+          ...(stackPairs ? { pair: true } : {}),
+        }
+        const folderPath = joinPath(subPath, r.folder!)
+        const meta = { ...item.meta, fileName: r.fileName!, rootId, folderPath, originalName: item.file.name }
+        // The row and what is still to do go in together, so nothing is lost if the tab closes now.
+        if (otherId !== undefined) details.stackWith = { id: otherId, how: pairNow ? 'pair' : 'join', thisOnTop: raw }
+        const [id] = await timed(t, 'catalog', () => catalog.addPhotos([{ ...meta, importDetails: JSON.stringify(details) }]))
+        if (id === null) {
+          progress.skipped++
+          outcome = 'skipped'
+        } else {
+          progress.imported++
+          outcome = 'added'
+          added.set(index, id)
+          if (item.thumb) await timed(t, 'thumbnail', () => saveThumb(id, item.thumb!))
+          if (ownStack) {
+            await timed(t, 'stacking', () => catalog.joinStackByUid(id, ownStack.uid, ownStack.top))
+            sidecarStacked.add(index)
+          }
+          if (otherId !== undefined) {
+            // A failed stack doesn't fail the photo: it is in the library either way (the background details try again).
+            await timed(t, 'stacking', () =>
+              (pairNow ? catalog.createStack([id, otherId], raw ? id : otherId) : catalog.stackRawJpegPairs([id])).then(
+                () => {},
+                (err) => console.warn('RAW+JPEG stacking failed', err),
+              ),
+            )
+          }
+        }
+      } catch (err) {
+        progress.failed.push({ name: item.file.name, error: message(err) })
+      }
     }
     progress.done++
+    timing.add(t, r.ok ? r.bytes : 0)
+    diagnostics.log('import-photo', { n: progress.done, kind: isRawFile(item.file.name) ? 'RAW' : 'JPEG', pass: plan.phase[index], bytes: r.bytes, outcome, ms: roundTimes(t) })
+    opts.onAdded?.()
     onProgress({ ...progress })
   }
-  const ids = [...added.values()]
-  // Twins imported before (or in another folder): paired by their names on the card and capture times.
-  if (stackPairs && ids.length) {
-    try {
-      sidecars.schedule(await catalog.stackRawJpegPairs(ids))
-    } catch (err) {
-      console.warn('RAW+JPEG stacking failed', err)
-    }
+
+  onProgress({ ...progress })
+  const override = opts.workers ?? workersOverride()
+  const lease = override ? null : cpuBudget.acquire('foreground', COPY_WORKERS.want, COPY_WORKERS.min)
+  const workers = () => override ?? Math.min(COPY_WORKERS.want, Math.max(COPY_WORKERS.min, lease!.slots))
+  try {
+    await runOrdered({ order: plan.order, deps: plan.deps, workers, run: copyOne, commit, signal, onWake: (wake) => lease?.onChange(wake) ?? (() => {}) })
+  } finally {
+    lease?.release()
   }
-  photosAdded.emit(ids)
+  const totals = timing.totals(performance.now() - started)
+  progress.summary = summaryLine(totals)
   progress.current = ''
+  diagnostics.log('import-done', {
+    photos: ordered.length, imported: progress.imported, skipped: progress.skipped, failed: progress.failed.length, rawOnlySkipped: progress.rawOnlySkipped,
+    stopped: !!signal?.aborted && progress.done < progress.total, workers: override ?? `${COPY_WORKERS.min}-${COPY_WORKERS.want}`, rawFirst: progress.firstPass < progress.total,
+    backup: !!backupDir, bytes: totals.bytes, wallMs: totals.wallMs, mbPerS: totals.mbPerS, ms: totals.steps, pct: totals.shares,
+  })
   onProgress({ ...progress })
   return progress
 }

@@ -33,7 +33,12 @@ export interface SourceFile {
  * otherwise, and stacked under their RAW. Returns the indices of such JPEGs.
  */
 export function findRawJpegPairs(files: (SourceFile & { capturedAt?: number })[]): Set<number> {
-  return new Set(pairTwins(files.map((f) => ({ group: f.dir, name: f.name, capturedAt: f.capturedAt ?? 0 }))).map(([, j]) => j))
+  return new Set(rawJpegTwins(files).keys())
+}
+
+/** The same pairs as findRawJpegPairs: each such JPEG's index → its RAW's index. */
+export function rawJpegTwins(files: (SourceFile & { capturedAt?: number })[]): Map<number, number> {
+  return new Map(pairTwins(files.map((f) => ({ group: f.dir, name: f.name, capturedAt: f.capturedAt ?? 0 }))).map(([r, j]) => [j, r]))
 }
 
 const pad = (n: number, w = 2) => String(n).padStart(w, '0')
