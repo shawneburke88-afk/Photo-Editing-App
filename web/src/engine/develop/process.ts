@@ -258,13 +258,13 @@ const V2: ProcessParams = {
 export const PROCESS_VERSIONS: ProcessVersion[] = [
   {
     version: 1,
-    summary: 'LightBench’s first rendering (0.1.0 until process version 2): darktable’s RCD, inpaint opposed, tone equalizer and sigmoid.',
+    summary: 'LightBench’s first rendering (0.1.0 until process version 2).',
     params: V1,
   },
   {
     version: TONE_EQ_PROCESS,
     summary:
-      'Highlights, Shadows, Whites and Blacks work like darktable’s tone equalizer: each area is brightened or darkened as a whole, judged by its surroundings, so fine detail and local contrast stay and there are fewer haloes along edges. Photos whose four tone sliders are at 0 look the same.',
+      'Highlights, Shadows, Whites and Blacks: each area is brightened or darkened as a whole, judged by its surroundings, so fine detail and local contrast stay and there are fewer haloes along edges. Photos whose four tone sliders are at 0 look the same.',
     params: V2,
   },
 ]

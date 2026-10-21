@@ -7,6 +7,8 @@ import { withKey } from '../settings/shortcuts'
 import { HELP } from './help'
 import { Slider } from './Slider'
 import { SectionEye } from './SectionEye'
+import { openSections, useOpen } from './panelState'
+import { SectionTitle } from './SectionTitle'
 
 export type TransformSlider = 'vertical' | 'horizontal' | 'rotate' | 'aspect' | 'scale' | 'offsetX' | 'offsetY'
 
@@ -41,11 +43,15 @@ const SLIDERS: { key: TransformSlider; label: string; min: number; max: number; 
 export function TransformPanel({ transform, focal, busy, message, summary, guiding, disabled, showHint, onMode, onSlider, onReset }: Props) {
   const t = transform ?? DEFAULT_TRANSFORM
   const mode = guiding ? 'guided' : t.upright
+  // A secondary section of Crop & Lens: closed until opened (remembered); Guided Upright opens it.
+  const [opened, setOpen] = useOpen(openSections, 'crop.transform')
+  const open = opened || guiding
   const fmt = (v: number, step: number, unit = '') => `${v > 0 && unit !== ' %' ? '+' : ''}${step < 1 ? v.toFixed(1) : Math.round(v)}${unit}`
   return (
     <div className="dpanel transform-panel">
       <section>
-        <div className="section-head"><h3>Transform</h3><SectionEye id="crop.transform" /></div>
+        <div className="section-head"><SectionTitle title="Transform" open={open} onToggle={() => setOpen(!open)} summary={transform ? 'Changed' : undefined} /><SectionEye id="crop.transform" /></div>
+        {open && (<>
         <div className="upright-modes" role="group" aria-label="Upright">
           {UPRIGHT_MODES.map((m) => (
             <button
@@ -67,7 +73,7 @@ export function TransformPanel({ transform, focal, busy, message, summary, guidi
         {!busy && !guiding && lightroomNote(transform) && (
           <p className={`small crop-note ${transform?.lightroom === 'guided' ? 'upright-warn' : 'muted'}`} data-note="lightroom">{lightroomNote(transform)}</p>
         )}
-        {focal === null && <p className="muted small crop-note" title="darktable rotate and perspective assumes 28 mm when the file gives no focal length">No focal length in the file: assuming 28 mm.</p>}
+        {focal === null && <p className="muted small crop-note" title="Upright and the Transform sliders need the lens’s focal length; 28 mm is assumed when the file gives none">No focal length in the file: assuming 28 mm.</p>}
         {SLIDERS.map((s) => (
           <Slider
             key={s.key}
@@ -91,6 +97,7 @@ export function TransformPanel({ transform, focal, busy, message, summary, guidi
             Reset
           </button>
         </div>
+        </>)}
       </section>
     </div>
   )

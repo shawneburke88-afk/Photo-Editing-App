@@ -283,8 +283,8 @@ export const ACTIONS: ActionDef[] = [
   { id: 'mask.featherUp', label: 'Mask brush: softer edge (more feather)', contexts: ['mask'], keys: ['}'] },
   { id: 'mask.featherDown', label: 'Mask brush: harder edge (less feather)', contexts: ['mask'], keys: ['{'] },
   { id: 'mask.erase', label: 'Mask brush: erase on or off (Alt-drag erases while held)', contexts: ['mask'], keys: [] },
-  { id: 'mask.invert', label: 'Invert the selected mask (matches Lightroom per a secondary source)', contexts: ['mask'], keys: ["'"] },
-  { id: 'mask.newSame', label: 'New mask of the selected kind (matches Lightroom per a secondary source)', contexts: ['mask'], keys: ['N'] },
+  { id: 'mask.invert', label: 'Invert the selected mask', contexts: ['mask'], keys: ["'"] },
+  { id: 'mask.newSame', label: 'New mask of the selected kind', contexts: ['mask'], keys: ['N'] },
   { id: 'mask.delete', label: 'Delete the selected part of the mask (or the mask)', contexts: ['mask'], keys: ['Delete', 'Backspace'] },
 
   // Develop, while cropping

@@ -4,7 +4,8 @@ import sqlite3InitModule, { type Database, type SAHPoolUtil, type Sqlite3Static 
 import { exposeRpc } from '../lib/rpc'
 import { isStorageFailure, NEWER_CATALOG_MESSAGE } from './errors'
 import { compileSmart, type SmartRules } from './smart'
-import { burstGroups, collapseStacks } from './stacks'
+import { burstGroups, collapseStacks, isJpegName, pairTwins, TWIN_SECONDS } from './stacks'
+import { cameraClockSeconds } from '../import/capture-time'
 import { assess, burstCompare, DEFAULT_SUGGEST, peerStats, rankGroup, sharpnessKey, similarGroups, STRICTNESS_BITS, suggestReasons, type AssessItem, type CullInfo, type PeerStats, type PhotoAnalysis } from './analysis'
 import { ANALYSIS_ALGO } from '../engine/analysis/analyze'
 import type { SidecarState } from '../sidecar/changes'
@@ -342,6 +343,18 @@ export function migrate(d: Database) {
       // Snapshots (docs/PHASE3.md Part 19): named copies of a photo's develop settings, one row each, deleted with the
       // photo (a virtual copy's with the copy). A new table only, so nothing else in the catalog changes.
       d.exec(SNAPSHOTS_TABLE)
+    }
+    if (version < 16) {
+      // RAW capture times as the camera's clock (import/capture-time.ts): RAWs were read as this computer's local time,
+      // so they were its UTC offset away from their JPEGs and from the time on the camera. Turned back with this
+      // browser's time zone, which is the one LibRaw used when they were added. JPEGs were right; nothing else changes.
+      const rows = d.selectObjects(`SELECT id, captured_at AS t FROM photos WHERE captured_at > 0 AND lower(file_type) NOT IN ('jpg', 'jpeg')`) as { id: number; t: number }[]
+      const stmt = d.prepare('UPDATE photos SET captured_at = ? WHERE id = ?')
+      for (const r of rows) {
+        const t = cameraClockSeconds(r.t)
+        if (t !== r.t) stmt.bind([t, r.id]).stepReset()
+      }
+      stmt.finalize()
     }
     d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     d.exec('COMMIT')
@@ -1229,27 +1242,52 @@ function autoStack(ids: number[], gapSeconds: number, opts: { similar?: number; 
 }
 
 /**
- * darktable-style RAW+JPEG stacks: for each photo in `ids`, an unstacked JPEG with the same base name as a RAW in
- * the same folder joins the RAW's stack, or starts one with the RAW on top. (A RAW can already be in a stack when
- * it was rebuilt from its sidecar before its JPEG was found.)
+ * RAW+JPEG stacks: each photo in `ids` and its twin (stacks.ts pairTwins: the same name in the same folder, or the
+ * same name on the card and the same capture time anywhere in the library, so twins imported separately or renamed
+ * still pair). An unstacked JPEG joins its RAW's stack, or starts one with the RAW on top. (A RAW can already be in a
+ * stack when it was rebuilt from its sidecar before its JPEG was found.) Returns the photos changed.
  */
 function stackRawJpegPairs(ids: number[]): number[] {
   if (!ids.length) return []
-  const pairs = conn().selectObjects(
-    `SELECT r.id AS raw, j.id AS jpeg, r.stack_id AS rawStack FROM photos r JOIN photos j
-       ON j.folder_id = r.folder_id AND j.id <> r.id
-      AND lower(substr(j.file_name, 1, length(j.file_name) - length(j.file_type) - 1)) = lower(substr(r.file_name, 1, length(r.file_name) - length(r.file_type) - 1))
-     WHERE lower(j.file_type) IN ('jpg', 'jpeg') AND lower(r.file_type) NOT IN ('jpg', 'jpeg') AND r.version = 0 AND j.version = 0
-       AND j.stack_id IS NULL
-       AND (r.id IN (${ids.map(() => '?').join(',')}) OR j.id IN (${ids.map(() => '?').join(',')}))`,
-    [...ids, ...ids],
-  ) as unknown as { raw: number; jpeg: number; rawStack: number | null }[]
+  type TwinRow = { id: number; folderId: number; fileName: string; originalName: string; capturedAt: number; stackId: number | null }
+  const cols = 'id, folder_id AS folderId, file_name AS fileName, original_name AS originalName, captured_at AS capturedAt, stack_id AS stackId'
+  const rows = new Map<number, TwinRow>()
+  const given: TwinRow[] = []
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500)
+    for (const r of conn().selectObjects(`SELECT ${cols} FROM photos WHERE version = 0 AND id IN (${chunk.map(() => '?').join(',')})`, chunk) as unknown as TwinRow[]) {
+      given.push(r)
+      rows.set(r.id, r)
+    }
+  }
+  // The possible twins: photos in the same folders, and photos taken within TWIN_SECONDS of each.
+  const add = (r: TwinRow) => {
+    if (!rows.has(r.id)) rows.set(r.id, r)
+  }
+  for (const folder of new Set(given.map((g) => g.folderId))) {
+    for (const r of conn().selectObjects(`SELECT ${cols} FROM photos WHERE version = 0 AND folder_id = ?`, [folder]) as unknown as TwinRow[]) add(r)
+  }
+  const near = conn().prepare(`SELECT ${cols} FROM photos WHERE version = 0 AND captured_at BETWEEN ? AND ?`)
+  try {
+    for (const g of given) {
+      if (!(g.capturedAt > 0)) continue
+      near.bind([g.capturedAt - TWIN_SECONDS, g.capturedAt + TWIN_SECONDS])
+      while (near.step()) add(near.get({}) as unknown as TwinRow)
+      near.reset()
+    }
+  } finally {
+    near.finalize()
+  }
+  // A JPEG already in a stack stays where it is, and a RAW stacked with its JPEG already has its twin.
+  const stem = (n: string) => n.slice(0, Math.max(0, n.lastIndexOf('.')) || n.length).toLowerCase()
+  const twinned = new Set([...rows.values()].filter((r) => r.stackId !== null && isJpegName(r.fileName)).map((r) => `${r.stackId}/${stem(r.originalName)}`))
+  const all = [...rows.values()].filter((r) => r.stackId === null || (!isJpegName(r.fileName) && !twinned.has(`${r.stackId}/${stem(r.originalName)}`)))
+  const focus = new Set(ids)
+  const pairs = pairTwins(all.map((r) => ({ group: r.folderId, name: r.fileName, originalName: r.originalName, capturedAt: r.capturedAt })))
+    .map(([r, j]) => ({ raw: all[r].id, jpeg: all[j].id, rawStack: all[r].stackId }))
+    .filter((p) => focus.has(p.raw) || focus.has(p.jpeg))
   const touched: number[] = []
-  const used = new Set<number>()
   for (const { raw, jpeg, rawStack } of pairs) {
-    if (used.has(raw) || used.has(jpeg)) continue
-    used.add(raw)
-    used.add(jpeg)
     if (rawStack !== null) {
       conn().exec({ sql: 'UPDATE photos SET stack_id = ? WHERE id = ?', bind: [rawStack, jpeg] })
       touched.push(raw, jpeg)

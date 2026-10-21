@@ -723,5 +723,5 @@ export function lightroomNote(t: TransformSettings | undefined): string | null {
   if (!t?.lightroom || t.lightroom !== t.upright) return null
   if (t.lightroom === 'guided') return 'Lightroom’s Guided Upright wasn’t imported: its guide lines can’t be read. Draw guides here to correct the photo.'
   const name = t.lightroom[0].toUpperCase() + t.lightroom.slice(1)
-  return `Upright ${name} came from Lightroom’s settings. LightBench ran its own Upright, so the result may differ slightly from Lightroom’s.`
+  return `Upright ${name} came from Lightroom’s settings and was worked out again for this photo, so the result may differ slightly.`
 }

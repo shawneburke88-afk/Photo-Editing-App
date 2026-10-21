@@ -46,7 +46,7 @@ describe('catalog schema 11', () => {
     const d = new sqlite3.oo1.DB(':memory:', 'c')
     migrate(d)
     expect(d.selectValue('PRAGMA user_version')).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(15)
+    expect(SCHEMA_VERSION).toBe(16)
     expect(columns(d).map((c) => c.name)).toEqual(expect.arrayContaining([...NEW_COLUMNS, ...GPS_COLUMNS, ...REFRESH_COLUMNS]))
   })
 

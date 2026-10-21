@@ -36,19 +36,19 @@ interface Props {
 const int = (v: number) => String(Math.round(v))
 
 function profileLine(p: ProfileChoice | null, kind: SourceKind, db: Props['db']): { text: string; warn?: boolean } {
-  if (kind === 'rgb') return { text: 'JPEG: darktable’s generic noise profile (the camera’s profiles describe its RAW files).' }
-  if (db === 'loading') return { text: 'Getting the noise profiles (darktable’s, once)…' }
-  if (db === 'failed') return { text: 'The noise profiles couldn’t be downloaded; darktable’s generic profile is used for now.', warn: true }
-  if (!p) return { text: 'Uses darktable’s noise profile for the camera and ISO.' }
-  if (p.kind === 'found') return { text: `Noise profile: ${p.camera}, ISO ${p.iso} (darktable).` }
-  if (p.kind === 'interpolated') return { text: `Noise profile: ${p.camera}, ISO ${p.iso}, between darktable’s profiled ISOs.` }
+  if (kind === 'rgb') return { text: 'JPEG: a generic noise profile (the camera’s profiles describe its RAW files).' }
+  if (db === 'loading') return { text: 'Getting the noise profiles (once)…' }
+  if (db === 'failed') return { text: 'The noise profiles couldn’t be downloaded; a generic profile is used for now.', warn: true }
+  if (!p) return { text: 'Uses a noise profile for the camera and ISO.' }
+  if (p.kind === 'found') return { text: `Noise profile: ${p.camera}, ISO ${p.iso}.` }
+  if (p.kind === 'interpolated') return { text: `Noise profile: ${p.camera}, ISO ${p.iso}, between the profiled ISOs.` }
   switch (p.reason) {
     case 'camera':
-      return { text: 'This camera isn’t in darktable’s noise profiles: its generic profile is used (it may need more or less strength).', warn: true }
+      return { text: 'This camera has no noise profile: a generic profile is used (it may need more or less strength).', warn: true }
     case 'iso':
-      return { text: `ISO ${p.iso} is outside the ${p.camera} profiles (ISO ${p.range?.[0]}–${p.range?.[1]}): darktable’s generic profile is used, as darktable does.`, warn: true }
+      return { text: `ISO ${p.iso} is outside the ${p.camera} profiles (ISO ${p.range?.[0]}–${p.range?.[1]}): a generic profile is used.`, warn: true }
     default:
-      return { text: 'darktable’s generic noise profile is used.' }
+      return { text: 'A generic noise profile is used.' }
   }
 }
 
@@ -58,10 +58,10 @@ function radiusLine(r: RadiusChoice | null, multiplier: number): string {
   const auto = r.auto ?? r.sigma
   const source =
     r.from === 'measured'
-      ? `measured from the photo’s raw data (darktable’s method)`
+      ? `measured from the photo’s raw data`
       : r.from === 'diffraction'
         ? `estimated from the aperture (f/${r.fNumber}) and pixel size; it couldn’t be measured from this photo`
-        : `darktable’s default; it couldn’t be measured from this photo`
+        : `the default; it couldn’t be measured from this photo`
   const limited = Math.abs(sharpenSigma(multiplier, auto) - multiplier * auto) > 1e-6 ? ` (limited to ${sharpenSigma(multiplier, auto).toFixed(2)} px)` : ''
   return `Automatic radius ${auto.toFixed(2)} px, ${source}. Sharpening radius ${multiplier.toFixed(1)} × ${auto.toFixed(2)} = ${(multiplier * auto).toFixed(2)} px${limited}.`
 }
@@ -163,7 +163,7 @@ export function DetailPanel({ detail, kind, defaults, disabled, showHint, profil
         <div className="dpanel-head">
           <h3>Noise reduction</h3>
           <SectionEye id="detail.noise" />
-          <button className="button small" disabled={disabled || JSON.stringify(d.noise) === JSON.stringify(DEFAULT_DETAIL.noise)} onClick={() => onChange('Reset Noise reduction', { ...d, noise: DEFAULT_DETAIL.noise })} title="Noise reduction back to off, with Lightroom's default Detail, Contrast and Smoothness">
+          <button className="button small" disabled={disabled || JSON.stringify(d.noise) === JSON.stringify(DEFAULT_DETAIL.noise)} onClick={() => onChange('Reset Noise reduction', { ...d, noise: DEFAULT_DETAIL.noise })} title="Noise reduction back to off, with the default Detail, Contrast and Smoothness">
             Reset
           </button>
         </div>

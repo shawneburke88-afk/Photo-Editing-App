@@ -12,7 +12,7 @@ export interface ControlHelp {
   right: string
   /** Things to watch out for. */
   pitfalls?: string
-  /** The darktable module behind it. */
+  /** The darktable module behind it: for the code's readers only, never shown (docs/USABILITY.md, no notes in the UI). */
   engine?: string
 }
 
@@ -100,7 +100,7 @@ export const HELP: Record<string, ControlHelp> = {
   // ---- Effects (PHASE3.md Part 25): Texture, Clarity and Dehaze in Basic → Presence; Vignette, Grain and Glow in Effects.
   texture: {
     hint: 'Fine detail: skin, foliage, fabric',
-    what: 'Strengthens or softens fine detail without changing the larger shapes or the overall contrast: darktable’s contrast & texture, its fine band. Its sizes are relative to the crop, so the effect re-measures when you change the crop.',
+    what: 'Strengthens or softens fine detail without changing the larger shapes or the overall contrast. Its sizes are relative to the crop, so the effect re-measures when you change the crop.',
     left: 'Smoother: softens skin and fine texture.',
     right: 'Crisper fine texture.',
     pitfalls: 'High values bring out noise and sensor dust. Zoomed out, the finest detail is smaller than a screen pixel: check at 100 % (the export uses the full-size detail).',
@@ -108,7 +108,7 @@ export const HELP: Record<string, ControlHelp> = {
   },
   clarity: {
     hint: 'Mid-tone local contrast',
-    what: 'Adds or removes contrast between neighbouring areas, mostly in the mid-tones: darktable’s contrast & texture, its coarse and medium bands, weighted to the mid-tones (LightCraft’s weighting). Sizes are relative to the crop, so it re-measures when you change the crop.',
+    what: 'Adds or removes contrast between neighbouring areas, mostly in the mid-tones. Sizes are relative to the crop, so it re-measures when you change the crop.',
     left: 'Softer, dreamier look.',
     right: 'Punchier mid-tones and more depth.',
     pitfalls: 'Strong values give halos along high-contrast edges and a gritty, “HDR” look; faces rarely need much.',
@@ -116,7 +116,7 @@ export const HELP: Record<string, ControlHelp> = {
   },
   dehaze: {
     hint: 'Removes or adds atmospheric haze',
-    what: 'Estimates the colour of the haze and how thick it is at each place, then removes it (or adds it, to the left), before Exposure: darktable’s haze removal (He, Sun and Tang’s dark channel). The haze colour and the photo’s depth are measured within the crop, so they re-measure when you change the crop. Strength and distance are always your settings.',
+    what: 'Estimates the colour of the haze and how thick it is at each place, then removes it (or adds it, to the left), before Exposure. The haze colour and the photo’s depth are measured within the crop, so they re-measure when you change the crop. Strength and distance are always your settings.',
     left: 'Adds haze, a misty look.',
     right: 'Clearer, more saturated distance.',
     pitfalls: 'Strong values darken shadows, saturate colours and amplify noise and JPEG blocks in skies; lower Distance (Advanced) to keep the far distance softer.',
@@ -124,28 +124,28 @@ export const HELP: Record<string, ControlHelp> = {
   },
   dehazeDistance: {
     hint: 'How far into the scene haze is removed',
-    what: 'darktable’s “distance”: limits how much the removal may amplify the most distant (haziest) parts. 0.2 is darktable’s default.',
+    what: 'Limits how much the removal may amplify the most distant (haziest) parts. 0.2 is the default.',
     left: 'Only near haze; the far distance stays soft (less noise).',
     right: 'Haze removed at every depth (strongest, noisiest).',
     engine: 'darktable haze removal (distance)',
   },
   ctDetailLevel: {
     hint: 'The size Texture and Clarity start at',
-    what: 'darktable’s “base detail level”: the coarsest scale of detail, as a power of two of the crop’s size (5 = 1/64 of it). Higher values work on smaller detail only.',
+    what: 'The coarsest scale of detail, as a power of two of the crop’s size (5 = 1/64 of it). Higher values work on smaller detail only.',
     left: 'Larger areas count as detail.',
     right: 'Only smaller detail.',
     engine: 'darktable contrast & texture (base detail level)',
   },
   ctHalo: {
     hint: 'Keeps strong edges from glowing',
-    what: 'darktable’s “halo control”: how strongly edges stop the smoothing that finds the detail.',
+    what: 'How strongly edges stop the smoothing that finds the detail.',
     left: 'Softer edges, more halo.',
     right: 'Stricter at edges, fewer halos.',
     engine: 'darktable contrast & texture (halo control)',
   },
   ctNoise: {
     hint: 'Keeps noise from being boosted',
-    what: 'darktable’s “noise bias”: detail fainter than this is left alone in the darkest areas.',
+    what: 'Detail fainter than this is left alone in the darkest areas.',
     left: 'Boost everything, noise included.',
     right: 'Protect more of the dark areas.',
     engine: 'darktable contrast & texture (noise bias)',
@@ -184,57 +184,56 @@ export const HELP: Record<string, ControlHelp> = {
   },
   vignetteCenter: {
     hint: 'Moves the vignette’s centre',
-    what: 'darktable’s centre: the vignette’s middle as a percentage of half the crop, left/right (Horizontal) and up/down (Vertical).',
+    what: 'The vignette’s middle as a percentage of half the crop, left/right (Horizontal) and up/down (Vertical).',
     left: 'Left / up.',
     right: 'Right / down.',
     engine: 'darktable vignetting (centre)',
   },
   vignetteShape: {
-    hint: 'darktable’s shape: square … star',
-    what: 'darktable’s shape exponent: 1 is an ellipse, smaller values squarer, larger values star-like.',
+    hint: 'Square … round … star',
+    what: '1 is an ellipse, smaller values squarer, larger values star-like.',
     left: 'Squarer.',
     right: 'More star-like.',
     engine: 'darktable vignetting (shape)',
   },
   grainAmount: {
     hint: 'Film grain over the photo',
-    what: 'Adds film-like grain (darktable’s grain: noise shaped like real grain scans, applied through a paper response so the mid-tones get the most). Each photo has its own grain pattern, kept with the edit; a virtual copy gets a new one.',
+    what: 'Adds film-like grain: noise shaped like real grain scans, strongest in the mid-tones. Each photo has its own grain pattern, kept with the edit; a virtual copy gets a new one.',
     left: 'No grain.',
     right: 'Stronger grain.',
     engine: 'darktable grain (grain.c)',
   },
   grainSize: {
     hint: 'The size of the grains',
-    what: 'darktable’s coarseness: larger grains. The grain is the same size relative to the photo at every zoom and in the export.',
+    what: 'Larger grains. The grain is the same size relative to the photo at every zoom and in the export.',
     left: 'Finer grain.',
     right: 'Coarser grain.',
     pitfalls: 'Zoomed out, fine grain averages away: judge it at 100 %.',
   },
   grainRoughness: {
     hint: 'Even or irregular grain',
-    what: 'LightBench’s control (Lightroom’s maths isn’t public): at 50 the grain is darktable’s exactly; lower values move weight to the coarser noise (smoother, more even), higher values to the finer noise, with a fourth, finer layer fading in.',
+    what: '50 is the default mix of grain sizes; lower values move weight to the coarser grain (smoother, more even), higher values to the finer grain.',
     left: 'Smoother, more regular.',
     right: 'Rougher, more irregular.',
   },
   grainColour: {
     hint: 'Colour grain instead of monochrome',
-    what: 'Grain on each colour channel separately (like colour film) instead of on lightness only. Lightroom’s grain is monochrome.',
+    what: 'Grain on each colour channel separately (like colour film) instead of on lightness only.',
     left: '',
     right: '',
   },
   grainMidtones: {
     hint: 'How much the grain favours mid-tones',
-    what: 'darktable’s mid-tones bias: at 100 the grain fades in deep shadows and bright highlights; at 0 it is as strong everywhere.',
+    what: 'At 100 the grain fades in deep shadows and bright highlights; at 0 it is as strong everywhere.',
     left: 'Even grain in every tone.',
     right: 'Grain mostly in the mid-tones.',
     engine: 'darktable grain (mid-tones bias)',
   },
   glowAmount: {
     hint: 'Soft light around bright areas',
-    what: 'LightBench’s glow: the brighter parts of the photo (Range) are blurred at several sizes (Spread), tinted (Warmth) and added back as light before the tone mapper, so they bloom like light in a lens or film. Styles: Bloom (soft glow on highlights), Diffusion (a hazy, film-like softening across the frame), Halation (a coloured halo around bright edges).',
+    what: 'The brighter parts of the photo (Range) are blurred at several sizes (Spread), tinted (Warmth) and added back as light, so they bloom like light in a lens or film. Styles: Bloom (soft glow on highlights), Diffusion (a hazy, film-like softening across the frame), Halation (a coloured halo around bright edges).',
     left: 'No glow.',
     right: 'Stronger glow.',
-    pitfalls: 'Ranges and the look are LightBench’s own: Adobe publishes no numbers for Camera Raw’s Glow, so the same values won’t match Camera Raw.',
     engine: 'LightBench (scene-linear; darktable’s bloom and soften are display-referred)',
   },
   glowRange: {
@@ -257,7 +256,7 @@ export const HELP: Record<string, ControlHelp> = {
   },
   glowLocal: {
     hint: 'Glow amount in the mask',
-    what: 'Adds or removes glow where the mask is, on top of the Effects group’s Glow (the two add up). Style, Range, Spread and Warmth are the Effects group’s: only the amount is per mask, as in Camera Raw.',
+    what: 'Adds or removes glow where the mask is, on top of the Effects group’s Glow (the two add up). Style, Range, Spread and Warmth are the Effects group’s: only the amount is per mask.',
     left: 'Less glow here (none below 0 in total).',
     right: 'More glow here.',
   },
@@ -340,16 +339,16 @@ export const HELP: Record<string, ControlHelp> = {
     hint: 'Restores the crispness lost in capture',
     what: 'Capture sharpening: undoes the slight blur of the lens, the sensor and the demosaic by deconvolution, so fine detail and edges come back without the look of an edge-boost. New RAW photos start at 40, or at 25 above ISO 1000 (less noise sharpened); photos edited before sharpening existed start at 0, so they look as they did. 0 is off.',
     left: 'Less sharpening (0 = none).',
-    right: 'More: more deconvolution steps (Amount ÷ 5; 40 = darktable’s 8).',
+    right: 'More: more deconvolution steps.',
     pitfalls: 'Judge it at 100 % (Z): at fit size most of it is finer than the screen’s pixels. High amounts also sharpen noise; reduce noise first (it runs before sharpening) or raise Masking.',
     engine: 'darktable capture sharpening (Richardson–Lucy, from RawTherapee), demosaic module',
   },
   sharpenRadius: {
     hint: 'Size of the blur to undo',
-    what: 'How wide a blur to undo, as a multiple of the photo’s own blur radius, which LightBench measures from the raw data as darktable does (usually 0.5–0.8 px). 1.0 uses the measured radius; the result is shown next to the value and kept between 0.25 and 1.5 px.',
+    what: 'How wide a blur to undo, as a multiple of the photo’s own blur radius, which LightBench measures from the raw data (usually 0.5–0.8 px). 1.0 uses the measured radius; the result is shown next to the value and kept between 0.25 and 1.5 px.',
     left: 'Below 1.0: a smaller radius, only the finest detail.',
     right: 'Above 1.0: a larger radius, for softer photos (small apertures, older lenses).',
-    pitfalls: 'A radius larger than the photo’s real blur makes ringing haloes. Leave it at 1.0 unless the result looks wrong. Lightroom’s Radius values carry over as this multiplier.',
+    pitfalls: 'A radius larger than the photo’s real blur makes ringing haloes. Leave it at 1.0 unless the result looks wrong.',
     engine: 'darktable capture sharpening: radius (auto-calculated) × this multiplier (LightBench’s mapping)',
   },
   sharpenDetail: {
@@ -362,17 +361,17 @@ export const HELP: Record<string, ControlHelp> = {
   sharpenMasking: {
     hint: 'Keeps smooth areas unsharpened',
     what: 'Limits sharpening to detailed areas, so skies and skin stay smooth. Hold Alt (Option on a Mac) while dragging, or tick Show mask, to see it: white is sharpened, black is not.',
-    left: 'Only darktable’s automatic noise protection (0).',
+    left: 'Only the automatic noise protection (0).',
     right: 'Only strong edges are sharpened.',
-    pitfalls: 'Unlike Lightroom, 0 still leaves flat, noisy areas alone (darktable’s automatic threshold for the ISO). Clipped highlights and the darkest areas are never sharpened.',
+    pitfalls: '0 still leaves flat, noisy areas alone (an automatic threshold for the ISO). Clipped highlights and the darkest areas are never sharpened.',
     engine: 'darktable capture sharpening: contrast sensitivity (capture.c)',
   },
   noiseLuminance: {
     hint: 'Smooths grainy brightness noise',
-    what: 'Reduces luminance noise, the grain-like speckle of high ISO photos, using darktable’s noise profile of your camera at this ISO. 0 is off.',
+    what: 'Reduces luminance noise, the grain-like speckle of high ISO photos, using a noise profile of your camera at this ISO. 0 is off.',
     left: 'Less noise reduction (0 = none).',
     right: 'Smoother, at the cost of fine detail.',
-    pitfalls: 'Too much looks plastic or painted. Judge it at 100 % (Z). 50 is darktable’s default strength.',
+    pitfalls: 'Too much looks plastic or painted. Judge it at 100 % (Z). 50 is the default strength.',
     engine: 'darktable denoise (profiled): wavelets, Y0 (luminance) bands',
   },
   noiseLuminanceDetail: {
@@ -391,10 +390,10 @@ export const HELP: Record<string, ControlHelp> = {
   },
   noiseColor: {
     hint: 'Removes coloured speckles',
-    what: 'Reduces colour noise, the red, green and blue speckles in dark and high ISO areas, using darktable’s noise profile. 0 is off.',
+    what: 'Reduces colour noise, the red, green and blue speckles in dark and high ISO areas, using a noise profile of your camera. 0 is off.',
     left: 'Less colour noise reduction (0 = none).',
     right: 'Removes more colour speckle and blotches.',
-    pitfalls: 'Very high values can wash out small coloured detail. 50 is darktable’s default strength.',
+    pitfalls: 'Very high values can wash out small coloured detail. 50 is the default strength.',
     engine: 'darktable denoise (profiled): wavelets, U0V0 (chroma) bands',
   },
   noiseColorDetail: {
@@ -444,10 +443,10 @@ export const HELP: Record<string, ControlHelp> = {
   },
   curveRefineSaturation: {
     hint: 'Colour that comes with contrast',
-    what: 'Where the curve gets steeper (more contrast), colours get stronger too, as in Lightroom. This sets how much. Hue is kept either way.',
+    what: 'Where the curve gets steeper (more contrast), colours get stronger too. This sets how much. Hue is kept either way.',
     left: 'Less: at 0 % the curve changes brightness only and colours keep their strength.',
-    right: '100 %: colours get as much stronger as Adobe’s colour-keeping curve makes them (the default; with the default brightness measure, Largest channel, the result is Adobe’s film-like curve).',
-    pitfalls: 'Not Basic’s Saturation: like Lightroom’s Refine Saturation, it only takes back (or keeps) the colour the curve adds. Applies to the RGB curve and Regions, not to the Red, Green and Blue curves.',
+    right: '100 %: colours get as much stronger as a colour-keeping, film-like curve makes them (the default).',
+    pitfalls: 'Not Basic’s Saturation: it only takes back (or keeps) the colour the curve adds. Applies to the RGB curve and Regions, not to the Red, Green and Blue curves.',
     engine: 'LightBench; brightness measured with darktable’s preserve-colors norms (Advanced)',
   },
   gradeWheel: {
@@ -460,7 +459,7 @@ export const HELP: Record<string, ControlHelp> = {
   },
   gradeLuminance: {
     hint: 'Brightens or darkens these tones',
-    what: 'Brightens or darkens the tones this wheel covers, without a tint (it works with saturation 0 too). Shadows and Highlights scale their range (darktable’s lift and gain), Midtones bends the middle like a gamma, Global brightens or darkens the whole photo.',
+    what: 'Brightens or darkens the tones this wheel covers, without a tint (it works with saturation 0 too). Shadows and Highlights scale their range (lift and gain), Midtones bends the middle like a gamma, Global brightens or darkens the whole photo.',
     left: 'Darker.',
     right: 'Brighter.',
     pitfalls: 'For overall brightness and recovering highlights or shadows, use Basic first (Exposure, Highlights, Shadows): they keep texture. Midtones −100 can crush the deepest shadows.',
@@ -468,9 +467,9 @@ export const HELP: Record<string, ControlHelp> = {
   },
   gradeBlending: {
     hint: 'How much the ranges overlap',
-    what: 'How softly the Shadows and Highlights ranges blend into each other and into the mid-tones. 50 is Lightroom’s default (and darktable’s fall-off 1). Global isn’t affected.',
-    left: 'Separate ranges: each tint stays in its own tones (0 is darktable’s steepest fall-off, 3).',
-    right: 'Wide overlap: the tints mix across the photo (100 is darktable’s softest, 0; old Split Toning edits used 100).',
+    what: 'How softly the Shadows and Highlights ranges blend into each other and into the mid-tones. 50 is the default. Global isn’t affected.',
+    left: 'Separate ranges: each tint stays in its own tones.',
+    right: 'Wide overlap: the tints mix across the photo (old Split Toning edits used 100).',
     pitfalls: 'Hold Alt (Option) while dragging to see the wheels’ tints at full saturation while you set it.',
     engine: 'darktable color balance rgb: shadows and highlights fall-off (masks tab)',
   },
@@ -478,13 +477,13 @@ export const HELP: Record<string, ControlHelp> = {
     hint: 'Moves the split between shadows and highlights',
     what: 'Moves the tone where the Shadows tint gives way to the Highlights tint (around middle grey at 0). Global isn’t affected.',
     left: 'Favours the shadows’ tint: it reaches further into the brighter tones.',
-    right: 'Favours the highlights’ tint: it reaches further down (Adobe: values above 0 increase the effect of the highlights).',
-    pitfalls: '±100 moves the split by 2 EV in LightBench (Lightroom’s numbers aren’t public).',
+    right: 'Favours the highlights’ tint: it reaches further down.',
+    pitfalls: '±100 moves the split by 2 EV.',
     engine: 'darktable color balance rgb: the masks’ middle-grey fulcrum',
   },
   mixerHue: {
     hint: 'Turns this colour',
-    what: 'Turns the hue of this band’s colours, measured in darktable’s perceptual colour space (UCS 22): ±100 turns them by ±30°, about as far as the neighbouring band. Colours between two bands follow both, in proportion; greys are never turned.',
+    what: 'Turns the hue of this band’s colours, measured in a perceptual colour space: ±100 turns them by ±30°, about as far as the neighbouring band. Colours between two bands follow both, in proportion; greys are never turned.',
     left: 'Towards the band before it in the list (Orange towards Red, Blue towards Aqua).',
     right: 'Towards the band after it (Orange towards Yellow, Blue towards Purple).',
     pitfalls: 'Skin is mostly Orange (with some Red): small moves there go a long way. A band reaches exactly to its neighbours’ centres and no further.',
@@ -492,7 +491,7 @@ export const HELP: Record<string, ControlHelp> = {
   },
   mixerSaturation: {
     hint: 'Stronger or weaker colour',
-    what: 'Makes this band’s colours stronger or weaker: −100 turns them grey, +100 makes them about twice as saturated, kept inside the working colour space. Colours close to grey change little (darktable’s saturation weight).',
+    what: 'Makes this band’s colours stronger or weaker: −100 turns them grey, +100 makes them about twice as saturated, kept inside the working colour space. Colours close to grey change little.',
     left: 'Weaker, towards grey (−100: grey).',
     right: 'Stronger (+100: about twice as saturated).',
     pitfalls: 'For the whole photo’s colour use Basic’s Vibrance and Saturation first; this is for one colour at a time. Strong values on noisy skies can look blotchy at 100 %: the guided filter (Advanced) smooths the change within each area of colour.',
@@ -500,7 +499,7 @@ export const HELP: Record<string, ControlHelp> = {
   },
   mixerLuminance: {
     hint: 'Brighter or darker colour',
-    what: 'Brightens or darkens this band’s colours. The change follows darktable’s brightness gain: stronger on more saturated colours, none on greys, so a darkened sky darkens while clouds stay white.',
+    what: 'Brightens or darkens this band’s colours. The change is stronger on more saturated colours, none on greys, so a darkened sky darkens while clouds stay white.',
     left: 'Darker (never all the way to black).',
     right: 'Brighter.',
     pitfalls: 'Darkening a saturated sky a lot can show halos or noise along edges against grey (buildings, clouds). The guided filter and its edge guard (on by default, Advanced) hold the change back at sharp edges in saturation.',
@@ -508,7 +507,7 @@ export const HELP: Record<string, ControlHelp> = {
   },
   pointHueShift: {
     hint: 'Turns the picked colour',
-    what: 'Turns the hue of the picked colour and of the colours in its range: ±100 turns the picked colour by ±30° (darktable UCS hue). Colours at the edge of the range turn less.',
+    what: 'Turns the hue of the picked colour and of the colours in its range: ±100 turns the picked colour by ±30°. Colours at the edge of the range turn less.',
     left: 'Hue turned one way (e.g. orange towards red).',
     right: 'The other way (orange towards yellow).',
     engine: 'LightBench (LightCraft’s Point Color design, in darktable UCS 22)',
@@ -532,7 +531,6 @@ export const HELP: Record<string, ControlHelp> = {
     what: 'Pulls the colours in the range towards the picked colour (to even out blotchy skin or patchy grass), or pushes them apart. Hue, saturation and brightness all follow.',
     left: 'More alike: −100 pulls them 80 % of the way to the picked colour.',
     right: 'More varied: the differences within the range grow.',
-    pitfalls: 'This follows LightCraft’s reading of Lightroom’s Variance (colour contrast within the range); what Adobe’s slider does exactly isn’t documented.',
     engine: 'LightBench (LightCraft’s design)',
   },
   pointRange: {
@@ -600,7 +598,7 @@ export const CURVE_GUIDE = {
 /** The Colour Grading group's guidance (owner's rule: say what comes first). */
 export const GRADING_GUIDE = {
   hint: 'Colour by tone: cool shadows, warm highlights',
-  what: 'Tints the shadows, mid-tones and highlights with colours of their own, or the whole photo (Global): Lightroom’s Color Grading on darktable’s color balance rgb. Each wheel also brightens or darkens its tones.',
+  what: 'Tints the shadows, mid-tones and highlights with colours of their own, or the whole photo (Global). Each wheel also brightens or darkens its tones.',
   order: 'Set white balance and Basic first, then the Colour Mixer for single colours; grade last, for the mood.',
   pitfalls: 'Small saturations go a long way (10–30). Greys take the tint, so a strong Shadows tint shows in black areas. Blending and Balance shape the Shadows and Highlights ranges only.',
 }
@@ -608,7 +606,7 @@ export const GRADING_GUIDE = {
 /** The Colour Mixer group's guidance (owner's rule: say what comes first). */
 export const MIXER_GUIDE = {
   hint: 'One colour at a time: skies, foliage, skin',
-  what: 'The Mixer changes the hue, saturation and luminance of eight colour bands (Lightroom’s names); Point Color changes a colour you pick on the photo and the colours like it.',
+  what: 'The Mixer changes the hue, saturation and luminance of eight colour bands; Point Color changes a colour you pick on the photo and the colours like it.',
   order: 'Set white balance and Basic first (Vibrance and Saturation change every colour); then use the mixer for single colours.',
   pitfalls: 'Greys and nearly grey colours aren’t changed. Strong Luminance moves on saturated skies can show edges: the guided filter (on by default) keeps the change smooth within each area of colour.',
 }
@@ -616,7 +614,7 @@ export const MIXER_GUIDE = {
 /** Soft proofing's guidance (PHASE3.md Part 20), shown on its bar. */
 export const PROOF_GUIDE = {
   hint: 'Preview for print or another colour space',
-  what: 'Soft proofing (S) shows the photo as a printer and paper, or a colour space such as sRGB, will reproduce it, using the destination’s ICC profile (Little CMS, in this browser). It is only a view: the edit, Export and thumbnails don’t change. Export can already write sRGB, Display P3 and Adobe RGB (choose them in Export); converting to a loaded printer profile on export isn’t built yet.',
+  what: 'Soft proofing (S) shows the photo as a printer and paper, or a colour space such as sRGB, will reproduce it, using the destination’s ICC profile. It is only a view: the edit, Export and thumbnails don’t change. Export can already write sRGB, Display P3 and Adobe RGB (choose them in Export); converting to a loaded printer profile on export isn’t built yet.',
   order: 'Edit first, then proof. To adjust the photo for one output, Create Proof Copy and edit the copy, so the original stays as it is.',
   pitfalls: 'Browsers don’t tell web pages the monitor’s own profile, so the screen warning tests sRGB or Display P3 (whichever LightBench draws in), not your monitor. Relative Colorimetric clips colours the destination can’t reach; Perceptual squeezes them in (printer profiles only: matrix profiles such as sRGB have no perceptual tables, so both look alike). Simulate Paper & Ink shows the paper’s white and the ink’s black.',
 }
@@ -638,7 +636,6 @@ export const MASK_HELP: Record<string, ControlHelp> = {
     what: 'Scales every local slider of this mask together: 100 % is the sliders as set, 50 % half their effect, 200 % double.',
     left: 'Weaker.',
     right: 'Stronger (up to twice the sliders’ effect).',
-    pitfalls: 'Its 0–200 % range is an assumption taken from LightCraft; Adobe doesn’t document the range of Lightroom’s mask Amount.',
   },
   feather: {
     hint: 'Softens the whole mask’s edges',

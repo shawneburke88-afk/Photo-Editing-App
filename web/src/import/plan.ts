@@ -1,6 +1,7 @@
 // Pure import planning: which files to offer, where they go and what they're called.
 
 import { RAW_EXTENSIONS } from '../engine/raw/decoder'
+import { pairTwins } from '../catalog/stacks'
 
 export const JPEG_EXTENSIONS = ['jpg', 'jpeg']
 
@@ -27,22 +28,12 @@ export interface SourceFile {
 }
 
 /**
- * Finds JPEGs shot alongside a RAW of the same name (RAW+JPEG mode). Like Lightroom, these are
- * treated as companions of the RAW rather than separate photos unless the user asks otherwise.
- * Returns the indices of such JPEGs.
+ * Finds JPEGs shot alongside a RAW (RAW+JPEG mode): the same name in the same folder, or in another folder with the
+ * same capture time when it is known (catalog/stacks.ts pairTwins). They are imported too unless the user says
+ * otherwise, and stacked under their RAW. Returns the indices of such JPEGs.
  */
-export function findRawJpegPairs(files: SourceFile[]): Set<number> {
-  const raws = new Set<string>()
-  files.forEach((f) => {
-    if (!JPEG_EXTENSIONS.includes(extensionOf(f.name))) raws.add(`${f.dir}/${baseNameOf(f.name).toLowerCase()}`)
-  })
-  const paired = new Set<number>()
-  files.forEach((f, i) => {
-    if (JPEG_EXTENSIONS.includes(extensionOf(f.name)) && raws.has(`${f.dir}/${baseNameOf(f.name).toLowerCase()}`)) {
-      paired.add(i)
-    }
-  })
-  return paired
+export function findRawJpegPairs(files: (SourceFile & { capturedAt?: number })[]): Set<number> {
+  return new Set(pairTwins(files.map((f) => ({ group: f.dir, name: f.name, capturedAt: f.capturedAt ?? 0 }))).map(([, j]) => j))
 }
 
 const pad = (n: number, w = 2) => String(n).padStart(w, '0')

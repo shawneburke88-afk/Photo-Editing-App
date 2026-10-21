@@ -279,9 +279,9 @@ describe('shortcut sets', () => {
       expect(matchAction(map, key('O', { shiftKey: true }), DEVELOP)).toBe('develop.sensorClipping')
       expect(matchAction(map, key('k'), LIBRARY)).toBeNull()
     }
-    // The secondary-source keys say so in their names.
-    expect(ACTION_BY_ID.get('mask.invert')!.label).toMatch(/secondary source/)
-    expect(ACTION_BY_ID.get('mask.newSame')!.label).toMatch(/secondary source/)
+    // The labels name what the keys do, without notes about other apps (owner's rule, docs/USABILITY.md).
+    expect(ACTION_BY_ID.get('mask.invert')!.label).toBe('Invert the selected mask')
+    expect(ACTION_BY_ID.get('mask.newSame')!.label).toBe('New mask of the selected kind')
   })
 
   it('gives the Remove brush its own keys: Q, [ and ] for the size, Shift+[ and Shift+] for the feather, H, Delete, Esc', () => {

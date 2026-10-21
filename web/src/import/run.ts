@@ -8,7 +8,9 @@ import { loadThumb, saveThumb } from '../catalog/thumbs'
 import type { PhotoMeta, PhotoMetadata } from '../catalog/types'
 import { getDirAt, resolveRoot } from '../platform/roots'
 import { copyVerified } from './copy'
-import { baseNameOf, dateFolder, extensionOf, JPEG_EXTENSIONS, joinPath, renamedFile, type RenameTemplate } from './plan'
+import { dateFolder, joinPath, renamedFile, type RenameTemplate } from './plan'
+import { pairTwins } from '../catalog/stacks'
+import { sidecars } from '../sidecar/sync'
 import type { ScannedFile } from './scan'
 import { fullSidecarName, sidecarCandidates, stemOwners, stemSidecarName } from '../sidecar/naming'
 import { readXmp, type SidecarRead } from '../sidecar/xmp'
@@ -38,6 +40,8 @@ export interface ImportOptions {
   destination: FileSystemDirectoryHandle
   rename: RenameTemplate
   backup?: FileSystemDirectoryHandle
+  /** Stack each JPEG shot alongside a RAW under its RAW (default on). */
+  stackPairs?: boolean
 }
 
 export interface ImportProgress {
@@ -241,10 +245,20 @@ export async function runImport(
     backupDir = await opts.backup.getDirectoryHandle(name, { create: true })
   }
 
-  // RAW+JPEG pairs, by their names on the card (renaming may give them different numbers), stacked at the end.
-  const pairKey = (f: ScannedFile) => `${f.dir}/${baseNameOf(f.name).toLowerCase()}`
-  const raws = new Map<string, number>()
-  const jpegs = new Map<string, number>()
+  // RAW+JPEG pairs, by their names on the card (renaming may give them different numbers) and capture times
+  // (catalog/stacks.ts). Each pair is stacked as soon as both are in the library, so a stopped or interrupted import
+  // keeps the stacks it made; twins imported earlier are paired at the end.
+  const stackPairs = opts.stackPairs !== false
+  const twin = new Map<number, number>()
+  if (stackPairs) {
+    for (const [r, j] of pairTwins(ordered.map((it) => ({ group: it.file.dir, name: it.file.name, capturedAt: it.meta.capturedAt })))) {
+      twin.set(r, j)
+      twin.set(j, r)
+    }
+  }
+  const added = new Map<number, number>()
+  /** Photos whose sidecar put them in a stack already: their twin joins that stack at the end instead. */
+  const sidecarStacked = new Set<number>()
   // Which file of RAW+JPEG twins on the card owns `NAME.xmp` (sidecar/naming.ts).
   const owners = stemOwners(ordered.map((it) => it.file))
 
@@ -285,11 +299,19 @@ export async function runImport(
         progress.skipped++
       } else {
         progress.imported++
-        ;(JPEG_EXTENSIONS.includes(extensionOf(item.file.name)) ? jpegs : raws).set(pairKey(item.file), id)
+        added.set(index, id)
         if (item.thumb) await saveThumb(id, item.thumb)
         const xmpText = sidecar?.text ?? item.xmp
         const read = xmpText ? await applySidecar(catalog, id, xmpText, !!sidecar?.borrowed) : null
         await applyEmbedded(catalog, id, read, item.camera, item.iptcKeywords)
+        if (read?.stack && !sidecar?.borrowed) sidecarStacked.add(index)
+        const other = twin.get(index)
+        const otherId = other === undefined ? undefined : added.get(other)
+        if (otherId !== undefined && other !== undefined && !sidecarStacked.has(index) && !sidecarStacked.has(other)) {
+          // A failed stack doesn't fail the photo: it is in the library either way.
+          const raw = isRawFile(item.file.name) ? id : otherId
+          await catalog.createStack([id, otherId], raw).then((touched) => sidecars.schedule(touched), (err) => console.warn('RAW+JPEG stacking failed', err))
+        }
       }
     } catch (err) {
       progress.failed.push({ name: item.file.name, error: err instanceof Error ? err.message : String(err) })
@@ -297,11 +319,16 @@ export async function runImport(
     progress.done++
     onProgress({ ...progress })
   }
-  for (const [key, jpeg] of jpegs) {
-    const raw = raws.get(key)
-    if (raw !== undefined) await catalog.createStack([raw, jpeg], raw).catch(() => {})
+  const ids = [...added.values()]
+  // Twins imported before (or in another folder): paired by their names on the card and capture times.
+  if (stackPairs && ids.length) {
+    try {
+      sidecars.schedule(await catalog.stackRawJpegPairs(ids))
+    } catch (err) {
+      console.warn('RAW+JPEG stacking failed', err)
+    }
   }
-  photosAdded.emit([...raws.values(), ...jpegs.values()])
+  photosAdded.emit(ids)
   progress.current = ''
   onProgress({ ...progress })
   return progress

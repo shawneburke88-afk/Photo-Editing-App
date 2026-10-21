@@ -1,13 +1,14 @@
 // The Develop tool stack (owner's decisions, 2026-10-11 and 2026-10-12; docs/USABILITY.md "Develop panel
 // layout"): one scrolling list of collapsible groups in workflow order, Crop first, with a jump bar of group
 // buttons at the top. Nothing is hidden; the jump bar only scrolls to a group (opening it if it was closed) and
-// shows which group is in view. Labels hide when the panel is narrow and the name shows on hover.
+// shows which group is in view. Labels hide when the panel is narrow and the name shows on hover. Groups start
+// closed and stay as the user leaves them (owner's feedback 2026-10-19; panelState.ts).
 //
 // Groups are created only when they have content. The planned order (USABILITY.md) is Crop, Basic, Curve,
 // Colour, Detail, Effects; each later group is one more entry in the list DevelopView passes.
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { useStoredJson } from '../lib/useStoredJson'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { openGroups } from './panelState'
 import { eyeIcon } from './tools'
 
 export type GroupId = 'crop' | 'remove' | 'basic' | 'curve' | 'colour' | 'grading' | 'detail' | 'masks' | 'effects'
@@ -33,15 +34,17 @@ interface Props {
   header?: ReactNode
   /** Shown below the groups. */
   footer?: ReactNode
-  /** Asks the stack to show a group (e.g. R opens Crop): scrolls to it and opens it. Changes each time. */
-  reveal?: { id: GroupId; n: number } | null
+  /**
+   * Asks the stack to show a group (e.g. R opens Crop): scrolls to it and opens it. Changes each time. `ifClosed`:
+   * only when it is closed (a tool started from a shortcut while its group is closed).
+   */
+  reveal?: { id: GroupId; n: number; ifClosed?: boolean } | null
 }
 
 export function ToolStack({ groups, header, footer, reveal }: Props) {
   const scroller = useRef<HTMLDivElement>(null)
   const bar = useRef<HTMLDivElement>(null)
-  const [stored, setStored] = useStoredJson<{ closed: GroupId[] }>('lightbench.develop.closedGroups', { closed: [] })
-  const closed = new Set(stored.closed)
+  useSyncExternalStore(openGroups.subscribe, openGroups.snapshot, openGroups.snapshot)
   const [inView, setInView] = useState<GroupId | null>(groups[0]?.id ?? null)
   // Labels hide when the buttons don't fit with them (the width they need is measured while they are shown).
   const [compact, setCompact] = useState(false)
@@ -72,10 +75,10 @@ export function ToolStack({ groups, header, footer, reveal }: Props) {
     return () => ro.disconnect()
   }, [labels])
 
-  const setOpen = (id: GroupId, open: boolean) => setStored({ closed: open ? stored.closed.filter((x) => x !== id) : [...stored.closed, id] })
+  const setOpen = (id: GroupId, open: boolean) => openGroups.setOpen(id, open)
 
   function jump(id: GroupId) {
-    if (closed.has(id)) setOpen(id, true)
+    if (!openGroups.isOpen(id)) setOpen(id, true)
     // After the group has opened.
     requestAnimationFrame(() => {
       const el = scroller.current?.querySelector<HTMLElement>(`[data-group="${id}"]`)
@@ -87,7 +90,7 @@ export function ToolStack({ groups, header, footer, reveal }: Props) {
   }
 
   useEffect(() => {
-    if (reveal) jump(reveal.id)
+    if (reveal && !(reveal.ifClosed && openGroups.isOpen(reveal.id))) jump(reveal.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reveal])
 
@@ -127,7 +130,7 @@ export function ToolStack({ groups, header, footer, reveal }: Props) {
       </nav>
       {header}
       {groups.map((g) => {
-        const open = !closed.has(g.id)
+        const open = openGroups.isOpen(g.id)
         return (
           <section key={g.id} className={`tool-group ${open ? 'open' : 'closed'} ${g.bypass?.off ? 'bypassed' : ''}`} data-group={g.id} aria-label={g.title}>
             <header className="tool-group-head">
