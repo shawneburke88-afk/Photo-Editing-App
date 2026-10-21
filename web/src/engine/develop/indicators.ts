@@ -51,6 +51,8 @@ export interface MaskOverlayDraw {
   mode: number
   colour: [number, number, number]
   opacity: number
+  /** Show the mask's depth map itself instead of the mask (a Depth range; PHASE3.md Part 24), with mode 6 (White on Black). */
+  depthMap?: boolean
 }
 
 /** A soft proof to draw: the table (engine/proof/lut.ts) and the warnings shown. */

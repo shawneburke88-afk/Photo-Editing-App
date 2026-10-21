@@ -336,7 +336,24 @@ stored spot already holds everything an AI fill would need (stroke, source, seed
 
 ## Model delivery
 
-**The plan:** download on first use from LightBench's own pinned copy, the way Lensfun data is handled:
+**Owner's decision (2026-10-17), built in PHASE3.md Part 24 with Depth Anything V2 Small, the first downloaded model:**
+the models are served from **LightBench's own GitHub Pages site** (same origin: no CORS question). They are **not in
+git**: the deploy workflow fetches each pinned file by exact URL (`huggingface.co/<repo>/resolve/<commit>/<path>`) into
+`dist/models/` and checks its byte count and SHA-256 (`web/scripts/models.mjs`), failing the build on a mismatch. The
+app downloads a model **once, only after the user agrees** (a dialog with its size, licence and a plain-words
+training-data note), checks the same SHA-256 (compiled into the app from `web/models/manifest.json`), keeps it in Cache
+Storage (`ai-models`, never precached by the service worker), works offline afterwards, and removes it in Settings → AI
+models. One runtime, **ONNX Runtime Web** (MIT, pinned 1.30.0, its native WebGPU provider in a worker), serves it and is
+meant to serve the later models. Devices with `shader-f16` get the fp16 file, others fp32 (F9 below). The manifest is
+pinned (2026-10-20, Depth Anything V2 Small at commit `4472b7362082ad9968fee890ca0f1e5aca36b93d`). huggingface.co was
+blocked from the build machine, so, by the owner's choice (2026-10-19), it is pinned and checked by the **"AI
+models" GitHub Action** (`.github/workflows/ai-models.yml`, run by hand from the Actions tab with "Use workflow from" the
+branch with the AI code). The Action runs `pin`, then a real-model check in Node through the app's own preprocessing
+(`web/scripts/models-check.mjs`), then commits the manifest (PHASE3.md Part 24, "Pinning and checking the models").
+Pages' limits: 1 GB per site (the two DA-V2 files are about 149 MB), 100 GB a month soft bandwidth (about 800 fp32 or
+1,300 fp16 first installs a month, runtime included: arithmetic).
+
+**The plan (before the decision):** download on first use from LightBench's own pinned copy, the way Lensfun data is handled:
 - not precached by the service worker;
 - fetched once into Cache Storage under its own cache name;
 - named by the source commit;

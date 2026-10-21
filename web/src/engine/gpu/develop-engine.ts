@@ -661,7 +661,8 @@ export class DevelopEngine {
     this.maskBuf = device.createBuffer({ size: MASK_UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.noPlanes = device.createBuffer({ size: 64, usage: GPUBufferUsage.STORAGE })
     this.noMaskTile = device.createBuffer({ size: MASK_TILE_SIZE, usage: GPUBufferUsage.UNIFORM })
-    this.maskStage = new MaskStage(device, this.sampler)
+    // Depth maps' textures it stops keeping are retired as the engine's own (Part 24 with Part 14's retirement).
+    this.maskStage = new MaskStage(device, this.sampler, (t) => this.retireTex(t))
     // Zero-initialised: no effects.
     this.fxBuf = device.createBuffer({ size: FX_UNIFORM_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.noFxTile = device.createBuffer({ size: FX_TILE_SIZE, usage: GPUBufferUsage.UNIFORM })
@@ -2065,7 +2066,7 @@ export class DevelopEngine {
     const ov = pass === 0 && ind.maskOverlay ? ind.maskOverlay : null
     const s = this.sensor!
     const map: ShownMap = { rawMap: src.rawMap, lens: src.lens, w: src.w, h: src.h, sensor: [s.width, s.height] }
-    const prepared = mk ? prepareMasks(mk.list, map, rect, mk.params, ov?.id ?? null) : null
+    const prepared = mk ? prepareMasks(mk.list, map, rect, mk.params, ov?.id ?? null, !!ov?.depthMap) : null
     this.maskInputs = mk ? { list: mk.list, map, params: mk.params } : null
     if (!mk || !prepared?.masks.length) {
       if (this.masksOn) this.device.queue.writeBuffer(this.maskBuf, 0, new ArrayBuffer(MASK_UNIFORM_SIZE))

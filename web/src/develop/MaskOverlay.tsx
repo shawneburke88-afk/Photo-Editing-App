@@ -30,7 +30,7 @@ interface Props {
   /** Waiting for a shape to be drawn (or a colour or tone to be picked). */
   creating: ShapeKind | null
   /** Clicking picks a colour sample (Shift-click adds one) or a tone for the selected range component. */
-  picking: 'colour' | 'luminance' | null
+  picking: 'colour' | 'luminance' | 'depth' | null
   brush: MaskBrush
   showPins: boolean
   onSelect: (mask: string | null, comp?: string | null) => void

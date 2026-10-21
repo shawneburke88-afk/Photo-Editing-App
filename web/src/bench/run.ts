@@ -33,6 +33,10 @@ import { DEFAULT_CLIP, DEFAULT_RAW_CLIP, type Indicators } from '../engine/devel
 import { clearProofCache, proofLut } from '../engine/proof/client'
 import { builtinIcc } from '../engine/proof/profiles'
 import { proofKey } from '../engine/proof/settings'
+import { computeDepth, renderSize } from '../ai/depth'
+import { AI, depthModel, providerFor } from '../ai/models'
+import { installed } from '../ai/store'
+import { DEFAULT_GEOMETRY } from '../engine/develop/geometry'
 import { GpuProfiler, type PassTime } from './profiler'
 import { commitOf, type AdapterReport, type BenchReport, type BenchRow, type DatasetReport } from './report'
 import { looksQuantized, summarize, sumPasses } from './stats'
@@ -46,7 +50,7 @@ export type StageId =
   | 'vignetteFit' | 'vignetteExport' | 'grainFit' | 'grainExport' | 'tcFit' | 'tcExport' | 'dehazeFit' | 'dehazeExport' | 'glowFit' | 'glowExport'
   | 'denoise' | 'sharpen'
   | 'displayFit' | 'display100' | 'displayFitCurve' | 'display100Curve' | 'proof' | 'proofLut'
-  | 'remove' | 'export' | 'exportAll' | 'jpeg' | 'thumb'
+  | 'remove' | 'export' | 'exportAll' | 'jpeg' | 'thumb' | 'aiDepth'
 
 type Kind = 'bayer' | 'xtrans' | 'srgb'
 
@@ -77,12 +81,12 @@ const STAGES_FOR: Record<BenchMode, Record<Kind, StageId[]>> = {
   quick: {
     bayer: ALL_RAW,
     xtrans: ['stageA', 'displayFit', 'export'],
-    srgb: ['stageA', 'displayFit', 'export'],
+    srgb: ['stageA', 'displayFit', 'export', 'aiDepth'],
   },
   full: {
     bayer: ALL_RAW,
     xtrans: ['stageA', 'stageA3', 'displayFit', 'display100', 'export', 'exportAll'],
-    srgb: ['stageA', 'mixer', 'mixerNoGuide', 'grading', 'masksFit', 'vignetteFit', 'grainFit', 'tcFit', 'dehazeFit', 'glowFit', 'displayFit', 'display100', 'displayFitCurve', 'export', 'jpeg', 'thumb'],
+    srgb: ['stageA', 'mixer', 'mixerNoGuide', 'grading', 'masksFit', 'vignetteFit', 'grainFit', 'tcFit', 'dehazeFit', 'glowFit', 'displayFit', 'display100', 'displayFitCurve', 'export', 'jpeg', 'thumb', 'aiDepth'],
   },
 }
 
@@ -473,7 +477,27 @@ export const STAGES: Record<StageId, StageDef> = {
     run: (c, s, k) => renderThumbnail(c.engine, nudged(s, k), c.info),
     note: 'as the background developer refreshes one; Detail at the thumbnail\'s level cached after the warm-up',
   },
+  // The AI Depth range (Part 24): one depth map, as Develop computes it for a new Depth range. Never downloads: skipped
+  // (with a message) unless the model is on this device.
+  aiDepth: {
+    label: 'AI depth: DA-V2 Small inference',
+    settings: (b, kind) => edit(kind, plain(b)),
+    run: async (c, s) => {
+      const m = depthModel()
+      if (!m || !AI || !(await installed(m))) throw new Error('skipped: the AI Depth model isn’t on this device (Settings → AI models downloads it; the benchmark never does)')
+      const p = await providerFor()
+      if (!p.provider) throw new Error(`skipped: ${p.why}`)
+      const g = c.engine.geometry(DEFAULT_GEOMETRY)
+      const img = await c.engine.renderImage(displayUniforms(s), wbOf(c, s), renderSize(g.size[0], g.size[1], m.input))
+      const r = await computeDepth(m, { rgba: img.data, width: img.width, height: img.height, uvToSensor: g.uvToSensor, sensor: [c.engine.sensorLayout.width, c.engine.sensorLayout.height] }, p.provider, AI.runtime.version)
+      lastDepth = { inferMs: r.inferMs, size: r.size, provider: r.provider, variant: r.depth.modelVersion }
+    },
+    gpu: 'none',
+    note: () => `wall: the photo rendered as shot, resized, one model run on the AI runtime's own GPU device (a worker: not in the GPU column) and the depth map encoded; the first warm-up also loads the model${lastDepth ? `; last model run ${Math.round(lastDepth.inferMs)} ms at ${lastDepth.size.join(' × ')} (${lastDepth.provider}, ${lastDepth.variant})` : ''}`,
+  },
 }
+
+let lastDepth: { inferMs: number; size: [number, number]; provider: string; variant: string } | null = null
 
 // ---- running
 

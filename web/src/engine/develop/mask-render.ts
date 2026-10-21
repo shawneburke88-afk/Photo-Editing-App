@@ -9,9 +9,10 @@
 // turns, flips and the straighten angle, and following the content through perspective and lens distortion); a linear
 // gradient maps its Full and Zero points; a brush maps every dab, with the stroke's local scale for its radius.
 
-import { sensorToDisplayAt, type ShownMap } from './shown-map'
+import { displayToSensorAt, sensorToDisplayAt, type ShownMap } from './shown-map'
 import { colourTolerance } from './mask-math'
-import { hasEffect, hasUnknown, LOCAL_KEYS, type BrushShape, type LocalMask, type MaskComponent } from './masks'
+import { decodeDepth } from './depth-map'
+import { hasEffect, hasUnknown, LOCAL_KEYS, type BrushShape, type DepthShape, type LocalMask, type MaskComponent } from './masks'
 import type { MaskParams } from './process'
 
 /** The drawn photo's rectangle in the drawing's target pixels (the shader's V.offset and V.size). */
@@ -23,7 +24,7 @@ export interface TargetRect {
 }
 
 /** Component kinds as the shader numbers them. */
-export const KIND_CODE = { linear: 1, radial: 2, brush: 3, luminance: 4, colour: 5 } as const
+export const KIND_CODE = { linear: 1, radial: 2, brush: 3, luminance: 4, colour: 5, depth: 6 } as const
 export const OP_CODE = { add: 0, subtract: 1, intersect: 2 } as const
 
 export interface PreparedComponent {
@@ -39,6 +40,8 @@ export interface PreparedComponent {
   dabs?: Float32Array
   /** What the brush covers, in target pixels (x0, y0, x1, y1). */
   bounds?: [number, number, number, number]
+  /** A Depth range's map (decoded; 255 = nearest), in the sensor frame. */
+  depth?: { px: Uint8Array; w: number; h: number }
 }
 
 export interface PreparedMask {
@@ -67,6 +70,33 @@ export interface PreparedMasks {
   toneLocal: boolean
   /** A mask sets Texture, Clarity, Dehaze or Glow: the planes have a fourth vec4 a pixel (Part 25). */
   spatial: boolean
+  /** With a Depth range: the drawn image's uv → sensor uv on a (n + 1) × (n + 1) grid (`sensorGrid`). */
+  grid?: { n: number; uv: Float32Array }
+}
+
+/** Cells per side of the drawing's uv → sensor grid (a depth map is about 500 texels across; 64 cells stay well under one). */
+export const GRID_CELLS = 64
+const gridCache = new Map<string, Float32Array>()
+
+/**
+ * The drawn image's uv → sensor uv at (n + 1)² points (through the drawing's crop, angle, perspective, flips and lens
+ * correction: `displayToSensorAt`), for sampling a depth map stored in the sensor frame. The shader interpolates it
+ * bilinearly: the maps are smooth, and a cell is far smaller than a depth-map texel on the drawn photo.
+ */
+export function sensorGrid(m: ShownMap, n = GRID_CELLS): Float32Array {
+  const key = `${m.rawMap.join(',')}|${m.lens ? idOf(m.lens) : 0}|${m.sensor.join('x')}|${n}`
+  const hit = gridCache.get(key)
+  if (hit) return hit
+  const out = new Float32Array((n + 1) * (n + 1) * 2)
+  for (let j = 0; j <= n; j++) {
+    for (let i = 0; i <= n; i++) {
+      const [x, y] = displayToSensorAt(m, i / n, j / n)
+      out.set([x / m.sensor[0], y / m.sensor[1]], (j * (n + 1) + i) * 2)
+    }
+  }
+  if (gridCache.size > 8) gridCache.delete(gridCache.keys().next().value!)
+  gridCache.set(key, out)
+  return out
 }
 
 let nextId = 1
@@ -159,6 +189,13 @@ function prepareComponent(c: MaskComponent, m: ShownMap, r: TargetRect, key: str
       const sh = s as Extract<MaskComponent['shape'], { kind: 'colour' }>
       return { ...base, kind: KIND_CODE.colour, p0: [colourTolerance(sh.refine, p), p.colourLightness, sh.samples.length, 0], p1: [0, 0, 0, 0], samples: sh.samples.map((x) => [...x] as [number, number, number]) }
     }
+    case 'depth': {
+      // p0: the range (0 near … 100 far); p1.x: 1 shows the map itself (the depth-map view), p1.y: the grid's cells.
+      const sh = s as DepthShape
+      const px = sh.raster ? decodeDepth(sh.raster) : null
+      if (!px || !sh.raster) return null
+      return { ...base, kind: KIND_CODE.depth, p0: [...sh.range], p1: [0, GRID_CELLS, 0, 0], depth: { px, w: sh.raster.width, h: sh.raster.height } }
+    }
     default:
       return null
   }
@@ -179,9 +216,11 @@ export function maskValues(mask: LocalMask, overlay: boolean): number[] {
 
 /**
  * The masks of a drawing. Masks without an effect are left out (unless one is shown with the overlay), and so are masks
- * holding a component this build doesn't know.
+ * holding a component this build doesn't know, and Depth ranges without a usable depth map (none yet on this photo, or
+ * a damaged one). `depthView` (with `overlayId`): that mask's first Depth range shows the depth map itself (1 = near),
+ * for the overlay's White on Black.
  */
-export function prepareMasks(masks: LocalMask[] | undefined, m: ShownMap, r: TargetRect, p: MaskParams, overlayId: string | null = null): PreparedMasks {
+export function prepareMasks(masks: LocalMask[] | undefined, m: ShownMap, r: TargetRect, p: MaskParams, overlayId: string | null = null, depthView = false): PreparedMasks {
   const out: PreparedMask[] = []
   let toneLocal = false
   let spatial = false
@@ -191,7 +230,17 @@ export function prepareMasks(masks: LocalMask[] | undefined, m: ShownMap, r: Tar
   for (const mask of masks) {
     const overlay = mask.id === overlayId
     if ((!hasEffect(mask) && !overlay) || hasUnknown(mask) || !mask.components.length) continue
-    const components = mask.components.map((c) => prepareComponent(c, m, r, key, p)).filter((c): c is PreparedComponent => !!c)
+    const parts = mask.components.map((c) => prepareComponent(c, m, r, key, p))
+    // A part that can't be drawn (a Depth range without its map) leaves the whole mask out, rather than drawing it wrong.
+    if (parts.some((c) => !c)) continue
+    const components = parts as PreparedComponent[]
+    if (overlay && depthView) {
+      const d = components.find((c) => c.kind === KIND_CODE.depth)
+      if (d) {
+        out.push({ id: mask.id, invert: false, components: [{ ...d, op: OP_CODE.add, invert: false, p1: [1, GRID_CELLS, 0, 0] }], sigma: 0, rho: 0, eps: p.refineEps, values: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0], image: false, guide: false })
+        continue
+      }
+    }
     if (!components.length) continue
     const values = maskValues(mask, overlay)
     if (values[2] || values[3] || values[4] || values[5]) toneLocal = true
@@ -209,5 +258,6 @@ export function prepareMasks(masks: LocalMask[] | undefined, m: ShownMap, r: Tar
       guide: rho >= 0.5,
     })
   }
-  return { masks: out, toneLocal, spatial }
+  const depth = out.some((x) => x.components.some((c) => c.depth))
+  return depth ? { masks: out, toneLocal, spatial, grid: { n: GRID_CELLS, uv: sensorGrid(m) } } : { masks: out, toneLocal, spatial }
 }

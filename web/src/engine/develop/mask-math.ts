@@ -93,6 +93,14 @@ export function trapezoid(x: number, r: readonly [number, number, number, number
   return 1
 }
 
+/**
+ * A Depth range (PHASE3.md Part 24; mask.wgsl case 6): the map's value (0…1, 1 = nearest) on the 0 (near) … 100 (far)
+ * scale, through the same trapezoid as the luminance range. `raw` gives the map itself (the depth-map view).
+ */
+export function depthAlpha(near: number, range: readonly [number, number, number, number], raw = false): number {
+  return raw ? near : trapezoid(100 * (1 - near), range)
+}
+
 /** CIE L* (0–100, capped at 100) of a relative luminance. */
 export function lstar(Y: number): number {
   const y = Math.max(0, Y)

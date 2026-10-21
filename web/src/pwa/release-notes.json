@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.6.13",
+    "date": "2026-10-21",
+    "newFeatures": [
+      "Masks: a new Depth (AI) range picks out parts of the photo by how near or far they are. Set the near end, far end and feather, or click \"Pick a distance…\" and click the photo. 0 is the nearest part of the photo and 100 the farthest. A depth range can be combined with Luminance and Colour ranges.",
+      "The depth is estimated by Depth Anything V2 Small, LightBench's first AI model. It's downloaded only if you agree (76 MB or 126 MB depending on your graphics card, including the runtime it needs), once, from LightBench's own site, and checked before it's kept. After that it works offline. The download window shows its licence and the data it was trained on.",
+      "The depth map is worked out once per photo and saved with the edit and in the .xmp, so the mask looks the same on another computer without the model. \"Show depth map\" shows it in white (near) to black (far).",
+      "Settings → AI models: see which models are on this device, download them, read about them, or remove them."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.6.12",
     "date": "2026-10-21",
     "newFeatures": [

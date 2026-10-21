@@ -25,10 +25,13 @@
 //  - Edits without masks have no `masks` key at all, so they stay exactly as they were and render byte-identically; no
 //    new process version is needed (MASKING.md "Process version needs"). The mask maths is fixed per process version
 //    (process.ts `ProcessParams.masks`).
-//  - AI components (the Depth range mask, a later build) plug in as one more component kind whose shape stores a raster
-//    (`RasterShape` below: a compressed map inside the edit, so inside the .xmp; owner's decision 10). This build
-//    doesn't render them: a mask holding a kind this build doesn't know is kept as it is and not rendered (as an edit
-//    from a newer LightBench), and the panel says so.
+//  - AI components plug in as one more component kind whose shape stores a raster (a compressed map inside the edit, so
+//    inside the .xmp; owner's decision 10). The first is the Depth range (`DepthShape`, PHASE3.md Part 24): a RANGE kind,
+//    so it combines with Luminance and Colour ranges and never with a shape (decision 12: no Depth ∩ shape). A mask
+//    holding a kind this build doesn't know (a later AI raster, anything from a newer LightBench) is kept as it is and
+//    not rendered, and the panel says so.
+
+import { normalizeRaster, type RasterData } from './depth-map'
 
 /** A point in sensor coordinates: x / sensor width, y / sensor height. */
 export type Pt = [number, number]
@@ -136,17 +139,31 @@ export interface ColourShape {
   refine: number
 }
 /**
- * Reserved for AI components (the Depth range mask next; Subject, Sky later): a raster stored in the edit (owner's
- * decision 10: inside the .xmp, compressed). Not rendered by this build.
+ * The AI Depth range (PHASE3.md Part 24): a range on the photo's depth map, which the component carries (the
+ * `RasterShape` slot: owner's decision 10, inside the edit and so inside the .xmp, compressed; depth-map.ts). A range
+ * kind: it joins range masks only, never a shape (owner's decision 12). Without a map (pasted from another photo, from a
+ * preset, or damaged) it is kept and not rendered until the map is computed for this photo.
  */
+export interface DepthShape {
+  kind: 'depth'
+  /** A trapezoid on the 0 (nearest) … 100 (farthest) scale of the map, as the luminance range's on L*. */
+  range: [number, number, number, number]
+  /** The model and its files ("depth-anything-v2-small"; "<revision 7>/<fp16|fp32>"), and the runtime that ran it. */
+  model: string
+  modelVersion: string
+  runtime?: string
+  /** The depth map in the sensor frame (depth-map.ts). */
+  raster?: RasterData
+}
+/** AI components of later builds (Subject, Sky, …): a raster stored in the edit. Kept, not rendered by this build. */
 export interface RasterShape {
-  kind: 'depth' | 'ai'
+  kind: 'ai'
   model?: string
   modelVersion?: string
-  raster?: { width: number; height: number; encoding: string; data: string }
+  raster?: RasterData
   [k: string]: unknown
 }
-export type KnownShape = LinearShape | RadialShape | BrushShape | LuminanceShape | ColourShape
+export type KnownShape = LinearShape | RadialShape | BrushShape | LuminanceShape | ColourShape | DepthShape
 /** A component kind this build doesn't know (an AI raster, or anything from a newer LightBench): kept, not rendered. */
 export interface UnknownShape {
   kind: string
@@ -180,7 +197,7 @@ export interface LocalMask {
 }
 
 export const SHAPE_KINDS: ShapeKind[] = ['brush', 'linear', 'radial']
-export const RANGE_KINDS: ShapeKind[] = ['luminance', 'colour']
+export const RANGE_KINDS: ShapeKind[] = ['luminance', 'colour', 'depth']
 export const KNOWN_KINDS: ShapeKind[] = [...SHAPE_KINDS, ...RANGE_KINDS]
 
 export const KIND_LABELS: Record<ShapeKind, string> = {
@@ -189,9 +206,10 @@ export const KIND_LABELS: Record<ShapeKind, string> = {
   radial: 'Radial gradient',
   luminance: 'Luminance range',
   colour: 'Colour range',
+  depth: 'Depth range',
 }
 /** Short names, for default mask names (Lightroom users asked for names by type). */
-export const KIND_SHORT: Record<ShapeKind, string> = { brush: 'Brush', linear: 'Linear', radial: 'Radial', luminance: 'Luminance range', colour: 'Colour range' }
+export const KIND_SHORT: Record<ShapeKind, string> = { brush: 'Brush', linear: 'Linear', radial: 'Radial', luminance: 'Luminance range', colour: 'Colour range', depth: 'Depth range' }
 
 /** Caps (owner's decision 9), against hostile files and slow GPUs. */
 export const MAX_MASKS = 64
@@ -239,6 +257,38 @@ export function dabCount(m: Pick<LocalMask, 'components'>): number {
 
 /** A mask holds a component this build can't render (it is then kept as it is and not rendered). */
 export const hasUnknown = (m: LocalMask) => m.components.some((c) => !isKnownKind(c.shape.kind))
+
+/** A Depth range part without its depth map (pasted, from a preset, or damaged): the mask waits for one. */
+export const needsDepth = (m: Pick<LocalMask, 'components'>) => m.components.some((c) => c.shape.kind === 'depth' && !(c.shape as DepthShape).raster)
+
+/** The photo's depth map, if one of its masks has it (a new Depth range reuses it: nothing is computed again). */
+export function existingDepth(masks: LocalMask[] | undefined): Omit<DepthShape, 'range'> | null {
+  for (const m of masks ?? []) {
+    for (const c of m.components) {
+      const s = c.shape as DepthShape
+      if (s.kind === 'depth' && s.raster) return { kind: 'depth', model: s.model, modelVersion: s.modelVersion, ...(s.runtime ? { runtime: s.runtime } : {}), raster: s.raster }
+    }
+  }
+  return null
+}
+
+/** The same masks without depth maps (they belong to one photo: paste and presets carry the ranges only). */
+export function withoutDepthMaps(masks: LocalMask[]): LocalMask[] {
+  return masks.map((m) =>
+    m.components.some((c) => c.shape.kind === 'depth')
+      ? { ...m, components: m.components.map((c) => (c.shape.kind === 'depth' ? { ...c, shape: (({ raster: _r, ...rest }) => (void _r, rest))(c.shape as DepthShape) } : c)) }
+      : m,
+  )
+}
+
+/** Every Depth range part of these masks gets this map (computed for the photo they are on). */
+export function withDepthMap(masks: LocalMask[], depth: Omit<DepthShape, 'range'>): LocalMask[] {
+  return masks.map((m) =>
+    m.components.some((c) => c.shape.kind === 'depth')
+      ? { ...m, components: m.components.map((c) => (c.shape.kind === 'depth' ? { ...c, shape: { ...(c.shape as DepthShape), ...depth, kind: 'depth', range: (c.shape as DepthShape).range } as DepthShape } : c)) }
+      : m,
+  )
+}
 
 /** The mask changes the photo: a local slider is set and Amount is above 0. */
 export const hasEffect = (m: LocalMask) => m.amount > 0 && LOCAL_KEYS.some((k) => (m.adjust[k] ?? 0) !== 0)
@@ -335,6 +385,17 @@ export function normalizeShape(v: unknown, dabBudget = MAX_DABS): MaskShape | nu
         .slice(0, MAX_SAMPLES)
         .map((s) => [q5(clamp(s[0], 0, 4)), q5(clamp(s[1], -1, 1)), q5(clamp(s[2], -1, 1))] as [number, number, number])
       return samples.length ? { kind: 'colour', samples, refine: q2(num(o.refine, 50, 0, 100)) } : null
+    }
+    case 'depth': {
+      if (!Array.isArray(o.range) || o.range.length !== 4 || !o.range.every(finite)) return null
+      const r = (o.range as number[]).map((x) => q2(clamp(x, 0, 100)))
+      for (let i = 1; i < 4; i++) r[i] = Math.max(r[i], r[i - 1])
+      const out: DepthShape = { kind: 'depth', range: r as DepthShape['range'], model: str(o.model, 80) || 'unknown', modelVersion: str(o.modelVersion, 80) }
+      if (typeof o.runtime === 'string' && o.runtime) out.runtime = str(o.runtime, 80)
+      // A damaged map is dropped (the part stays, waiting for a new map); its contents are checked when it is decoded.
+      const raster = normalizeRaster(o.raster)
+      if (raster) out.raster = raster
+      return out
     }
     default:
       // A kind from a newer LightBench (or the AI rasters of a later build): kept as it is, never rendered here.
@@ -454,13 +515,16 @@ export function capMessage(masks: LocalMask[], change: { addMask?: boolean; mask
 
 /**
  * Masks pasted onto a photo are ADDED to its own (owner's decision 7), with new ids, after them; past the 64-mask cap the
- * rest are left out.
+ * rest are left out. A depth map belongs to the photo it was computed on: pasted Depth ranges take the target's own map
+ * when it has one, else they wait for one to be computed there (MASKING.md: AI masks are recomputed on paste).
  */
 export function appendMasks(own: LocalMask[] | undefined, pasted: LocalMask[] | undefined): LocalMask[] | undefined {
   const base = own ?? []
   if (!pasted?.length) return own
   const room = Math.max(0, MAX_MASKS - base.length)
-  const added = pasted.slice(0, room).map((m) => ({
+  const depth = existingDepth(base)
+  const bare = withoutDepthMaps(pasted.slice(0, room))
+  const added = (depth ? withDepthMap(bare, depth) : bare).map((m) => ({
     ...JSON.parse(JSON.stringify(m)) as LocalMask,
     // Masks read from Lightroom keep their "lr" mark (the panel says they are experimental).
     id: `${m.id.startsWith('lr') ? 'lr' : ''}${newMaskId()}`,
@@ -472,7 +536,8 @@ export function appendMasks(own: LocalMask[] | undefined, pasted: LocalMask[] | 
 
 /** Presets may hold gradients and range masks, not brush strokes (owner's decision 7): masks with a brush are left out. */
 export function presetMasks(masks: LocalMask[] | undefined): LocalMask[] | undefined {
-  const out = (masks ?? []).filter((m) => !m.components.some((c) => c.shape.kind === 'brush'))
+  // Depth ranges are kept without the photo's depth map (each photo gets its own when the preset is applied).
+  const out = withoutDepthMaps((masks ?? []).filter((m) => !m.components.some((c) => c.shape.kind === 'brush')))
   return out.length ? out : undefined
 }
 

@@ -36,6 +36,10 @@ jobs:
         env:
           # Project sites are served from /<repository-name>/
           BASE_PATH: /${{ github.event.repository.name }}/
+      # The AI models (docs/PHASE3.md Part 24): each pinned file of web/models/manifest.json is fetched by its exact
+      # URL into dist/models/ and checked by size and SHA-256; a mismatch fails the build. Not in git, not precached.
+      - name: Fetch AI models
+        run: node scripts/models.mjs fetch --out dist
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main'
         with:

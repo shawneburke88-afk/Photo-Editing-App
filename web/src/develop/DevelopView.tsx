@@ -5,7 +5,7 @@ import { forgetThumbUrl, holdThumbUrl, loadThumb, saveThumb } from '../catalog/t
 import type { PhotoDetail } from '../catalog/types'
 import { AUTO_SLIDERS, BUILT_IN_TARGETS, metricsFromStats, solveAuto, statsFromPixels, targetFromMetrics, type AutoKey, type AutoTarget } from '../engine/develop/auto'
 import { defaultsFor, displayUniforms, normalizeSettings, type DevelopSettings } from '../engine/develop/settings'
-import { flip, isIdentityGeometry, resetCrop, rotate90, sameGeometry, setAngle, setAspect, setLocked, swapAspect, type GeometrySettings } from '../engine/develop/geometry'
+import { DEFAULT_GEOMETRY, flip, isIdentityGeometry, resetCrop, rotate90, sameGeometry, setAngle, setAspect, setLocked, swapAspect, type GeometrySettings } from '../engine/develop/geometry'
 import { CURRENT_PROCESS, PROCESS_VERSIONS, processStatus } from '../engine/develop/process'
 import { DevelopEngine, type ImageStats, type RawStageOptions, type ViewState } from '../engine/gpu/develop-engine'
 import { gpuGate } from '../engine/gpu/gate'
@@ -79,6 +79,8 @@ import { menuPoint } from './menuPoint'
 import { cleanName, makeSnapshot, sortSnapshots, uniqueName, type Snapshot } from './snapshots'
 import { snapshotsChanged } from './snapshotStore'
 import { useMasking } from './useMasking'
+import { renderSize, useDepth } from './useDepth'
+import { ModelDialog } from '../ai/ModelDialog'
 import { MaskOverlay } from './MaskOverlay'
 import { diagnostics } from '../diagnostics/recorder'
 import { PhotoNumbers, photoSummary, settingsChange } from '../diagnostics/anon'
@@ -865,6 +867,21 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     },
     [change],
   )
+  /**
+   * The AI Depth range (PHASE3.md Part 24): the photo rendered as shot for the depth model (the edit's tones and colours;
+   * no crop, angle, perspective, flips, lens correction, masks or effects (Part 25: Texture, Clarity, Dehaze, vignette,
+   * grain, Glow); the camera's orientation), and its uv → sensor map.
+   */
+  const depth = useDepth(async (input) => {
+    const engine = engineRef.current
+    const x = latest.current
+    const inf = x.info
+    if (!engine || !inf) return null
+    const s: DevelopSettings = withMasksList({ ...x.settings, geometry: DEFAULT_GEOMETRY, lens: { ...x.settings.lens, enabled: false }, detail: undefined, effects: undefined }, undefined)
+    const g = engine.geometry(DEFAULT_GEOMETRY)
+    const img = await gpuGate.foreground(() => engine.renderImage(displayUniforms(s), multipliers(s, inf), renderSize(g.size[0], g.size[1], input)))
+    return { rgba: img.data, width: img.width, height: img.height, uvToSensor: g.uvToSensor, sensor: sensorSize() }
+  })
   /** Masks (PHASE3.md Part 23): the masking tool on the photo and what it does to the photo's masks. */
   const masking = useMasking({
     settings: () => (historyRef.current ? current(historyRef.current) : latest.current.settings),
@@ -896,11 +913,22 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       if (drawn) setShownBox((b) => ({ ...drawn, n: (b?.n ?? 0) + 1 }))
       setReveal({ id: 'masks', n: Date.now() })
     },
+    depth: depth.obtain,
+    toSensorUv: (uv) => {
+      const engine = engineRef.current
+      if (!engine) return null
+      const [sw, sh] = sensorSize()
+      const [x, y] = engine.displayToSensor(uv[0], uv[1])
+      return [x / sw, y / sh]
+    },
   })
   maskingRef.current = masking
-  const ovKey = masking.active && masking.overlay.on && masking.sel.mask && !masking.hidden.has(masking.sel.mask) ? `${masking.sel.mask}|${masking.overlay.mode}|${masking.overlay.colour}|${masking.overlay.opacity}` : ''
+  // The depth-map view (Part 24): the selected mask's depth map, white near, with White on Black, while masking.
+  const depthViewOn = masking.active && masking.depthView && !!masking.sel.mask && !masking.hidden.has(masking.sel.mask)
+  const ovKey = depthViewOn ? `${masking.sel.mask}|depth` : masking.active && masking.overlay.on && masking.sel.mask && !masking.hidden.has(masking.sel.mask) ? `${masking.sel.mask}|${masking.overlay.mode}|${masking.overlay.colour}|${masking.overlay.opacity}` : ''
   useEffect(() => {
     const o = masking.overlay
+    if (depthViewOn && masking.sel.mask) return setMaskOverlayDraw({ id: masking.sel.mask, mode: 6, colour: [1, 1, 1], opacity: 1, depthMap: true })
     setMaskOverlayDraw(ovKey && masking.sel.mask ? { id: masking.sel.mask, mode: o.mode, colour: OVERLAY_COLOURS[o.colour % OVERLAY_COLOURS.length].rgb, opacity: o.opacity / 100 } : null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ovKey])
@@ -1921,7 +1949,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   })
   // While masking on the photo, Develop listens to 'mask' (PHASE3.md Part 23).
   const maskNew = (cmd: string) => {
-    const kind = ({ 'develop.maskBrush': 'brush', 'develop.maskLinear': 'linear', 'develop.maskRadial': 'radial', 'develop.maskColour': 'colour', 'develop.maskLuminance': 'luminance' } as const)[cmd as 'develop.maskBrush']
+    const kind = ({ 'develop.maskBrush': 'brush', 'develop.maskLinear': 'linear', 'develop.maskRadial': 'radial', 'develop.maskColour': 'colour', 'develop.maskLuminance': 'luminance', 'develop.maskDepth': 'depth' } as const)[cmd as 'develop.maskBrush']
     if (!kind || status.kind !== 'ready') return false
     masking.newOf(kind)
     return true
@@ -1941,7 +1969,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'develop.maskLinear':
       case 'develop.maskRadial':
       case 'develop.maskColour':
-      case 'develop.maskLuminance': maskNew(cmd); break
+      case 'develop.maskLuminance':
+      case 'develop.maskDepth': maskNew(cmd); break
       case 'mask.overlay': masking.setOverlay({ ...masking.overlay, on: !masking.overlay.on }); break
       case 'mask.overlayColour': masking.nextOverlayColour(); break
       case 'mask.overlayMode': masking.nextOverlayMode(); break
@@ -1973,7 +2002,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'develop.maskLinear':
       case 'develop.maskRadial':
       case 'develop.maskColour':
-      case 'develop.maskLuminance': maskNew(cmd); break
+      case 'develop.maskLuminance':
+      case 'develop.maskDepth': maskNew(cmd); break
       case 'develop.grid': onLibrary(); break
       case 'develop.curveTarget': toggleCurveTarget(); break
       case 'develop.curveReset': changeCurve('Reset tone curve', undefined, true); break
@@ -2720,6 +2750,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                 <MasksPanel
                   masks={masking.draft ?? settings.masks ?? []}
                   m={masking}
+                  depth={depth}
                   disabled={status.kind !== 'ready'}
                   showHint={hintsPref === 1}
                   acr={acr}
@@ -2894,6 +2925,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         />
         </SectionEyeContext.Provider>
       </aside>
+      {depth.ask && (
+        <ModelDialog model={depth.ask.model} file={depth.ask.file} purpose="The Depth range mask" onInstalled={(rec) => depth.ask?.done(rec)} onClose={() => depth.ask?.done(null)} />
+      )}
       {pasting && (
         <PasteDialog
           mode={pasting.mode}

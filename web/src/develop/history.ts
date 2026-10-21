@@ -53,20 +53,64 @@ export function replaceCurrent(h: History, settings: DevelopSettings): History {
   return { ...h, steps }
 }
 
-/** Saved form of the history (timestamps are not stored). */
+/**
+ * Saved form of the history (timestamps are not stored). Depth maps (PHASE3.md Part 24) are kept once: each step's
+ * depth map is replaced by "@r<n>", the n-th entry of `rasters` (base64 never contains "@"). Up to 200 steps of the
+ * same photo otherwise repeat the same map in every step.
+ */
 export interface SavedHistory {
   steps: { label: string; settings: DevelopSettings }[]
   index: number
+  rasters?: string[]
 }
 
-export const savedForm = (h: History): SavedHistory => ({ steps: h.steps.map(({ label, settings }) => ({ label, settings })), index: h.index })
+type RasterLike = { raster?: { data: string } }
+
+/** Calls `fn` on each Depth range shape's raster in a step's settings, replacing its data with what `fn` returns. */
+function mapRasters(s: DevelopSettings, fn: (data: string) => string): DevelopSettings {
+  if (!s.masks?.some((m) => m.components.some((c) => (c.shape as RasterLike).raster))) return s
+  return {
+    ...s,
+    masks: s.masks.map((m) => ({
+      ...m,
+      components: m.components.map((c) => {
+        const r = (c.shape as RasterLike).raster
+        return r && typeof r.data === 'string' ? { ...c, shape: { ...c.shape, raster: { ...r, data: fn(r.data) } } } : c
+      }),
+    })),
+  }
+}
+
+export const savedForm = (h: History): SavedHistory => {
+  const rasters: string[] = []
+  const index = new Map<string, number>()
+  const steps = h.steps.map(({ label, settings }) => ({
+    label,
+    settings: mapRasters(settings, (data) => {
+      let n = index.get(data)
+      if (n === undefined) {
+        n = rasters.length
+        rasters.push(data)
+        index.set(data, n)
+      }
+      return `@r${n}`
+    }),
+  }))
+  return rasters.length ? { steps, index: h.index, rasters } : { steps, index: h.index }
+}
+
+/** The steps with their depth maps put back (a reference to a missing map leaves it empty: the part then waits for one). */
+export function unpackRasters(sh: SavedHistory): SavedHistory['steps'] {
+  const table = Array.isArray(sh.rasters) ? sh.rasters : []
+  return sh.steps.map((st) => ({ label: st.label, settings: mapRasters(st.settings, (d) => (d.startsWith('@r') ? (typeof table[Number(d.slice(2))] === 'string' ? table[Number(d.slice(2))] : '') : d)) }))
+}
 
 /** A photo's history as saved in the catalog (or a fresh one at the defaults for its kind and EXIF ISO). */
 export function loadHistory(saved: { settings: string; history: string } | null, kind: SourceKind, iso?: number | null): History {
   if (!saved) return startHistory(defaultsFor(kind, iso))
   try {
     const sh = JSON.parse(saved.history) as SavedHistory
-    const steps = sh.steps.map((st) => ({ label: st.label, settings: normalizeSettings(st.settings, kind), at: 0 }))
+    const steps = unpackRasters(sh).map((st) => ({ label: st.label, settings: normalizeSettings(st.settings, kind), at: 0 }))
     if (steps.length) return { steps, index: Math.min(sh.index, steps.length - 1) }
   } catch {
     // fall back to the settings alone

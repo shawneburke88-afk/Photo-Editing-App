@@ -19,5 +19,5 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["vite.config.ts", "sw-plugin.ts", "lensfun-plugin.ts", "noiseprofiles-plugin.ts"]
+  "include": ["vite.config.ts", "sw-plugin.ts", "lensfun-plugin.ts", "noiseprofiles-plugin.ts", "models-plugin.ts"]
 }

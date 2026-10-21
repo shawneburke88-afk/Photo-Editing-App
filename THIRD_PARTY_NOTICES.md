@@ -25,6 +25,8 @@ following third-party components, each under its own license.
 | [Little CMS](https://github.com/mm2/Little-CMS) (compiled into lcms-wasm's `lcms.wasm`; lcms-wasm's `lib/constants.js` gives `LCMS_VERSION = 2160`, i.e. 2.16; the exact commit of its `Little-CMS` submodule was not checked) | The colour management engine behind soft proofing | MIT. Copyright (c) 2023 Marti Maria Saguer (licence text of the `lcms2.16` tag, below). lcms-wasm's `build.sh` compiles only `Little-CMS/src/*.c` (the core library; no plugins). |
 | [SQLite](https://sqlite.org/) / [@sqlite.org/sqlite-wasm](https://github.com/sqlite/sqlite-wasm) | Library catalog database | Public domain / Apache-2.0 |
 | [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) 0.1.7 | No longer shipped. LightBench's own service worker (`web/src/pwa/sw.ts`) reproduces its COOP/COEP header logic for cross-origin isolation on GitHub Pages | MIT. Copyright © Guido Zuidhof and contributors. |
+| [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2) **Small** (weights; the ONNX export [`onnx-community/depth-anything-v2-small`](https://huggingface.co/onnx-community/depth-anything-v2-small), fp16 and fp32 files, pinned by commit and SHA-256 in `web/models/manifest.json`). **Not in this repository and not part of the app's install**: the deploy workflow fetches the pinned files into the site, and the app downloads one only when the user agrees (docs/PHASE3.md Part 24) | The AI Depth range mask (relative depth of each part of a photo), run on the user's device with ONNX Runtime Web | **Apache-2.0** (the Depth Anything V2 README: “Depth-Anything-V2-Small model is under the Apache-2.0 license. Depth-Anything-V2-Base/Large/Giant models are under the CC-BY-NC-4.0 license.”; only Small is used). Licence text: `web/models/notices/depth-anything-v2.LICENSE.txt` (the repository's `LICENSE` at commit `a561b84`; the repository has no NOTICE file), also served next to the model as `models/depth-anything-v2-small/LICENSE.txt`. By Lihe Yang, Bingyi Kang, Zilong Huang, Zhen Zhao, Xiaogang Xu, Jiashi Feng and Hengshuang Zhao (“Depth Anything V2”, NeurIPS 2024, arXiv:2406.09414). **Training data** (paper, Table 7): synthetic BlendedMVS, Hypersim, IRS, TartanAir, Virtual KITTI 2; pseudo-labelled real BDD100K, Google Landmarks, ImageNet-21K, LSUN, Objects365, Open Images V7, Places365, SA-1B. These sets are named publicly; some have non-commercial or research-only terms (e.g. SA-1B, Virtual KITTI 2). The app's download dialog and Settings → AI models say so. |
+| [ONNX Runtime Web](https://github.com/microsoft/onnxruntime) 1.30.0 (npm `onnxruntime-web`, exact version; its JavaScript in the AI runtime worker's chunk, its WebAssembly file `ort-wasm-simd-threaded.asyncify.wasm` served at `ort/1.30.0/` and downloaded only with a model) | Running the AI models (WebGPU, or WebAssembly) | MIT. Copyright (c) Microsoft Corporation (text below; `web/models/notices/onnxruntime.LICENSE.txt`, from the `v1.30.0` tag). The components compiled into its WebAssembly are listed in ONNX Runtime's `ThirdPartyNotices.txt` (same tag), kept in `web/models/notices/onnxruntime-1.30.0.ThirdPartyNotices.txt` and served next to the runtime. Its npm dependencies (`onnxruntime-common` MIT, `flatbuffers` Apache-2.0, `guid-typescript` ISC, `long` Apache-2.0, `platform` MIT, `protobufjs` BSD-3-Clause) are installed by npm; the `onnxruntime-web/webgpu` bundle LightBench imports is self-contained (it imports none of them). |
 | [React](https://react.dev/) | User interface | MIT |
 | [Vite](https://vite.dev/), [TypeScript](https://www.typescriptlang.org/), [oxlint](https://oxc.rs/) | Build tools (not shipped) | MIT / Apache-2.0 / MIT |
 
@@ -136,3 +138,39 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
 TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE 
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
+
+## ONNX Runtime licence (MIT)
+
+`web/models/notices/onnxruntime.LICENSE.txt` (ONNX Runtime's `LICENSE` at the `v1.30.0` tag), for the ONNX Runtime Web
+code and WebAssembly LightBench serves:
+
+```
+MIT License
+
+Copyright (c) Microsoft Corporation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## Depth Anything V2 Small licence (Apache-2.0)
+
+The full Apache License 2.0 text, as in the Depth Anything V2 repository's `LICENSE` (commit `a561b84`), is in
+`web/models/notices/depth-anything-v2.LICENSE.txt` and is served next to the model files
+(`models/depth-anything-v2-small/LICENSE.txt`). LightBench redistributes the ONNX export of the Small weights unchanged
+(byte for byte, checked by SHA-256). The repository has no NOTICE file.

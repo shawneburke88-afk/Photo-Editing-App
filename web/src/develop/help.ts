@@ -708,7 +708,39 @@ export const MASK_HELP: Record<string, ControlHelp> = {
     left: 'Only colours very close to the samples.',
     right: 'A wider range of similar colours.',
   },
+  // The AI Depth range (PHASE3.md Part 24).
+  depthNew: {
+    hint: 'Select by distance from the camera',
+    what: 'A range mask on how near or far each part of the photo is, estimated by an AI model (Depth Anything V2 Small) that runs on this computer. The first time, LightBench asks before downloading the model; each photo’s depth map is computed once and kept in its edit and .xmp, so it looks the same everywhere.',
+    left: '',
+    right: '',
+    pitfalls: 'The depth is relative (nearer or farther within this photo), not a distance in metres. Thin things (hair, branches) and glass, mirrors and the sky can be estimated wrongly; Feather, Refine and a second range help.',
+  },
+  depthNear: {
+    hint: 'Nearest distance at full effect',
+    what: 'Where the range starts, on this photo’s own scale: 0 is its nearest part, 100 its farthest.',
+    left: 'Includes nearer parts.',
+    right: 'Starts farther away.',
+  },
+  depthFar: {
+    hint: 'Farthest distance at full effect',
+    what: 'Where the range ends, on the same 0 (near) … 100 (far) scale.',
+    left: 'Ends nearer.',
+    right: 'Includes farther parts.',
+  },
+  depthFeather: {
+    hint: 'How softly the depth range fades',
+    what: 'How far beyond the range’s ends the effect fades out, on the 0–100 depth scale.',
+    left: 'A hard cut at the range’s ends.',
+    right: 'A gradual fade in front of and behind the range.',
+  },
+  depthView: {
+    hint: 'See the depth map',
+    what: 'Shows the photo’s depth map instead of the photo while masking: white is near, black is far. A view only; nothing is changed.',
+    left: '',
+    right: '',
+  },
 }
 
 /** What the panel says about range masks (owner's decision 12: no patent talk in the interface). */
-export const RANGE_NOTE = 'Range masks apply to the whole photo: a luminance or colour range can’t be combined with a brush or gradient. Make it a separate mask; masks stack.'
+export const RANGE_NOTE = 'Range masks apply to the whole photo: a luminance, colour or depth range can’t be combined with a brush or gradient. Make it a separate mask; masks stack.'

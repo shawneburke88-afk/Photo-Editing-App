@@ -87,6 +87,12 @@ export default function App() {
     window.addEventListener('keydown', onShortcutKey)
     return () => window.removeEventListener('keydown', onShortcutKey)
   }, [])
+  // A panel's "Settings → …" link (e.g. the Depth range mask's "AI models").
+  useEffect(() => {
+    const open = (e: Event) => setPanel({ kind: 'settings', section: (e as CustomEvent<SettingsSection>).detail })
+    window.addEventListener('lightbench:settings', open)
+    return () => window.removeEventListener('lightbench:settings', open)
+  }, [])
   useShortcuts(['global'], true, (id) => {
     if (id === 'app.settings') setPanel({ kind: 'settings' })
     else if (id === 'app.shortcuts') setPanel({ kind: 'shortcuts' })

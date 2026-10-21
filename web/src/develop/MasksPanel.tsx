@@ -5,9 +5,10 @@
 import { useState } from 'react'
 import { withKey } from '../settings/shortcuts'
 import {
-  describeKinds, hasUnknown, isKnownKind, KIND_LABELS, LOCAL_KEYS, LOCAL_LABELS, LOCAL_RANGE, maskFamily, MAX_DABS, MAX_MASKS, RANGE_KINDS, SHAPE_KINDS,
-  type BrushShape, type ColourShape, type LocalKey, type LocalMask, type LuminanceShape, type MaskComponent, type MaskOp, type RadialShape, type ShapeKind,
+  describeKinds, hasUnknown, isKnownKind, KIND_LABELS, LOCAL_KEYS, LOCAL_LABELS, LOCAL_RANGE, maskFamily, MAX_DABS, MAX_MASKS, needsDepth, RANGE_KINDS, SHAPE_KINDS,
+  type BrushShape, type ColourShape, type DepthShape, type LocalKey, type LocalMask, type LuminanceShape, type MaskComponent, type MaskOp, type RadialShape, type ShapeKind,
 } from '../engine/develop/masks'
+import type { Depth } from './useDepth'
 import { OVERLAY_MODES } from '../engine/develop/indicators'
 import { HELP, MASK_HELP, RANGE_NOTE, type ControlHelp } from './help'
 import { DEFAULT_MASK_BRUSH, MASK_BRUSH_SIZE, OVERLAY_COLOURS } from './maskUi'
@@ -24,6 +25,8 @@ interface Props {
   acr: boolean
   /** Masks read from Lightroom's own fields, and what was left out (experimental). */
   lightroomNote: string | null
+  /** The AI Depth range's model and depth map (Part 24). */
+  depth: Depth
 }
 
 const NEW_KINDS: { kind: ShapeKind; action: string; short: string }[] = [
@@ -32,6 +35,7 @@ const NEW_KINDS: { kind: ShapeKind; action: string; short: string }[] = [
   { kind: 'radial', action: 'develop.maskRadial', short: 'Radial' },
   { kind: 'colour', action: 'develop.maskColour', short: 'Colour' },
   { kind: 'luminance', action: 'develop.maskLuminance', short: 'Luminance' },
+  { kind: 'depth', action: 'develop.maskDepth', short: 'Depth (AI)' },
 ]
 const OP_SIGN: Record<MaskOp, string> = { add: '+', subtract: '−', intersect: '∩' }
 const OP_NAME: Record<MaskOp, string> = { add: 'Add', subtract: 'Subtract', intersect: 'Intersect' }
@@ -60,7 +64,7 @@ function localHelp(k: LocalKey): ControlHelp {
   return { ...h, hint: `${h.hint}, in the mask`, what: `${h.what} Here it acts only where the mask is, on top of Basic’s ${where} (the two add up).` }
 }
 
-export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote }: Props) {
+export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, depth }: Props) {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [addKind, setAddKind] = useState<ShapeKind | null>(null)
   const mask = masks.find((x) => x.id === m.sel.mask) ?? null
@@ -92,7 +96,7 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote }:
               className={`button small touch ${m.creating?.kind === k.kind && !m.creating.op ? 'on' : ''}`}
               disabled={disabled || masks.length >= MAX_MASKS}
               onClick={() => m.newOf(k.kind)}
-              title={withKey(`New ${KIND_LABELS[k.kind].toLowerCase()} mask`, k.action)}
+              title={withKey(k.kind === 'depth' ? `New depth range mask (AI): ${MASK_HELP.depthNew.what}` : `New ${KIND_LABELS[k.kind].toLowerCase()} mask`, k.action)}
             >
               {k.short}
             </button>
@@ -107,6 +111,21 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote }:
         )}
         {m.picking === 'luminance' && <p className="small crop-note" role="status">Click a tone on the photo to centre the range on it. <button className="linklike" onClick={() => m.setPicking(null)}>Done</button></p>}
         {m.picking === 'colour' && <p className="small crop-note" role="status">Click a colour on the photo; Shift-click adds a sample (up to five). <button className="linklike" onClick={() => m.setPicking(null)}>Done</button></p>}
+        {m.picking === 'depth' && <p className="small crop-note" role="status">Click on the photo to centre the depth range at that distance. <button className="linklike" onClick={() => m.setPicking(null)}>Done</button></p>}
+        {(depth.status || m.depthBusy) && <p className="small crop-note" role="status" aria-busy="true">{depth.status ?? 'Preparing the AI Depth model…'}</p>}
+        {depth.error && (
+          <p className="small masks-warn" role="alert">
+            {depth.error}{' '}
+            <button className="linklike" onClick={() => window.dispatchEvent(new CustomEvent('lightbench:settings', { detail: 'ai' }))}>AI models…</button>{' '}
+            <button className="linklike" onClick={() => depth.setError(null)}>Dismiss</button>
+          </p>
+        )}
+        {masks.some(needsDepth) && (
+          <p className="small masks-note" role="note">
+            Some Depth ranges have no depth map for this photo yet (they came from another photo or a preset), so they aren’t shown.{' '}
+            <button className="linklike" disabled={disabled || m.depthBusy} onClick={() => void m.computeMissingDepth()}>Compute the depth map</button>
+          </p>
+        )}
         {m.message && <p className="small masks-warn" role="alert">{m.message}</p>}
         {masks.length > 0 && (
           <ul className="mask-list" aria-label="Masks">
@@ -157,7 +176,7 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote }:
         {mask && (
           <div className="mask-add" role="group" aria-label={`Add to ${mask.name}`}>
             <select aria-label="Part to combine" value={chosenAdd} onChange={(e) => setAddKind(e.target.value as ShapeKind)} disabled={disabled}>
-              {kindsFor.map((k) => <option key={k} value={k}>{KIND_LABELS[k]}</option>)}
+              {kindsFor.map((k) => <option key={k} value={k}>{KIND_LABELS[k]}{k === 'depth' ? ' (AI)' : ''}</option>)}
             </select>
             {(['add', 'subtract', 'intersect'] as MaskOp[]).map((op) => (
               <button key={op} className="button small touch" disabled={disabled} onClick={() => m.addPart(chosenAdd, op)} title={`${OP_NAME[op]} a ${KIND_LABELS[chosenAdd].toLowerCase()} ${op === 'add' ? 'to' : op === 'subtract' ? 'from' : 'with'} ${mask.name}`}>
@@ -296,6 +315,31 @@ function ShapeControls({ m, mask, comp, disabled, showHint }: { m: Masking; mask
         <Slider label="Range: bright end" help={MASK_HELP.lumHigh} showHint={showHint} value={c} min={0} max={100} step={1} defaultValue={100} format={(v) => `L* ${Math.round(v)}`} disabled={disabled} onChange={(v) => set(b, Math.round(v), smooth)} />
         <Slider label="Smoothness" help={MASK_HELP.lumSmooth} showHint={showHint} value={smooth} min={0} max={50} step={1} defaultValue={20} format={(v) => `${Math.round(v)}`} disabled={disabled} onChange={(v) => set(b, c, Math.round(v))} />
         <button className={`button small touch ${m.picking === 'luminance' ? 'on' : ''}`} disabled={disabled} onClick={() => { if (!m.active) m.start(); m.setPicking(m.picking === 'luminance' ? null : 'luminance') }}>Pick a tone…</button>
+      </section>
+    )
+  }
+  if (s.kind === 'depth') {
+    const l = s as DepthShape
+    const [a, b, c, d] = l.range
+    const smooth = Math.round(Math.max(b - a, d - c))
+    const set = (lo: number, hi: number, sm: number) => {
+      const x = Math.min(lo, hi)
+      const y = Math.max(lo, hi)
+      m.changeShape(comp.id, { ...l, range: [Math.max(0, x - sm), x, y, Math.min(100, y + sm)] }, `${mask.name}: depth range`)
+    }
+    return (
+      <section aria-label="Depth range">
+        {!l.raster && <p className="small masks-warn">No depth map for this photo yet: this part isn’t shown.</p>}
+        <Slider label="Depth: near end" help={MASK_HELP.depthNear} showHint={showHint} value={b} min={0} max={100} step={1} defaultValue={0} format={(v) => `${Math.round(v)}`} disabled={disabled} onChange={(v) => set(Math.round(v), c, smooth)} />
+        <Slider label="Depth: far end" help={MASK_HELP.depthFar} showHint={showHint} value={c} min={0} max={100} step={1} defaultValue={30} format={(v) => `${Math.round(v)}`} disabled={disabled} onChange={(v) => set(b, Math.round(v), smooth)} />
+        <Slider label="Depth feather" help={MASK_HELP.depthFeather} showHint={showHint} value={smooth} min={0} max={50} step={1} defaultValue={20} format={(v) => `${Math.round(v)}`} disabled={disabled} onChange={(v) => set(b, c, Math.round(v))} />
+        <div className="crop-tools">
+          <button className={`button small touch ${m.picking === 'depth' ? 'on' : ''}`} disabled={disabled || !l.raster} onClick={() => { if (!m.active) m.start(); m.setPicking(m.picking === 'depth' ? null : 'depth') }}>Pick a distance…</button>
+          <label className="check small" title={MASK_HELP.depthView.what}>
+            <input type="checkbox" checked={m.depthView} disabled={disabled || !l.raster} onChange={(e) => { if (!m.active) m.start(); m.setDepthView(e.target.checked) }} /> Show depth map
+          </label>
+        </div>
+        <p className="muted small">0 is the nearest part of this photo, 100 the farthest (relative depth from the AI model, not distances). Model: {l.model}{l.modelVersion ? ` ${l.modelVersion}` : ''}.</p>
       </section>
     )
   }

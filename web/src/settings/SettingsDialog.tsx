@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { AiModelsSettings } from '../ai/AiModelsSettings'
 import { DiagnosticsSection } from '../diagnostics/DiagnosticsSection'
 import { CullingSettings } from '../library/CullingSettings'
 import { SOURCE_URL } from '../lib/source'
@@ -8,13 +9,14 @@ import { allConflicts, assignKey, conflictsFor, removeKey, resetKeys, resolveKey
 import { keyText, useEscapeKey } from './shortcuts'
 import { BACKGROUNDS, settings, UI_SCALES, useSettings, type Background } from './store'
 
-export type SettingsSection = 'keyboard' | 'display' | 'culling' | 'diagnostics'
+export type SettingsSection = 'keyboard' | 'display' | 'culling' | 'ai' | 'diagnostics'
 
 /** The sections of the Settings window; later preferences get their own entry here. */
 const SECTIONS: { id: SettingsSection; name: string }[] = [
   { id: 'keyboard', name: 'Keyboard' },
   { id: 'display', name: 'Display' },
   { id: 'culling', name: 'Culling' },
+  { id: 'ai', name: 'AI models' },
   { id: 'diagnostics', name: 'Diagnostics' },
 ]
 
@@ -42,7 +44,7 @@ export function SettingsDialog({ section: initial = 'keyboard', onClose }: { sec
               </button>
             ))}
           </nav>
-          <div className="settings-pane">{section === 'keyboard' ? <KeyboardSection onBusy={setBusy} /> : section === 'display' ? <DisplaySection /> : section === 'diagnostics' ? <DiagnosticsSection /> : <CullingSettings />}</div>
+          <div className="settings-pane">{section === 'keyboard' ? <KeyboardSection onBusy={setBusy} /> : section === 'display' ? <DisplaySection /> : section === 'ai' ? <AiModelsSettings /> : section === 'diagnostics' ? <DiagnosticsSection /> : <CullingSettings />}</div>
         </div>
         <p className="settings-foot muted small">
           Settings are remembered in this browser (not in the library or your photo folders). LightBench is free software (GPL-3.0):{' '}
