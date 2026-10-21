@@ -47,7 +47,7 @@ export const MODELS = [
     files: { 'fp32/encoder': 'onnx/vision_encoder.onnx', 'fp32/decoder': 'onnx/prompt_encoder_mask_decoder.onnx',
       'fp16/encoder': 'onnx/vision_encoder_fp16.onnx', 'fp16/decoder': 'onnx/prompt_encoder_mask_decoder_fp16.onnx' } },
   { id: 'slimsam-77', name: 'SlimSAM-77', hf: 'Xenova/slimsam-77-uniform', kind: 'sam',
-    files: { 'fp16/encoder': 'onnx/vision_encoder_fp16.onnx', 'fp16/decoder': 'onnx/prompt_encoder_mask_decoder_fp16.onnx' } },
+    files: { 'fp16/encoder': 'onnx/vision_encoder_fp16.onnx', 'fp16/decoder': 'onnx/prompt_encoder_mask_decoder_fp16.onnx', 'fp32/encoder': 'onnx/vision_encoder.onnx', 'fp32/decoder': 'onnx/prompt_encoder_mask_decoder.onnx' } },
   { id: 'birefnet-lite', name: 'BiRefNet_lite', hf: 'onnx-community/BiRefNet_lite-ONNX', kind: 'birefnet',
     files: { fp16: 'onnx/model_fp16.onnx', fp32: 'onnx/model.onnx' } },
   { id: 'yunet', name: 'YuNet', gh: { repo: 'opencv/opencv_zoo', dir: 'models/face_detection_yunet' }, kind: 'yunet',

@@ -37,9 +37,12 @@ ap.add_argument("cmd")
 ap.add_argument("--model", required=True)
 ap.add_argument("--out", required=True)
 ap.add_argument("--tensors")
+ap.add_argument("--tensor")
 ap.add_argument("--target", type=int, default=64 * 1024 * 1024)
 ap.add_argument("--limit", type=int, default=128 * 1024 * 1024)
 ap.add_argument("--max-bufs", type=int, default=8)
+ap.add_argument("--probe-batch", type=int, default=12)
+ap.add_argument("--shapes", help="JSON {tensor: shape} to use instead of probing")
 a = ap.parse_args()
 
 
@@ -76,7 +79,8 @@ def feeds_for(m):
     return f
 
 
-def probe(m, names, types, batch=12):
+def probe(m, names, types, batch=None):
+    batch = batch or a.probe_batch
     """{tensor: shape} by running onnxruntime CPU with `names` exposed, `batch` at a time."""
     import onnxruntime as ort
 
@@ -223,7 +227,7 @@ def cmd_birefnet_fix():
     # Conv shapes (input, output) for the channel chunking.
     convs = [n for n in m.graph.node if n.op_type == "Conv"]
     try:
-        cshapes = probe(m, [x for n in convs for x in (n.input[0], n.output[0])], types)
+        cshapes = json.load(open(a.shapes)) if a.shapes else probe(m, [x for n in convs for x in (n.input[0], n.output[0])], types)
     except Exception as e:  # noqa: BLE001
         cshapes = {}
         rep["convProbeError"] = repr(e)[:400]
@@ -365,4 +369,121 @@ def cmd_birefnet_fix():
     json.dump(rep, open(a.out + ".json", "w"), indent=1)
 
 
-{"list": cmd_list, "instrument": cmd_instrument, "sam-fix": cmd_sam_fix, "birefnet-fix": cmd_birefnet_fix}[a.cmd]()
+def cmd_chunk_big():
+    """Chunk every Softmax / LayerNormalization / Pad / Where whose input or output exceeds --limit along a safe axis
+    (Slice the inputs, run the op per chunk, Concat): these kernels mishandle segmented tensors in ORT 1.30.0.
+    Shapes from --shapes (JSON {tensor: shape}, e.g. from onnxruntime's symbolic shape inference)."""
+    m = load(a.model)
+    types = types_of(m)
+    shapes = json.load(open(a.shapes))
+    inits = {i.name: i for i in m.graph.initializer}
+    namer = Namer(m)
+    target = a.target
+    out_nodes, rep = [], []
+
+    def const(name, arr):
+        n = namer(name)
+        m.graph.initializer.append(nh.from_array(np.asarray(arr), n))
+        return n
+
+    for n in m.graph.node:
+        if n.op_type not in ("Softmax", "LayerNormalization", "Pad", "Where") or n.output[0] not in shapes:
+            out_nodes.append(n)
+            continue
+        oshape = shapes[n.output[0]]
+        et = types.get(n.output[0], 1)
+        if any(i and i not in inits and i not in shapes for i in n.input):
+            rep.append({"node": n.name, "op": n.op_type, "skipped": "input shape unknown"})
+            out_nodes.append(n)
+            continue
+        sizes = [nbytes(oshape, et)] + [nbytes(shapes[i], types.get(i, 1)) for i in n.input if i and i in shapes and i not in inits]
+        if max(sizes) <= a.limit:
+            out_nodes.append(n)
+            continue
+        rank = len(oshape)
+        attrs = {x.name: h.get_attribute_value(x) for x in n.attribute}
+        if n.op_type == "Softmax":
+            bad = {attrs.get("axis", -1) % rank}
+        elif n.op_type == "LayerNormalization":
+            bad = set(range(attrs.get("axis", -1) % rank, rank))
+        elif n.op_type == "Pad":
+            pads = nh.to_array(inits[n.input[1]]) if len(n.input) > 1 and n.input[1] in inits else None
+            if pads is None:
+                rep.append({"node": n.name, "skipped": "pads not constant"})
+                out_nodes.append(n)
+                continue
+            bad = {d for d in range(rank) if pads[d] != 0 or pads[d + rank] != 0}
+        else:
+            bad = set()
+        axes = [d for d in range(rank) if d not in bad and oshape[d] > 1]
+        if not axes:
+            rep.append({"node": n.name, "skipped": "no safe axis"})
+            out_nodes.append(n)
+            continue
+        ax = max(axes, key=lambda d: oshape[d])
+        k = min(oshape[ax], math.ceil(max(sizes) / target))
+        bounds = [(i * oshape[ax] // k, (i + 1) * oshape[ax] // k) for i in range(k)]
+        parts = []
+        for b0, b1 in bounds:
+            ins = []
+            for j, x in enumerate(n.input):
+                xs = shapes.get(x) if x and x not in inits else None
+                slice_it = x and x not in inits and xs is not None and (n.op_type != "Pad" or j == 0) and (n.op_type != "LayerNormalization" or j == 0)
+                if slice_it:
+                    off = rank - len(xs)  # numpy broadcasting: align right
+                    d = ax - off
+                    if d < 0 or xs[d] != oshape[ax]:
+                        slice_it = False
+                if slice_it:
+                    y = namer("chunk_in")
+                    out_nodes.append(h.make_node("Slice", [x, const("st", [b0]), const("en", [b1]), const("ax", [d])], [y], name=namer("mp_slice")))
+                    ins.append(y)
+                else:
+                    ins.append(x)
+            o = namer("chunk_out")
+            out_nodes.append(h.make_node(n.op_type, ins, [o] + [""] * (len(n.output) - 1), name=namer("mp_" + n.op_type.lower()), **attrs))
+            parts.append(o)
+        out_nodes.append(h.make_node("Concat", parts, [n.output[0]], axis=ax, name=namer("mp_concat")))
+        rep.append({"node": n.name, "op": n.op_type, "shape": oshape, "bytes": max(sizes), "axis": ax, "chunks": k})
+    del m.graph.node[:]
+    m.graph.node.extend(out_nodes)
+    check(m)
+    save(m, a.out)
+    json.dump(rep, open(a.out + ".chunk.json", "w"), indent=1)
+    print("CHUNK_BIG", json.dumps(rep))
+
+
+def cmd_shapes():
+    """All static shapes: ONNX shape inference with data propagation, plus an onnxruntime probe of the inputs and
+    outputs of Softmax / LayerNormalization / Pad / Where nodes it could not resolve."""
+    m = load(a.model)
+    types = types_of(m)
+    inf = onnx.shape_inference.infer_shapes(m, data_prop=True)
+    S = {}
+    for v in list(inf.graph.value_info) + list(inf.graph.output) + list(inf.graph.input):
+        dims = [x.dim_value if x.HasField("dim_value") else None for x in v.type.tensor_type.shape.dim]
+        if v.type.tensor_type.HasField("shape") and all(x is not None and x > 0 for x in dims):
+            S[v.name] = dims
+    inits = {i.name for i in m.graph.initializer}
+    want = [t for n in m.graph.node if n.op_type in ("Softmax", "LayerNormalization", "Pad", "Where") for t in list(n.input) + [n.output[0]] if t and t not in inits and t not in S]
+    rep = {"inferred": len(S), "probe": len(set(want))}
+    try:
+        S.update(probe(m, list(dict.fromkeys(want)), types))
+    except Exception as e:  # noqa: BLE001
+        rep["probeError"] = repr(e)[:300]
+    json.dump(S, open(a.out, "w"))
+    print("SHAPES", json.dumps(rep))
+
+
+def cmd_prefix():
+    """The graph from its input up to --tensor, with that tensor as the only output."""
+    m = load(a.model)
+    types = types_of(m)
+    inits = {i.name for i in m.graph.initializer}
+    inp = [i.name for i in m.graph.input if i.name not in inits]
+    m.graph.value_info.append(h.make_tensor_value_info(a.tensor, types.get(a.tensor, 1), None))
+    sub = onnx.utils.Extractor(m).extract_model(inp, [a.tensor])
+    save(sub, a.out)
+
+
+{"list": cmd_list, "chunk-big": cmd_chunk_big, "shapes": cmd_shapes, "prefix": cmd_prefix, "instrument": cmd_instrument, "sam-fix": cmd_sam_fix, "birefnet-fix": cmd_birefnet_fix}[a.cmd]()
