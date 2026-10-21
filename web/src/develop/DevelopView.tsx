@@ -7,7 +7,8 @@ import { AUTO_SLIDERS, BUILT_IN_TARGETS, metricsFromStats, solveAuto, statsFromP
 import { defaultsFor, displayUniforms, normalizeSettings, type DevelopSettings } from '../engine/develop/settings'
 import { DEFAULT_GEOMETRY, flip, isIdentityGeometry, resetCrop, rotate90, sameGeometry, setAngle, setAspect, setLocked, swapAspect, type GeometrySettings } from '../engine/develop/geometry'
 import { CURRENT_PROCESS, PROCESS_VERSIONS, processStatus } from '../engine/develop/process'
-import { DevelopEngine, type ImageStats, type RawStageOptions, type ViewState } from '../engine/gpu/develop-engine'
+import { DevelopEngine, GpuWorkError, type ImageStats, type RawStageOptions, type ViewState } from '../engine/gpu/develop-engine'
+import { GpuRecovery, type GpuTrouble } from './gpuRecovery'
 import { gpuGate } from '../engine/gpu/gate'
 import type { RetouchProgress } from '../engine/gpu/retouch-stage'
 import { newSeed, newSpotId, simplifyStroke, STROKE_EPSILON, type Spot, type SpotMode } from '../engine/develop/spots'
@@ -316,6 +317,14 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [engineGen, setEngineGen] = useState(0)
   /** A short notice after the engine was made again. */
   const [gpuNotice, setGpuNotice] = useState<string | null>(null)
+  /** What Develop does when its graphics device fails (gpuRecovery.ts): restarts, at most a few in a short time. */
+  const recoveryRef = useRef<GpuRecovery | null>(null)
+  recoveryRef.current ??= new GpuRecovery()
+  /** The preview stopped after repeated failures (no engine until Try again), and its message. */
+  const gpuPaused = useRef(false)
+  const [gpuStopped, setGpuStopped] = useState<string | null>(null)
+  /** A restart waiting for its delay. */
+  const restartTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** The adapter's name when it looks like integrated graphics and its notice wasn't dismissed. */
   const [adapterNotice, setAdapterNotice] = useState<string | null>(null)
   /** The photo decoded last, kept to upload it again to a new engine after a lost device. */
@@ -411,10 +420,64 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     return engine.isLost || engineRef.current !== engine
   }
 
+  /**
+   * Develop's graphics device failed: it was lost, an error no scope caught was reported (out of memory, internal,
+   * validation), a full-size allocation ran out of memory, or making the new engine failed. Logged to Diagnostics;
+   * the engine is made again (gpuRecovery.ts decides when, and when to stop and ask the person).
+   */
+  const gpuTrouble = (kind: GpuTrouble, detail: string) => {
+    const r = recoveryRef.current!
+    const d = r.report(kind)
+    diagnostics.log('gpu-trouble', { kind, detail: detail.slice(0, 300), action: d.action, restarts: r.recentRestarts })
+    if (d.action === 'restart') {
+      setGpuNotice(d.message)
+      const go = () => {
+        restartTimer.current = null
+        setEngineGen((g) => g + 1)
+      }
+      if (restartTimer.current) clearTimeout(restartTimer.current)
+      if (d.delayMs) restartTimer.current = setTimeout(go, d.delayMs)
+      else go()
+    } else if (d.action === 'give-up') {
+      // No new engine until Try again; bumping the generation frees the failed one.
+      gpuPaused.current = true
+      setGpuNotice(null)
+      setGpuStopped(d.message)
+      setEngineGen((g) => g + 1)
+    } else if (d.action === 'notice') {
+      setGpuNotice(d.message)
+    }
+  }
+  /** Try again, after the preview stopped. */
+  const tryGpuAgain = () => {
+    recoveryRef.current!.tryAgain()
+    gpuPaused.current = false
+    setGpuStopped(null)
+    setEngineError('')
+    diagnostics.log('engine-recovery', { stage: 'try again' })
+    setEngineGen((g) => g + 1)
+  }
+  useEffect(() => () => {
+    if (restartTimer.current) clearTimeout(restartTimer.current)
+  }, [])
+  /** A failed GPU call on the engine in use: true when it was a failure the recovery handles (no error to show). */
+  const recoveredFrom = (e: unknown, engine: DevelopEngine | null): boolean => {
+    if (!(e instanceof GpuWorkError) || e.kind === 'validation') return false
+    // A lost device is reported by the engine itself (onLost); an old engine's failures are stale.
+    if (e.kind !== 'lost' && engine && engineRef.current === engine) gpuTrouble(e.kind, e.detail)
+    return true
+  }
+
   // ---- engine lifetime (made again when its GPU device is lost: a driver reset, or the browser took it back)
   useEffect(() => {
     let alive = true
     let stopLost = () => {}
+    let stopErrors = () => {}
+    // Stopped after repeated failures: no engine until Try again.
+    if (gpuPaused.current) {
+      engineCreating.current = false
+      return
+    }
     engineCreating.current = true
     // 'auto': the display mode tested once when the page started (engine/gpu/present.ts); ?gpu= still decides.
     DevelopEngine.create('auto').then(
@@ -441,6 +504,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         }
         engineRef.current = e
         engineCreating.current = false
+        recoveryRef.current!.ready()
         if (engineGen) diagnostics.log('engine-recovery', { stage: 'new engine', restored: !!restored })
         if (looksIntegrated(e.adapter)) {
           const name = adapterName(e.adapter)
@@ -453,11 +517,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           if (dismissed !== name) setAdapterNotice(name)
         }
         stageRef.current?.prepend(e.canvas)
-        stopLost = e.onLost(() => {
-          if (!alive) return
-          setGpuNotice('The graphics card was reset, so Develop restarted it. Your edit is safe.')
-          diagnostics.log('engine-recovery', { stage: 'device lost' })
-          setEngineGen((g) => g + 1)
+        stopLost = e.onLost((message) => {
+          if (alive) gpuTrouble('lost', message)
+        })
+        stopErrors = e.onGpuError((kind, message) => {
+          if (alive) gpuTrouble(kind, message)
         })
         setEngineError('')
         setEngineReady((n) => n + 1)
@@ -473,12 +537,18 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       },
       (e: Error) => {
         engineCreating.current = false
+        // Making a new engine after a failure: tried again a few times (gpuRecovery.ts).
+        if (engineGen && recoveryRef.current!.isRestarting) {
+          if (alive) gpuTrouble('create-failed', e.message)
+          return
+        }
         setEngineError(`Graphics acceleration is not available: ${e.message}`)
       },
     )
     return () => {
       alive = false
       stopLost()
+      stopErrors()
       const e = engineRef.current
       engineRef.current = null
       if (e?.isLost) e.canvas.remove()
@@ -557,7 +627,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       decodedRef.current = { id, decoded: r }
       // The engine can take a while to make (seconds, while background GPU work keeps the GPU busy, or while a new one
       // is made after a lost device): wait as long as it is being made, up to 2 minutes.
-      for (let t = 0; !engineRef.current && (engineCreating.current || t < 100) && t < 2400 && !stale(); t++) await new Promise((res) => setTimeout(res, 50))
+      for (let t = 0; !engineRef.current && (engineCreating.current || restartTimer.current || t < 100) && t < 2400 && !stale(); t++) await new Promise((res) => setTimeout(res, 50))
       if (stale()) return
       const engine = engineRef.current
       if (!engine) throw new Error('Graphics acceleration is not available.')
@@ -579,7 +649,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       setHistory(h)
       setStatus({ kind: 'ready' })
     })().catch(async (e: Error) => {
-      // A lost device: the new engine loads the photo again (engine lifetime, above).
+      // A lost device or another GPU failure: the new engine loads the photo again (engine lifetime, above). With the
+      // preview stopped, its message says what to do.
+      if (recoveredFrom(e, used) || gpuPaused.current) return
       if (await lostMeanwhile(used)) return
       if (!stale()) setStatus({ kind: 'error', message: e.message })
     })
@@ -619,6 +691,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           requestRender()
         },
         async (e: Error) => {
+          if (recoveredFrom(e, engine)) return
           if (engineRef.current === engine && !(await lostMeanwhile(engine))) setStatus({ kind: 'error', message: e.message })
         },
       )
@@ -2412,9 +2485,17 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           {pointPick && !draft && !guiding && !before && status.kind === 'ready' && (
             <PointPickLayer enabled={!pasting} uvAt={imageUv} sample={(uv) => sampleMixerAt(uv, true)} onPick={addPoint} onExit={() => setPointPick(false)} />
           )}
-          {status.kind === 'loading' && <div className="dmessage">Developing…</div>}
-          {status.kind === 'error' && <div className="dmessage error">{status.message}</div>}
-          {engineError && <div className="dmessage error">{engineError}</div>}
+          {status.kind === 'loading' && !gpuStopped && <div className="dmessage">Developing…</div>}
+          {status.kind === 'error' && !gpuStopped && <div className="dmessage error">{status.message}</div>}
+          {engineError && !gpuStopped && <div className="dmessage error">{engineError}</div>}
+          {gpuStopped && (
+            <div className="dmessage error gpu-stopped" role="alert">
+              <p>{gpuStopped}</p>
+              <button className="button" onClick={tryGpuAgain}>
+                Try again
+              </button>
+            </div>
+          )}
           {draft && frameBox && info && status.kind === 'ready' && (
             <CropOverlay
               box={frameBox}
