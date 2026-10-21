@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { BASELINE, baselineOf, compare, failedRows, limitsText, MIN_EXTRA_MS, SHARE_TOLERANCE, stageRows, summaryMarkdown, TOTAL_TOLERANCE } from './speed-gate.mjs'
+import { BASELINE, SKIPPED_STAGES, baselineOf, compare, failedRows, limitsText, MIN_EXTRA_MS, SHARE_TOLERANCE, stageRows, summaryMarkdown, TOTAL_TOLERANCE } from './speed-gate.mjs'
 
 const row = (id, median, peakBytes = 10 * 2 ** 20, extra = {}) => ({ id, stage: `Stage ${id}`, image: 'Bayer 0.30 MP (synthetic, scaled)', wall: { median, min: median, n: 3 }, gpu: null, peakBytes, ...extra })
 const report = (rows, extra = {}) => ({ app: { version: '0.6.13+abc1234', commit: 'abc1234' }, date: '2026-10-21T00:00:00Z', mode: 'quick', scaledTo: 0.3, warmup: 1, runs: 3, adapter: { vendor: 'google', architecture: 'swiftshader' }, display: {}, rows, cancelled: false, ...extra })
@@ -29,7 +29,7 @@ describe('speed gate', () => {
   })
 
   it('warns when one stage takes a larger share of the run, naming it', () => {
-    const now = report([row('a', 1000), row('b', 500 * (1 + SHARE_TOLERANCE) * 1.6), row('c', 200), row('d', 20)])
+    const now = report([row('a', 400), row('b', 1500), row('c', 200), row('d', 20)])
     const c = compare(now, base)
     expect(c.stages.find((s) => s.id === 'b').status).toBe('slower')
     expect(c.warnings).toHaveLength(1)
@@ -39,7 +39,7 @@ describe('speed gate', () => {
   })
 
   it('ignores a short stage’s growth under the minimum extra time (noise)', () => {
-    const now = report([row('a', 1000), row('b', 500), row('c', 200), row('d', 20 + MIN_EXTRA_MS / 2)])
+    const now = report([row('a', 1000), row('b', 500), row('c', 200), row('d', 20 + MIN_EXTRA_MS * 0.6)])
     const c = compare(now, base)
     expect(c.stages.find((s) => s.id === 'd').shareChange).toBeGreaterThan(SHARE_TOLERANCE)
     expect(c.warnings).toEqual([])
@@ -74,7 +74,7 @@ describe('speed gate', () => {
   })
 
   it('writes a summary with the table, what it measures and what it can’t catch', () => {
-    const now = report([row('a', 1000), row('b', 1500), row('c', 200), row('d', 20)])
+    const now = report([row('a', 400), row('b', 1500), row('c', 200), row('d', 20)])
     const md = summaryMarkdown(now, base, compare(now, base))
     expect(md).toMatch(/^## Speed check\n\n\*\*1 warning\*\*/)
     expect(md).toContain('| Stage b | Bayer 0.30 MP (synthetic, scaled) | 500 ms | 1.50 s |')
@@ -99,5 +99,7 @@ describe('speed gate', () => {
     expect(b.scaledTo).toBe(0.3)
     expect(stageRows(b).size).toBeGreaterThan(20)
     expect(failedRows(b)).toEqual([])
+    // The rows the check leaves out to stay short aren't in it.
+    for (const id of stageRows(b).keys()) expect(SKIPPED_STAGES).not.toContain(id.split('.')[1])
   })
 })

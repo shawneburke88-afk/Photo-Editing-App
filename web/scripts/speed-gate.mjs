@@ -29,14 +29,23 @@ export const BASELINE = join(HERE, 'speed-baseline.json')
 
 /** Test images' size for the check: at nominal size (24 MP) the software GPU needs minutes per stage. */
 export const SPEED_MP = 0.3
-/** A stage warns when its share of the run grew by more than this (0.5 = half as much again). */
-export const SHARE_TOLERANCE = 0.5
+/**
+ * A stage warns when its share of the run grew by more than this (1 = twice its share). Two runs of the same code on
+ * the build machine differed by up to 84 % in one stage's share (2026-10-21), so less would warn about noise.
+ */
+export const SHARE_TOLERANCE = 1
 /** … and only when that growth is at least this many ms at this run's speed (short stages are mostly noise). */
 export const MIN_EXTRA_MS = 40
 /** The whole run warns when it took more than this many times the baseline's (another machine can differ this much). */
 export const TOTAL_TOLERANCE = 2
 /** A stage's peak engine memory warns past this (0.1 = 10 % more). */
 export const MEMORY_TOLERANCE = 0.1
+/**
+ * Quick-mode stages left out to keep the check to a few minutes: the full-size export rows of the masks and effects
+ * and the end-to-end export (on the software GPU they took about 60 % of the run). The slider-to-preview rows (fit,
+ * 100 %), Stage A, Detail, the plain export render and the thumbnail stay.
+ */
+export const SKIPPED_STAGES = ['masksExport', 'vignetteExport', 'grainExport', 'tcExport', 'dehazeExport', 'glowExport', 'exportAll']
 
 /** The rows compared: measured stage rows (not the ↳ parts, not failed or skipped rows), by id. */
 export function stageRows(report) {
@@ -111,8 +120,8 @@ const amount = (x) => `${Math.round(x * 100)} %`
 /** What the check measures and can't catch, for the run summary. */
 export function limitsText(mp = SPEED_MP) {
   return [
-    `**What this measures.** System Check's GPU benchmark (Quick) on synthetic test images scaled to ${mp} MP, in headless Chromium on the software GPU (SwiftShader, which runs the shaders on the CPU), with the median of 3 runs after 1 warm-up per stage. Time is compared as each stage's share of the whole run, so a uniformly faster or slower machine doesn't count; memory is the engine's own estimate of what it allocated.`,
-    `**What it can't catch.** Speed on a real graphics card (memory bandwidth, drivers, integrated graphics); changes smaller than about ${Math.round(SHARE_TOLERANCE * 100)} % in a stage, or under ${MIN_EXTRA_MS} ms; a slowdown that hits every stage alike, unless the whole run takes ${TOTAL_TOLERANCE} times as long; work at full size (24 MP and up) that the scaled images don't reach; the interface's own responsiveness (React, the main thread outside engine calls); real memory use by the driver. It only warns: it never fails the build.`,
+    `**What this measures.** System Check's GPU benchmark (Quick, without its full-size export rows for the masks and effects and the end-to-end export) on synthetic test images scaled to ${mp} MP, in headless Chromium on the software GPU (SwiftShader, which runs the shaders on the CPU), with the median of 3 runs after 1 warm-up per stage. Time is compared as each stage's share of the whole run, so a uniformly faster or slower machine doesn't count; memory is the engine's own estimate of what it allocated.`,
+    `**What it can't catch.** Speed on a real graphics card (memory bandwidth, drivers, integrated graphics); changes smaller than about ${Math.round(SHARE_TOLERANCE * 100)} % in a stage, or under ${MIN_EXTRA_MS} ms; a slowdown that hits every stage alike, unless the whole run takes ${TOTAL_TOLERANCE} times as long; work at full size (24 MP and up) that the scaled images don't reach; the masks' and effects' export rows, which it leaves out; the interface's own responsiveness (React, the main thread outside engine calls); real memory use by the driver. It only warns: it never fails the build.`,
   ].join('\n\n')
 }
 
@@ -191,18 +200,20 @@ export async function runBenchmarkInBrowser({ port = 5530, mp = SPEED_MP, log = 
     })
     await page.goto(`http://localhost:${port}/?gpu=readback`)
     await page.waitForSelector('#root *', { timeout: 120_000 })
-    return await page.evaluate(async (mp) => {
+    return await page.evaluate(async ([mp, skipped]) => {
       const { benchPlan, runBenchmark } = await import('/src/bench/run.ts')
+      const plan = benchPlan('quick', mp)
+      for (const d of plan.datasets) d.stages = d.stages.filter((s) => !skipped.includes(s))
       const stage = document.createElement('div')
       stage.style.cssText = 'position:fixed;left:0;top:0;width:938px;height:420px;z-index:10'
       document.body.append(stage)
-      return runBenchmark(benchPlan('quick', mp), {
+      return runBenchmark(plan, {
         stage,
         signal: new AbortController().signal,
         onProgress: (done, total, label) => console.log(`SPEED ${done}/${total} ${label}`),
         onRow: () => {},
       })
-    }, mp)
+    }, [mp, SKIPPED_STAGES])
   } finally {
     await browser.close().catch(() => {})
     await server.close().catch(() => {})
