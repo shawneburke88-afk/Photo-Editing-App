@@ -209,10 +209,15 @@ jobs:
           echo "ORT_NODE_DIR=${RUNNER_TEMP}/ortnode" >> "$GITHUB_ENV"
           mkdir -p "${RUNNER_TEMP}/masks" "${RUNNER_TEMP}/ortnode"
           # onnxruntime-node 1.30.0 (CPU EP + its WebGPU EP over Dawn/Vulkan); skip the optional CUDA download.
-          (cd "${RUNNER_TEMP}/ortnode" && ONNXRUNTIME_NODE_INSTALL=skip npm install --no-save --no-audit --no-fund onnxruntime-node@1.30.0)
+          # Retried: run 39652979118 lost this download to a network reset (npm ECONNRESET).
+          for i in 1 2 3 4 5; do
+            (cd "${RUNNER_TEMP}/ortnode" && ONNXRUNTIME_NODE_INSTALL=skip npm install --no-save --no-audit --no-fund --fetch-retries=5 onnxruntime-node@1.30.0) && break
+            if [ "$i" = 5 ]; then exit 1; fi
+            echo "npm install failed (attempt $i); retrying in $((i * 15)) s"; sleep $((i * 15))
+          done
           node -e "const o=require('${RUNNER_TEMP}/ortnode/node_modules/onnxruntime-node'); console.log('onnxruntime-node', require('${RUNNER_TEMP}/ortnode/node_modules/onnxruntime-node/package.json').version)"
           python -m pip install --quiet --upgrade pip
-          python -m pip install --quiet onnx numpy pillow ai-edge-litert onnxruntime
+          python -m pip install --quiet --retries 10 onnx numpy pillow ai-edge-litert onnxruntime || python -m pip install --quiet --retries 10 onnx numpy pillow ai-edge-litert onnxruntime
           python -m pip show onnx ai-edge-litert onnxruntime | grep -E '^(Name|Version)'
           # Software Vulkan (Mesa lavapipe) so the WebGPU EP finds an adapter on a GPU-less runner.
           sudo apt-get update -q >/dev/null && sudo apt-get install -y -q mesa-vulkan-drivers libvulkan1 vulkan-tools >/dev/null || echo "::warning::lavapipe install failed"
