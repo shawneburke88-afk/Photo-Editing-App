@@ -2310,7 +2310,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             zoom={view.zoom}
             disabled={status.kind !== 'ready' || !!draft || guiding}
             onChange={(z) => zoom.set(z)}
-            title={`${withKey('Zoom: Fit or a size, where 100 % shows one photo pixel per screen pixel. Above 100 % the pixels are enlarged as they are, without smoothing. Fit and the last size', 'develop.zoom')}; ${withKey('larger', 'develop.zoomIn')}; ${withKey('smaller', 'develop.zoomOut')}; Ctrl+wheel over the photo zooms toward the pointer.`}
+            title={`Zoom. 100 % shows one photo pixel per screen pixel; above it the pixels are enlarged without smoothing, so sharpness and noise show as they are. ${withKey('Fit and back', 'develop.zoom')} · ${withKey('Larger', 'develop.zoomIn')} · ${withKey('Smaller', 'develop.zoomOut')} · Ctrl or ⌘ + wheel over the photo zooms toward the pointer · a click on the fitted photo zooms in there.`}
           />
           <label className="check small" title={withKey('Soft proofing: preview the photo as a printer, paper or colour space will show it. A view only: the edit and exports don’t change.', 'develop.softProof')}>
             <input type="checkbox" checked={proof.settings.on} onChange={(e) => proof.set({ ...proof.settings, on: e.target.checked })} />

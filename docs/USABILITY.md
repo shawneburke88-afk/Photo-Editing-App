@@ -144,6 +144,7 @@ New text follows the rule; review it when adding panels. The strings changed for
 - Shortcuts follow Lightroom where one exists (J, W, D, G, P/X/U, 0–5, \\), with darktable's as aliases (O, Shift+O).
 - Units: K, EV, %. Signed sliders centre on 0.
 - The preview is truthful at every zoom. If a preview is approximate, the interface says so.
+- Zoom in Develop (owner, 2026-10-19): Fit, 25 %, 50 %, 100 %, 200 %, 400 % and 800 % from the toolbar's Zoom menu, **Z** (Fit and back to the last level), **=** / **−** one level in or out, and Ctrl/⌘ + wheel over the photo, always toward the pointer. Above 100 % the photo's own pixels are shown enlarged without smoothing, so sharpness and noise can be judged; below it the preview is averaged like Fit. Zoom is a view only ([PHASE3.md](PHASE3.md#zoom-levels-owner-2026-10-19)).
 
 ## Already done (Part 2b, in progress)
 
