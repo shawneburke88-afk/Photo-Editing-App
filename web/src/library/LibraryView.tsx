@@ -13,6 +13,9 @@ import { savedSettings } from '../develop/source'
 import type { SourceKind } from '../engine/develop/settings'
 import { isRawFile } from '../engine/raw/decoder'
 import { ImportDialog } from '../import/ImportDialog'
+import { ImportStatus } from '../import/ImportStatus'
+import { importSession } from '../import/session'
+import { importDetails } from '../import/details'
 import { joinPath } from '../import/plan'
 import { launched } from '../pwa/launch'
 import { supportsFolderAccess } from '../platform/folders'
@@ -151,6 +154,29 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
       refresh()
     })
   }, [refresh])
+
+  // Photos appear while an import adds them (the Import window may be closed), and again as their details (ratings,
+  // keywords, stacks…) are filled in in the background (import/details.ts).
+  useEffect(() => {
+    let changes = importSession.status.changes
+    return importSession.subscribe(() => {
+      if (importSession.status.changes === changes) return
+      changes = importSession.status.changes
+      refresh()
+    })
+  }, [refresh])
+  useEffect(() => {
+    let changes = importDetails.status.changes
+    return importDetails.subscribe(() => {
+      if (importDetails.status.changes === changes) return
+      changes = importDetails.status.changes
+      refresh()
+    })
+  }, [refresh])
+  // What an import left to do when the tab was closed is finished when the library opens.
+  useEffect(() => {
+    if (status === 'ready') void importDetails.start()
+  }, [status])
 
   // Older photos get their GPS and corrected Adobe RGB thumbnails once (refresh.ts): started when the library opens,
   // when Open folder finishes and when a folder is reconnected; folders without permission wait without a prompt.
@@ -859,6 +885,7 @@ export function LibraryView({ active, externalVersion, onFocusChange, onDevelop,
           Export…
         </button>
         <IndexProgress status={indexing} />
+        <ImportStatus onShow={openImport} />
         <RefreshProgress />
         <AnalysisProgress />
         {folderError && <p className="error small pad">{folderError}</p>}
