@@ -11,6 +11,10 @@ name: AI models
 #                  web/models/manifest.json, and nothing else, to the branch it ran on (only if it changed and the
 #                  check passed).
 #   check          only the real-model check, of the files the branch's manifest pins (downloaded from Hugging Face).
+#   masks-prep     read-only preparation check of the AI masks candidates (branch lightbench/ai-masks-prep only):
+#                  pins (commit, licence, LFS sha256), ONNX inspection against ORT 1.30.0's WebGPU kernels, one CPU run
+#                  each in onnxruntime-node, a WebGPU-EP run on software Vulkan, the MediaPipe TFLite comparison and
+#                  the EfficientViT-Seg export (web/scripts/masks-prep.mjs, web/scripts/masks-prep/). Commits nothing.
 
 on:
   workflow_dispatch:
@@ -21,6 +25,7 @@ on:
         options:
           - pin-and-check
           - check
+          - masks-prep
         default: pin-and-check
         required: true
       revision:
@@ -39,7 +44,7 @@ concurrency:
 jobs:
   models:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     env:
       TASK: ${{ inputs.task }}
       REVISION: ${{ inputs.revision }}
@@ -52,7 +57,16 @@ jobs:
         id: code
         run: |
           echo "branch ${GITHUB_REF_NAME} at $(git rev-parse --short HEAD), task ${TASK}"
-          if [ -f web/scripts/models.mjs ] && [ -f web/scripts/models-check.mjs ] && [ -f web/models/manifest.json ]; then
+          if [ "${TASK}" = "masks-prep" ]; then
+            if [ -f web/scripts/masks-prep.mjs ]; then
+              echo "found web/scripts/masks-prep.mjs"
+              echo "present=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "run masks-prep from lightbench/ai-masks-prep"
+              echo "## AI models: masks-prep needs the branch lightbench/ai-masks-prep" >> "$GITHUB_STEP_SUMMARY"
+              echo "present=false" >> "$GITHUB_OUTPUT"
+            fi
+          elif [ -f web/scripts/models.mjs ] && [ -f web/scripts/models-check.mjs ] && [ -f web/models/manifest.json ]; then
             echo "found web/scripts/models.mjs, web/scripts/models-check.mjs and web/models/manifest.json"
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
@@ -74,8 +88,8 @@ jobs:
             exit 1
           fi
           case "${TASK}" in
-            pin-and-check|check) ;;
-            *) echo "::error::unknown task '${TASK}' (pin-and-check or check)"; exit 1 ;;
+            pin-and-check|check|masks-prep) ;;
+            *) echo "::error::unknown task '${TASK}' (pin-and-check, check or masks-prep)"; exit 1 ;;
           esac
           if [ -n "${REVISION}" ]; then
             if ! [[ "${REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
@@ -94,14 +108,14 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/setup-node@v4
-        if: steps.code.outputs.present == 'true'
+        if: steps.code.outputs.present == 'true' && inputs.task != 'masks-prep'
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
 
       - name: Install
-        if: steps.code.outputs.present == 'true'
+        if: steps.code.outputs.present == 'true' && inputs.task != 'masks-prep'
         working-directory: web
         run: npm ci
 
@@ -125,7 +139,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check the real model
-        if: steps.code.outputs.present == 'true'
+        if: steps.code.outputs.present == 'true' && inputs.task != 'masks-prep'
         working-directory: web
         run: |
           if [ "${TASK}" = "pin-and-check" ]; then
@@ -176,3 +190,93 @@ jobs:
           fi
           echo "pushed $(git rev-parse --short HEAD) to ${GITHUB_REF_NAME}"
           echo "Committed \`$(git rev-parse --short HEAD)\` (web/models/manifest.json only) to \`${GITHUB_REF_NAME}\`." >> "$GITHUB_STEP_SUMMARY"
+
+      # ---------------------------------------------------------------- masks-prep (read-only; commits nothing)
+      - uses: actions/setup-node@v4
+        if: steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        with:
+          node-version: 22
+
+      - uses: actions/setup-python@v5
+        if: steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        with:
+          python-version: "3.12"
+
+      - name: "masks-prep: install tools (runner only)"
+        if: steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        run: |
+          echo "MASKS_DIR=${RUNNER_TEMP}/masks" >> "$GITHUB_ENV"
+          echo "ORT_NODE_DIR=${RUNNER_TEMP}/ortnode" >> "$GITHUB_ENV"
+          mkdir -p "${RUNNER_TEMP}/masks" "${RUNNER_TEMP}/ortnode"
+          # onnxruntime-node 1.30.0 (CPU EP + its WebGPU EP over Dawn/Vulkan); skip the optional CUDA download.
+          (cd "${RUNNER_TEMP}/ortnode" && ONNXRUNTIME_NODE_INSTALL=skip npm install --no-save --no-audit --no-fund onnxruntime-node@1.30.0)
+          node -e "const o=require('${RUNNER_TEMP}/ortnode/node_modules/onnxruntime-node'); console.log('onnxruntime-node', require('${RUNNER_TEMP}/ortnode/node_modules/onnxruntime-node/package.json').version)"
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet onnx numpy pillow ai-edge-litert onnxruntime
+          python -m pip show onnx ai-edge-litert onnxruntime | grep -E '^(Name|Version)'
+          # Software Vulkan (Mesa lavapipe) so the WebGPU EP finds an adapter on a GPU-less runner.
+          sudo apt-get update -q >/dev/null && sudo apt-get install -y -q mesa-vulkan-drivers libvulkan1 vulkan-tools >/dev/null || echo "::warning::lavapipe install failed"
+          vulkaninfo --summary 2>/dev/null | grep -E 'deviceName|driverName|apiVersion|deviceType' || true
+
+      - name: "masks-prep: pin and download"
+        if: steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        working-directory: web
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/masks-prep.mjs pin --dir "${MASKS_DIR}"
+
+      - name: "masks-prep: export EfficientViT-Seg B1 to ONNX"
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          python -m venv "${RUNNER_TEMP}/evenv"
+          . "${RUNNER_TEMP}/evenv/bin/activate"
+          pip install --quiet torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet triton==3.1.0 onnx onnxsim onnxruntime omegaconf pyyaml pillow tqdm numpy \
+            "git+https://github.com/facebookresearch/segment-anything.git"
+          git clone --quiet --depth 1 https://github.com/mit-han-lab/efficientvit.git "${RUNNER_TEMP}/efficientvit"
+          python -I web/scripts/masks-prep/export_efficientvit.py --dir "${MASKS_DIR}" --repo "${RUNNER_TEMP}/efficientvit" --opset 17 --size 512
+
+      - name: "masks-prep: inspect the ONNX graphs"
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        run: python -I web/scripts/masks-prep/inspect_models.py --dir "${MASKS_DIR}" --photos web/scripts/masks-prep
+
+      - name: "masks-prep: one run each on the CPU (onnxruntime-node)"
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        working-directory: web
+        run: node scripts/masks-prep.mjs run --dir "${MASKS_DIR}" --ep cpu
+
+      - name: "masks-prep: MediaPipe TFLite vs community ONNX"
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        continue-on-error: true
+        run: python -I web/scripts/masks-prep/tflite_compare.py --dir "${MASKS_DIR}"
+
+      - name: "masks-prep: WebGPU EP on software Vulkan (onnxruntime-node)"
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        continue-on-error: true
+        timeout-minutes: 60
+        working-directory: web
+        run: node scripts/masks-prep.mjs run --dir "${MASKS_DIR}" --ep webgpu --timeout 300
+
+      - name: "masks-prep: report"
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        working-directory: web
+        run: node scripts/masks-prep.mjs report --dir "${MASKS_DIR}"
+
+      - name: "masks-prep: collect the artifact"
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/masks-artifact"
+          cp -r "${MASKS_DIR}/out" "${RUNNER_TEMP}/masks-artifact/" 2>/dev/null || true
+          cp "${MASKS_DIR}"/*.json "${RUNNER_TEMP}/masks-artifact/" 2>/dev/null || true
+          if [ -d "${MASKS_DIR}/webgpu-logs" ]; then tar czf "${RUNNER_TEMP}/masks-artifact/webgpu-logs.tgz" -C "${MASKS_DIR}" webgpu-logs; fi
+          ls -la "${RUNNER_TEMP}/masks-artifact" "${RUNNER_TEMP}/masks-artifact/out" 2>/dev/null | head -80
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        with:
+          name: masks-prep-${{ github.run_id }}
+          path: ${{ runner.temp }}/masks-artifact
+          if-no-files-found: warn
+          retention-days: 30
