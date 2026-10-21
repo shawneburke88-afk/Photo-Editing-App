@@ -90,4 +90,21 @@ describe('verified copies', () => {
     expect(files.get('DSC_0001.NEF')).toEqual(other) // left alone
     expect(files.get('DSC_0001-2.NEF')).toEqual(bytes(1000))
   })
+
+  it('writes over an empty file of the same name (a copy cut off before it was written)', async () => {
+    const { dir, files } = memoryDir()
+    files.set('DSC_0001.NEF', new Uint8Array())
+    const r = await copyVerified(dir, 'DSC_0001.NEF', file(bytes(1000)), undefined, 64)
+    expect(r).toMatchObject({ name: 'DSC_0001.NEF', copied: true })
+    expect(files.get('DSC_0001.NEF')).toEqual(bytes(1000))
+    expect([...files.keys()]).toEqual(['DSC_0001.NEF'])
+  })
+
+  it('times reading, hashing, writing and verifying', async () => {
+    const { dir } = memoryDir()
+    const t: Record<string, number> = {}
+    await copyVerified(dir, 'DSC_0001.NEF', file(bytes(1000)), undefined, 64, t)
+    expect(Object.keys(t).sort()).toEqual(['hash', 'read', 'verify', 'write'])
+    for (const v of Object.values(t)) expect(v).toBeGreaterThanOrEqual(0)
+  })
 })

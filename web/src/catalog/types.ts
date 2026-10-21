@@ -47,6 +47,11 @@ export interface NewPhoto extends PhotoMeta {
   folderPath: string
   /** File name on the card before any renaming (used for duplicate detection). */
   originalName: string
+  /**
+   * Import: what is still to be applied to the new photo in the background (import/details.ts), as JSON. Kept in
+   * `import_pending` with the photo, in the same transaction, so a closed tab resumes it on the next start.
+   */
+  importDetails?: string
 }
 
 /** Compact row for grids. */

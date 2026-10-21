@@ -25,9 +25,9 @@ beforeAll(async () => {
 
 /** Everything in a catalog (optionally without the snapshots table): schema and rows. */
 function dump(d: Database, withoutSnapshots = false) {
-  const tables = (d.selectValues("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name") as string[]).filter((t) => !withoutSnapshots || t !== 'snapshots')
+  const tables = (d.selectValues("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name") as string[]).filter((t) => !withoutSnapshots || (t !== 'snapshots' && t !== 'import_pending'))
   return {
-    schema: d.selectObjects(`SELECT type, name, tbl_name, sql FROM sqlite_schema ${withoutSnapshots ? "WHERE tbl_name <> 'snapshots'" : ''} ORDER BY name`),
+    schema: d.selectObjects(`SELECT type, name, tbl_name, sql FROM sqlite_schema ${withoutSnapshots ? "WHERE tbl_name NOT IN ('snapshots', 'import_pending')" : ''} ORDER BY name`),
     rows: Object.fromEntries(tables.map((t) => [t, d.selectObjects(`SELECT * FROM ${t} ORDER BY rowid`)])),
   }
 }
@@ -36,7 +36,7 @@ function dump(d: Database, withoutSnapshots = false) {
 function v14(): Database {
   const d = new sqlite3.oo1.DB(':memory:', 'c')
   migrate(d)
-  d.exec('DROP TABLE snapshots')
+  d.exec('DROP TABLE snapshots; DROP TABLE import_pending')
   d.exec(`
     INSERT INTO roots (id, name) VALUES (1, 'Photos');
     INSERT INTO folders (id, root_id, path) VALUES (1, 1, 'day1');
@@ -55,7 +55,7 @@ function v14(): Database {
 
 describe('schema 15', () => {
   it('upgrades a version-14 catalog by adding an empty snapshots table, nothing else', () => {
-    expect(SCHEMA_VERSION).toBe(16)
+    expect(SCHEMA_VERSION).toBe(17)
     const d = v14()
     const before = dump(d)
     migrate(d)
@@ -75,7 +75,7 @@ describe('schema 15', () => {
     const before = dump(d)
     migrate(d)
     d.exec(`INSERT INTO snapshots (photo_id, uid, name, settings, created_at) VALUES (7, 'x', 'Warm', '{}', 1)`)
-    d.exec('DROP TABLE snapshots; PRAGMA user_version = 14')
+    d.exec('DROP TABLE snapshots; DROP TABLE import_pending; PRAGMA user_version = 14')
     expect(dump(d)).toEqual(before)
     migrate(d)
     expect(d.selectValue('SELECT COUNT(*) FROM snapshots')).toBe(0)
