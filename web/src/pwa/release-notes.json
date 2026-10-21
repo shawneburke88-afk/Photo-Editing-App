@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.6.15",
+    "date": "2026-10-22",
+    "newFeatures": [
+      "Remove: a new AI Remove mode. Paint over something you want gone and an AI model on your own computer fills the area with new, matching detail. Try again draws a different fill.",
+      "The AI Remove model (Moebius) is downloaded only if you agree: about 1.24 GB, straight from Hugging Face, checked before it's kept. If the download is interrupted it continues where it stopped. After that it works offline.",
+      "Each AI fill is saved with the edit and in the .xmp, so the photo looks the same on another computer, even without the model.",
+      "Settings → AI models: the AI Remove model can be downloaded, removed or checked for newer published files. Checking only reports; nothing is installed without you."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.6.14",
     "date": "2026-10-21",
     "newFeatures": [
