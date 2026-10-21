@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.6.12",
+    "date": "2026-10-21",
+    "newFeatures": [
+      "Develop: choose the zoom level from the new Zoom menu in the toolbar: Fit, 25 %, 50 %, 100 %, 200 %, 400 % or 800 %. Above 100 % each photo pixel is shown as a sharp square, so you can check fine detail and sharpness.",
+      "Zoom shortcuts: = or + zooms in and - zooms out (the keypad keys too); Z switches between Fit and the last level you chose. Ctrl + mouse wheel over the photo zooms in or out toward the pointer.",
+      "Clicking the photo at Fit zooms to your last level, keeping the clicked spot under the pointer. Dragging pans, and stops at the photo's edges."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.6.10",
     "date": "2026-10-21",
     "newFeatures": [
