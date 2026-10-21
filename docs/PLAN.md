@@ -321,4 +321,4 @@ Capabilities that would be **reduced** vs Lightroom Classic. Each requires the o
 | T5 | Lightroom edit migration | Edits not imported | Adobe processing is proprietary; results would not match | Accepted |
 
 ## Open questions
-- Tool search: how results treat other apps' names; camera profiles: what v1 contains ([ROADMAP.md](ROADMAP.md#5-questions-for-the-owner), questions 3 and 4).
+- Camera profiles: what v1 contains ([ROADMAP.md](ROADMAP.md#5-questions-for-the-owner), question 4; the owner asked what camera profiles are). Tool search naming was decided on 2026-10-21: other apps' names find LightBench's tools, and results show only LightBench's names.

@@ -113,7 +113,7 @@ Every group follows the same rules:
 - **One control per job.** Alternative algorithms (e.g. sigmoid / filmic / AgX for tone mapping) go in a **Method** dropdown inside the group, not in separate modules.
 - **"Advanced ▸"** inside each group shows the darktable module's own parameters, so no capability is lost.
 - **One stack with a jump bar** (owner, 2026-10-11, after round 2; replaces the earlier tool-tabs choice): all groups stay in one scrolling list in workflow order. A row of group buttons at the top of the panel jumps to a group and highlights the group in view; nothing is hidden. Panel order is cosmetic; the processing order is fixed (R2 7). _Built in Phase 3, Part 1 with the Crop and Basic groups; groups also close, and each has an on/off eye to see the photo without it ([PHASE3.md](PHASE3.md)). Since Part 21 the sections inside the groups have eyes too (white balance, tone, presence, each curve, mixer and Point Color, each grading wheel, sharpening, noise reduction, crop, transform, lens): a section's eye shows the photo with that section as its Reset would set it; the group's eye still hides the whole group and wins over its sections' eyes ([PHASE3.md, Part 21](PHASE3.md#part-21-section-eyes-and-tone-curve-auto)). Part 25's Effects group has an eye per section (Vignette, Grain, Glow), and the Presence eye covers Texture, Clarity and Dehaze._
-- **Tool search** (owner, 2026-10-11): `/` or Ctrl+F finds a tool by its Lightroom name, LightBench name or darktable name, e.g. "Clarity" → Presence → Clarity (local contrast). It comes after AI Denoise in the order to 1.0 ([ROADMAP.md](ROADMAP.md)). **Still open:** how results treat other apps' names, since the no-notes rule (below) keeps them out of visible text ([ROADMAP.md](ROADMAP.md#5-questions-for-the-owner), question 3).
+- **Tool search** (owner, 2026-10-11): `/` or Ctrl+F finds a tool by its Lightroom name, LightBench name or darktable name, e.g. "local contrast" → Presence → Clarity. It comes after AI Denoise in the order to 1.0 ([ROADMAP.md](ROADMAP.md)). **Naming (owner, 2026-10-21):** typing another app's name (e.g. "Clarity", "Shadows") finds the matching LightBench tool, but results show only LightBench's own names; no other app is named in the UI, as the no-notes rule (below) requires.
 
 ### Guidance in the interface (owner's request)
 
@@ -163,7 +163,7 @@ New text follows the rule; review it when adding panels. The strings changed for
 | Hints on by default? | Yes, but on the label's line only, shown only when they fit the panel width. Built. |
 | Solo mode? | Use tool tabs in workflow order instead. **Superseded** by the stack + jump bar decision below. |
 | Browse before import ("Open folder")? | Yes. Planned for Phase 2. |
-| Tool search? | Late, once most tools are chosen (end of Phase 3). Now placed after AI Denoise (owner, 2026-10-21); its naming is still open. |
+| Tool search? | Late, once most tools are chosen (end of Phase 3). Now placed after AI Denoise (owner, 2026-10-21). Naming decided the same day: other apps' names find LightBench's tools, and only LightBench's names are shown. |
 | Crop & Lens position? | Before Basic. Re-confirmed after round 2 (conflict 2 above). |
 | Tabs or one stack? (round 2) | One scrolling stack with a jump bar of group buttons; nothing hidden. |
 | Open folder model? (round 2) | One library model: opening a folder adds it in place, indexes it in the background, every feature works; removing it never deletes files. |
@@ -283,4 +283,5 @@ From the owner's answers to the roadmap ([ROADMAP.md](ROADMAP.md), section 6) an
 | AI Remove's download | In the app, from Hugging Face at a pinned commit (about 1.24 GB), not from GitHub Release files picked by hand. |
 | Hardware before 1.0 | The owner's laptop only. |
 | Lightroom interop | Ships unverified, and says so plainly. |
-| Still open | How tool search treats other apps' names; what camera profiles v1 contains. |
+| Tool search naming | Typing another app's name (e.g. "Clarity", "Shadows") finds the matching LightBench tool, but results show only LightBench's own names; no other app is named in the UI. |
+| Still open | What camera profiles v1 contains (the owner asked what camera profiles are). |
