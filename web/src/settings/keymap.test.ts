@@ -396,6 +396,12 @@ describe('changing keys', () => {
     expect(conflictsFor(map, 'photo.pick', 'X').map((a) => a.id)).toEqual(['photo.reject'])
     // Z is zoom in culling and in Develop, but those never show together.
     expect(conflictsFor(map, 'develop.zoom', 'Z')).toEqual([])
+    // Develop's zoom keys (= + −) are free wherever they work; the browser's Ctrl+= / Ctrl+− page zoom isn't taken.
+    for (const [id, keys] of [['develop.zoomIn', ['=', '+']], ['develop.zoomOut', ['-']]] as const) {
+      expect(map.get(id)).toEqual(keys)
+      for (const k of keys) expect(conflictsFor(map, id, k)).toEqual([])
+    }
+    expect([...map.values()].flat().filter((k) => k === 'Ctrl+=' || k === 'Ctrl+-')).toEqual([])
     // Pick works in culling, where E closes the view.
     expect(conflictsFor(map, 'photo.pick', 'E').map((a) => a.id)).toEqual(['library.loupe', 'cull.close', 'survey.close'])
     // A key for everywhere conflicts with every view.

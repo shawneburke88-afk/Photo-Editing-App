@@ -187,7 +187,11 @@ export const ACTIONS: ActionDef[] = [
   // Cowork verification of 2026-10-13). Develop only: the Library's S and Shift+S (stacks) are in another view.
   { id: 'develop.softProof', label: 'Soft proofing on or off', contexts: ['develop'], keys: ['S'] },
   { id: 'develop.proofGamut', label: 'Soft proofing: destination gamut warning', contexts: ['develop'], keys: ['Shift+S'] },
-  { id: 'develop.zoom', label: 'Zoom to 100 % and back', contexts: ['develop', 'curve', 'mixer', 'remove', 'mask'], keys: ['Z'] },
+  { id: 'develop.zoom', label: 'Zoom: Fit and back to the last size (100 % at first)', contexts: ['develop', 'curve', 'mixer', 'remove', 'mask'], keys: ['Z'] },
+  // Zoom levels (docs/PHASE3.md, "Zoom levels"): = and − (+ with Shift, and the keypad's), not Ctrl+= / Ctrl+−, which
+  // zoom the browser page; Ctrl+Alt+= / Ctrl+Alt+− are the interface size.
+  { id: 'develop.zoomIn', label: 'Zoom in (next size)', contexts: ['develop', 'curve', 'mixer', 'remove', 'mask'], keys: ['=', '+'] },
+  { id: 'develop.zoomOut', label: 'Zoom out (next size)', contexts: ['develop', 'curve', 'mixer', 'remove', 'mask'], keys: ['-'] },
   { id: 'develop.next', label: 'Next photo', contexts: ['develop'], keys: ['ArrowRight'] },
   { id: 'develop.prev', label: 'Previous photo', contexts: ['develop'], keys: ['ArrowLeft'] },
   { id: 'develop.whiteBalance', label: 'White balance picker', contexts: ['develop'], keys: ['W'] },
