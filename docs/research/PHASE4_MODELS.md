@@ -345,8 +345,8 @@ training-data note), checks the same SHA-256 (compiled into the app from `web/mo
 Storage (`ai-models`, never precached by the service worker), works offline afterwards, and removes it in Settings → AI
 models. One runtime, **ONNX Runtime Web** (MIT, pinned 1.30.0, its native WebGPU provider in a worker), serves it and is
 meant to serve the later models. Devices with `shader-f16` get the fp16 file, others fp32 (F9 below). The manifest is
-not pinned yet: huggingface.co was blocked from the build machine, so the owner pins it with `node web/scripts/models.mjs
-pin` (Part 24, "What the owner must supply"). Owner's choice (2026-10-19): it is pinned and checked by the **"AI
+pinned (2026-10-20, Depth Anything V2 Small at commit `4472b7362082ad9968fee890ca0f1e5aca36b93d`). huggingface.co was
+blocked from the build machine, so, by the owner's choice (2026-10-19), it is pinned and checked by the **"AI
 models" GitHub Action** (`.github/workflows/ai-models.yml`, run by hand from the Actions tab with "Use workflow from" the
 branch with the AI code). The Action runs `pin`, then a real-model check in Node through the app's own preprocessing
 (`web/scripts/models-check.mjs`), then commits the manifest (PHASE3.md Part 24, "Pinning and checking the models").
