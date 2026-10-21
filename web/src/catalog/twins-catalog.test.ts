@@ -34,11 +34,12 @@ const stackOf = (id: number) => api.queryPhotos({ ids: [id], ungrouped: true })[
 
 describe('schema 16: RAW capture times', () => {
   it('turns RAW times read as local time back into the camera’s clock, leaving JPEGs as they were', () => {
-    expect(SCHEMA_VERSION).toBe(16)
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(16)
     env.TZ = 'America/Halifax'
     try {
       const d: Database = new sqlite3.oo1.DB(':memory:', 'c')
       migrate(d)
+      d.exec('DROP TABLE import_pending')
       const shiftedRaw = T + 3 * 3600 // what LibRaw gave on a computer on Atlantic (daylight) time
       d.exec(`
         INSERT INTO roots (id, name) VALUES (1, 'Photos');
@@ -49,7 +50,7 @@ describe('schema 16: RAW capture times', () => {
         PRAGMA user_version = 15;
       `)
       migrate(d)
-      expect(d.selectValue('PRAGMA user_version')).toBe(16)
+      expect(d.selectValue('PRAGMA user_version')).toBe(SCHEMA_VERSION)
       expect(d.selectObjects('SELECT id, captured_at AS t FROM photos ORDER BY id')).toEqual([{ id: 1, t: T }, { id: 2, t: T }, { id: 3, t: 0 }])
       expect(d.selectValue('PRAGMA integrity_check')).toBe('ok')
     } finally {

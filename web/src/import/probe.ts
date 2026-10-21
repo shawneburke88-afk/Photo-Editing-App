@@ -36,8 +36,16 @@ export class ProbePool {
     if (priority === 'foreground') this.pool.prestart()
   }
 
-  probe(file: File): Promise<ProbeResult> {
-    return this.pool.run((w) => w.api.probe(file))
+  /** Reads a photo; `t.ms`, if given, gets the time a worker spent on it (not the wait for a free worker). */
+  probe(file: File, t?: { ms: number }): Promise<ProbeResult> {
+    return this.pool.run(async (w) => {
+      const start = performance.now()
+      try {
+        return await w.api.probe(file)
+      } finally {
+        if (t) t.ms = performance.now() - start
+      }
+    })
   }
 
   /** Drops queued (not yet started) work, e.g. when the import window closes. */

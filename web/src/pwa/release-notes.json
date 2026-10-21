@@ -11,6 +11,21 @@
     "bugFixes": []
   },
   {
+    "version": "0.6.10",
+    "date": "2026-10-21",
+    "newFeatures": [
+      "Import finishes as soon as every file is copied and checked: your photos appear right away, and ratings, keywords and edits from .xmp files fill in afterwards in the background. If you close LightBench, it carries on next time.",
+      "With RAW + JPEG pairs, the RAWs are imported first; the JPEGs follow and are stacked under them. You can close the Import window and let it continue in the background.",
+      "Two or three files are copied at once (every copy is still read back and checked, so it's safe to format the card).",
+      "New import option: \"RAW only (skip JPEGs that have a RAW twin)\".",
+      "Import steps are timed and recorded when Settings → Diagnostics → Record diagnostics is on, and the finished Import window shows a one-line summary."
+    ],
+    "bugFixes": [
+      "A photo that was copied but never added to the library (for example after an interrupted import) now shows \"Copied, not in library\" in the Import window and is added without copying it again.",
+      "An empty file left by an interrupted copy is now replaced, instead of the new copy getting a \"-1\" name."
+    ]
+  },
+  {
     "version": "0.6.9",
     "date": "2026-10-21",
     "newFeatures": [

@@ -9,7 +9,7 @@ import type { RenameTemplate } from './plan'
 export interface ImportPresetData {
   rename: { kind: RenameTemplate['kind']; text: string; start: number }
   backup: boolean
-  /** Also import JPEGs shot alongside RAW files. */
+  /** Also import JPEGs shot alongside RAW files; false is the window's "RAW only (skip JPEGs that have a RAW twin)". */
   includePaired: boolean
   /** Stack those JPEGs under their RAWs (missing in presets saved before the option: on). */
   stackPairs?: boolean
