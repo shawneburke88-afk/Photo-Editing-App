@@ -1,9 +1,9 @@
 // AI Remove in the app (docs/PHASE3.md Part 26): one spot's patch, made by Moebius in the shared runtime worker.
 //
 // The three graphs run one after another, each loaded from this device (and checked) when its phase starts: the image
-// encoder (freed after it ran), then the 907 MB denoiser 20 times (kept loaded for the next spot until the runtime's
-// idle timeout), then the decoder (freed after it ran). So at most the denoiser and one image graph are in GPU memory
-// at once. Each run is held as foreground GPU work (Part 14's gate: Export and the background developer wait between
+// encoder, then the 907 MB denoiser 20 times (the encoder is freed once the denoiser is loaded: ONNX Runtime ends its
+// GPU device when its last session goes), then the decoder (freed after it ran). The denoiser stays loaded for the next
+// spot until the runtime's idle timeout. So at most the denoiser and one image graph are in GPU memory at once. Each run is held as foreground GPU work (Part 14's gate: Export and the background developer wait between
 // runs) and has its own watchdog (runtime.ts), sized so a slow 20-step run is never stopped while a hung step is.
 
 import { gpuGate } from '../engine/gpu/gate'
@@ -75,9 +75,10 @@ export async function makeAiFill(m: ModelEntry, spot: Spot, size: [number, numbe
     phase: async (name) => {
       if (name === 'encode') await load('vae_encoder')
       if (name === 'denoise') {
+        // The denoiser first, then the encoder freed: ONNX Runtime ends its GPU device when its last session goes.
+        await load('unet')
         trace('free vae_encoder')
         if (keys.vae_encoder) await releaseGraph(keys.vae_encoder)
-        await load('unet')
       }
       if (name === 'decode') await load('vae_decoder')
       o.onProgress?.({ phase: name })

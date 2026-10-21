@@ -31,6 +31,8 @@ async function watchDevice() {
   try {
     const dev = await ort.env.webgpu.device
     void dev.lost.then((info) => {
+      // Destroyed on purpose (ONNX Runtime ends its device when its last session is released): not a failure.
+      if (info.reason === 'destroyed') return
       lostMessage = info.message || 'The GPU device was lost.'
       for (const s of sessions.values()) void s.session.release().catch(() => {})
       sessions.clear()

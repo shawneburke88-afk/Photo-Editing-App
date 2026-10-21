@@ -15,6 +15,8 @@ import type { PxRect, Spot } from '../engine/develop/spots'
 export interface AiAsk {
   model: ModelEntry
   files: ModelFile[]
+  /** No WebGPU here: it would run on the processor, slowly. */
+  slow: boolean
   done: (rec: InstalledModel | null) => void
 }
 
@@ -42,7 +44,7 @@ export function useAiRemove() {
   const [error, setError] = useState<string | null>(null)
   const abort = useRef<AbortController | null>(null)
 
-  const askFor = (model: ModelEntry, files: ModelFile[]) => new Promise<InstalledModel | null>((resolve) => setAsk({ model, files, done: (rec) => { setAsk(null); resolve(rec) } }))
+  const askFor = (model: ModelEntry, files: ModelFile[], slow: boolean) => new Promise<InstalledModel | null>((resolve) => setAsk({ model, files, slow, done: (rec) => { setAsk(null); resolve(rec) } }))
 
   /**
    * A patch for `spot` (in the w × h scene), or null (declined, unavailable, cancelled or failed: `error` says why).
@@ -70,10 +72,10 @@ export function useAiRemove() {
           setError('AI Remove’s model isn’t available for this computer in this build.')
           return null
         }
-        if (!(await askFor(model, files))) return null
+        if (!(await askFor(model, files, p.provider === 'wasm'))) return null
       }
       if (ctl.signal.aborted) return null
-      const cpu = p.provider === 'wasm' ? ' (on the CPU, without WebGPU: this takes several minutes)' : ''
+      const cpu = p.provider === 'wasm' ? ' (on the processor, without WebGPU: this takes several minutes)' : ''
       setBusy({ text: `AI Remove: getting ready${cpu}…` })
       const r = await makeAiFill(model, spot, size, readCrop, {
         seed: spot.seed,

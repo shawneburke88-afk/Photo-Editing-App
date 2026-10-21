@@ -31,10 +31,12 @@ export async function removeModel(m: ModelEntry) {
 }
 
 /**
- * AI Remove's CPU fallback (no WebGPU): ONNX Runtime's WebAssembly provider. Its speed was measured by the "AI models"
- * workflow's moebius-check (PHASE3.md Part 26, "Speed"); when on, the panel says plainly that it will be slow.
+ * AI Remove's CPU fallback (no WebGPU): ONNX Runtime's WebAssembly provider, 4 threads. On. The "AI models" workflow
+ * ran the real graphs with this same runtime's WebAssembly in Node (PHASE3.md Part 26, "Speed"): finite results, the
+ * encoder 14–23 s, one denoising step 12–20 s and the decoder 31–50 s on a 4-core runner, so about 5–8 minutes per
+ * spot. The download dialog and the panel say plainly that it is slow. Its memory use in a browser tab is unmeasured.
  */
-export const INPAINT_WASM_FALLBACK = false
+export const INPAINT_WASM_FALLBACK = true
 
 const fmtMiB = (n: number) => `${Math.round(n / 2 ** 20)} MiB`
 

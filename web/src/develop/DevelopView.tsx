@@ -2998,7 +2998,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         </SectionEyeContext.Provider>
       </aside>
       {aiRemove.ask && (
-        <ModelDialog model={aiRemove.ask.model} files={aiRemove.ask.files} purpose="AI Remove" onInstalled={(rec) => aiRemove.ask?.done(rec)} onClose={() => aiRemove.ask?.done(null)} />
+        <ModelDialog model={aiRemove.ask.model} files={aiRemove.ask.files} purpose={aiRemove.ask.slow ? 'AI Remove (without WebGPU here it runs on the processor: several minutes per spot)' : 'AI Remove'} onInstalled={(rec) => aiRemove.ask?.done(rec)} onClose={() => aiRemove.ask?.done(null)} />
       )}
       {depth.ask && (
         <ModelDialog model={depth.ask.model} file={depth.ask.file} purpose="The Depth range mask" onInstalled={(rec) => depth.ask?.done(rec)} onClose={() => depth.ask?.done(null)} />
