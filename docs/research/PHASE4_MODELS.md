@@ -502,6 +502,13 @@ not re-checked here).
   untested on ONNX Runtime Web; EfficientViT's ONNX export; DA3-Metric's size and browser support; transformers.js
   4.3.1 uses ONNX Runtime 1.31-dev, while LightBench pins ONNX Runtime 1.30.0 directly.
 
+### Face details for People masks: later (owner, 2026-10-21)
+
+Eyes, lips, teeth and eyebrows for People masks are listed as later work, after the AI masks build. They need a
+face-landmark model, for example Google's MediaPipe Face Landmarker. Its training data isn't named, so it would need
+an exception of its own from the owner; its licence and training data are to be researched when it comes up (not
+checked here).
+
 ### Lens Blur queued (owner, 2026-10-21)
 
 **Lens Blur** (AI depth of field, [section 2](#2-ai-depth-of-field) and [DEPTH_OF_FIELD.md](DEPTH_OF_FIELD.md)) is queued
