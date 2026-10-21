@@ -33,7 +33,7 @@ class MemCaches {
   }
 }
 
-const bytes = (n: number, seed: number) => new Uint8Array(n).map((_, i) => (i * 31 + seed) & 255)
+const bytes = (n: number, seed: number): Uint8Array<ArrayBuffer> => new Uint8Array(n).map((_, i) => (i * 31 + seed) & 255)
 const REV = 'feedface'.repeat(5)
 const sam = () => parseManifest(shipped).models.find((m) => m.task === 'segment')!
 
@@ -134,7 +134,7 @@ describe('installing a model of several files from the site', () => {
     const dec32 = bytes(310, 7)
     const decData32 = bytes(1800, 8)
     const runtime = bytes(3000, 9)
-    const f = async (variant: 'fp16' | 'fp32', part: string, path: string, b: Uint8Array, data?: true): Promise<ModelFile> => ({ variant, part, ...(data ? { data } : {}), path, bytes: b.length, sha256: await sha256Hex(b) })
+    const f = async (variant: 'fp16' | 'fp32', part: string, path: string, b: Uint8Array<ArrayBuffer>, data?: true): Promise<ModelFile> => ({ variant, part, ...(data ? { data } : {}), path, bytes: b.length, sha256: await sha256Hex(b) })
     const model: ModelEntry = {
       ...sam(),
       source: { host: 'huggingface', repo: 'onnx-community/sam2.1-hiera-tiny-ONNX', revision: REV, pinnedBy: 'owner' },

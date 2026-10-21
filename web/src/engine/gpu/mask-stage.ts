@@ -39,6 +39,10 @@ export interface PxRegion {
 type Entry = 'component' | 'invertMask' | 'guideInit' | 'down' | 'downGuided' | 'blurX' | 'blurY' | 'coef' | 'upFeather' | 'upRefine' | 'accumulate'
 const ENTRIES: Entry[] = ['component', 'invertMask', 'guideInit', 'down', 'downGuided', 'blurX', 'blurY', 'coef', 'upFeather', 'upRefine', 'accumulate']
 
+/** Depth maps and AI mattes kept uploaded (count, and bytes together). */
+const KEEP_MAPS = 16
+const KEEP_MAP_BYTES = 48 << 20
+
 const TILE_SIZE = 208
 const PASS_SIZE = 176
 const SLOT = 256
@@ -64,7 +68,10 @@ export class MaskStage {
   private dummies: GPUBuffer[] = []
   private dummyTex: GPUTexture | null = null
   private dummyDepth: GPUTexture | null = null
-  /** Uploaded depth maps (Part 24), by their decoded bytes (depth-map.ts keeps one array per stored map), newest last. */
+  /**
+   * Uploaded depth maps (Part 24) and AI mattes (Part 27), by their decoded bytes (depth-map.ts keeps one array per
+   * stored map), newest last.
+   */
   private depthTex = new Map<Uint8Array, GPUTexture>()
 
   /** How a depth texture no longer kept is freed: DevelopEngine's `retireTex` (after the drawings open now end). */
@@ -128,8 +135,10 @@ export class MaskStage {
   }
 
   /**
-   * A depth map as an r8unorm texture (sampled bilinearly), uploaded once and kept while drawings use it. The oldest of
-   * more than four is handed to the engine's retirement (retire.ts): another drawing open now may have encoded with it.
+   * A depth map or AI matte as an r8unorm texture (sampled bilinearly), uploaded once and kept while drawings use it.
+   * Up to KEEP_MAPS of them and KEEP_MAP_BYTES together (an edit may hold several AI mattes of up to 2048 × 2048: Part
+   * 27); the oldest past that is handed to the engine's retirement (retire.ts): another drawing open now may have
+   * encoded with it.
    */
   private depthTexture(d: { px: Uint8Array; w: number; h: number }): GPUTexture {
     const hit = this.depthTex.get(d.px)
@@ -141,9 +150,12 @@ export class MaskStage {
     const t = this.device.createTexture({ label: 'mask:depth', size: [d.w, d.h], format: 'r8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST })
     this.device.queue.writeTexture({ texture: t }, d.px as Uint8Array<ArrayBuffer>, { bytesPerRow: d.w }, [d.w, d.h])
     this.depthTex.set(d.px, t)
-    while (this.depthTex.size > 4) {
+    let bytes = 0
+    for (const k of this.depthTex.keys()) bytes += k.length
+    while (this.depthTex.size > KEEP_MAPS || (bytes > KEEP_MAP_BYTES && this.depthTex.size > 1)) {
       const [k, old] = this.depthTex.entries().next().value!
       this.depthTex.delete(k)
+      bytes -= k.length
       this.retire(old)
     }
     return t
@@ -215,7 +227,7 @@ export class MaskStage {
     tileBuf.unmap()
     temps.push(tileBuf)
 
-    // Depth ranges: the drawing's uv → sensor grid (mask-render.ts `sensorGrid`).
+    // Depth ranges and AI selections: the drawing's uv → sensor grid (mask-render.ts `sensorGrid`).
     const sgrid = draw.prepared.grid
     const gridBuf = sgrid ? device.createBuffer({ size: Math.max(64, sgrid.uv.byteLength), usage: GPUBufferUsage.STORAGE, mappedAtCreation: true }) : null
     if (gridBuf && sgrid) {
@@ -253,9 +265,10 @@ export class MaskStage {
         f.set(c.p1, 8)
         c.samples?.forEach((s, k) => f.set(s, 16 + 4 * k))
         const bind: Op['bind'] = { 4: { buffer: alpha } }
-        if (c.depth && gridBuf) {
+        const map = c.depth ?? c.raster
+        if (map && gridBuf) {
           bind[10] = { buffer: gridBuf }
-          bind[11] = this.depthTexture(c.depth).createView()
+          bind[11] = this.depthTexture(map).createView()
         }
         ops.push({ entry: 'component', pass: b, bind, size: W })
       })

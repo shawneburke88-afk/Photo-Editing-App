@@ -27,11 +27,14 @@
 //    (process.ts `ProcessParams.masks`).
 //  - AI components plug in as one more component kind whose shape stores a raster (a compressed map inside the edit, so
 //    inside the .xmp; owner's decision 10). The first is the Depth range (`DepthShape`, PHASE3.md Part 24): a RANGE kind,
-//    so it combines with Luminance and Colour ranges and never with a shape (decision 12: no Depth ∩ shape). A mask
-//    holding a kind this build doesn't know (a later AI raster, anything from a newer LightBench) is kept as it is and
-//    not rendered, and the panel says so.
+//    so it combines with Luminance and Colour ranges and never with a shape (decision 12: no Depth ∩ shape). The AI
+//    selections (`AiShape`, kind "ai", PHASE3.md Part 27: Object select first; people, faces, sky and subject later)
+//    store their matte, the model that made it and the prompt it was made from: a SHAPE kind (owner's AI-masks decision
+//    1), so brushes and gradients add to, subtract from or intersect them, and ranges stay separate masks. A mask
+//    holding a kind this build doesn't know (anything from a newer LightBench) is kept as it is and not rendered, and
+//    the panel says so.
 
-import { normalizeRaster, type RasterData } from './depth-map'
+import { normalizeRaster, type RasterCaps, type RasterData } from './depth-map'
 
 /** A point in sensor coordinates: x / sensor width, y / sensor height. */
 export type Pt = [number, number]
@@ -155,15 +158,41 @@ export interface DepthShape {
   /** The depth map in the sensor frame (depth-map.ts). */
   raster?: RasterData
 }
-/** AI components of later builds (Subject, Sky, …): a raster stored in the edit. Kept, not rendered by this build. */
-export interface RasterShape {
-  kind: 'ai'
-  model?: string
-  modelVersion?: string
-  raster?: RasterData
-  [k: string]: unknown
+/** What an AI selection selects. Object select is this build's; people, faces, sky and subject come later (Part 27). */
+export const AI_WHATS = ['object'] as const
+export type AiWhat = (typeof AI_WHATS)[number]
+/** Names for masks and parts, by what they select ("Object 1"). */
+export const AI_WHAT_LABELS: Record<string, string> = { object: 'Object' }
+
+/** The prompt an AI selection was made from, in sensor coordinates (x / width, y / height), so it can be made again. */
+export interface AiPrompt {
+  /** Points with their label: 1 adds what is there, 0 removes it. */
+  points?: [number, number, 0 | 1][]
+  /** A box: x0, y0, x1, y1. */
+  box?: [number, number, number, number]
 }
-export type KnownShape = LinearShape | RadialShape | BrushShape | LuminanceShape | ColourShape | DepthShape
+
+/**
+ * An AI selection (PHASE3.md Part 27): the matte an AI model made for this photo, kept in the edit (so in the .xmp)
+ * and drawn from there: drawing never runs the model, and another computer draws the same mask without it. The matte
+ * is 8 bits in the SENSOR frame (255 = selected; depth-map.ts's encoding), at most 2048 texels on its long side (owner's
+ * AI-masks decision 4). Without a matte (pasted from another photo, from a preset, or damaged) the part is kept and its
+ * mask waits for "Compute for this photo". A SHAPE kind (owner's AI-masks decision 1).
+ */
+export interface AiShape {
+  kind: 'ai'
+  /** "object" in this build; a later build's value is kept and its matte drawn, but it can't be made again here. */
+  what: string
+  /** The model and its files ("sam2-1-hiera-tiny"; "<revision 7>/<fp16|fp32>"), and the runtime that ran it. */
+  model: string
+  modelVersion: string
+  runtime?: string
+  prompt?: AiPrompt
+  raster?: RasterData
+}
+/** The slot Part 23 left for AI rasters, by its first name. */
+export type RasterShape = AiShape
+export type KnownShape = LinearShape | RadialShape | BrushShape | LuminanceShape | ColourShape | DepthShape | AiShape
 /** A component kind this build doesn't know (an AI raster, or anything from a newer LightBench): kept, not rendered. */
 export interface UnknownShape {
   kind: string
@@ -196,7 +225,7 @@ export interface LocalMask {
   adjust: LocalAdjust
 }
 
-export const SHAPE_KINDS: ShapeKind[] = ['brush', 'linear', 'radial']
+export const SHAPE_KINDS: ShapeKind[] = ['brush', 'linear', 'radial', 'ai']
 export const RANGE_KINDS: ShapeKind[] = ['luminance', 'colour', 'depth']
 export const KNOWN_KINDS: ShapeKind[] = [...SHAPE_KINDS, ...RANGE_KINDS]
 
@@ -207,15 +236,31 @@ export const KIND_LABELS: Record<ShapeKind, string> = {
   luminance: 'Luminance range',
   colour: 'Colour range',
   depth: 'Depth range',
+  ai: 'Object',
 }
 /** Short names, for default mask names (Lightroom users asked for names by type). */
-export const KIND_SHORT: Record<ShapeKind, string> = { brush: 'Brush', linear: 'Linear', radial: 'Radial', luminance: 'Luminance range', colour: 'Colour range', depth: 'Depth range' }
+export const KIND_SHORT: Record<ShapeKind, string> = { brush: 'Brush', linear: 'Linear', radial: 'Radial', luminance: 'Luminance range', colour: 'Colour range', depth: 'Depth range', ai: 'Object' }
+
+/** A part's name in the panel: its kind, or for an AI selection what it selects ("Object"). */
+export function partLabel(s: { kind: string; what?: unknown }): string {
+  if (s.kind === 'ai') return AI_WHAT_LABELS[String(s.what)] ?? 'AI selection'
+  return isKnownKind(s.kind) ? KIND_LABELS[s.kind] : `${s.kind} (newer LightBench)`
+}
 
 /** Caps (owner's decision 9), against hostile files and slow GPUs. */
 export const MAX_MASKS = 64
 export const MAX_COMPONENTS = 32
 export const MAX_DABS = 10000
 export const MAX_SAMPLES = 5
+/**
+ * AI selections (Part 27): the matte's long side (owner's AI-masks decision 4: up to 2048), and caps on what an edit
+ * may hold: per matte (2048 × 2048 texels, 4 MB of text) and for all of a photo's AI mattes together (16 MB of text:
+ * a real matte takes tens of kB; a file over the total is damaged or hostile, and the rest wait). Prompt points per part.
+ */
+export const AI_RASTER_LONG = 2048
+export const AI_RASTER_CAPS: RasterCaps = { side: 2048, pixels: 2048 * 2048, chars: 4 << 20 }
+export const MAX_AI_CHARS = 16 << 20
+export const MAX_AI_POINTS = 64
 
 export const isKnownKind = (k: unknown): k is ShapeKind => typeof k === 'string' && (KNOWN_KINDS as string[]).includes(k)
 export const isShapeKind = (k: string) => (SHAPE_KINDS as string[]).includes(k)
@@ -244,8 +289,8 @@ export function canAdd(m: Pick<LocalMask, 'components'>, kind: string): boolean 
 export function refuseReason(m: Pick<LocalMask, 'components'>, kind: string): string | null {
   if (canAdd(m, kind)) return null
   return maskFamily(m) === 'range'
-    ? 'Range masks apply to the whole photo, so a brush or gradient can’t be combined with one. Make a separate mask instead.'
-    : 'Range masks apply to the whole photo, so they can’t be combined with a brush or gradient. Make a separate range mask instead.'
+    ? 'Range masks apply to the whole photo, so a brush, gradient or object selection can’t be combined with one. Make a separate mask instead.'
+    : 'Range masks apply to the whole photo, so they can’t be combined with a brush, gradient or object selection. Make a separate range mask instead.'
 }
 
 /** Dabs stored in a mask (all its brush strokes). */
@@ -261,6 +306,16 @@ export const hasUnknown = (m: LocalMask) => m.components.some((c) => !isKnownKin
 /** A Depth range part without its depth map (pasted, from a preset, or damaged): the mask waits for one. */
 export const needsDepth = (m: Pick<LocalMask, 'components'>) => m.components.some((c) => c.shape.kind === 'depth' && !(c.shape as DepthShape).raster)
 
+/** An AI selection without its matte (pasted, from a preset, or damaged): the mask waits for "Compute for this photo". */
+export const needsAi = (m: Pick<LocalMask, 'components'>) => m.components.some((c) => c.shape.kind === 'ai' && !(c.shape as AiShape).raster)
+
+/** The text all AI mattes of these masks take in the edit. */
+export function aiChars(masks: LocalMask[] | undefined): number {
+  let n = 0
+  for (const m of masks ?? []) for (const c of m.components) if (c.shape.kind === 'ai') n += (c.shape as AiShape).raster?.data.length ?? 0
+  return n
+}
+
 /** The photo's depth map, if one of its masks has it (a new Depth range reuses it: nothing is computed again). */
 export function existingDepth(masks: LocalMask[] | undefined): Omit<DepthShape, 'range'> | null {
   for (const m of masks ?? []) {
@@ -272,14 +327,19 @@ export function existingDepth(masks: LocalMask[] | undefined): Omit<DepthShape, 
   return null
 }
 
-/** The same masks without depth maps (they belong to one photo: paste and presets carry the ranges only). */
+/**
+ * The same masks without depth maps and AI mattes (they belong to one photo: paste and presets carry the ranges and
+ * the AI selections' prompts and models, which then wait to be computed for the photo they land on).
+ */
 export function withoutDepthMaps(masks: LocalMask[]): LocalMask[] {
+  const raster = (k: string) => k === 'depth' || k === 'ai'
   return masks.map((m) =>
-    m.components.some((c) => c.shape.kind === 'depth')
-      ? { ...m, components: m.components.map((c) => (c.shape.kind === 'depth' ? { ...c, shape: (({ raster: _r, ...rest }) => (void _r, rest))(c.shape as DepthShape) } : c)) }
+    m.components.some((c) => raster(c.shape.kind))
+      ? { ...m, components: m.components.map((c) => (raster(c.shape.kind) ? { ...c, shape: (({ raster: _r, ...rest }) => (void _r, rest))(c.shape as DepthShape | AiShape) } : c)) }
       : m,
   )
 }
+export const withoutRasters = withoutDepthMaps
 
 /** Every Depth range part of these masks gets this map (computed for the photo they are on). */
 export function withDepthMap(masks: LocalMask[], depth: Omit<DepthShape, 'range'>): LocalMask[] {
@@ -299,9 +359,9 @@ const rnd = () => Math.floor(Math.random() * 1e6).toString(36)
 export const newMaskId = () => `m${Date.now().toString(36)}${rnd()}`
 export const newComponentId = () => `c${Date.now().toString(36)}${rnd()}`
 
-/** The default name for a new mask of this kind: "Linear 2" when one Linear mask exists. */
-export function defaultName(masks: LocalMask[], kind: ShapeKind): string {
-  const base = KIND_SHORT[kind]
+/** The default name for a new mask of this kind: "Linear 2" when one Linear mask exists ("Object 1" for Object select). */
+export function defaultName(masks: LocalMask[], kind: ShapeKind, what?: string): string {
+  const base = kind === 'ai' ? (AI_WHAT_LABELS[what ?? ''] ?? 'AI selection') : KIND_SHORT[kind]
   const taken = new Set(masks.map((m) => m.name))
   for (let n = 1; ; n++) if (!taken.has(`${base} ${n}`)) return `${base} ${n}`
 }
@@ -386,6 +446,29 @@ export function normalizeShape(v: unknown, dabBudget = MAX_DABS): MaskShape | nu
         .map((s) => [q5(clamp(s[0], 0, 4)), q5(clamp(s[1], -1, 1)), q5(clamp(s[2], -1, 1))] as [number, number, number])
       return samples.length ? { kind: 'colour', samples, refine: q2(num(o.refine, 50, 0, 100)) } : null
     }
+    case 'ai': {
+      const what = str(o.what, 40)
+      if (!what) return null
+      const out: AiShape = { kind: 'ai', what, model: str(o.model, 80) || 'unknown', modelVersion: str(o.modelVersion, 80) }
+      if (typeof o.runtime === 'string' && o.runtime) out.runtime = str(o.runtime, 80)
+      const p = o.prompt as Record<string, unknown> | undefined
+      if (p && typeof p === 'object') {
+        const prompt: AiPrompt = {}
+        if (Array.isArray(p.points)) {
+          const pts = p.points
+            .filter((x): x is [number, number, number] => Array.isArray(x) && x.length === 3 && x.every(finite) && (x[2] === 0 || x[2] === 1))
+            .slice(0, MAX_AI_POINTS)
+            .map((x) => [q6(clamp(x[0], -2, 3)), q6(clamp(x[1], -2, 3)), x[2] as 0 | 1] as [number, number, 0 | 1])
+          if (pts.length) prompt.points = pts
+        }
+        if (Array.isArray(p.box) && p.box.length === 4 && p.box.every(finite)) prompt.box = (p.box as number[]).map((x) => q6(clamp(x, -2, 3))) as AiPrompt['box']
+        if (prompt.points || prompt.box) out.prompt = prompt
+      }
+      // A damaged matte is dropped (the part stays, waiting to be computed again); its contents are checked when drawn.
+      const raster = normalizeRaster(o.raster, AI_RASTER_CAPS)
+      if (raster) out.raster = raster
+      return out
+    }
     case 'depth': {
       if (!Array.isArray(o.range) || o.range.length !== 4 || !o.range.every(finite)) return null
       const r = (o.range as number[]).map((x) => q2(clamp(x, 0, 100)))
@@ -465,10 +548,18 @@ export function normalizeMasks(v: unknown): LocalMask[] | undefined {
   if (!Array.isArray(v)) return undefined
   const out: LocalMask[] = []
   const ids = new Set<string>()
+  let aiLeft = MAX_AI_CHARS
   for (const m of v) {
     if (out.length >= MAX_MASKS) break
     const n = normalizeMask(m)
     if (!n) continue
+    // All AI mattes together within MAX_AI_CHARS: past it, a matte is dropped and its part waits.
+    for (const c of n.components) {
+      const s = c.shape as AiShape
+      if (s.kind !== 'ai' || !s.raster) continue
+      if (s.raster.data.length > aiLeft) delete s.raster
+      else aiLeft -= s.raster.data.length
+    }
     // Ids are what history labels, the panel and paste picking go by: keep them unique.
     while (ids.has(n.id)) n.id = `${n.id}x`
     ids.add(n.id)
@@ -493,7 +584,7 @@ function hashString(s: string): number {
 export function newMask(masks: LocalMask[], shape: KnownShape): LocalMask {
   return {
     id: newMaskId(),
-    name: defaultName(masks, shape.kind),
+    name: defaultName(masks, shape.kind, shape.kind === 'ai' ? shape.what : undefined),
     invert: false,
     amount: 100,
     feather: 0,
@@ -504,8 +595,9 @@ export function newMask(masks: LocalMask[], shape: KnownShape): LocalMask {
 }
 
 /** What happens when a change would break a cap; null when it fits. */
-export function capMessage(masks: LocalMask[], change: { addMask?: boolean; maskId?: string; addComponent?: boolean; addDabs?: number }): string | null {
+export function capMessage(masks: LocalMask[], change: { addMask?: boolean; maskId?: string; addComponent?: boolean; addDabs?: number; addAiChars?: number }): string | null {
   if (change.addMask && masks.length >= MAX_MASKS) return `A photo can have at most ${MAX_MASKS} masks. Delete one to add another.`
+  if (change.addAiChars && aiChars(masks) + change.addAiChars > MAX_AI_CHARS) return 'This photo’s AI selections already hold as much as an edit may keep. Delete one to make another.'
   const m = change.maskId ? masks.find((x) => x.id === change.maskId) : undefined
   if (m && change.addComponent && m.components.length >= MAX_COMPONENTS) return `A mask can have at most ${MAX_COMPONENTS} parts. Start a new mask instead.`
   if (m && change.addDabs && dabCount(m) + change.addDabs > MAX_DABS)
@@ -541,9 +633,9 @@ export function presetMasks(masks: LocalMask[] | undefined): LocalMask[] | undef
   return out.length ? out : undefined
 }
 
-/** A mask's kinds in words: "Linear gradient, Luminance range". */
+/** A mask's kinds in words: "Linear gradient, Luminance range", "Object (AI), Brush". */
 export function describeKinds(m: LocalMask): string {
-  const kinds = [...new Set(m.components.map((c) => (isKnownKind(c.shape.kind) ? KIND_LABELS[c.shape.kind] : `${c.shape.kind} (newer LightBench)`)))]
+  const kinds = [...new Set(m.components.map((c) => (c.shape.kind === 'ai' ? `${partLabel(c.shape as AiShape)} (AI)` : partLabel(c.shape))))]
   return kinds.join(', ')
 }
 

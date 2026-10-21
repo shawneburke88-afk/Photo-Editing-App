@@ -750,4 +750,4 @@ export const MASK_HELP: Record<string, ControlHelp> = {
 }
 
 /** What the panel says about range masks (owner's decision 12: no patent talk in the interface). */
-export const RANGE_NOTE = 'Range masks apply to the whole photo: a luminance, colour or depth range can’t be combined with a brush or gradient. Make it a separate mask; masks stack.'
+export const RANGE_NOTE = 'Range masks apply to the whole photo: a luminance, colour or depth range can’t be combined with a brush, gradient or object selection. Make it a separate mask; masks stack.'
