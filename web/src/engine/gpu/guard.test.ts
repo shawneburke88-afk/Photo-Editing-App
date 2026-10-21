@@ -160,3 +160,16 @@ describe('renderOutput size check', () => {
     expect((e as Error).message).toBe('The export is too large for this graphics card: 6400×4288 at 16 bits needs 209 MB in one piece, and the card allows 128 MB. Choose a smaller size or 8 bits.')
   })
 })
+
+describe('guardGpuWork with an allocation check inside (alloc-check.ts)', () => {
+  it('passes an out-of-memory GpuWorkError from the work through unchanged, so it is retried like any out of memory', async () => {
+    const f = fakeDevice()
+    const e = await guardGpuWork(f.device, f.isLost, async () => {
+      throw new GpuWorkError('out-of-memory', 'Not enough memory')
+    }).catch((x: unknown) => x)
+    expect(e).toBeInstanceOf(GpuWorkError)
+    expect((e as GpuWorkError).kind).toBe('out-of-memory')
+    expect(retryableGpuError(e)).toBe(true)
+    expect(f.scopes).toHaveLength(0)
+  })
+})

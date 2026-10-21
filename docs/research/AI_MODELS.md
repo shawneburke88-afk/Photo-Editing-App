@@ -2,7 +2,12 @@
 
 **Prepared for:** Shawn Burke (LightBench) · **Research date:** 2026-10-11 · **Scope:** open models LightBench could run locally (browser via ONNX Runtime Web + WebGPU or transformers.js; later native in Tauri) for hover/click selection, one-click masks, AI-assisted Auto and Auto for a masked area.
 
-**Contents:** [Summary](#summary) · [How this was researched](#how-this-was-researched) · [By provider](#by-provider) · [darktable's AI models](#darktables-ai-models-from-its-code) · [1. Hover/click selection](#1-hover-and-click-object-selection) · [2. One-click masks](#2-one-click-masks) · [3. AI-driven Auto](#3-ai-driven-auto) · [4. Auto for a selected area](#4-auto-for-a-selected-area) · [Excluded models](#excluded-models) · [Open questions](#open-questions-and-hands-on-tests)
+**Contents:** [Summary](#summary) · [How this was researched](#how-this-was-researched) · [By provider](#by-provider) · [darktable's AI models](#darktables-ai-models-from-its-code) · [1. Hover/click selection](#1-hover-and-click-object-selection) · [2. One-click masks](#2-one-click-masks) · [3. AI-driven Auto](#3-ai-driven-auto) · [4. Auto for a selected area](#4-auto-for-a-selected-area) · [Excluded models](#excluded-models) · [Open questions](#open-questions-and-hands-on-tests) · [Owner's decisions (2026-10-21): AI masks](#owners-decisions-2026-10-21-ai-masks)
+
+> **Update (2026-10-21).** A training-data check of the mask models followed on 2026-10-21
+> ([cowork-2026-10-21-ai-masks/AI_MASKS.md](cowork-2026-10-21-ai-masks/AI_MASKS.md)), and the owner relaxed the model
+> rule and chose the AI masks models and order: see [the decisions at the end](#owners-decisions-2026-10-21-ai-masks).
+> The tables below are the 2026-10-11 research as it was.
 
 ---
 
@@ -292,3 +297,25 @@ YOLO-World is GPL-3.0 ([LICENSE](https://github.com/AILab-CVC/YOLO-World/blob/ma
 11. **MediaPipe models in ONNX Runtime.** Decide between MediaPipe's own web runtime (adds a second runtime) and converting TFLite → ONNX.
 12. **Tauri later.** Native ONNX Runtime can use CUDA/DirectML/CoreML as darktable does (`dev-doc/AI.md:145-180`), so the HQ models become more practical there.
 13. **FSF compatibility list.** Apache-2.0 and MIT are generally listed as GPL-3.0-compatible by the FSF ([licence list](https://www.gnu.org/licenses/license-list.html)); the page could not be re-opened during this research (unverified here).
+
+## Owner's decisions (2026-10-21): AI masks
+
+After the check in [cowork-2026-10-21-ai-masks/AI_MASKS.md](cowork-2026-10-21-ai-masks/AI_MASKS.md). The full record,
+with the AI Remove decisions of the same day, is in [PHASE4_MODELS.md](PHASE4_MODELS.md#model-rule-relaxed-owner-2026-10-21).
+
+- **Model rule relaxed (option B).** Weights must stay permissively licensed (non-commercial weights licences remain
+  excluded). Training data must be **mostly named**: a small unpublished share, or an unpublished foundation model or
+  backbone (e.g. DINOv2's LVD-142M, already accepted through Depth Anything V2 Small), is allowed when the model info
+  says so in plain words. Well-known publishers that name no data can be approved as exceptions, one at a time: RawNIND,
+  Moebius and MediaPipe Selfie Multiclass (approved 2026-10-21). Named datasets with non-commercial or research-only
+  terms stay allowed with a plain-words note. The owner's policy, not a legal opinion.
+- **Eligible now:** SAM 2.1 (Tiny / Base+; about 14.8 % Meta internal licensed video), DA3-Metric-Large (sky; 13 of 14
+  datasets named; 669 MB fp16), RF-DETR-Seg N/S (people), MediaPipe Selfie Multiclass (hair, skin, clothes; the
+  exception), plus BiRefNet_lite, SlimSAM-77, YuNet and EfficientViT-Seg B1 (sky; needs our own ONNX export), which
+  passed before.
+- **Order inside the AI masks build:** 1. click/hover select, 2. people/faces, 3. sky, 4. subject.
+- **When:** after AI Remove and before Lens Blur and AI Denoise; AI masks are in 1.0 (the order is in [ROADMAP.md](../ROADMAP.md)).
+- **To settle in the build:** BiRefNet_lite's data list (its Hugging Face card and GitHub README differ); BiRefNet's
+  WebGPU graph needs patching; MediaPipe's community ONNX is untested on ONNX Runtime Web; EfficientViT's ONNX export;
+  DA3-Metric's size and browser support; transformers.js 4.3.1 uses ONNX Runtime 1.31-dev, while LightBench pins ONNX
+  Runtime 1.30.0 directly.

@@ -80,7 +80,7 @@ export function useDepth(renderAsShot: (input: ModelEntry['input']) => Promise<A
       const run: LastRun = { inferMs: res.inferMs, totalMs: res.totalMs, provider: res.provider, variant: rec.variant, size: res.size, bytes: res.depth.raster.data.length }
       depthTimings.push(run)
       // Diagnostics (PHASE3.md "Diagnostics"): the run's durations and where it ran; no pixels or names.
-      diagnostics.log('ai-depth', { model: model.id, variant: rec.variant, provider: res.provider, size: res.size, renderMs: Math.round(renderMs), loadMs: Math.round(res.loadMs), inferMs: Math.round(res.inferMs), totalMs: Math.round(res.totalMs), bytes: run.bytes })
+      diagnostics.log('ai-depth', { model: model.id, variant: rec.variant, provider: res.provider, gpu: res.gpu, size: res.size, renderMs: Math.round(renderMs), loadMs: Math.round(res.loadMs), inferMs: Math.round(res.inferMs), totalMs: Math.round(res.totalMs), bytes: run.bytes })
       console.info(`Depth map: ${res.size[0]} × ${res.size[1]}, model ${Math.round(res.inferMs)} ms, total ${Math.round(res.totalMs)} ms (${res.provider}, ${rec.variant}), ${res.depth.raster.data.length} characters in the edit`)
       return res.depth
     } catch (e) {

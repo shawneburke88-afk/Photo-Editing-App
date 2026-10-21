@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.6.14",
+    "date": "2026-10-21",
+    "newFeatures": [
+      "If the graphics card stops responding or runs out of memory while you edit, Develop now restarts its preview by itself and tells you, and your edit is kept. If it keeps happening, Develop stops and shows what you can try, with a Try again button.",
+      "AI models now ask for the faster graphics card on computers that have two, the same as Develop. Settings → Diagnostics records which graphics card each AI run used.",
+      "When a new version is ready, a green Update ready button now stays at the top right until you reload. Click it to read what's new and reload into the new version.",
+      "If the website is ever put back to an earlier version, installed copies of LightBench now say so clearly when they offer the reload."
+    ],
+    "bugFixes": [
+      "Develop could stay on \"Developing…\" forever if the graphics card was lost while the preview was starting. It now recovers.",
+      "When the graphics card couldn't make room for a full-size image, it failed without a clear message. You now see one."
+    ]
+  },
+  {
     "version": "0.6.13",
     "date": "2026-10-21",
     "newFeatures": [

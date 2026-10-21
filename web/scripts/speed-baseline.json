@@ -1,0 +1,359 @@
+{
+ "app": {
+  "version": "0.6.13+4a0cc14",
+  "commit": "4a0cc14"
+ },
+ "date": "2026-10-21T18:33:01.229Z",
+ "mode": "quick",
+ "scaledTo": 0.3,
+ "warmup": 1,
+ "runs": 3,
+ "adapter": {
+  "vendor": "google",
+  "architecture": "swiftshader",
+  "isFallbackAdapter": true
+ },
+ "display": {
+  "presentMode": "readback",
+  "reason": "forced",
+  "devicePixelRatio": 1,
+  "canvas": [
+   300,
+   150
+  ]
+ },
+ "rows": [
+  {
+   "id": "bayer24.stageA",
+   "stage": "Stage A: RAW → scene (process)",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 209.97500000009313,
+    "min": 193.91500000003725,
+    "max": 218.62000000011176,
+    "runs": 3
+   },
+   "peakBytes": 16309040
+  },
+  {
+   "id": "bayer24.warp",
+   "stage": "Geometry warp: lens correction + straighten, full size",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 386.42499999981374,
+    "min": 356.95999999996275,
+    "max": 452.65500000026077,
+    "runs": 3
+   },
+   "peakBytes": 10040592
+  },
+  {
+   "id": "bayer24.toneMask",
+   "stage": "Tone equalizer mask pre-pass (process 2, Shadows +40)",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 94.06000000005588,
+    "min": 87.49000000022352,
+    "max": 97.78500000014901,
+    "runs": 3
+   },
+   "peakBytes": 7669224
+  },
+  {
+   "id": "bayer24.mixer",
+   "stage": "Colour Mixer, guided filter on: pre-pass + display pass, fit",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 2491.404999999795,
+    "min": 2418.660000000149,
+    "max": 2571.0999999996275,
+    "runs": 3
+   },
+   "peakBytes": 18143112
+  },
+  {
+   "id": "bayer24.mixerNoGuide",
+   "stage": "Colour Mixer, guided filter off: display pass, fit",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 1115.494999999646,
+    "min": 1111.369999999646,
+    "max": 1149.4499999997206,
+    "runs": 3
+   },
+   "peakBytes": 14023336
+  },
+  {
+   "id": "bayer24.grading",
+   "stage": "Colour Grading on: display pass, fit",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 1157.570000000298,
+    "min": 1083.4900000002235,
+    "max": 1195.0849999999627,
+    "runs": 3
+   },
+   "peakBytes": 14023336
+  },
+  {
+   "id": "bayer24.masksFit",
+   "stage": "Masks: 3 masks (brush + radial + luminance), display pass, fit",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 1193.8849999997765,
+    "min": 1148.4199999999255,
+    "max": 1224.5400000000373,
+    "runs": 3
+   },
+   "peakBytes": 20830243
+  },
+  {
+   "id": "bayer24.vignetteFit",
+   "stage": "Effects: Post-crop vignette (Highlight Priority), display pass, fit",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 1080.179999999702,
+    "min": 1061.839999999851,
+    "max": 1081.875,
+    "runs": 3
+   },
+   "peakBytes": 17721979
+  },
+  {
+   "id": "bayer24.grainFit",
+   "stage": "Effects: Grain, display pass, fit",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 1313.035000000149,
+    "min": 1239.1450000000186,
+    "max": 1340.369999999646,
+    "runs": 3
+   },
+   "peakBytes": 17721979
+  },
+  {
+   "id": "bayer24.tcFit",
+   "stage": "Effects: Texture + Clarity, display pass, fit",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 2832.5,
+    "min": 2832.4599999999627,
+    "max": 3024.9799999999814,
+    "runs": 3
+   },
+   "peakBytes": 20003867
+  },
+  {
+   "id": "bayer24.dehazeFit",
+   "stage": "Effects: Dehaze, display pass, fit",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 2379.2099999999627,
+    "min": 2377.064999999944,
+    "max": 2509.7650000001304,
+    "runs": 3
+   },
+   "peakBytes": 28978027
+  },
+  {
+   "id": "bayer24.glowFit",
+   "stage": "Effects: Glow (Bloom), display pass, fit",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 1332.3100000000559,
+    "min": 1305.7049999996088,
+    "max": 1482.0750000001863,
+    "runs": 3
+   },
+   "peakBytes": 28968227
+  },
+  {
+   "id": "bayer24.denoise",
+   "stage": "Detail: denoise (profiled, wavelets), full size",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 3886.670000000391,
+    "min": 3739.8199999998324,
+    "max": 3927.5400000000373,
+    "runs": 3
+   },
+   "peakBytes": 38139843
+  },
+  {
+   "id": "bayer24.sharpen",
+   "stage": "Detail: capture sharpening, Amount 40 (separable blur), full size",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 2067.9799999999814,
+    "min": 2002.5550000001676,
+    "max": 2157.0500000002794,
+    "runs": 3
+   },
+   "peakBytes": 38120835
+  },
+  {
+   "id": "bayer24.displayFit",
+   "stage": "Display pass, fit, without Tone Curve",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 1123.4199999999255,
+    "min": 1108.619999999646,
+    "max": 1174.3950000000186,
+    "runs": 3
+   },
+   "peakBytes": 28087939
+  },
+  {
+   "id": "bayer24.display100",
+   "stage": "Display pass, 100 %, without Tone Curve",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 1156.9750000000931,
+    "min": 1116.1399999996647,
+    "max": 1164.2750000003725,
+    "runs": 3
+   },
+   "peakBytes": 28087939
+  },
+  {
+   "id": "bayer24.displayFitCurve",
+   "stage": "Display pass, fit, with Tone Curve",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 1153.3449999997392,
+    "min": 1150.7349999998696,
+    "max": 1176.7749999999069,
+    "runs": 3
+   },
+   "peakBytes": 28153475
+  },
+  {
+   "id": "bayer24.display100Curve",
+   "stage": "Display pass, 100 %, with Tone Curve",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 1139.1299999998882,
+    "min": 1127.1099999998696,
+    "max": 1221.6850000000559,
+    "runs": 3
+   },
+   "peakBytes": 28153475
+  },
+  {
+   "id": "bayer24.proof",
+   "stage": "Soft proofing on: display pass, fit (both gamut warnings)",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 1148.9899999997579,
+    "min": 1095.1850000000559,
+    "max": 1216.2600000002421,
+    "runs": 3
+   },
+   "peakBytes": 36941475
+  },
+  {
+   "id": "bayer24.proofLut",
+   "stage": "Soft proof table: build 65³ with Little CMS (worker)",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 288.839999999851,
+    "min": 284.46500000031665,
+    "max": 317.45999999996275,
+    "runs": 3
+   },
+   "peakBytes": 36569475
+  },
+  {
+   "id": "bayer24.remove",
+   "stage": "Remove: one spot (fill search on the CPU, tiles on the GPU)",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 207.66500000003725,
+    "min": 183.3300000000745,
+    "max": 285.5599999995902,
+    "runs": 3
+   },
+   "peakBytes": 42978787
+  },
+  {
+   "id": "bayer24.export",
+   "stage": "Export render, full size, 8-bit sRGB (develop + read back)",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 7483.700000000186,
+    "min": 7462.30999999959,
+    "max": 7690.095000000205,
+    "runs": 3
+   },
+   "peakBytes": 44572675
+  },
+  {
+   "id": "bayer24.jpeg",
+   "stage": "JPEG encode, full size (jpegli, quality 90)",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 21.544999999925494,
+    "min": 16.740000000223517,
+    "max": 22.34500000020489,
+    "runs": 3
+   },
+   "peakBytes": 39770019
+  },
+  {
+   "id": "bayer24.thumb",
+   "stage": "Thumbnail: 512 px JPEG (renderThumbnail)",
+   "image": "Bayer 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 4395.339999999851,
+    "min": 4332.295000000391,
+    "max": 4536.125,
+    "runs": 3
+   },
+   "peakBytes": 41170851
+  },
+  {
+   "id": "srgb24.stageA",
+   "stage": "Stage A: RAW → scene (process)",
+   "image": "sRGB 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 27.229999999515712,
+    "min": 24.87000000011176,
+    "max": 31.419999999925494,
+    "runs": 3
+   },
+   "peakBytes": 8243611
+  },
+  {
+   "id": "srgb24.displayFit",
+   "stage": "Display pass, fit, without Tone Curve",
+   "image": "sRGB 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 1133.9150000000373,
+    "min": 1120.2800000002608,
+    "max": 1142.7299999995157,
+    "runs": 3
+   },
+   "peakBytes": 5411915
+  },
+  {
+   "id": "srgb24.export",
+   "stage": "Export render, full size, 8-bit sRGB (develop + read back)",
+   "image": "sRGB 0.30 MP (synthetic, scaled)",
+   "wall": {
+    "median": 7444.290000000037,
+    "min": 7193.515000000596,
+    "max": 7541.3650000002235,
+    "runs": 3
+   },
+   "peakBytes": 9842571
+  },
+  {
+   "id": "srgb24.aiDepth",
+   "stage": "AI depth: DA-V2 Small inference",
+   "image": "sRGB 0.30 MP (synthetic, scaled)",
+   "wall": null,
+   "peakBytes": null,
+   "error": "skipped: the AI Depth model isn’t on this device (Settings → AI models downloads it; the benchmark never does)"
+  }
+ ]
+}

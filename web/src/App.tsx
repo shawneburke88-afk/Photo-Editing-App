@@ -6,7 +6,7 @@ import { DevelopView } from './develop/DevelopView'
 import { LibraryView } from './library/LibraryView'
 import { startNewPhotosMetadata } from './library/metadataPresets'
 import { launched } from './pwa/launch'
-import { UpdateNotice } from './pwa/UpdateNotice'
+import { UpdateButton, UpdateNotice } from './pwa/UpdateNotice'
 import { SidecarBanner } from './sidecar/SidecarBanner'
 import { sidecars } from './sidecar/sync'
 import { CommandSearch } from './settings/CommandSearch'
@@ -142,6 +142,7 @@ export default function App() {
             </button>
           ))}
         </nav>
+        <UpdateButton />
         <button className="gear" onClick={() => setPanel({ kind: 'settings' })} title={withKey('Settings', 'app.settings')} aria-label="Settings">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden>
             <circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray="3.38 3.38" />

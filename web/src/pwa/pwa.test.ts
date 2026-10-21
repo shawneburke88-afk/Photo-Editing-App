@@ -3,7 +3,7 @@ import { RAW_EXTENSIONS } from '../engine/raw/decoder'
 import manifestText from '../../public/manifest.webmanifest?raw'
 import packageText from '../../package.json?raw'
 import { isLaunchablePhoto, launched, receiveLaunch } from './launch'
-import { newReleases, releaseNotes, type Release } from './notes'
+import { compareVersions, newReleases, releaseNotes, updateInfo, type Release } from './notes'
 
 const manifest = JSON.parse(manifestText)
 const publicFiles = Object.keys(import.meta.glob('../../public/**/*')).map((p) => p.replace('../../public/', ''))
@@ -72,5 +72,45 @@ describe('Open with LightBench', () => {
     expect(launched.get()).toEqual([])
     expect(calls).toBe(2)
     stop()
+  })
+})
+
+describe('Update ready after a rollback (an earlier version)', () => {
+  const r = (version: string): Release => ({ version, date: '2026-01-01', newFeatures: ['x'], bugFixes: [] })
+
+  it('compares versions by their numbers, ignoring the commit', () => {
+    expect(compareVersions('0.6.12+abc1234', '0.6.13+def5678')).toBeLessThan(0)
+    expect(compareVersions('0.10.0', '0.9.9')).toBeGreaterThan(0)
+    expect(compareVersions('1.0.0', '0.99.99')).toBeGreaterThan(0)
+    expect(compareVersions('0.6.13+abc', '0.6.13+def')).toBe(0)
+    expect(compareVersions('', '0.6.13')).toBe(0)
+    expect(compareVersions('undefined+dev', '0.6.13')).toBe(0)
+  })
+
+  it('a newer build lists its new releases', () => {
+    expect(updateInfo({ version: '0.6.14+aaa', releases: [r('0.6.14'), r('0.6.13')] }, '0.6.13+bbb', [r('0.6.13')])).toEqual({ version: '0.6.14+aaa', releases: [r('0.6.14')], earlier: false })
+  })
+
+  it('an earlier build (the website rolled back) is marked earlier and lists no releases', () => {
+    const u = updateInfo({ version: '0.6.12+ccc', releases: [r('0.6.12'), r('0.6.11')] }, '0.6.14+aaa', [r('0.6.14'), r('0.6.13'), r('0.6.12'), r('0.6.11')])
+    expect(u).toEqual({ version: '0.6.12+ccc', releases: [], earlier: true })
+  })
+
+  it('the same version again (another build of it) is not earlier', () => {
+    expect(updateInfo({ version: '0.6.13+ccc', releases: [r('0.6.13')] }, '0.6.13+aaa', [r('0.6.13')])).toEqual({ version: '0.6.13+ccc', releases: [], earlier: false })
+  })
+
+  it('a build that doesn’t answer shows no version and no releases', () => {
+    expect(updateInfo(null, '0.6.13+aaa', [r('0.6.13')])).toEqual({ version: '', releases: [], earlier: false })
+  })
+})
+
+describe('the top bar update button', () => {
+  it('names each waiting state and hides when there is none', async () => {
+    const { updateLabel } = await import('./register')
+    expect(updateLabel({ kind: 'none' })).toBeNull()
+    expect(updateLabel({ kind: 'ready', version: '0.6.15', releases: [], earlier: false })).toBe('Update ready')
+    expect(updateLabel({ kind: 'ready', version: '0.6.12', releases: [], earlier: true })).toBe('Earlier version ready')
+    expect(updateLabel({ kind: 'elsewhere' })).toBe('Reload needed')
   })
 })
