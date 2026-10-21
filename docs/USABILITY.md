@@ -284,4 +284,4 @@ From the owner's answers to the roadmap ([ROADMAP.md](ROADMAP.md), section 6) an
 | Hardware before 1.0 | The owner's laptop only. |
 | Lightroom interop | Ships unverified, and says so plainly. |
 | Tool search naming | Typing another app's name (e.g. "Clarity", "Shadows") finds the matching LightBench tool, but results show only LightBench's own names; no other app is named in the UI. |
-| Still open | What camera profiles v1 contains (the owner asked what camera profiles are). |
+| Camera profiles v1 | Version 1 has all three: LightBench's own looks, with today's look kept as "Standard"; importing `.cube` looks; and reading DCP camera profiles, after a licence check. Old edits stay unchanged: an edit with no profile set means Standard. |

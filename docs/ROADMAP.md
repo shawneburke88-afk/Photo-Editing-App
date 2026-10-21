@@ -39,7 +39,7 @@ _First written on 2026-10-21 from `origin/main` at 0.6.9 and the open branches (
 | **AI Auto, Auto for a mask** | Waits for the AI masks | — |
 | **Faces and blinks** | Needs a decision | ONNX BlazeFace, or MediaPipe (which has telemetry). No embedding model passes the rule. YuNet passes for face boxes (AI_MASKS.md). |
 | **Tool search** | Researched; naming decided 2026-10-21 | Questions C1–C5. **Naming (owner, 2026-10-21):** typing another app's name (e.g. "Clarity", "Shadows") finds the matching LightBench tool, but results show only LightBench's own names; no other app is named in the UI. Needs a control registry (stable ids for the sliders). |
-| **Camera profiles and looks** | Needs decisions | **Still open:** what v1 contains (question 4 below). Freeze "Standard"; `.cube` LUTs; DCP files; names that clash with Auto's looks. |
+| **Camera profiles and looks** | Decided 2026-10-21 | **Owner:** version 1 has all three: LightBench's own looks, with today's look kept as "Standard"; importing `.cube` looks; and reading DCP camera profiles, after a licence check. Old edits stay unchanged: an edit with no profile set means Standard. Still to settle in the build: names that clash with Auto's looks; the DCP licence check. |
 | **Library gaps** | Planned | Missing-file marking, keyword renaming and synonyms, collection sets, preset export, metadata undo, EXIF editing. Lightroom catalog import is postponed. |
 | **Export extras** | Planned | AVIF, PNG optimisation, "Export with this profile". |
 | **Release discipline** | Built in the hardening build, except the published minimum browsers and GPUs | A speed check on every push to main and every pull request (warnings only; no time budgets yet, as they must be confirmed on the owner's GPU first), release tags `v<version>`, one-click rollback ([ROLLBACK.md](ROLLBACK.md)). Not on GitHub's servers yet when written: the workflows were checked with actionlint, not run. |
@@ -71,7 +71,7 @@ At most two builds at a time.
 3. **AI masks**, in this order inside the build: click/hover select, people/faces, sky, subject. In 1.0.
 4. **AI Denoise** (RawNIND). It reuses the AI runtime, and as an opt-in tool it leaves old edits unchanged.
 5. **Tool search**, with the control registry it needs (naming decided: other apps' names find LightBench's tools; only LightBench's names are shown).
-6. **Camera profiles and looks** (v1 contents still open: the owner asked what camera profiles are, so this is not decided yet). Old edits don't change, because an absent value means Standard v1.
+6. **Camera profiles and looks**: version 1 has all three: LightBench's own looks, with today's look kept as "Standard"; importing `.cube` looks; and reading DCP camera profiles, after a licence check. Old edits stay unchanged: an edit with no profile set means Standard.
 7. **Library and data gaps**: missing files, keyword renaming, preset export, keeping copied settings.
 8. **1.0 release**: published minimum browsers and GPUs, the trust promise, notices, and a decision on patent advice.
 
@@ -82,7 +82,7 @@ The first version of this roadmap had an owner feedback batch, AI Denoise before
 1. **Should AI subject/sky masks be in 1.0?** (a) No, they come in 1.1 *(recommended)* · (b) Yes, which delays 1.0. — **Answered: yes, in 1.0**, after AI Remove and before AI Denoise (section 6).
 2. **After the in-flight work, what comes first?** (a) Hardening and cleanup *(recommended)* · (b) AI Denoise. — **Answered: hardening and cleanup.**
 3. **How should tool search treat other apps' names?** (a) Find tools by Lightroom and darktable names but show only LightBench's *(recommended)* · (b) Show "Lightroom: …" in results · (c) After 1.0. — **Answered (2026-10-21): (a).** Typing another app's name (e.g. "Clarity", "Shadows") finds the matching LightBench tool, but results show only LightBench's own names; no other app is named in the UI.
-4. **Camera profiles v1?** (a) "Standard", LightBench's own looks and `.cube` import, no DCP *(recommended)* · (b) Also DCP files, after a legal check · (c) After 1.0. — **Still open:** the owner asked what camera profiles are, so it isn't decided yet.
+4. **Camera profiles v1?** (a) "Standard", LightBench's own looks and `.cube` import, no DCP *(recommended)* · (b) Also DCP files, after a legal check · (c) After 1.0. — **Answered (2026-10-21): (b).** Version 1 has all three: LightBench's own looks, with today's look kept as "Standard"; importing `.cube` looks; and reading DCP camera profiles, after a licence check. Old edits stay unchanged: an edit with no profile set means Standard.
 5. **Hardware before 1.0?** (a) Test one integrated-GPU laptop and one AMD or Apple machine *(recommended)* · (b) Use the owner's laptop only. — **Answered: the owner's laptop only.**
 6. **How do we prove Lightroom interop?** (a) Verify against Lightroom-written .xmp files (from a trial or a friend) *(recommended)* · (b) Ship unverified. — **Answered: ship unverified, said plainly.**
 
@@ -96,4 +96,5 @@ The first version of this roadmap had an owner feedback batch, AI Denoise before
 - **AI Remove (2026-10-21, after the Hugging Face check):** an in-app download from Hugging Face at a pinned commit, recorded in [research/PHASE4_MODELS.md](research/PHASE4_MODELS.md#ai-remove-delivery-and-licence-owner-2026-10-21).
 - **The order:** hardening → AI Remove → AI masks (click/hover, people/faces, sky, subject) → AI Denoise → tool search → camera profiles → library gaps → 1.0.
 - **Tool search naming (2026-10-21):** typing another app's name (e.g. "Clarity", "Shadows") finds the matching LightBench tool, but results show only LightBench's own names; no other app is named in the UI.
-- Still open: camera profiles v1 (question 4); the owner asked what camera profiles are.
+- **Camera profiles v1 (2026-10-21):** version 1 has all three: LightBench's own looks, with today's look kept as "Standard"; importing `.cube` looks; and reading DCP camera profiles, after a licence check. Old edits stay unchanged: an edit with no profile set means Standard.
+- No roadmap questions remain open.

@@ -10,6 +10,7 @@
 
 import * as ort from 'onnxruntime-web/webgpu'
 import { exposeRpc } from '../lib/rpc'
+import { AI_ADAPTER_OPTIONS, gpuName, type GpuName } from './adapter'
 
 export type Provider = 'webgpu' | 'wasm'
 
@@ -21,7 +22,7 @@ let lostMessage: string | null = null
 async function probe(): Promise<{ webgpu: boolean; f16: boolean; adapter: string }> {
   const gpu = (self.navigator as Navigator & { gpu?: GPU }).gpu
   if (!gpu) return { webgpu: false, f16: false, adapter: '' }
-  const a = await gpu.requestAdapter().catch(() => null)
+  const a = await gpu.requestAdapter(AI_ADAPTER_OPTIONS).catch(() => null)
   if (!a) return { webgpu: false, f16: false, adapter: '' }
   const i = a.info
   return { webgpu: true, f16: a.features.has('shader-f16'), adapter: [i?.vendor, i?.architecture, i?.device, i?.description].filter(Boolean).join(' ') }
@@ -40,7 +41,17 @@ async function watchDevice() {
   }
 }
 
-async function load(key: string, model: ArrayBuffer, wasm: ArrayBuffer, provider: Provider, threads: number): Promise<{ inputs: string[]; outputs: string[]; inputShape: (number | string)[] }> {
+/** The card of the device ONNX Runtime's WebGPU provider made (null for the CPU provider or when it isn't known). */
+async function deviceGpu(provider: Provider): Promise<GpuName | null> {
+  if (provider !== 'webgpu') return null
+  try {
+    return gpuName((await ort.env.webgpu.device).adapterInfo)
+  } catch {
+    return null
+  }
+}
+
+async function load(key: string, model: ArrayBuffer, wasm: ArrayBuffer, provider: Provider, threads: number): Promise<{ inputs: string[]; outputs: string[]; inputShape: (number | string)[]; gpu: GpuName | null }> {
   if (lostMessage) throw new Error(`gpu-lost: ${lostMessage}`)
   if (!wasmSet) {
     ort.env.wasm.wasmBinary = wasm
@@ -48,15 +59,17 @@ async function load(key: string, model: ArrayBuffer, wasm: ArrayBuffer, provider
     ort.env.wasm.proxy = false
     ort.env.wasm.numThreads = Math.max(1, threads)
     ort.env.logLevel = 'error'
+    // The adapter ONNX Runtime checks WebGPU with; the device it makes already asks for high performance (adapter.ts).
+    ort.env.webgpu.powerPreference = 'high-performance'
     wasmSet = true
   }
   const old = sessions.get(key)
-  if (old && old.provider === provider) return describe(old.session)
+  if (old && old.provider === provider) return { ...describe(old.session), gpu: await deviceGpu(provider) }
   if (old) await old.session.release().catch(() => {})
   const session = await ort.InferenceSession.create(new Uint8Array(model), { executionProviders: [provider], graphOptimizationLevel: 'all', logSeverityLevel: 3 })
   sessions.set(key, { session, provider })
   if (provider === 'webgpu') await watchDevice()
-  return describe(session)
+  return { ...describe(session), gpu: await deviceGpu(provider) }
 }
 
 function describe(s: ort.InferenceSession) {
