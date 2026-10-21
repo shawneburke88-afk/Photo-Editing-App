@@ -438,10 +438,12 @@ function inputsOf(inspect, file) {
 }
 
 const SESSIONS = []
+/** `ep` is 'cpu', 'webgpu' or 'webgpu-basic' (WebGPU with only basic graph optimisations: no fused contrib ops). */
 async function session(path, ep) {
   const O = loadOrt()
-  const opts = { executionProviders: [ep], graphOptimizationLevel: 'all' }
-  if (ep === 'webgpu') {
+  const [name, level] = ep.split('-')
+  const opts = { executionProviders: [name], graphOptimizationLevel: level ?? 'all' }
+  if (name === 'webgpu') {
     // Verbose: the EP logs each node it has no kernel for, and the session logs where nodes were placed.
     O.env.logLevel = 'verbose'
     opts.logSeverityLevel = 0
@@ -549,8 +551,15 @@ function finish(m, variant, ep, photo, map, mw, mh, er, dr, primary, extra) {
   const outs = { ...(er ? prefixed('encoder.', describeOutputs(er.out)) : {}), ...prefixed(er ? 'decoder.' : '', describeOutputs(dr.out)) }
   return {
     ep, photo: photo.name, cpuMs: er ? { encoder: er.runMs, decoder: dr.runMs, total: er.runMs + dr.runMs, firstEncoder: er.firstMs, firstDecoder: dr.firstMs } : { total: dr.runMs, first: dr.firstMs },
-    outputsFinite: Object.values(outs).every((o) => o.finite), outputs: outs, mask, vsCpu: compareWithCpu(key, ep, primary), ...extra,
+    outputsFinite: Object.values(outs).every((o) => o.finite), outputs: outs, mask, vsCpu: compareWithCpu(key, ep, primary),
+    vsCpuEach: { ...(er ? compareEach(`${key}-enc`, ep, er.out) : {}), ...compareEach(`${key}-dec`, ep, dr.out) }, ...extra,
   }
+}
+/** Every float output against the CPU's (max / mean absolute difference). */
+function compareEach(key, ep, out) {
+  const r = {}
+  for (const [n, t] of Object.entries(out)) if (t.type === 'float32' || t.type === 'float16') r[n] = compareWithCpu(`${key}-${n}`, ep, t)
+  return ep === 'cpu' ? {} : r
 }
 const prefixed = (p, o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [p + k, v]))
 
@@ -728,6 +737,14 @@ function plan(pins) {
     const variants = m.kind === 'sam' ? [...new Set(Object.keys(m.files).map((k) => k.split('/')[0]))] : m.kind === 'evit' ? Object.keys(m.exported) : Object.keys(m.files)
     for (const v of variants) for (const ph of photos) jobs.push({ key: `${m.id}/${v}/${ph}`, m, v, ph })
   }
+  // Diagnostics on WebGPU: the models whose WebGPU result differed from the CPU or failed in run 1, again with only
+  // basic graph optimisations (no fused com.microsoft kernels), compared with the same CPU result.
+  if (RUN_EP === 'webgpu') {
+    for (const k of ['sam21-tiny/fp32/astronaut', 'slimsam-77/fp16/astronaut', 'birefnet-lite/fp32/astronaut']) {
+      const j = jobs.find((x) => x.key === k)
+      if (j) jobs.push({ ...j, key: `${k}@basic`, ep: 'webgpu-basic' })
+    }
+  }
   return jobs
 }
 
@@ -824,7 +841,7 @@ async function runOne() {
   const job = plan(pins).find((j) => j.key === opt('--only'))
   let res
   try {
-    res = await runJob(job, opt('--ep', 'webgpu'), pins, inspect)
+    res = await runJob(job, job.ep ?? opt('--ep', 'webgpu'), pins, inspect)
   } catch (e) {
     res = { ep: opt('--ep'), error: String(e.message ?? e).slice(0, 1500) }
   }
@@ -856,7 +873,7 @@ function report() {
         notes: ins?.notes ?? null,
       }
     })
-    const runs = Object.fromEntries(Object.entries(cpu).filter(([k]) => k.startsWith(`${m.id}/`)).map(([k, r]) => [k, { cpu: r, webgpu: gpu[k] ?? null }]))
+    const runs = Object.fromEntries(Object.entries(cpu).filter(([k]) => k.startsWith(`${m.id}/`)).map(([k, r]) => [k, { cpu: r, webgpu: gpu[k] ?? null, webgpuBasic: gpu[`${k}@basic`] ?? null }]))
     const res = { id: m.id, name: m.name, repo: p.repo, commit: p.commit, lastModified: p.lastModified, licence: p.licence, licenceTags: p.licenceTags, licenceLine: p.licenceLine, pinError: p.error ?? null, onnxListed: p.onnxListed, tflite: p.tflite, files: fileRows, runs }
     if (m.kind === 'selfie') res.tfliteCompare = tfl
     if (m.kind === 'evit') res.export = evit
@@ -874,6 +891,8 @@ function report() {
       const c = r.cpu
       const g = r.webgpu
       const gs = !g ? '—' : g.error ? `error: ${g.error.slice(0, 160)}` : `ran, finite ${g.outputsFinite}, max|Δ| vs CPU ${g.vsCpu?.maxAbsDiff ?? '—'}, no-kernel ${JSON.stringify(g.webgpu?.kernelNotFound ?? {})}`
+      const b = r.webgpuBasic
+      if (b) L.push(`| ${k} @basic | | | | ${b.error ? `error: ${b.error.slice(0, 160)}` : `ran, finite ${b.outputsFinite}, max|Δ| vs CPU ${b.vsCpu?.maxAbsDiff ?? '—'}`} |`)
       L.push(`| ${k} | ${c.error ? `error: ${c.error.slice(0, 200)}` : JSON.stringify(c.cpuMs)} | ${c.outputsFinite ?? '—'} | ${c.mask?.coverage ?? '—'} | ${gs} |`)
     }
     if (m.kind === 'selfie') L.push('', `TFLite comparison: ${tfl ? JSON.stringify(tfl.summary ?? tfl) : 'not run'}`)

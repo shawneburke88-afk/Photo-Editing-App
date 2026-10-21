@@ -233,8 +233,11 @@ jobs:
           python -m venv "${RUNNER_TEMP}/evenv"
           . "${RUNNER_TEMP}/evenv/bin/activate"
           pip install --quiet torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
-          pip install --quiet triton==3.1.0 onnx onnxsim onnxruntime omegaconf pyyaml pillow tqdm numpy \
-            "git+https://github.com/facebookresearch/segment-anything.git"
+          # Keep torch 2.5.1 (its torch.onnx.export defaults to the TorchScript exporter the repo's export uses).
+          printf 'torch==2.5.1\ntorchvision==0.20.1\n' > "${RUNNER_TEMP}/torch-pin.txt"
+          pip install --quiet -c "${RUNNER_TEMP}/torch-pin.txt" triton==3.1.0 onnx onnxsim onnxruntime omegaconf pyyaml pillow \
+            tqdm numpy timm einops scipy "git+https://github.com/facebookresearch/segment-anything.git"
+          python -c "import torch, timm; print('torch', torch.__version__, 'timm', timm.__version__)"
           git clone --quiet --depth 1 https://github.com/mit-han-lab/efficientvit.git "${RUNNER_TEMP}/efficientvit"
           python -I web/scripts/masks-prep/export_efficientvit.py --dir "${MASKS_DIR}" --repo "${RUNNER_TEMP}/efficientvit" --opset 17 --size 512
 
