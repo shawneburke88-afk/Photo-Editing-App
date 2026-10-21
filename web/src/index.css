@@ -946,3 +946,14 @@ button.kbd:hover { border-color: var(--muted); }
 /* Diagnostics: the GPU memory readout (Settings → Diagnostics, or ?memdebug) */
 .mem-readout { position: fixed; right: 8px; bottom: 8px; z-index: 50; padding: 3px 8px; border-radius: 4px; background: rgba(0, 0, 0, 0.72); color: #e8e8e8; font: 11px/1.4 ui-monospace, monospace; pointer-events: none; }
 .adapter-notice { position: absolute; left: 50%; bottom: 80px; transform: translateX(-50%); z-index: 4; max-width: min(560px, calc(100% - 20px)); display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); font-size: 0.8rem; }
+
+/* AI models (Parts 24 and 26): download progress, the model's info, AI Remove's progress in the Remove panel. */
+.model-progress { position: relative; height: 18px; border-radius: 4px; background: rgba(255, 255, 255, 0.08); overflow: hidden; margin: 8px 0; flex: 1; }
+.model-progress > div { position: absolute; inset: 0 auto 0 0; background: var(--accent); opacity: 0.55; transition: width 0.2s; }
+.model-progress > span { position: relative; padding: 0 6px; line-height: 18px; }
+.model-progress.ai-progress { height: 8px; margin: 4px 8px 4px 0; }
+.model-dialog { max-width: 620px; max-height: 90vh; overflow: auto; }
+.model-info dt { font-weight: 600; margin-top: 6px; }
+.model-info dd { margin: 2px 0 0; }
+.model-info .model-file { display: block; }
+.remove-overlay .spot-pin.ai { fill: #f0c75c; }
