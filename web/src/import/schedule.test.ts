@@ -99,9 +99,11 @@ describe('runOrdered', () => {
           resolve(i * 10)
         })
       }),
-      commit: async (i, r) => {
-        expect(r).toBe(i * 10)
-        committed.push(i)
+      commit: async (batch) => {
+        for (const { index, result } of batch) {
+          expect(result).toBe(index * 10)
+          committed.push(index)
+        }
       },
     })
     await tick()
@@ -133,7 +135,7 @@ describe('runOrdered', () => {
         await tick()
         return i
       },
-      commit: async (i) => void log.push(`commit ${i}`),
+      commit: async (batch) => void log.push(...batch.map((b) => `commit ${b.index}`)),
     })
     expect(log.indexOf('run 1')).toBeGreaterThan(log.indexOf('commit 0'))
     expect(log.filter((l) => l.startsWith('commit'))).toEqual(['commit 0', 'commit 1', 'commit 2'])
@@ -152,7 +154,7 @@ describe('runOrdered', () => {
         await tick()
         return i
       },
-      commit: async (i) => void committed.push(i),
+      commit: async (batch) => void committed.push(...batch.map((b) => b.index)),
       signal: stop.signal,
     })
     expect(n).toBe(2)
@@ -216,5 +218,27 @@ describe('runOrdered', () => {
     }
     expect(await done).toBe(4)
     expect(most).toBe(3)
+  })
+
+  it('commits the photos finished by then together, in order, up to the batch size, keeping twins apart', async () => {
+    const gates = new Map<number, () => void>()
+    const batches: number[][] = []
+    const done = runOrdered({
+      order: [0, 1, 2, 3, 4, 5],
+      deps: Array.from({ length: 6 }, () => []),
+      workers: () => 6,
+      maxBatch: 3,
+      // 4 and 5 are twins: never in one batch.
+      joins: (inBatch, index) => !(index === 5 && inBatch.includes(4)),
+      run: (i) => new Promise<number>((r) => gates.set(i, () => r(i))),
+      commit: async (batch) => void batches.push(batch.map((b) => b.index)),
+    })
+    await tick()
+    for (const i of [5, 4, 3, 2, 1]) gates.get(i)!()
+    await tick()
+    expect(batches).toEqual([])
+    gates.get(0)!()
+    expect(await done).toBe(6)
+    expect(batches).toEqual([[0, 1, 2], [3, 4], [5]])
   })
 })

@@ -188,25 +188,25 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
     }
     for (const f of files) {
       let size = 0
-      let t0 = 0
+      let started = false
+      const t = { ms: 0 }
       const raw = !/\.jpe?g$/i.test(f.name)
       void f.handle
         .getFile()
         .then((file) => {
           size = file.size
-          // From when it is handed to the pool (includes the wait for a free worker).
-          t0 = performance.now()
-          return pool.probe(file)
+          started = true
+          return pool.probe(file, t)
         })
         .then((r) => {
-          probed(performance.now() - t0, size, true, raw)
+          probed(t.ms, size, true, raw)
           const thumbUrl = r.thumb ? URL.createObjectURL(new Blob([r.thumb], { type: 'image/jpeg' })) : undefined
           batch.set(f, { status: 'ready', item: { file: f, meta: r.meta, thumb: r.thumb, xmp: r.xmp, camera: r.camera, iptcKeywords: r.iptcKeywords }, thumbUrl })
           schedule()
         })
         .catch((e: Error) => {
           if (e.message === 'cancelled') return
-          probed(t0 ? performance.now() - t0 : 0, size, false, raw)
+          probed(started ? t.ms : 0, size, false, raw)
           batch.set(f, { status: 'error', error: e.message })
           schedule()
         })

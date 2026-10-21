@@ -42,7 +42,7 @@ export function ImportProgressView({ onClose }: { onClose: () => void }) {
         <div className="progress"><div className="progress-bar" style={{ width: `${pct}%` }} /></div>
         {progress && (
           <p>
-            {passText(progress)}
+            {finished ? `${progress.done.toLocaleString('en-US')} of ${plural(progress.total, 'photo', 'photos')}` : passText(progress)}
             {progress.current && !finished && <span className="muted"> · {progress.current}</span>}
           </p>
         )}

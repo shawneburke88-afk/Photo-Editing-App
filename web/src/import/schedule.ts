@@ -12,8 +12,9 @@
 //   with is done; when RAW first would put that earlier photo later, it is moved up instead (rare: e.g. two cameras'
 //   DSC_0001.JPG on the same day).
 // - The pool: up to `workers()` photos are copied at once, started in the execution order; their results are committed
-//   (added to the library) strictly in that order, so ids, progress and "Stop" behave as one at a time. At most
-//   `window` photos are started past the oldest one not yet committed, which bounds what waits in memory.
+//   (added to the library) strictly in that order, so ids, progress and "Stop" behave as one at a time; photos copied
+//   by then go in together (one catalog transaction instead of one each). At most `window` photos are started past
+//   the oldest one not yet committed, which bounds what waits in memory.
 
 import { isJpegName, pairTwins } from '../catalog/stacks'
 import { fullSidecarName, stemSidecarName } from '../sidecar/naming'
@@ -112,12 +113,18 @@ export interface PoolOptions<R> {
   deps: number[][]
   /** How many may run at once now (read before each start, so it can follow the CPU budget). */
   workers: () => number
-  /** At most this many started past the oldest not yet committed (default 4 × workers). */
+  /** At most this many started past the oldest not yet committed (default 2 × workers). */
   window?: number
   /** Copies one item. Should not throw: failures are part of its result. */
   run: (index: number) => Promise<R>
-  /** Called for each started item, strictly in execution order, after its run finished. */
-  commit: (index: number, result: R) => Promise<void>
+  /**
+   * Called with the finished items, strictly in execution order: consecutive finished items together (up to
+   * `maxBatch`, default 1), so the library can add them in one transaction.
+   */
+  commit: (batch: { index: number; result: R }[]) => Promise<void>
+  maxBatch?: number
+  /** Whether `index` may join a batch holding `batch` (default: yes). */
+  joins?: (batch: number[], index: number) => boolean
   /** Stops starting new items (the ones running finish and are committed). */
   signal?: AbortSignal
   /** Called when the number of workers may have changed (e.g. a CPU-budget change); wakes the pool. */
@@ -152,7 +159,7 @@ export function runOrdered<R>(o: PoolOptions<R>): Promise<number> {
     const pump = () => {
       if (done) return
       const width = Math.max(1, o.workers())
-      const window = o.window ?? width * 4
+      const window = o.window ?? width * 2
       while (!stopped() && next < o.order.length && running < width && next - committed < window && depsDone(o.order[next])) {
         const p = next++
         const idx = o.order[p]
@@ -177,10 +184,15 @@ export function runOrdered<R>(o: PoolOptions<R>): Promise<number> {
       committing = true
       try {
         while (results.has(committed)) {
-          const r = results.get(committed) as R
-          results.delete(committed)
-          await o.commit(o.order[committed], r)
-          committed++
+          const batch: { index: number; result: R }[] = []
+          let p = committed
+          while (results.has(p) && batch.length < (o.maxBatch ?? 1) && (!batch.length || (o.joins?.(batch.map((b) => b.index), o.order[p]) ?? true))) {
+            batch.push({ index: o.order[p], result: results.get(p) as R })
+            results.delete(p)
+            p++
+          }
+          await o.commit(batch)
+          committed = p
         }
       } catch (e) {
         done = true

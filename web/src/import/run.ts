@@ -5,7 +5,7 @@
 import type { Catalog } from '../catalog/client'
 import { masksFromLightroom } from '../sidecar/lightroomMasks'
 import { loadThumb, saveThumb } from '../catalog/thumbs'
-import type { PhotoMeta, PhotoMetadata } from '../catalog/types'
+import type { NewPhoto, PhotoMeta, PhotoMetadata } from '../catalog/types'
 import { getDirAt, resolveRoot } from '../platform/roots'
 import { CHUNK_BYTES, copyVerified } from './copy'
 import { dateFolder, joinPath, renamedFile, type RenameTemplate } from './plan'
@@ -273,6 +273,9 @@ export interface ImportDetails {
 /** How many photos are copied at once: up to 3, at least 2 (foreground work on the CPU budget, engine/cpu-budget.ts). */
 export const COPY_WORKERS = { want: 3, min: 2 }
 
+/** At most this many copied photos are added to the library in one catalog transaction. */
+const COMMIT_BATCH = 16
+
 /** `?importWorkers=N` (testing and measurements): copy N photos at once instead. */
 function workersOverride(): number | null {
   try {
@@ -414,64 +417,90 @@ export async function runImport(
     }
   }
 
-  /** Adds a copied photo to the library: one at a time, in the planned order. */
-  const commit = async (index: number, r: Copied) => {
-    const item = ordered[index]
-    progress.current = item.file.name
-    const t = r.t
-    let outcome = 'failed'
-    if (!r.ok) {
-      progress.failed.push({ name: item.file.name, error: r.error ?? 'failed' })
-    } else {
-      try {
-        const sidecar = r.sidecar
-        // The sidecar's stack is applied with the photo (its twin may join it at once); the rest in the background.
-        const own = sidecar && !sidecar.borrowed ? readXmp(sidecar.text) : null
-        const ownStack = own?.stack
-        const other = plan.twin.get(index)
-        const otherId = other === undefined ? undefined : added.get(other)
-        const pairNow = otherId !== undefined && other !== undefined && !ownStack && !sidecarStacked.has(other)
-        const raw = isRawFile(item.file.name)
-        const details: ImportDetails = {
-          ...(sidecar ? { sidecar: { text: sidecar.text, borrowed: sidecar.borrowed } } : item.xmp ? { xmp: item.xmp } : {}),
-          ...(item.camera ? { camera: item.camera } : {}),
-          ...(item.iptcKeywords?.length ? { iptcKeywords: item.iptcKeywords } : {}),
-          ...(stackPairs ? { pair: true } : {}),
-        }
-        const folderPath = joinPath(subPath, r.folder!)
-        const meta = { ...item.meta, fileName: r.fileName!, rootId, folderPath, originalName: item.file.name }
-        // The row and what is still to do go in together, so nothing is lost if the tab closes now.
-        if (otherId !== undefined) details.stackWith = { id: otherId, how: pairNow ? 'pair' : 'join', thisOnTop: raw }
-        const [id] = await timed(t, 'catalog', () => catalog.addPhotos([{ ...meta, importDetails: JSON.stringify(details) }]))
-        if (id === null) {
-          progress.skipped++
-          outcome = 'skipped'
-        } else {
-          progress.imported++
-          outcome = 'added'
-          added.set(index, id)
-          if (item.thumb) await timed(t, 'thumbnail', () => saveThumb(id, item.thumb!))
-          if (ownStack) {
-            await timed(t, 'stacking', () => catalog.joinStackByUid(id, ownStack.uid, ownStack.top))
-            sidecarStacked.add(index)
-          }
-          if (otherId !== undefined) {
-            // A failed stack doesn't fail the photo: it is in the library either way (the background details try again).
-            await timed(t, 'stacking', () =>
-              (pairNow ? catalog.createStack([id, otherId], raw ? id : otherId) : catalog.stackRawJpegPairs([id])).then(
-                () => {},
-                (err) => console.warn('RAW+JPEG stacking failed', err),
-              ),
-            )
-          }
-        }
-      } catch (err) {
-        progress.failed.push({ name: item.file.name, error: message(err) })
+  /**
+   * Adds copied photos to the library, in the planned order: the photos copied by then together, in one catalog
+   * transaction (each with what is left for the background), then each one's thumbnail and stacks.
+   */
+  const commit = async (batch: { index: number; result: Copied }[]) => {
+    const rows: NewPhoto[] = []
+    const prepared: { index: number; r: Copied; row: number; ownStack?: { uid: string; top: boolean }; otherId?: number; pairNow: boolean }[] = []
+    for (const { index, result: r } of batch) {
+      const item = ordered[index]
+      if (!r.ok) {
+        prepared.push({ index, r, row: -1, pairNow: false })
+        continue
       }
+      const sidecar = r.sidecar
+      // The sidecar's stack is applied with the photo (its twin may join it at once); the rest in the background.
+      const ownStack = sidecar && !sidecar.borrowed ? readXmp(sidecar.text).stack : undefined
+      const other = plan.twin.get(index)
+      const otherId = other === undefined ? undefined : added.get(other)
+      const pairNow = otherId !== undefined && other !== undefined && !ownStack && !sidecarStacked.has(other)
+      const details: ImportDetails = {
+        ...(sidecar ? { sidecar: { text: sidecar.text, borrowed: sidecar.borrowed } } : item.xmp ? { xmp: item.xmp } : {}),
+        ...(item.camera ? { camera: item.camera } : {}),
+        ...(item.iptcKeywords?.length ? { iptcKeywords: item.iptcKeywords } : {}),
+        ...(stackPairs ? { pair: true } : {}),
+        ...(otherId !== undefined ? { stackWith: { id: otherId, how: pairNow ? 'pair' : 'join', thisOnTop: isRawFile(item.file.name) } as const } : {}),
+      }
+      // The row and what is still to do go in together, so nothing is lost if the tab closes now.
+      rows.push({ ...item.meta, fileName: r.fileName!, rootId, folderPath: joinPath(subPath, r.folder!), originalName: item.file.name, importDetails: JSON.stringify(details) })
+      prepared.push({ index, r, row: rows.length - 1, ownStack, otherId, pairNow })
     }
-    progress.done++
-    timing.add(t, r.ok ? r.bytes : 0)
-    diagnostics.log('import-photo', { n: progress.done, kind: isRawFile(item.file.name) ? 'RAW' : 'JPEG', pass: plan.phase[index], bytes: r.bytes, outcome, ms: roundTimes(t) })
+    let ids: (number | null)[] = []
+    let failure = ''
+    if (rows.length) {
+      const start = performance.now()
+      try {
+        ids = await catalog.addPhotos(rows)
+      } catch (err) {
+        failure = message(err)
+      }
+      // The transaction's time, shared by its photos.
+      const share = (performance.now() - start) / rows.length
+      for (const x of prepared) if (x.row >= 0) x.r.t.catalog = (x.r.t.catalog ?? 0) + share
+    }
+    for (const { index, r, row, ownStack, otherId, pairNow } of prepared) {
+      const item = ordered[index]
+      const t = r.t
+      progress.current = item.file.name
+      let outcome = 'failed'
+      if (!r.ok || failure) {
+        progress.failed.push({ name: item.file.name, error: r.error ?? failure })
+      } else {
+        const id = ids[row]
+        try {
+          if (id === null || id === undefined) {
+            progress.skipped++
+            outcome = 'skipped'
+          } else {
+            progress.imported++
+            outcome = 'added'
+            added.set(index, id)
+            if (item.thumb) await timed(t, 'thumbnail', () => saveThumb(id, item.thumb!))
+            if (ownStack) {
+              await timed(t, 'stacking', () => catalog.joinStackByUid(id, ownStack.uid, ownStack.top))
+              sidecarStacked.add(index)
+            }
+            if (otherId !== undefined) {
+              // A failed stack doesn't fail the photo: it is in the library either way (the background details try again).
+              const raw = isRawFile(item.file.name)
+              await timed(t, 'stacking', () =>
+                (pairNow ? catalog.createStack([id, otherId], raw ? id : otherId) : catalog.stackRawJpegPairs([id])).then(
+                  () => {},
+                  (err) => console.warn('RAW+JPEG stacking failed', err),
+                ),
+              )
+            }
+          }
+        } catch (err) {
+          progress.failed.push({ name: item.file.name, error: message(err) })
+        }
+      }
+      progress.done++
+      timing.add(t, r.ok ? r.bytes : 0)
+      diagnostics.log('import-photo', { n: progress.done, kind: isRawFile(item.file.name) ? 'RAW' : 'JPEG', pass: plan.phase[index], batch: batch.length, bytes: r.bytes, outcome, ms: roundTimes(t) })
+    }
     opts.onAdded?.()
     onProgress({ ...progress })
   }
@@ -481,7 +510,12 @@ export async function runImport(
   const lease = override ? null : cpuBudget.acquire('foreground', COPY_WORKERS.want, COPY_WORKERS.min)
   const workers = () => override ?? Math.min(COPY_WORKERS.want, Math.max(COPY_WORKERS.min, lease!.slots))
   try {
-    await runOrdered({ order: plan.order, deps: plan.deps, workers, run: copyOne, commit, signal, onWake: (wake) => lease?.onChange(wake) ?? (() => {}) })
+    await runOrdered({
+      order: plan.order, deps: plan.deps, workers, run: copyOne, commit, signal, maxBatch: COMMIT_BATCH,
+      // Twins are added in separate batches, so the second one knows the first one's id (and is stacked with it).
+      joins: (inBatch, index) => !inBatch.includes(plan.twin.get(index) ?? -1),
+      onWake: (wake) => lease?.onChange(wake) ?? (() => {}),
+    })
   } finally {
     lease?.release()
   }
