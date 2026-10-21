@@ -100,7 +100,12 @@ def parity(repo, weights, unet):
     stub_fla()
     sys.path.insert(0, repo)
     os.chdir(repo)
-    from removal.v1_2.removal_model import build_removal_model, load_cfg, load_removal_model
+    # The model file alone: the package's __init__ also imports the authors' pipeline (OpenCV, PIL, the VAE …).
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('moebius_removal_model', os.path.join(repo, 'removal/v1_2/removal_model.py'))
+    rm = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rm)
+    build_removal_model, load_cfg, load_removal_model = rm.build_removal_model, rm.load_cfg, rm.load_removal_model
     cfg = load_cfg(os.path.join(repo, 'config/model_cfg/moebius.yaml'))
     t0 = time.time()
     model = build_removal_model(cfg, 20).eval()

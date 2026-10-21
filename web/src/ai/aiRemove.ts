@@ -14,6 +14,11 @@ import type { ModelEntry } from './manifest'
 import { loadGraph, releaseGraph, runGraph } from './runtime'
 import type { Provider } from './runtime.worker'
 
+/** Step-by-step trace in the console when `globalThis.__lbAiDebug` is set (tests and support; off by default). */
+const trace = (m: string) => {
+  if ((globalThis as { __lbAiDebug?: boolean }).__lbAiDebug) console.debug(`[ai-remove] ${m}`)
+}
+
 export class AiInvalidError extends Error {
   constructor() {
     super('The AI model gave invalid numbers on this GPU, so nothing was changed.')
@@ -45,24 +50,32 @@ export async function makeAiFill(m: ModelEntry, spot: Spot, size: [number, numbe
   const [w, h] = size
   const px = spotPixels(spot, w, h)
   const crop = contextRect(clipRect(spotBounds(px), w, h), w, h)
+  trace(`read ${crop.x1 - crop.x0} x ${crop.y1 - crop.y0}`)
   const prep = prepare(await readCrop(crop), crop, px, w, h)
+  trace(`prepared (gain ${prep.gain.toFixed(3)})`)
   let loadMs = 0
   const keys: Record<string, string> = {}
   const load = async (part: string) => {
     o.onProgress?.({ phase: 'load' })
+    trace(`load ${part}`)
     const r = await loadGraph(m, part, o.provider)
+    trace(`loaded ${part} in ${Math.round(r.ms)} ms`)
     loadMs += r.ms
     keys[part] = r.key
     return r.key
   }
   const run = async (part: string, feeds: Parameters<typeof runGraph>[1]) => {
     const key = keys[part] ?? (await load(part))
-    return (await gpuGate.foreground(() => runGraph(key, feeds))).data
+    trace(`run ${part}`)
+    const r = await gpuGate.foreground(() => runGraph(key, feeds))
+    trace(`ran ${part} in ${Math.round(r.ms)} ms`)
+    return r.data
   }
   const runner: MoebiusRunner = {
     phase: async (name) => {
       if (name === 'encode') await load('vae_encoder')
       if (name === 'denoise') {
+        trace('free vae_encoder')
         if (keys.vae_encoder) await releaseGraph(keys.vae_encoder)
         await load('unet')
       }

@@ -181,7 +181,8 @@ export async function runGraph(key: string, feeds: Record<string, Feed>): Promis
 export async function releaseGraph(key: string): Promise<void> {
   if (!graphs.has(key) || !rpc) return
   graphs.delete(key)
-  await rpc.release(key).catch(() => {})
+  // Freeing is best effort: never wait long for it (the next phase doesn't depend on it).
+  await Promise.race([rpc.release(key).catch(() => {}), new Promise((r) => setTimeout(r, 10_000))])
 }
 
 /** Fixed input sizes the loaded model declares (height, width), or null when they are free. */
