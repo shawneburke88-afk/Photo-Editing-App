@@ -9,6 +9,7 @@
 //    number of quarter turns and flips), so it follows the photo's geometry like every mask (owner's decision 1).
 // 4. It is encoded for the edit (depth-map.ts `encodeDepth`).
 
+import type { GpuName } from './adapter'
 import { applyMap } from '../engine/develop/geometry'
 import { invert, type Mat3 } from '../engine/color/matrix'
 import { encodeDepth, quantizeDisparity, type RasterData } from '../engine/develop/depth-map'
@@ -147,6 +148,8 @@ export interface DepthResult {
   inferMs: number
   totalMs: number
   provider: Provider
+  /** The card the model ran on (Diagnostics), null for the CPU provider or when unknown. */
+  gpu: GpuName | null
   size: [number, number]
 }
 
@@ -183,6 +186,7 @@ export async function computeDepth(m: ModelEntry, shot: AsShot, provider: Provid
     inferMs: r.ms,
     totalMs: performance.now() - t0,
     provider: r.provider,
+    gpu: r.gpu,
     size: [mw, mh],
   }
 }

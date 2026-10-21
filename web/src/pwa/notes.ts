@@ -29,3 +29,27 @@ export function newReleases(incoming: Release[], known: Release[]): Release[] {
   const seen = new Set(known.map((r) => r.version))
   return incoming.filter((r) => !seen.has(r.version))
 }
+
+/**
+ * Compares two versions ("0.6.13", "0.6.13+abc1234": the part after "+" is ignored): negative when `a` is earlier,
+ * positive when later, 0 when the same or when either can't be read.
+ */
+export function compareVersions(a: string, b: string): number {
+  const parse = (v: string) => /^(\d+)\.(\d+)\.(\d+)/.exec(v.trim())?.slice(1).map(Number) ?? null
+  const x = parse(a)
+  const y = parse(b)
+  if (!x || !y) return 0
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]
+  return 0
+}
+
+/**
+ * What "Update ready" shows for a waiting build: its version, the releases this build doesn't list, and whether it
+ * is an earlier version (the website was rolled back: docs/ROLLBACK.md). An earlier build's notes are all known here,
+ * so it lists none and says it goes back instead.
+ */
+export function updateInfo(info: BuildInfo | null, running: string, known: Release[]): { version: string; releases: Release[]; earlier: boolean } {
+  const version = info?.version ?? ''
+  const earlier = !!version && compareVersions(version, running) < 0
+  return { version, releases: earlier ? [] : newReleases(info?.releases ?? [], known), earlier }
+}

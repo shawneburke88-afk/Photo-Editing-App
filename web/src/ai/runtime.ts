@@ -3,6 +3,7 @@
 // unused, which frees its GPU memory. A failure (a lost GPU, an out-of-memory, a broken file) ends the worker too, so
 // the next try starts clean; nothing of it reaches Develop's own GPU device.
 
+import { AI_ADAPTER_OPTIONS, type GpuName } from './adapter'
 import { createRpcClient, transfer, type RpcClient } from '../lib/rpc'
 import type { ModelEntry, Variant } from './manifest'
 import { installed, load as loadFiles, loadPart } from './store'
@@ -40,7 +41,7 @@ export interface GpuProbe {
 
 let worker: Worker | null = null
 let rpc: RpcClient<RuntimeApi> | null = null
-let loaded: { key: string; provider: Provider; inputShape: (number | string)[] } | null = null
+let loaded: { key: string; provider: Provider; inputShape: (number | string)[]; gpu: GpuName | null } | null = null
 /** Graphs of a model made of several (AI Remove) loaded in the worker, by key. */
 const graphs = new Map<string, Provider>()
 let idle: ReturnType<typeof setTimeout> | null = null
@@ -72,12 +73,12 @@ function touch() {
 
 /**
  * What the GPU offers to models (asked once). Asked here rather than in the worker, so a panel can show it without
- * starting the runtime; the worker's own adapter is the browser's default one, the same.
+ * starting the runtime; it asks for the same adapter as the worker and Develop (the high-performance one, adapter.ts).
  */
 export function probeGpu(): Promise<GpuProbe> {
   probed ??= (async () => {
     const gpu = (globalThis.navigator as Navigator & { gpu?: GPU } | undefined)?.gpu
-    const a = gpu ? await gpu.requestAdapter().catch(() => null) : null
+    const a = gpu ? await gpu.requestAdapter(AI_ADAPTER_OPTIONS).catch(() => null) : null
     if (!a) return { webgpu: false, f16: false, adapter: '', maxBufferSize: 0, maxStorageBufferBindingSize: 0 }
     const i = a.info
     return {
@@ -92,6 +93,8 @@ export function probeGpu(): Promise<GpuProbe> {
 }
 
 export interface ModelRun {
+  /** The card the model ran on (WebGPU), from the runtime's device; null for the CPU provider or when unknown. */
+  gpu: GpuName | null
   data: Float32Array
   dims: number[]
   ms: number
@@ -111,7 +114,7 @@ async function ensure(m: ModelEntry, provider: Provider): Promise<{ key: string;
   const files = await loadFiles(m)
   // One thread for WebGPU (the GPU does the work; no pthread workers to start), up to 4 for the CPU provider.
   const d = await withTimeout(client().load(key, files.model, files.wasm, provider, provider === 'wasm' ? threads() : 1), RUN_TIMEOUT_MS)
-  loaded = { key, provider, inputShape: d.inputShape }
+  loaded = { key, provider, inputShape: d.inputShape, gpu: d.gpu }
   return { key, variant: rec.variant }
 }
 
@@ -121,7 +124,7 @@ export async function runModel(m: ModelEntry, data: Float32Array, dims: number[]
     const { key, variant } = await ensure(m, provider)
     const r = await withTimeout(client().run(key, data, dims), RUN_TIMEOUT_MS)
     touch()
-    return { ...r, provider, variant }
+    return { ...r, provider, variant, gpu: loaded?.gpu ?? null }
   } catch (e) {
     // Whatever went wrong, the next run starts with a fresh worker (and GPU device).
     stopRuntime()

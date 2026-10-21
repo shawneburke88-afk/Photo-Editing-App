@@ -81,6 +81,7 @@ import { EFFECTS_V1, type EffectsParams, type MaskParams } from '../develop/proc
 import type { LocalMask } from '../develop/masks'
 
 import { DeviceMemory, Retirement } from './retire'
+import { AllocCheck, gpuErrorKind } from './alloc-check'
 import { encodeUpscale, upscalePipeline, upscalePlan, type UpscalePlan } from './zoom-blit'
 
 /** The graphics adapter an engine's device belongs to (`GPUDevice.adapterInfo`), for diagnostics and notices. */
@@ -487,6 +488,7 @@ export class DevelopEngine {
   /** Set by `destroy` (a loss caused by it is not reported). */
   private destroyed = false
   private readonly lostListeners = new Set<(message: string) => void>()
+  private readonly errorListeners = new Set<(kind: 'out-of-memory' | 'validation' | 'internal', message: string) => void>()
   /** The white balance the scene texture was built with (for live previews of WB changes). */
   private builtWb: Vec3 = [1, 1, 1]
   private camToWorking: Mat3 = IDENTITY
@@ -615,8 +617,12 @@ export class DevelopEngine {
       if (this.lastRender && !this.lost) void this.render(...this.lastRender).catch(() => {})
     })
     device.addEventListener('uncapturederror', (e) => {
-      console.error('WebGPU error:', (e as GPUUncapturedErrorEvent).error.message)
-      engineTrace?.({ op: 'gpu-error', error: (e as GPUUncapturedErrorEvent).error.message })
+      const { error } = e as GPUUncapturedErrorEvent
+      const kind = gpuErrorKind(error)
+      console.error('WebGPU error:', error.message)
+      engineTrace?.({ op: 'gpu-error', error: `${kind}: ${error.message}` })
+      if (this.destroyed) return
+      for (const fn of [...this.errorListeners]) fn(kind, error.message)
     })
     void device.lost.then((info) => {
       this.lost = true
@@ -719,6 +725,25 @@ export class DevelopEngine {
   onLost(fn: (message: string) => void): () => void {
     this.lostListeners.add(fn)
     return () => void this.lostListeners.delete(fn)
+  }
+
+  /**
+   * Calls `fn` for each error on this engine's device that no error scope caught (WebGPU then only drops the work: a
+   * drawing stays black or unfinished). Returns the function that stops it. Develop uses it to restart its engine or
+   * say so (develop/gpuRecovery.ts); engines used inside `guarded` catch their errors there instead.
+   */
+  onGpuError(fn: (kind: 'out-of-memory' | 'validation' | 'internal', message: string) => void): () => void {
+    this.errorListeners.add(fn)
+    return () => void this.errorListeners.delete(fn)
+  }
+
+  /** Throws GpuWorkError('out-of-memory') if an allocation made through `alloc` failed. */
+  private async allocated(alloc: AllocCheck): Promise<void> {
+    const failed = await alloc.failure()
+    if (!failed) return
+    console.error('WebGPU error:', failed.message)
+    engineTrace?.({ op: 'gpu-error', error: `out-of-memory: ${failed.message}` })
+    throw new GpuWorkError(this.lost ? 'lost' : 'out-of-memory', failed.message)
   }
 
   /**
@@ -1284,8 +1309,10 @@ export class DevelopEngine {
     const px = w * h
     const half = Math.ceil(w / 2) * h
 
+    // The full-size allocations are checked for out of memory (alloc-check.ts) before the scene is used.
+    const alloc = new AllocCheck(device)
     const buf = (n: number, extra = 0) =>
-      device.createBuffer({ size: Math.max(16, n * 4), usage: GPUBufferUsage.STORAGE | extra })
+      alloc.make(() => device.createBuffer({ size: Math.max(16, n * 4), usage: GPUBufferUsage.STORAGE | extra }))
     const temps: GPUBuffer[] = []
 
     const maxMul = Math.max(...opts.wb)
@@ -1308,12 +1335,12 @@ export class DevelopEngine {
     const paramBuf = device.createBuffer({ size: RAW_PARAMS_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     device.queue.writeBuffer(paramBuf, 0, params)
 
-    const scene = device.createTexture({
+    const scene = alloc.make(() => device.createTexture({
       size: [w, h],
       format: 'rgba16float',
       mipLevelCount: Math.floor(Math.log2(Math.max(w, h))) + 1,
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
-    })
+    }))
 
     // Bayer photos use raw-pipeline.wgsl as it always was; X-Trans photos the same kernels with the XTRANS override.
     const mod: ShaderSet = xtrans ? 'rawX' : 'raw'
@@ -1419,6 +1446,12 @@ export class DevelopEngine {
     await device.queue.onSubmittedWorkDone()
     for (const b of temps) b.destroy()
     paramBuf.destroy()
+    try {
+      await this.allocated(alloc)
+    } catch (e) {
+      scene.destroy()
+      throw e
+    }
     return scene
   }
 
@@ -1616,12 +1649,13 @@ export class DevelopEngine {
     device.queue.writeBuffer(paramBuf, 0, params)
     const lutBuf = device.createBuffer({ size: rgb.lut.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
     device.queue.writeBuffer(lutBuf, 0, rgb.lut)
-    const scene = device.createTexture({
+    const alloc = new AllocCheck(device)
+    const scene = alloc.make(() => device.createTexture({
       size: [w, h],
       format: 'rgba16float',
       mipLevelCount: Math.floor(Math.log2(Math.max(w, h))) + 1,
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
-    })
+    }))
     const enc = device.createCommandEncoder()
     const pass = enc.beginComputePass()
     pass.setPipeline(this.rgbPipe)
@@ -1641,6 +1675,12 @@ export class DevelopEngine {
     await device.queue.onSubmittedWorkDone()
     paramBuf.destroy()
     lutBuf.destroy()
+    try {
+      await this.allocated(alloc)
+    } catch (e) {
+      scene.destroy()
+      throw e
+    }
     await this.retouch.adopt(scene)
     this.newScene(scene)
     // White balance on a JPEG is applied entirely by the develop pass (relative to the file's colours).
@@ -1673,7 +1713,9 @@ export class DevelopEngine {
     const { w: iw, h: ih } = src
     const pipes = (this.exportPipes ??= this.createExportPipes())
 
-    const dev = device.createTexture({ size: [iw, ih], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING })
+    // The export's full-size images are checked for out of memory (alloc-check.ts) before the result is read.
+    const alloc = new AllocCheck(device)
+    const dev = alloc.make(() => device.createTexture({ size: [iw, ih], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING }))
     this.writeView(u, wb, src, { x: 0, y: 0, w: iw, h: ih }, 0, NO_INDICATORS, 2, 'srgb', maskSrc)
     const enc = device.createCommandEncoder()
     const mixTemps = this.encodeDisplay(enc, this.statsRenderPipe, dev.createView(), src.tex, iw, ih)
@@ -1692,8 +1734,8 @@ export class DevelopEngine {
     const paramBuf = device.createBuffer({ size: params.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     device.queue.writeBuffer(paramBuf, 0, params)
     const words = o.width * o.height * (o.bits === 16 ? 2 : 1)
-    const outBuf = device.createBuffer({ size: words * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC })
-    const read = device.createBuffer({ size: words * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
+    const outBuf = alloc.make(() => device.createBuffer({ size: words * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC }))
+    const read = alloc.make(() => device.createBuffer({ size: words * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }))
     const dispatch = (pipe: GPUComputePipeline, entries: GPUBindGroupEntry[], x: number, y: number) => {
       const pass = enc.beginComputePass()
       pass.setPipeline(pipe)
@@ -1709,8 +1751,8 @@ export class DevelopEngine {
       // Resize (unless full size) into `img`, blur L* across, then blur down, mix and encode.
       let img = dev
       if (o.width !== iw || o.height !== ih) {
-        mid = device.createTexture({ size: [o.width, ih], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING })
-        img = device.createTexture({ size: [o.width, o.height], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING })
+        mid = alloc.make(() => device.createTexture({ size: [o.width, ih], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING }))
+        img = alloc.make(() => device.createTexture({ size: [o.width, o.height], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING }))
         temps.push(img)
         dispatch(pipes.resampleX, [
           { binding: 0, resource: { buffer: paramBuf } },
@@ -1736,7 +1778,7 @@ export class DevelopEngine {
       sf[28] = sh.halo
       sharpBuf = device.createBuffer({ size: sp.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
       device.queue.writeBuffer(sharpBuf, 0, sp)
-      const blur = device.createTexture({ size: [o.width, o.height], format: 'r32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING })
+      const blur = alloc.make(() => device.createTexture({ size: [o.width, o.height], format: 'r32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING }))
       temps.push(blur)
       dispatch(pipes.sharpenBlurX, [
         { binding: 0, resource: { buffer: paramBuf } },
@@ -1758,7 +1800,7 @@ export class DevelopEngine {
         { binding: 4, resource: { buffer: outBuf } },
       ], o.width, o.height)
     } else {
-      mid = device.createTexture({ size: [o.width, ih], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING })
+      mid = alloc.make(() => device.createTexture({ size: [o.width, ih], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING }))
       dispatch(pipes.resampleX, [
         { binding: 0, resource: { buffer: paramBuf } },
         { binding: 1, resource: dev.createView() },
@@ -1775,6 +1817,8 @@ export class DevelopEngine {
     src.release()
     if (maskSrc !== src) maskSrc.release()
     try {
+      // A failed allocation would read back zeros (a black file).
+      await this.allocated(alloc)
       await read.mapAsync(GPUMapMode.READ)
       const data = read.getMappedRange().slice(0)
       return {
@@ -3104,6 +3148,7 @@ export class DevelopEngine {
     this.destroyed = true
     liveEngines.delete(this)
     this.lostListeners.clear()
+    this.errorListeners.clear()
     this.unwatchDisplay()
     this.lastRender = null
     this.rgbInput?.texture.destroy()
