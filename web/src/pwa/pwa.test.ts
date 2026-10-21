@@ -104,3 +104,13 @@ describe('Update ready after a rollback (an earlier version)', () => {
     expect(updateInfo(null, '0.6.13+aaa', [r('0.6.13')])).toEqual({ version: '', releases: [], earlier: false })
   })
 })
+
+describe('the top bar update button', () => {
+  it('names each waiting state and hides when there is none', async () => {
+    const { updateLabel } = await import('./register')
+    expect(updateLabel({ kind: 'none' })).toBeNull()
+    expect(updateLabel({ kind: 'ready', version: '0.6.15', releases: [], earlier: false })).toBe('Update ready')
+    expect(updateLabel({ kind: 'ready', version: '0.6.12', releases: [], earlier: true })).toBe('Earlier version ready')
+    expect(updateLabel({ kind: 'elsewhere' })).toBe('Reload needed')
+  })
+})

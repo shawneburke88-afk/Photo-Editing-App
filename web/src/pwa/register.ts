@@ -15,6 +15,13 @@ export type UpdateState =
   /** Another LightBench window took the update; this one still runs the old version. */
   | { kind: 'elsewhere' }
 
+/** The top bar update button's words for each state (null: no button). */
+export function updateLabel(state: UpdateState): string | null {
+  if (state.kind === 'none') return null
+  if (state.kind === 'elsewhere') return 'Reload needed'
+  return state.earlier ? 'Earlier version ready' : 'Update ready'
+}
+
 let state: UpdateState = { kind: 'none' }
 let waiting: ServiceWorker | null = null
 let applying = false
