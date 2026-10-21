@@ -154,12 +154,14 @@ function letterbox(content: Float32Array, fit: Fit, ch: number): Float32Array {
 
 /** The exposure that puts the context's 99th percentile of max(R, G, B) (linear sRGB) at 0.85: within 1/64…64. */
 export function exposureGain(srgbLinear: Float32Array): number {
+  // A histogram on a log scale (2^-16 … 2^4 in 4096 bins: about 0.3 % apart), so dark crops are measured as finely as
+  // bright ones.
   const n = srgbLinear.length / 3
   const hist = new Uint32Array(4096)
-  const top = 16
   for (let i = 0; i < n; i++) {
     const m = Math.max(srgbLinear[i * 3], srgbLinear[i * 3 + 1], srgbLinear[i * 3 + 2])
-    hist[Math.min(4095, Math.max(0, Math.floor((m / top) * 4096)))]++
+    const k = m > 0 ? Math.floor(((Math.log2(m) + 16) / 20) * 4096) : 0
+    hist[Math.min(4095, Math.max(0, k))]++
   }
   let want = Math.ceil(n * 0.99)
   let k = 0
@@ -167,8 +169,8 @@ export function exposureGain(srgbLinear: Float32Array): number {
     want -= hist[k]
     if (want <= 0) break
   }
-  const p99 = ((k + 1) / 4096) * top
-  return Math.min(64, Math.max(1 / 64, 0.85 / Math.max(1e-6, p99)))
+  const p99 = 2 ** (((k + 0.5) / 4096) * 20 - 16)
+  return Math.min(64, Math.max(1 / 64, 0.85 / p99))
 }
 
 export interface Prepared {
