@@ -1,6 +1,6 @@
 // Develop's zoom (docs/PHASE3.md, "Zoom levels"): the levels chosen from the toolbar, Z, the zoom keys, a click on the
 // fitted photo and Ctrl/⌘ + wheel over the photo, always keeping the point under the pointer in place.
-import { useCallback, useEffect, useRef, type Dispatch, type RefObject, type SetStateAction } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, type Dispatch, type RefObject, type SetStateAction } from 'react'
 import type { DevelopEngine, ViewState } from '../engine/gpu/develop-engine'
 import { useStoredJson } from '../lib/useStoredJson'
 import { centerAround, clampCenter, stepZoom, validLevel, type Zoom } from './zoom'
@@ -16,8 +16,11 @@ export function useZoom(opts: { engine: RefObject<DevelopEngine | null>; view: V
   // The last level chosen (Z and a click on the fitted photo go back to it), remembered in this browser.
   const [stored, setStored] = useStoredJson<{ last: number }>('lightbench.develop.zoom', { last: 1 })
   const last = validLevel(stored.last)
+  // The view as last rendered (moved on at once by each change here, so quick wheel steps add up).
   const viewRef = useRef(view)
-  viewRef.current = view
+  useLayoutEffect(() => {
+    viewRef.current = view
+  }, [view])
 
   const set = useCallback(
     (z: Zoom, at?: At) => {
@@ -65,9 +68,11 @@ export function useZoom(opts: { engine: RefObject<DevelopEngine | null>; view: V
   // Ctrl/⌘ + wheel (and a trackpad pinch, which browsers send as Ctrl + wheel) over the photo zooms toward the pointer
   // instead of zooming the page. A listener of its own: React's wheel listener can't prevent the page zoom.
   const enabledRef = useRef(enabled)
-  enabledRef.current = enabled
   const stepRef = useRef(step)
-  stepRef.current = step
+  useLayoutEffect(() => {
+    enabledRef.current = enabled
+    stepRef.current = step
+  }, [enabled, step])
   useEffect(() => {
     const el = stage.current
     if (!el) return
