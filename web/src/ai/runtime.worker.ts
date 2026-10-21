@@ -32,6 +32,8 @@ async function watchDevice() {
   try {
     const dev = await ort.env.webgpu.device
     void dev.lost.then((info) => {
+      // Destroyed on purpose (ONNX Runtime ends its device when its last session is released): not a failure.
+      if (info.reason === 'destroyed') return
       lostMessage = info.message || 'The GPU device was lost.'
       for (const s of sessions.values()) void s.session.release().catch(() => {})
       sessions.clear()
@@ -93,6 +95,25 @@ async function run(key: string, data: Float32Array, dims: number[]): Promise<{ d
   return res
 }
 
+export type Feed = { type: 'float32'; data: Float32Array; dims: number[] } | { type: 'int64'; data: BigInt64Array; dims: number[] }
+
+/** One run with named inputs (AI Remove's graphs: float32 and int64), the first output out (float32). */
+async function runFeeds(key: string, feeds: Record<string, Feed>): Promise<{ data: Float32Array; dims: number[]; ms: number }> {
+  if (lostMessage) throw new Error(`gpu-lost: ${lostMessage}`)
+  const s = sessions.get(key)
+  if (!s) throw new Error('The model isn’t loaded.')
+  const t0 = performance.now()
+  const tensors: Record<string, ort.Tensor> = {}
+  for (const [name, f] of Object.entries(feeds)) tensors[name] = f.type === 'int64' ? new ort.Tensor('int64', f.data, f.dims) : new ort.Tensor('float32', f.data, f.dims)
+  const out = await s.session.run(tensors)
+  const t = out[s.session.outputNames[0]]
+  const got = (await t.getData()) as Float32Array
+  const res = { data: got instanceof Float32Array ? got : Float32Array.from(got as ArrayLike<number>), dims: [...t.dims], ms: performance.now() - t0 }
+  for (const v of Object.values(out)) v.dispose()
+  if (lostMessage) throw new Error(`gpu-lost: ${lostMessage}`)
+  return res
+}
+
 async function release(key?: string) {
   for (const [k, s] of sessions) {
     if (key && k !== key) continue
@@ -101,7 +122,7 @@ async function release(key?: string) {
   }
 }
 
-const handlers = { probe, load, run, release, version: () => ort.env.versions?.web ?? '' }
+const handlers = { probe, load, run, runFeeds, release, version: () => ort.env.versions?.web ?? '' }
 export type RuntimeApi = typeof handlers
 // ONNX Runtime's WebAssembly threads are workers started from this same script (in a build, its code is in this chunk)
 // with the name "em-pthread…": they run ONNX Runtime's own message loop, which the RPC handler must not replace.

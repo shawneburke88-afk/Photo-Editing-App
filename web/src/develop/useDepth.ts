@@ -4,7 +4,7 @@
 
 import { useRef, useState } from 'react'
 import { computeDepth, Fp16InvalidError, renderSize, type AsShot } from '../ai/depth'
-import { chooseFile, modelPinned, type ModelEntry, type ModelFile, type Variant } from '../ai/manifest'
+import { chooseFile, modelPinned, type DepthInput, type ModelEntry, type ModelFile, type Variant } from '../ai/manifest'
 import { AI, depthModel, providerFor } from '../ai/models'
 import { runtimeMessage } from '../ai/runtime'
 import { installed, type InstalledModel } from '../ai/store'
@@ -32,7 +32,7 @@ export interface LastRun {
 /** The last depth run's timings (for the e2e tests and the console). */
 export const depthTimings: LastRun[] = []
 
-export function useDepth(renderAsShot: (input: ModelEntry['input']) => Promise<AsShot | null>) {
+export function useDepth(renderAsShot: (input: DepthInput) => Promise<AsShot | null>) {
   const [ask, setAsk] = useState<DepthAsk | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -69,7 +69,7 @@ export function useDepth(renderAsShot: (input: ModelEntry['input']) => Promise<A
       }
       setStatus(p.provider === 'wasm' ? 'Computing the depth map on the CPU (once for this photo; no WebGPU here, so it takes longer)…' : 'Computing the depth map (once for this photo)…')
       const r0 = performance.now()
-      const shot = await renderAsShot(model.input)
+      const shot = await renderAsShot(model.input!)
       if (!shot) return null
       const renderMs = performance.now() - r0
       // The model's GPU work counts as Develop's (Part 14's foreground gate): background work (Export, the batch

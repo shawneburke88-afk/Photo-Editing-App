@@ -12,10 +12,10 @@ describe('the AI runtime’s graphics card', () => {
   })
 
   it('checks fp16 support on that same adapter', async () => {
-    const requestAdapter = vi.fn(async () => ({ features: new Set(['shader-f16']), info: { vendor: 'nvidia', architecture: 'ada', device: '', description: 'RTX' } }))
+    const requestAdapter = vi.fn(async () => ({ features: new Set(['shader-f16']), info: { vendor: 'nvidia', architecture: 'ada', device: '', description: 'RTX' }, limits: { maxBufferSize: 2 ** 32, maxStorageBufferBindingSize: 2 ** 31 } }))
     vi.stubGlobal('navigator', { gpu: { requestAdapter }, hardwareConcurrency: 4 })
     const { probeGpu } = await import('./runtime')
-    await expect(probeGpu()).resolves.toEqual({ webgpu: true, f16: true, adapter: 'nvidia ada RTX' })
+    await expect(probeGpu()).resolves.toEqual({ webgpu: true, f16: true, adapter: 'nvidia ada RTX', maxBufferSize: 2 ** 32, maxStorageBufferBindingSize: 2 ** 31 })
     expect(requestAdapter).toHaveBeenCalledWith({ powerPreference: 'high-performance' })
   })
 

@@ -1,0 +1,11 @@
+{
+  "photo": "philadelphia-768.png",
+  "source": "A 768 × 512 crop of the embedded preview of philadelphia.nef (Nikon D700) from immich-app/test-assets (commit ec56cc6, formats/raw/Nikon/D700), scaled to 33 %. That repository's README says: “All assets are public domain”.",
+  "seed": 1234,
+  "cases": [
+    { "name": "bin", "what": "the litter bin by the hedge (the model sees 512 px of the photo at full resolution)", "points": [[568, 298], [568, 347]], "radius": 30 },
+    { "name": "bollard", "what": "the left bollard and its shadow on the paving", "points": [[208, 362], [208, 455], [200, 480]], "radius": 28 },
+    { "name": "bollard-wide", "what": "the right bollard and its shadow with a wide brush", "points": [[608, 362], [608, 458], [622, 482]], "radius": 34 },
+    { "name": "large", "what": "the left bollard with a large brush (the model sees a crop wider than 512 pixels, scaled down and letterboxed)", "points": [[208, 345], [198, 490]], "radius": 45 }
+  ]
+}

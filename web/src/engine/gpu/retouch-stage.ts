@@ -24,8 +24,8 @@ import type { Completion } from '../retouch/completion'
 import { computeFills } from '../retouch/fill-pool'
 import { planSpots, pickRegion } from '../retouch/plan'
 import type { RetouchReply, RetouchRequest } from '../retouch/retouch.worker'
-import { tileRect, tilesOf, type HalfTile } from '../retouch/tiles'
-import { clipRect, spotBounds, spotPixels } from '../develop/spots'
+import { TileImage, tileRect, tilesOf, type HalfTile } from '../retouch/tiles'
+import { clipRect, hashString, spotBounds, spotPixels, type PxRect } from '../develop/spots'
 import { Retirement } from './retire'
 
 export interface RetouchHost {
@@ -48,8 +48,19 @@ export interface RetouchProgress {
   fraction?: number
 }
 
+/** An AI Remove patch's identity (its data can be a megabyte: hashed once per patch). */
+const patchIds = new WeakMap<object, string>()
+function patchId(ai: NonNullable<Spot['ai']>): string {
+  let id = patchIds.get(ai)
+  if (!id) {
+    id = `${ai.rect.join(',')}|${ai.gain}|${ai.width}x${ai.height}|${ai.data.length}|${hashString(ai.data)}`
+    patchIds.set(ai, id)
+  }
+  return id
+}
+
 /** What decides a spot list's pixels (ids don't). */
-export const spotsKey = (spots: Spot[]) => JSON.stringify(spots.map((s) => [s.mode, s.points, s.size, s.feather, s.opacity, s.offset, s.seed]))
+export const spotsKey = (spots: Spot[]) => JSON.stringify(spots.map((s) => (s.ai ? [s.mode, s.points, s.size, s.feather, s.opacity, s.offset, s.seed, patchId(s.ai)] : [s.mode, s.points, s.size, s.feather, s.opacity, s.offset, s.seed])))
 
 interface Job {
   spots: Spot[]
@@ -292,6 +303,13 @@ export class RetouchStage {
         buf.destroy()
       }
     }
+  }
+
+  /** A rectangle of a texture's level 0 as linear RGB (interleaved), for AI Remove's model input. */
+  async readRegion(tex: GPUTexture, r: PxRect): Promise<Float32Array> {
+    const map = new Map<number, Uint16Array>()
+    await this.readTiles(tex, [...tilesOf(r, tex.width, tex.height)], map)
+    return new TileImage(tex.width, tex.height, [...map].map(([idx, data]) => ({ idx, data }))).read(r)
   }
 
   /**

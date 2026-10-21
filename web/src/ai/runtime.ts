@@ -4,10 +4,10 @@
 // the next try starts clean; nothing of it reaches Develop's own GPU device.
 
 import { AI_ADAPTER_OPTIONS, type GpuName } from './adapter'
-import { createRpcClient, type RpcClient } from '../lib/rpc'
+import { createRpcClient, transfer, type RpcClient } from '../lib/rpc'
 import type { ModelEntry, Variant } from './manifest'
-import { installed, load as loadFiles } from './store'
-import type { Provider, RuntimeApi } from './runtime.worker'
+import { installed, load as loadFiles, loadPart } from './store'
+import type { Feed, Provider, RuntimeApi } from './runtime.worker'
 
 /** End the worker after this long without a run. */
 export const IDLE_MS = 120_000
@@ -34,11 +34,16 @@ export interface GpuProbe {
   webgpu: boolean
   f16: boolean
   adapter: string
+  /** The adapter's largest buffer and storage-buffer binding (bytes; 0 without WebGPU). */
+  maxBufferSize?: number
+  maxStorageBufferBindingSize?: number
 }
 
 let worker: Worker | null = null
 let rpc: RpcClient<RuntimeApi> | null = null
 let loaded: { key: string; provider: Provider; inputShape: (number | string)[]; gpu: GpuName | null } | null = null
+/** Graphs of a model made of several (AI Remove) loaded in the worker, by key. */
+const graphs = new Map<string, Provider>()
 let idle: ReturnType<typeof setTimeout> | null = null
 let probed: Promise<GpuProbe> | null = null
 
@@ -58,6 +63,7 @@ export function stopRuntime() {
   worker = null
   rpc = null
   loaded = null
+  graphs.clear()
 }
 
 function touch() {
@@ -73,9 +79,15 @@ export function probeGpu(): Promise<GpuProbe> {
   probed ??= (async () => {
     const gpu = (globalThis.navigator as Navigator & { gpu?: GPU } | undefined)?.gpu
     const a = gpu ? await gpu.requestAdapter(AI_ADAPTER_OPTIONS).catch(() => null) : null
-    if (!a) return { webgpu: false, f16: false, adapter: '' }
+    if (!a) return { webgpu: false, f16: false, adapter: '', maxBufferSize: 0, maxStorageBufferBindingSize: 0 }
     const i = a.info
-    return { webgpu: true, f16: a.features.has('shader-f16'), adapter: [i?.vendor, i?.architecture, i?.device, i?.description].filter(Boolean).join(' ') }
+    return {
+      webgpu: true,
+      f16: a.features.has('shader-f16'),
+      adapter: [i?.vendor, i?.architecture, i?.device, i?.description].filter(Boolean).join(' '),
+      maxBufferSize: a.limits?.maxBufferSize ?? 0,
+      maxStorageBufferBindingSize: a.limits?.maxStorageBufferBindingSize ?? 0,
+    }
   })()
   return probed
 }
@@ -119,6 +131,61 @@ export async function runModel(m: ModelEntry, data: Float32Array, dims: number[]
     probed = null
     throw e
   }
+}
+
+// ---- models of several graphs (AI Remove: docs/PHASE3.md Part 26)
+
+/**
+ * AI Remove's watchdogs: loading a graph (the 907 MB denoiser is read from the device, checked and compiled for the
+ * GPU) and each single run (one of 20 denoising steps). Per step, so a slow GPU that needs minutes in all is not
+ * stopped, while a hung one is found within minutes.
+ */
+export const GRAPH_LOAD_TIMEOUT_MS = 300_000
+export const GRAPH_RUN_TIMEOUT_MS = { webgpu: 180_000, wasm: 900_000 }
+
+const graphKey = (m: ModelEntry, part: string, revision: string) => `${m.id}:${part}:${revision}`
+
+/** Loads one graph of an installed model into the worker (read from this device and checked first). */
+export async function loadGraph(m: ModelEntry, part: string, provider: Provider): Promise<{ key: string; ms: number }> {
+  const t0 = performance.now()
+  try {
+    const rec = await installed(m)
+    if (!rec) throw new Error(`${m.name} isn’t on this device.`)
+    const key = graphKey(m, part, rec.revision)
+    if (graphs.get(key) === provider) return { key, ms: 0 }
+    const files = await loadPart(m, part)
+    await withTimeout(client().load(key, transfer(files.model), files.wasm, provider, provider === 'wasm' ? threads() : 1), GRAPH_LOAD_TIMEOUT_MS)
+    graphs.set(key, provider)
+    touch()
+    return { key, ms: performance.now() - t0 }
+  } catch (e) {
+    stopRuntime()
+    probed = null
+    throw e
+  }
+}
+
+/** One run of a loaded graph with named inputs; the first output. */
+export async function runGraph(key: string, feeds: Record<string, Feed>): Promise<{ data: Float32Array; ms: number }> {
+  try {
+    const provider = graphs.get(key)
+    if (!provider) throw new Error('The model isn’t loaded.')
+    const r = await withTimeout(client().runFeeds(key, feeds), GRAPH_RUN_TIMEOUT_MS[provider])
+    touch()
+    return { data: r.data, ms: r.ms }
+  } catch (e) {
+    stopRuntime()
+    probed = null
+    throw e
+  }
+}
+
+/** Frees one graph (its GPU memory) without ending the worker. */
+export async function releaseGraph(key: string): Promise<void> {
+  if (!graphs.has(key) || !rpc) return
+  graphs.delete(key)
+  // Freeing is best effort: never wait long for it (the next phase doesn't depend on it).
+  await Promise.race([rpc.release(key).catch(() => {}), new Promise((r) => setTimeout(r, 10_000))])
 }
 
 /** Fixed input sizes the loaded model declares (height, width), or null when they are free. */

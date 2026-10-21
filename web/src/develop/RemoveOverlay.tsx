@@ -103,7 +103,8 @@ export function RemoveOverlay({ toView, fromView, box, spots, sensor, brush, sel
     for (const x of visible) if (dist(p, x.pin) <= NEAR && (!best || dist(p, x.pin) < dist(p, best.pin))) best = x
     return best
   }
-  const onSource = (p: Pt) => !!sel && (dist(p, sel.srcPin) <= NEAR || polyDist(p, sel.source) <= Math.max(6, sel.r))
+  // AI Remove spots (Part 26) have no source to drag.
+  const onSource = (p: Pt) => !!sel && sel.s.mode !== 'ai' && (dist(p, sel.srcPin) <= NEAR || polyDist(p, sel.source) <= Math.max(6, sel.r))
   const inPhoto = (p: Pt) => p[0] >= box.x && p[1] >= box.y && p[0] <= box.x + box.w && p[1] <= box.y + box.h
 
   function onPointerDown(e: React.PointerEvent) {
@@ -211,8 +212,8 @@ export function RemoveOverlay({ toView, fromView, box, spots, sensor, brush, sel
       {sel && (
         <g className="spot-selected">
           {outline(`${uid}-t`, sel.target, sel.r, 'spot-target')}
-          {outline(`${uid}-s`, moving ? sel.source.map(([x, y]) => [x + moving.to[0] - moving.from[0], y + moving.to[1] - moving.from[1]] as Pt) : sel.source, sel.r, 'spot-source')}
-          {(() => {
+          {sel.s.mode !== 'ai' && outline(`${uid}-s`, moving ? sel.source.map(([x, y]) => [x + moving.to[0] - moving.from[0], y + moving.to[1] - moving.from[1]] as Pt) : sel.source, sel.r, 'spot-source')}
+          {sel.s.mode !== 'ai' && (() => {
             const sp: Pt = moving ? [sel.srcPin[0] + moving.to[0] - moving.from[0], sel.srcPin[1] + moving.to[1] - moving.from[1]] : sel.srcPin
             return (
               <>

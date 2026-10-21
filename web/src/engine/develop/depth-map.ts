@@ -74,7 +74,7 @@ export function fromBase64(s: string): Uint8Array {
   return out
 }
 
-async function deflateRaw(b: Uint8Array): Promise<Uint8Array> {
+export async function deflateRaw(b: Uint8Array): Promise<Uint8Array> {
   const cs = new CompressionStream('deflate-raw')
   const writer = cs.writable.getWriter()
   void writer.write(b as Uint8Array<ArrayBuffer>)

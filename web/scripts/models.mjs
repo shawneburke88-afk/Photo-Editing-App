@@ -5,6 +5,8 @@
 //       https://huggingface.co/<repo>/resolve/<revision>/<path>, checks its byte count and SHA-256 and writes it to
 //       dist/models/<id>/<revision 7>/<variant>.onnx (what the app downloads, on the user's opt-in). Any mismatch
 //       fails the build. A model that isn't pinned yet is skipped with a warning (the app then says it isn't available).
+//       A model delivered from Hugging Face ("delivery": "huggingface": AI Remove's Moebius, about 1.24 GB, over Pages'
+//       1 GB site limit) is skipped with a note: the app downloads it itself (PHASE3.md Part 26).
 //       --from DIR reads the files from DIR (same layout as under dist/models/) instead of downloading: a dry run.
 //   node scripts/models.mjs verify --dir DIR
 //       Checks files laid out as under dist/models/ against the manifest (no network).
@@ -15,7 +17,8 @@
 //       For the owner, on a machine that can reach huggingface.co: takes the repository's current commit (or the one
 //       given), reads each file's Git LFS pointer (its sha256 and size) at that commit, downloads the file, checks it
 //       against the pointer, and writes the revision, sizes and hashes into the manifest. --save keeps the files (e.g.
-//       in models/local for the dev server).
+//       in models/local for the dev server). Models delivered from Hugging Face are left as they are (pinned by the
+//       owner's decision; scripts/moebius-check.mjs checks them).
 //
 // The checks are kept in sync with src/ai/manifest.ts (same layout, same hash format).
 
@@ -34,18 +37,25 @@ export const pinned = (m, f) => /^[0-9a-f]{40}$/.test(m.source?.revision ?? '') 
 export const servedPath = (m, f) => `models/${m.id}/${m.source.revision.slice(0, 7)}/${f.variant}.onnx`
 export const sourceUrl = (m, f) => `https://huggingface.co/${m.source.repo}/resolve/${m.source.revision}/${f.path}`
 export const pointerUrl = (m, f, rev) => `https://huggingface.co/${m.source.repo}/raw/${rev}/${f.path}`
+/** Served by LightBench's site (the deploy fetches it), or downloaded by the app from Hugging Face (never deployed). */
+export const deployed = (m) => (m.delivery ?? 'site') === 'site'
 
-/** The files to fetch, and the models skipped because they aren't pinned. */
+/** The files to fetch, the models skipped because they aren't pinned, and those the app gets from Hugging Face. */
 export function plan(manifest) {
   const files = []
   const unpinned = []
+  const fromHub = []
   for (const m of manifest.models) {
+    if (!deployed(m)) {
+      fromHub.push(m.id)
+      continue
+    }
     for (const f of m.files) {
       if (pinned(m, f)) files.push({ model: m, file: f, url: sourceUrl(m, f), path: servedPath(m, f) })
       else unpinned.push(`${m.id} ${f.variant}`)
     }
   }
-  return { files, unpinned }
+  return { files, unpinned, fromHub }
 }
 
 /** Null when `buf` is the pinned file, else why not. */
@@ -91,8 +101,9 @@ const arg = (args, name) => {
 const warn = (msg) => console.log(process.env.GITHUB_ACTIONS ? `::warning::${msg}` : `warning: ${msg}`)
 
 export async function fetchModels(manifest, out, from) {
-  const { files, unpinned } = plan(manifest)
+  const { files, unpinned, fromHub } = plan(manifest)
   for (const u of unpinned) warn(`AI model ${u} is not pinned (no revision or SHA-256 in web/models/manifest.json): not deployed. See docs/PHASE3.md Part 24.`)
+  for (const id of fromHub) console.log(`skipped ${id}: the app downloads it from Hugging Face itself (not deployed; docs/PHASE3.md Part 26)`)
   let bad = 0
   for (const x of files) {
     const buf = from ? readFileSync(join(from, x.path.slice('models/'.length))) : await download(x.url)
@@ -165,13 +176,15 @@ export function formatManifest(x, ind = '', inList = false) {
 export function describePins(manifest, markdown = false) {
   const out = []
   for (const m of manifest.models) {
+    const how = deployed(m) ? '' : ' (downloaded by the app from Hugging Face; not deployed)'
+    const name = (f) => (f.part ? `${f.variant} ${f.part}` : f.variant)
     if (markdown) {
-      out.push(`\`${m.source.repo}\` @ \`${m.source.revision ?? 'not pinned'}\``, '', '| file | path | bytes | SHA-256 |', '|---|---|---|---|')
-      for (const f of m.files) out.push(`| ${f.variant} | \`${f.path}\` | ${f.bytes} | ${f.sha256 ? `\`${f.sha256}\`` : 'not pinned'} |`)
+      out.push(`\`${m.source.repo}\` @ \`${m.source.revision ?? 'not pinned'}\`${how}`, '', '| file | path | bytes | SHA-256 |', '|---|---|---|---|')
+      for (const f of m.files) out.push(`| ${name(f)} | \`${f.path}\` | ${f.bytes} | ${f.sha256 ? `\`${f.sha256}\`` : 'not pinned'} |`)
       out.push('')
     } else {
-      out.push(`${m.id}: ${m.source.repo} @ ${m.source.revision ?? 'not pinned'}`)
-      for (const f of m.files) out.push(`  ${f.variant} ${f.path} ${f.bytes} bytes sha256 ${f.sha256 ?? 'not pinned'}`)
+      out.push(`${m.id}: ${m.source.repo} @ ${m.source.revision ?? 'not pinned'}${how}`)
+      for (const f of m.files) out.push(`  ${name(f)} ${f.path} ${f.bytes} bytes sha256 ${f.sha256 ?? 'not pinned'}`)
     }
   }
   return out.join('\n')
@@ -179,6 +192,10 @@ export function describePins(manifest, markdown = false) {
 
 async function pin(manifest, revision, save, path = MANIFEST) {
   for (const m of manifest.models) {
+    if (!deployed(m)) {
+      console.log(`${m.id}: left as it is (delivered from Hugging Face and pinned by the owner's decision)`)
+      continue
+    }
     let rev = revision
     if (!rev) {
       // The Hub API's model info carries the commit as `sha` (not checked from this build machine: huggingface.co

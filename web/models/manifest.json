@@ -3,7 +3,8 @@
   "notes": [
     "LightBench's downloadable AI models (docs/PHASE3.md Part 24). The files are NOT in git: the deploy workflow fetches each pinned file by exact URL (source.repo at source.revision) and checks its byte count and SHA-256 (web/scripts/models.mjs fetch), failing the build on any mismatch, then serves it from LightBench's own GitHub Pages site under models/<id>/<revision 7>/<variant>.onnx.",
     "While source.revision or a file's sha256 is null the model is not pinned: the workflow skips it with a warning and the app says the model isn't available in that build. Pin it on a machine that can reach huggingface.co with `node web/scripts/models.mjs pin` (it reads the Hugging Face commit, the Git LFS pointers' sha256 and size, downloads each file and checks it against them, and writes this file).",
-    "bytes: as read from the Git LFS pointers of the repository's main branch on 2026-10-13 (docs/research/cowork-2026-10-13b/F_MODEL_DELIVERY.md, F3); `pin` replaces them with the pinned revision's values."
+    "bytes: as read from the Git LFS pointers of the repository's main branch on 2026-10-13 (docs/research/cowork-2026-10-13b/F_MODEL_DELIVERY.md, F3); `pin` replaces them with the pinned revision's values.",
+    "Moebius (AI Remove) is delivered from Hugging Face (\"delivery\": \"huggingface\", owner's decision 2026-10-21): at about 1.24 GB it is too big for GitHub Pages' 1 GB site limit, so the deploy skips it and the app downloads the three files itself, after the user agrees, from the commit-pinned /resolve/ URLs, checking each file's size and SHA-256. Pinned by the owner's decision, not by `models.mjs pin` (which leaves it alone). docs/PHASE3.md Part 26."
   ],
   "models": [
     {
@@ -33,6 +34,49 @@
       "files": [
         { "variant": "fp16", "path": "onnx/model_fp16.onnx", "bytes": 49642442, "sha256": "2df6223f206b5164e21f664ace61dabeb9bb6a49b8b5a3e00510b4807d0f5b04" },
         { "variant": "fp32", "path": "onnx/model.onnx", "bytes": 99060839, "sha256": "afb6a5c28f3b6bf1618c6e43f02073ef9dfdc70e937502d51603e57b0a1df10c" }
+      ]
+    },
+    {
+      "id": "moebius",
+      "name": "Moebius",
+      "task": "inpaint",
+      "delivery": "huggingface",
+      "summary": "Fills in what you paint over with the AI Remove brush: it draws new detail that continues the surroundings, so objects disappear instead of being patched from elsewhere in the photo.",
+      "licence": {
+        "id": "Apache-2.0",
+        "url": "https://github.com/hustvl/Moebius/blob/b88d462bacb9af6e7128a3b4cc4a07418bedfd61/LICENSE",
+        "file": "notices/moebius.LICENSE.txt",
+        "statement": "“Both the code and the pretrained model weights of Moebius are released under the Apache License 2.0” and “Commercial use of the weights and the images produced with them is permitted.” (Moebius README on GitHub, commit b88d462, 2026-08-12)",
+        "notes": "The Hugging Face page of the original weights (hustvl/Moebius) is tagged MIT and has no licence file; LightBench relies on the Apache-2.0 statement in the authors’ GitHub repository. The part that turns pictures into the model’s working form and back (its VAE) comes from the same authors’ earlier PixelHacker, which uses Stability AI’s SDXL VAE; PixelHacker’s Hugging Face copy is tagged MIT, with no licence file or copyright line. The files LightBench downloads are Simon Willison’s ONNX conversion (simonw/Moebius-ONNX, Apache-2.0)."
+      },
+      "credit": "Kangsheng Duan, Ziyang Xu, Wenyu Liu, Xiaohu Ruan, Xiaoxin Chen and Xinggang Wang (Huazhong University of Science and Technology and vivo AI Lab): “Moebius: 0.2B Lightweight Image Inpainting Framework with 10B-Level Performance” (ECCV 2026, arXiv:2606.19195). Code and weights: github.com/hustvl/Moebius. VAE: hustvl/PixelHacker. ONNX conversion: Simon Willison (huggingface.co/simonw/Moebius-ONNX).",
+      "trainingData": "Moebius was trained to imitate its authors’ earlier, larger model, PixelHacker, and this version was then fine-tuned on Places2 (photos of places). PixelHacker was trained on 14 million images with masks from COCONut-Large, Objects365 V2, Google Landmarks V2 and a collection of 7.49 million natural-scene photos that its authors gathered and have not named (about half of the images), then fine-tuned on Places2, CelebA-HQ and FFHQ. Which images were used to train Moebius from PixelHacker isn’t stated. So not all of its training data is named publicly: LightBench’s owner accepted this as an exception to the rule that a model’s training data must be named. Some of the named sets carry non-commercial or research-only terms, for example FFHQ.",
+      "source": {
+        "host": "huggingface",
+        "repo": "simonw/Moebius-ONNX",
+        "revision": "5bf1ef5d2861ec01a727183a3f95dc64f352120e"
+      },
+      "checkpoint": {
+        "name": "ft_places2",
+        "source": "export script, not model card (simonw/moebius-web python/reexport_unet_no_conv3d.py at 080be6e)"
+      },
+      "updates": {
+        "upstream": {
+          "repo": "hustvl/Moebius",
+          "revision": "cd01f47fb648219d3fa605806c5ce00b713faa5e",
+          "path": "ft_places2/diffusion_pytorch_model.bin",
+          "bytes": 905298356,
+          "sha256": "6525afb888e55f9b5c74fa0a5d19ca0762d720d6c716fb0f8422fbeb6868a09a"
+        }
+      },
+      "gpu": {
+        "maxStorageBufferBindingSize": 134217728,
+        "maxBufferSize": 134217728
+      },
+      "files": [
+        { "variant": "fp32", "part": "vae_encoder", "path": "vae_encoder.onnx", "bytes": 136757093, "sha256": "b8b81d41e757222a0707665ba9d826703987855e5bed056036b90b988968042f" },
+        { "variant": "fp32", "part": "unet", "path": "unet.onnx", "bytes": 906698976, "sha256": "e3f90f52f72378339b990459fadb29a68d3c7b5c6851545ba42774f489160b08" },
+        { "variant": "fp32", "part": "vae_decoder", "path": "vae_decoder.onnx", "bytes": 198078671, "sha256": "d90ef0b7f6c8c8b7234459c8b449d70be0033bf1576c842e8b9991baf3934280" }
       ]
     }
   ]

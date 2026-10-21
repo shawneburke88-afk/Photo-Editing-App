@@ -264,6 +264,7 @@ export const ACTIONS: ActionDef[] = [
   { id: 'remove.modeRemove', label: 'Spot mode: Remove (fill from the surroundings)', contexts: ['remove'], keys: [] },
   { id: 'remove.modeHeal', label: 'Spot mode: Heal', contexts: ['remove'], keys: [] },
   { id: 'remove.modeClone', label: 'Spot mode: Clone', contexts: ['remove'], keys: [] },
+  { id: 'remove.modeAi', label: 'Spot mode: AI Remove', contexts: ['remove'], keys: [] },
   { id: 'remove.clear', label: 'Delete all spots…', contexts: ['develop', 'remove'], keys: [] },
 
   // Masks (docs/PHASE3.md Part 23). Shift+W, K, M, Shift+M, Shift+J, Shift+Q, O, Shift+O, Alt+O, H, [ ], Shift+[ / ] and

@@ -1,4 +1,4 @@
-// The Remove group of the tool stack (PHASE3.md, Part 11): Lightroom's Remove / Heal / Clone tool without AI.
+// The Remove group of the tool stack (PHASE3.md, Parts 11 and 26): Remove / Heal / Clone, and the optional AI Remove.
 // The brush is used on the photo (RemoveOverlay); here are its mode, Size, Feather and Opacity, and what is
 // selected. With a spot selected, the controls change that spot; otherwise they set the brush for new spots.
 
@@ -7,6 +7,7 @@ import { withKey } from '../settings/shortcuts'
 import { HELP } from './help'
 import { DEFAULT_BRUSH, SIZE_RANGE, type BrushSettings } from './removeBrush'
 import { Slider } from './Slider'
+import type { AiBusy } from './useAiRemove'
 
 
 interface Props {
@@ -28,10 +29,14 @@ interface Props {
   onShowAll: (on: boolean) => void
   onDelete: () => void
   onClear: () => void
+  /** AI Remove: what it is doing, Cancel, and a new fill for the selected spot. */
+  ai?: { busy: AiBusy | null; onCancel: () => void; onRetry: () => void }
 }
 
-export function RemovePanel({ active, brush, selected, count, showAll, status, disabled, showHint, onToggle, onMode, onSize, onFeather, onOpacity, onShowAll, onDelete, onClear }: Props) {
+export function RemovePanel({ active, brush, selected, count, showAll, status, disabled, showHint, onToggle, onMode, onSize, onFeather, onOpacity, onShowAll, onDelete, onClear, ai }: Props) {
   const mode = selected ? selected.spot.mode : brush.mode
+  const aiSpot = selected?.spot.mode === 'ai'
+  const aiBusy = ai?.busy ?? null
   const size = selected ? selected.size : brush.size
   const feather = selected ? Math.round(selected.spot.feather * 100) : brush.feather
   const opacity = selected ? Math.round(selected.spot.opacity * 100) : brush.opacity
@@ -57,7 +62,7 @@ export function RemovePanel({ active, brush, selected, count, showAll, status, d
               key={m.id}
               className={`button small ${mode === m.id ? 'on' : ''}`}
               aria-pressed={mode === m.id}
-              disabled={disabled}
+              disabled={disabled || !!aiBusy}
               onClick={() => onMode(m.id)}
               title={`${m.help}${selected ? ` Changes spot ${selected.number}.` : ' For the next spots painted.'}`}
             >
@@ -65,20 +70,41 @@ export function RemovePanel({ active, brush, selected, count, showAll, status, d
             </button>
           ))}
         </div>
-        <Slider label="Size" help={HELP.removeSize} showHint={showHint} value={size} min={SIZE_RANGE[0]} max={SIZE_RANGE[1]} step={1} defaultValue={DEFAULT_BRUSH.size} format={(v) => `${Math.round(v)} px`} disabled={disabled} onChange={onSize} />
+        <Slider label="Size" help={aiSpot ? HELP.removeAiSize : HELP.removeSize} showHint={showHint} value={size} min={SIZE_RANGE[0]} max={SIZE_RANGE[1]} step={1} defaultValue={DEFAULT_BRUSH.size} format={(v) => `${Math.round(v)} px`} disabled={disabled || aiSpot} onChange={onSize} />
         <Slider label="Feather" help={HELP.removeFeather} showHint={showHint} value={feather} min={0} max={100} step={1} defaultValue={DEFAULT_BRUSH.feather} format={(v) => `${Math.round(v)} %`} disabled={disabled} onChange={onFeather} />
         <Slider label="Opacity" help={HELP.removeOpacity} showHint={showHint} value={opacity} min={1} max={100} step={1} defaultValue={DEFAULT_BRUSH.opacity} format={(v) => `${Math.round(v)} %`} disabled={disabled} onChange={onOpacity} />
         {status && <p className="muted small crop-note" role="status">{status}</p>}
+        {aiBusy && (
+          <div className="crop-tools">
+            <div className="model-progress ai-progress" role="progressbar" aria-label="AI Remove progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(100 * (aiBusy.fraction ?? 0))}>
+              <div style={{ width: `${Math.round(100 * (aiBusy.fraction ?? 0))}%` }} />
+            </div>
+            <button className="button small" onClick={ai?.onCancel} title="Stop AI Remove (nothing is changed)">
+              Cancel
+            </button>
+          </div>
+        )}
         {active && !status && (
           <p className="muted small crop-note">
             {selected
-              ? `Spot ${selected.number} selected: drag its dashed outline to take the fill from somewhere else. Delete removes it; Esc deselects.`
-              : 'Paint over what to remove; LightBench picks where to take the fill from. Click a pin to select a spot. [ ] size · Space-drag moves the photo.'}
+              ? aiSpot
+                ? selected.spot.ai
+                  ? `Spot ${selected.number} selected: Try again draws a new fill. Delete removes it; Esc deselects.`
+                  : `Spot ${selected.number} has no AI fill on this photo yet: Generate draws one.`
+                : `Spot ${selected.number} selected: drag its dashed outline to take the fill from somewhere else. Delete removes it; Esc deselects.`
+              : mode === 'ai'
+                ? 'Paint over what to remove; the AI model draws what was behind it (this takes a while). Click a pin to select a spot. [ ] size · Space-drag moves the photo.'
+                : 'Paint over what to remove; LightBench picks where to take the fill from. Click a pin to select a spot. [ ] size · Space-drag moves the photo.'}
           </p>
         )}
         <div className="crop-tools">
-          <span className="muted small">{selected ? `Spot ${selected.number} of ${count}` : 'No AI: fills come from the photo itself.'}</span>
+          <span className="muted small">{selected ? `Spot ${selected.number} of ${count}` : mode === 'ai' ? 'AI Remove: the fill is drawn by a model on this computer.' : 'No AI: fills come from the photo itself.'}</span>
           <span className="crop-tools-gap" />
+          {aiSpot && (
+            <button className="button small" disabled={disabled || !!aiBusy} onClick={ai?.onRetry} title={selected?.spot.ai ? 'Draw a new AI fill for this spot (a different result; one history step)' : 'Draw this spot’s AI fill for this photo (one history step)'}>
+              {selected?.spot.ai ? 'Try again' : 'Generate'}
+            </button>
+          )}
           {selected && (
             <button className="button small" disabled={disabled} onClick={onDelete} title={withKey('Delete the selected spot', 'remove.delete')}>
               Delete

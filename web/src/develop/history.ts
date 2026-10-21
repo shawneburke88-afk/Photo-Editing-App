@@ -54,8 +54,8 @@ export function replaceCurrent(h: History, settings: DevelopSettings): History {
 }
 
 /**
- * Saved form of the history (timestamps are not stored). Depth maps (PHASE3.md Part 24) are kept once: each step's
- * depth map is replaced by "@r<n>", the n-th entry of `rasters` (base64 never contains "@"). Up to 200 steps of the
+ * Saved form of the history (timestamps are not stored). Depth maps (PHASE3.md Part 24) and AI Remove patches
+ * (Part 26) are kept once: each step's map or patch is replaced by "@r<n>", the n-th entry of `rasters` (base64 never contains "@"). Up to 200 steps of the
  * same photo otherwise repeat the same map in every step.
  */
 export interface SavedHistory {
@@ -66,8 +66,12 @@ export interface SavedHistory {
 
 type RasterLike = { raster?: { data: string } }
 
-/** Calls `fn` on each Depth range shape's raster in a step's settings, replacing its data with what `fn` returns. */
+/**
+ * Calls `fn` on each Depth range shape's raster and each AI Remove spot's patch (Part 26) in a step's settings,
+ * replacing its data with what `fn` returns.
+ */
 function mapRasters(s: DevelopSettings, fn: (data: string) => string): DevelopSettings {
+  if (s.spots?.some((sp) => sp.ai)) s = { ...s, spots: s.spots.map((sp) => (sp.ai && typeof sp.ai.data === 'string' ? { ...sp, ai: { ...sp.ai, data: fn(sp.ai.data) } } : sp)) }
   if (!s.masks?.some((m) => m.components.some((c) => (c.shape as RasterLike).raster))) return s
   return {
     ...s,

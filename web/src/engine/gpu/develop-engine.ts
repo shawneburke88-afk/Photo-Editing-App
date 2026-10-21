@@ -62,7 +62,7 @@ import { noiseOn } from '../detail/settings'
 import { loadNoiseProfiles, noiseProfilesState } from '../detail/noise-db'
 import type { ProfileChoice } from '../detail/noiseprofiles'
 import { diffractionRadius, measureRadius, type RadiusChoice } from '../detail/capture'
-import type { Spot } from '../develop/spots'
+import type { PxRect, Spot } from '../develop/spots'
 import { RetouchStage, type RetouchProgress } from './retouch-stage'
 import colourMixerWgsl from './colour-mixer.wgsl?raw'
 import colourMixerFilterWgsl from './colour-mixer-filter.wgsl?raw'
@@ -2371,6 +2371,26 @@ export class DevelopEngine {
     const base = others.length ? await this.retouch.texture(() => this.scene!, others, true) : { tex: this.scene, release: () => {} }
     try {
       return await this.retouch.pick(base.tex, spot, others)
+    } finally {
+      base.release()
+    }
+  }
+
+  /** The full-resolution scene's size (what spots are measured against), or null before a photo is processed. */
+  sceneSize(): [number, number] | null {
+    return this.scene ? [this.scene.width, this.scene.height] : null
+  }
+
+  /**
+   * AI Remove's model input (PHASE3.md Part 26): a rectangle of the full-resolution scene (linear Rec.2020, sensor
+   * orientation) as it is with `others` applied (the spots before the new one), as interleaved RGB.
+   */
+  async readSceneRegion(r: PxRect, others: Spot[]): Promise<Float32Array> {
+    this.checkAlive()
+    if (!this.scene) throw new Error('No photo processed')
+    const base = others.length ? await this.retouch.texture(() => this.scene!, others, true) : { tex: this.scene, release: () => {} }
+    try {
+      return await this.retouch.readRegion(base.tex, r)
     } finally {
       base.release()
     }
