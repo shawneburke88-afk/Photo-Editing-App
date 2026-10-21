@@ -88,6 +88,9 @@ import { MASK_BRUSH_SIZE, OVERLAY_COLOURS } from './maskUi'
 import { presetMasks, withMasksList, type LocalMask } from '../engine/develop/masks'
 import { hasAcrSidecar } from '../sidecar/acr'
 import type { MaskOverlayDraw } from '../engine/develop/indicators'
+import { useZoom } from './useZoom'
+import { ZoomControl } from './ZoomControl'
+import { panCenter } from './zoom'
 
 interface Props {
   ids: number[]
@@ -1516,7 +1519,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     if (!engine || view.zoom === 'fit') return
     const dpr = window.devicePixelRatio || 1
     const l = engine.layout(view, engine.canvas.width, engine.canvas.height)
-    setView((v) => ({ zoom: v.zoom, center: [Math.min(1, Math.max(0, v.center[0] - (dx * dpr) / l.w)), Math.min(1, Math.max(0, v.center[1] - (dy * dpr) / l.h))] }))
+    setView((v) => ({ zoom: v.zoom, center: panCenter(v.center, dx * dpr, dy * dpr, l, engine.canvas.width, engine.canvas.height) }))
   }
   const spotStatus = placing
     ? 'Finding where to take the fill from…'
@@ -1787,6 +1790,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   // ---- keyboard
   const index = ids.indexOf(id)
+  /** Zoom levels (PHASE3.md, "Zoom levels"): the toolbar menu, Z, the zoom keys, a click on the fitted photo, Ctrl/⌘ + wheel. */
+  const zoom = useZoom({ engine: engineRef, view, setView, stage: stageRef, enabled: status.kind === 'ready' && !draft && !guiding })
   useShortcuts(['crop'], !pasting && !!draft, (cmd) => {
     switch (cmd) {
       case 'develop.crop':
@@ -1836,7 +1841,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'develop.redo': historyKey(cmd); break
       case 'develop.before': setBefore((b) => !b); break
       case 'develop.clipping': setOverlay((o) => !o); break
-      case 'develop.zoom': setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center })); break
+      case 'develop.zoom': zoom.toggle(); break
+      case 'develop.zoomIn': zoom.step(1); break
+      case 'develop.zoomOut': zoom.step(-1); break
       default:
         return false
     }
@@ -1864,7 +1871,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'develop.redo': historyKey(cmd); break
       case 'develop.before': setBefore((b) => !b); break
       case 'develop.clipping': setOverlay((o) => !o); break
-      case 'develop.zoom': setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center })); break
+      case 'develop.zoom': zoom.toggle(); break
+      case 'develop.zoomIn': zoom.step(1); break
+      case 'develop.zoomOut': zoom.step(-1); break
       default:
         return false
     }
@@ -1896,7 +1905,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'remove.modeClone': editSpot('mode', 'clone'); break
       case 'remove.clear': clearSpots(); break
       case 'develop.before': setBefore((b) => !b); break
-      case 'develop.zoom': setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center })); break
+      case 'develop.zoom': zoom.toggle(); break
+      case 'develop.zoomIn': zoom.step(1); break
+      case 'develop.zoomOut': zoom.step(-1); break
       case 'develop.snapshot':
       case 'develop.snapshotApp': createSnapshot(); break
       case 'develop.undo':
@@ -1944,7 +1955,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'mask.newSame': masking.newSame(); break
       case 'mask.delete': masking.deleteSelected(); break
       case 'develop.before': setBefore((x) => !x); break
-      case 'develop.zoom': setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center })); break
+      case 'develop.zoom': zoom.toggle(); break
+      case 'develop.zoomIn': zoom.step(1); break
+      case 'develop.zoomOut': zoom.step(-1); break
       case 'develop.snapshot':
       case 'develop.snapshotApp': createSnapshot(); break
       case 'develop.undo':
@@ -2000,7 +2013,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       // Lightroom Classic: S soft proofing, Shift+S its destination gamut warning (shown with proofing).
       case 'develop.softProof': proof.set({ ...proof.settings, on: !proof.settings.on }); break
       case 'develop.proofGamut': proof.set({ ...proof.settings, on: true, destWarning: !(proof.settings.on && proof.settings.destWarning) }); break
-      case 'develop.zoom': setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center })); break
+      case 'develop.zoom': zoom.toggle(); break
+      case 'develop.zoomIn': zoom.step(1); break
+      case 'develop.zoomOut': zoom.step(-1); break
       case 'develop.next':
         if (index >= ids.length - 1) return false
         pick(ids[index + 1])
@@ -2125,10 +2140,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     const p = canvasPoint(e)
     if (!p) return
     const dpr = window.devicePixelRatio || 1
-    const dx = ((e.clientX - d.x) * dpr) / p.l.w
-    const dy = ((e.clientY - d.y) * dpr) / p.l.h
     if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 3) d.moved = true
-    setView({ zoom: view.zoom, center: [Math.min(1, Math.max(0, d.center[0] - dx)), Math.min(1, Math.max(0, d.center[1] - dy))] })
+    const c = engineRef.current!.canvas
+    setView({ zoom: view.zoom, center: panCenter(d.center, (e.clientX - d.x) * dpr, (e.clientY - d.y) * dpr, p.l, c.width, c.height) })
   }
   function onPointerUp(e: React.PointerEvent) {
     if (wbPick) {
@@ -2144,7 +2158,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     if (view.zoom === 'fit') {
       const u = (p.px - p.l.x) / p.l.w
       const v = (p.py - p.l.y) / p.l.h
-      if (u >= 0 && u <= 1 && v >= 0 && v <= 1) setView({ zoom: 1, center: [u, v] })
+      // To the last chosen level, keeping the clicked point under the pointer.
+      if (u >= 0 && u <= 1 && v >= 0 && v <= 1) zoom.set(zoom.last, e)
     } else {
       setView({ zoom: 'fit', center: view.center })
     }
@@ -2291,9 +2306,12 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           <button className={`button small ${before ? 'on' : ''}`} onClick={() => setBefore(!before)} disabled={status.kind !== 'ready' || !!draft} title={withKey(beforeSnap ? `Before / after: compares with the snapshot “${beforeSnap.name}”` : 'Before / after', 'develop.before')}>
             {before ? 'Showing before' : 'Before / after'}
           </button>
-          <button className="button small" onClick={() => setView((v) => ({ zoom: v.zoom === 'fit' ? 1 : 'fit', center: v.center }))} disabled={status.kind !== 'ready'} title={withKey('Zoom', 'develop.zoom')}>
-            {view.zoom === 'fit' ? 'Fit' : '100 %'}
-          </button>
+          <ZoomControl
+            zoom={view.zoom}
+            disabled={status.kind !== 'ready' || !!draft || guiding}
+            onChange={(z) => zoom.set(z)}
+            title={`${withKey('Zoom: Fit or a size, where 100 % shows one photo pixel per screen pixel. Above 100 % the pixels are enlarged as they are, without smoothing. Fit and the last size', 'develop.zoom')}; ${withKey('larger', 'develop.zoomIn')}; ${withKey('smaller', 'develop.zoomOut')}; Ctrl+wheel over the photo zooms toward the pointer.`}
+          />
           <label className="check small" title={withKey('Soft proofing: preview the photo as a printer, paper or colour space will show it. A view only: the edit and exports don’t change.', 'develop.softProof')}>
             <input type="checkbox" checked={proof.settings.on} onChange={(e) => proof.set({ ...proof.settings, on: e.target.checked })} />
             Soft proofing

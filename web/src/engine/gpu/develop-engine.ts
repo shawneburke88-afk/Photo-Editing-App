@@ -81,6 +81,7 @@ import { EFFECTS_V1, type EffectsParams, type MaskParams } from '../develop/proc
 import type { LocalMask } from '../develop/masks'
 
 import { DeviceMemory, Retirement } from './retire'
+import { encodeUpscale, upscalePipeline, upscalePlan, type UpscalePlan } from './zoom-blit'
 
 /** The graphics adapter an engine's device belongs to (`GPUDevice.adapterInfo`), for diagnostics and notices. */
 export interface AdapterSummary {
@@ -155,6 +156,11 @@ export interface DeviceInstrument {
 
 /** Margin around the photo in the crop tool's view, in CSS pixels. */
 export const FRAME_PAD = 28
+
+/** A view above 100 % (not the crop tool's): drawn at 100 % and enlarged without smoothing (zoom-blit.ts). */
+export function enlarged(view: ViewState): boolean {
+  return typeof view.zoom === 'number' && view.zoom > 1 && !view.frame
+}
 
 /** What a rendering samples: the scene, or its warped copy, and how output uv maps onto it and onto the sensor. */
 interface Source {
@@ -545,6 +551,8 @@ export class DevelopEngine {
   private noGlow: GPUTexture | null = null
   private viewData: ArrayBuffer | null = null
   private boundRect: { x: number; y: number; w: number; h: number } = { x: 0, y: 0, w: 1, h: 1 }
+  /** Views above 100 %: the 100 % drawing enlarged without smoothing (zoom-blit.ts), made when first needed. */
+  private upscalePipe: GPURenderPipeline | null = null
   private dehazeCache: { key: string; a0: Vec3; distanceMax: number } | null = null
   private lumPipe: GPURenderPipeline | null = null
   private readonly displayModule: GPUShaderModule
@@ -2179,6 +2187,11 @@ export class DevelopEngine {
     let y = (ch - h) / 2
     if (w > cw) x = Math.min(0, Math.max(cw - w, cw / 2 - view.center[0] * w))
     if (h > ch) y = Math.min(0, Math.max(ch - h, ch / 2 - view.center[1] * h))
+    // Above 100 % the photo's pixels are enlarged into whole blocks of canvas pixels (`render`).
+    if (enlarged(view)) {
+      x = Math.round(x)
+      y = Math.round(y)
+    }
     const lod = Math.max(0, Math.log2(1 / scale))
     return { x, y, w, h, lod, scale }
   }
@@ -2203,11 +2216,13 @@ export class DevelopEngine {
     const maskSrc = await this.toneSource(u, src, wb)
     const l = this.layout(view, cw, ch, [src.w, src.h])
     this.shown = { w: src.w, h: src.h, rawMap: src.rawMap, lens: src.lens }
-    this.writeView(u, wb, src, l, l.lod, indicators, 0, this.displaySpace, maskSrc)
+    // Above 100 %: only the visible part, drawn at 100 % (one photo pixel per pixel), then enlarged without smoothing.
+    const plan = enlarged(view) ? upscalePlan(l, cw, ch) : undefined
+    this.writeView(u, wb, src, plan ? { x: -plan.ox, y: -plan.oy, w: src.w, h: src.h } : l, plan ? 0 : l.lod, indicators, 0, this.displaySpace, maskSrc)
     const target = this.gpuCtx
       ? this.gpuCtx.getCurrentTexture()
       : this.device.createTexture({ size: [cw, ch], format: this.format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
-    const pixels = await this.draw(this.displayPipe, target, src.tex, cw, ch, !this.gpuCtx, this.displaySpace)
+    const pixels = await this.draw(this.displayPipe, target, src.tex, cw, ch, !this.gpuCtx, this.displaySpace, plan)
     src.release()
     if (maskSrc !== src) maskSrc.release()
     if (pixels) {
@@ -3027,10 +3042,23 @@ export class DevelopEngine {
     return (this.noMask ??= this.device.createTexture({ size: [1, 1], format: 'rg32float', usage: GPUTextureUsage.TEXTURE_BINDING }))
   }
 
-  private async draw(pipe: GPURenderPipeline, target: GPUTexture, tex: GPUTexture, w: number, h: number, readback: boolean, space: DisplaySpace = 'srgb'): Promise<ImageData | null> {
+  /** `plan`: the drawing is made at 100 % into a small texture and enlarged onto `target` (views above 100 %). */
+  private async draw(pipe: GPURenderPipeline, target: GPUTexture, tex: GPUTexture, w: number, h: number, readback: boolean, space: DisplaySpace = 'srgb', plan?: UpscalePlan): Promise<ImageData | null> {
     const { device } = this
     const enc = device.createCommandEncoder()
-    const temps = this.encodeDisplay(enc, pipe, target.createView(), tex, w, h)
+    let temps: (GPUTexture | GPUBuffer)[]
+    if (plan) {
+      const small = device.createTexture({ size: [plan.w, plan.h], format: this.format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING })
+      try {
+        temps = [...this.encodeDisplay(enc, pipe, small.createView(), tex, plan.w, plan.h), small]
+      } catch (e) {
+        small.destroy()
+        throw e
+      }
+      temps.push(encodeUpscale(device, enc, (this.upscalePipe ??= upscalePipeline(device, this.format)), small, target.createView(), plan))
+    } else {
+      temps = this.encodeDisplay(enc, pipe, target.createView(), tex, w, h)
+    }
     if (!readback) {
       device.queue.submit([enc.finish()])
       for (const t of temps) t.destroy()
