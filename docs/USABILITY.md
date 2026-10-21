@@ -232,3 +232,16 @@ Built in Phase 3, Part 20 ([PHASE3.md](PHASE3.md#part-20-soft-proofing)), after 
 | Firefox? | Its 2D canvases have no colour space option (MDN's compatibility data, checked by Cowork; not tried in Firefox here), so LightBench asks the browser whether a canvas can hold Display P3 and shows sRGB where it can't, with a note on the screen warning's button. Chrome, Edge and Safari keep Display P3. |
 | Export? | Proofing never changes exports. "Export with this profile" for loaded printer profiles is left for later; Export already writes sRGB, Display P3 and Adobe RGB. |
 | Where are the settings kept? | In this browser, as a way of viewing: not in the edit, the history or sidecars. |
+
+### Import speed (owner, 2026-10-20)
+
+After the first real import (about 1,500 Nikon D5200 RAW+JPEG pairs from a card took several minutes). Built in [PHASE3.md, "Import speed"](PHASE3.md#import-speed-owner-2026-10-20).
+
+| Question | Owner's answer |
+|---|---|
+| Where does the time go? | Measure it: every step of every photo is timed and written to the Diagnostics log (Settings → Diagnostics), with bytes and MB/s. The finished Import window adds one quiet line, e.g. "1,500 photos, 38 GB in 6 min 12 s · copying 71 % · thumbnails 18 %". |
+| When is an import finished? | When every file is copied, read back and checked, and in the Library with its camera preview. Ratings, keywords and edits from sidecars, stacks with twins imported earlier and the presets for new photos fill in afterwards in the background, with a note in the left panel; closing LightBench is safe, the rest is done when it opens again. |
+| RAW+JPEG cards? | With stacking on, the RAWs are copied first, so they show at once; the JPEGs follow, each joining its RAW's stack. The Import window can be closed meanwhile (**Continue in the background**); the left panel shows the import with **Show** and **Stop**. |
+| Copy checking? | Stays on: it is what makes formatting the card safe. 2–3 files are copied at once instead of one. |
+| Skipping the JPEGs? | **RAW only (skip JPEGs that have a RAW twin)**, off by default, kept in import presets. The summary says how many JPEGs stayed on the card. |
+| What must not change? | The files, names, numbering (`-1`), folders, sidecars and stacks are those of the one-at-a-time import; a failed photo still fails alone with the same message; Stop and "Already imported" work as before. A rating, flag, label or edit given to a photo while its details are still being filled in is kept. |
