@@ -200,6 +200,34 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+      - name: AI Remove's comparison pictures on a temporary branch (moebius-check)
+        # The artifact holds every picture; the few comparison sheets also go to a throwaway branch
+        # (lightbench/ai-remove-check-output, replaced on every run) for a session that can read git but not artifacts.
+        # Delete the branch once read.
+        if: steps.code.outputs.present == 'true' && inputs.task == 'moebius-check' && !cancelled()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          d="${RUNNER_TEMP}/moebius-check"
+          if ! ls "$d"/sheet-*.png > /dev/null 2>&1; then echo "no comparison pictures"; exit 0; fi
+          out="${RUNNER_TEMP}/sheets"
+          mkdir -p "$out"
+          cp "$d"/sheet-*.png "$out"/
+          cp "$d"/summary.md "$d"/results.json "$out"/ 2>/dev/null || true
+          cd "$out"
+          git init -q
+          git checkout -q -b out
+          git add .
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -F - <<EOF
+          moebius-check run ${GITHUB_RUN_ID}: AI Remove comparison pictures (temporary)
+
+          Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+          Claude-Session: https://claude.ai/code/session_0181RBB2b9F97WCBoqXW1yHb
+          EOF
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" out:refs/heads/lightbench/ai-remove-check-output
+          echo "pushed the comparison pictures to lightbench/ai-remove-check-output (delete it once read)"
+
       - name: Check the pinned manifest with the deploy step and the app's tests
         if: steps.code.outputs.present == 'true' && inputs.task == 'pin-and-check'
         working-directory: web

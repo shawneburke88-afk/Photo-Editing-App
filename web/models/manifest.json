@@ -69,6 +69,10 @@
           "sha256": "6525afb888e55f9b5c74fa0a5d19ca0762d720d6c716fb0f8422fbeb6868a09a"
         }
       },
+      "gpu": {
+        "maxStorageBufferBindingSize": 134217728,
+        "maxBufferSize": 134217728
+      },
       "files": [
         { "variant": "fp32", "part": "vae_encoder", "path": "vae_encoder.onnx", "bytes": 136757093, "sha256": "b8b81d41e757222a0707665ba9d826703987855e5bed056036b90b988968042f" },
         { "variant": "fp32", "part": "unet", "path": "unet.onnx", "bytes": 906698976, "sha256": "e3f90f52f72378339b990459fadb29a68d3c7b5c6851545ba42774f489160b08" },

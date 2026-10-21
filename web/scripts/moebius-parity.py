@@ -85,7 +85,11 @@ def stub_fla():
     import types
     for name in ('fla', 'fla.ops', 'fla.ops.gla', 'fla.models', 'fla.models.gla', 'fla.models.gla.modeling_gla', 'fla.modules'):
         mod = types.ModuleType(name)
-        mod.__getattr__ = lambda attr: type(attr, (object,), {})  # PEP 562
+        def attr(name):
+            if name.startswith('__'):
+                raise AttributeError(name)  # __file__, __path__ …: as a plain module has them, or not
+            return type(name, (object,), {})
+        mod.__getattr__ = attr  # PEP 562
         sys.modules[name] = mod
 
 

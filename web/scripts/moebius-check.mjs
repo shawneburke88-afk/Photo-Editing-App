@@ -460,9 +460,10 @@ async function main(args) {
   const before8 = toSrgb8(app, scene)
   log(`test photo ${fixture.photo}: ${w} x ${h}`)
   md.push('### Removals (the app’s own code, CPU)', '', `Photo: \`${fixture.photo}\` (${w} × ${h}). ${fixture.source}`, '', `Seed ${fixture.seed}, ${app.inpaint.STEPS} steps, guidance ${app.inpaint.GUIDANCE}.`, '',
-    '| case | strength | crop → model | encode | step (mean) | decode | total | finite | spot changed (mean / max, 8-bit) | outside changed | patch (chars) | spot vs ring colour (8-bit) |',
-    '|---|---|---|---|---|---|---|---|---|---|---|---|')
+    '| case | strength | crop → model | encode | step (mean) | decode | total | finite | spot changed (mean / max, 8-bit) | outside changed | patch (chars) | spot vs ring colour (8-bit) | resemblance to the removed object |',
+    '|---|---|---|---|---|---|---|---|---|---|---|---|---|')
   const results = []
+  const sheets = {}
   for (const c of fixture.cases) {
     if (only && !only.includes(c.name)) continue
     const spot = app.normalizeSpot({ id: c.name, mode: 'ai', points: c.points.map(([x, y]) => [x / w, y / h]), size: c.radius / Math.min(w, h), feather: 0.25, opacity: 1, offset: [0, 0], seed: fixture.seed })
@@ -546,6 +547,20 @@ async function main(args) {
         }
       }
       const blendIn = Math.hypot(...spotMean.map((v, k) => v / Math.max(1, inN) - ringMean[k] / Math.max(1, ringN)))
+      // How much the spot still looks like what was removed: the correlation of the result's and the original's
+      // luminance over the spot (1: the same picture; around 0: unrelated).
+      const lum = (a, i) => 0.2126 * a[i * 3] + 0.7152 * a[i * 3 + 1] + 0.0722 * a[i * 3 + 2]
+      let sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0
+      for (let i = 0; i < w * h; i++) {
+        if (!(alpha[i] > 0)) continue
+        const a = lum(after8, i)
+        const b = lum(before8, i)
+        sa += a; sb += b; saa += a * a; sbb += b * b; sab += a * b
+      }
+      const nn = Math.max(1, inN)
+      const resemblance = (sab / nn - (sa / nn) * (sb / nn)) / Math.sqrt(Math.max(1e-9, (saa / nn - (sa / nn) ** 2) * (sbb / nn - (sb / nn) ** 2)))
+      sheets[c.name] ??= { crop: zoom, parts: [outline(crop8(before8, w, zoom), zoom.x1 - zoom.x0, zoom.y1 - zoom.y0, (x, y) => x >= 0 && y >= 0 && x < zoom.x1 - zoom.x0 && y < zoom.y1 - zoom.y0 && alpha[(zoom.y0 + y) * w + zoom.x0 + x] > 0)] }
+      sheets[c.name].parts.push(crop8(after8, w, zoom))
       const inMean = inSum / Math.max(1, inN)
       if (inMean < 2) fail(`${tag}: the spot hardly changed (mean ${inMean.toFixed(2)} levels)`)
       if (outN) fail(`${tag}: ${outN} pixels outside the spot changed (up to ${outMax} levels)`)
@@ -553,11 +568,24 @@ async function main(args) {
       const mean = steps.reduce((a, b) => a + b, 0) / steps.length
       const s = stats(gen.image)
       log(`  ${tag}: encode ${ms(gen.ms.encode)}, steps ${steps.length} x ${ms(mean)}, decode ${ms(gen.ms.decode)}, total ${sec(total)}; decoded min ${s.min.toFixed(3)} max ${s.max.toFixed(3)}, finite ${st}; spot changed mean ${inMean.toFixed(1)} max ${inMax}; outside changed ${outN}; patch ${ex.width} x ${ex.height}, ${data.length} chars`)
-      results.push({ case: c.name, strength, total, mean, encode: gen.ms.encode, decode: gen.ms.decode, inMean, inMax, outN, blendIn, chars: data.length, finite: st })
-      md.push(`| ${c.name} | ${strength} | ${cw}×${chh} → ${prep.fit.cwS}×${prep.fit.chS} | ${ms(gen.ms.encode)} | ${ms(mean)} × ${steps.length} | ${ms(gen.ms.decode)} | ${sec(total)} | ${st ? 'yes' : '**no**'} | ${inMean.toFixed(1)} / ${inMax} | ${outN ? `**${outN} px**` : 'none'} | ${data.length.toLocaleString('en')} (${ex.width}×${ex.height}) | ${blendIn.toFixed(1)} |`)
+      results.push({ case: c.name, strength, total, mean, encode: gen.ms.encode, decode: gen.ms.decode, inMean, inMax, outN, blendIn, resemblance, chars: data.length, finite: st })
+      md.push(`| ${c.name} | ${strength} | ${cw}×${chh} → ${prep.fit.cwS}×${prep.fit.chS} | ${ms(gen.ms.encode)} | ${ms(mean)} × ${steps.length} | ${ms(gen.ms.decode)} | ${sec(total)} | ${st ? 'yes' : '**no**'} | ${inMean.toFixed(1)} / ${inMax} | ${outN ? `**${outN} px**` : 'none'} | ${data.length.toLocaleString('en')} (${ex.width}×${ex.height}) | ${blendIn.toFixed(1)} | ${resemblance.toFixed(3)} |`)
     }
   }
-  md.push('', 'Images (input with the spot outlined, the model’s 512 × 512 output, the result and its crop) are in the run’s **moebius-check** artifact.', '')
+  // One picture per case: the original with the spot outlined, then the result at each strength, side by side.
+  for (const [name, sh] of Object.entries(sheets)) {
+    const cw = sh.crop.x1 - sh.crop.x0
+    const ch = sh.crop.y1 - sh.crop.y0
+    const n = sh.parts.length
+    const gap = 8
+    const W = n * cw + (n - 1) * gap
+    const out = new Uint8Array(W * ch * 3).fill(255)
+    sh.parts.forEach((part, k) => {
+      for (let y = 0; y < ch; y++) out.set(part.subarray(y * cw * 3, (y + 1) * cw * 3), (y * W + k * (cw + gap)) * 3)
+    })
+    writeFileSync(join(outDir, `sheet-${name}.png`), encodePng(W, ch, out))
+  }
+  md.push('', `Images (input with the spot outlined, the model’s 512 × 512 output, the result and its crop; \`sheet-<case>.png\`: original, then strength ${strengths.join(', then ')}) are in the run’s **moebius-check** artifact. “Resemblance” is the correlation of the spot’s luminance with the original’s (1: the object is still there).`, '')
   await R.release()
 
   // 4. The CPU fallback's speed: the app's own runtime (onnxruntime-web WebAssembly) in Node.
