@@ -11,10 +11,10 @@
 //   gets the numbered one (`-1`), exactly as one at a time. A photo is never started before an earlier photo it clashes
 //   with is done; when RAW first would put that earlier photo later, it is moved up instead (rare: e.g. two cameras'
 //   DSC_0001.JPG on the same day).
-// - The pool: up to `workers()` photos are copied at once, started in the execution order; their results are committed
-//   (added to the library) strictly in that order, so ids, progress and "Stop" behave as one at a time; photos copied
-//   by then go in together (one catalog transaction instead of one each). At most `window` photos are started past
-//   the oldest one not yet committed, which bounds what waits in memory.
+// - The pool: up to `workers()` photos are copied at once, started in the execution order. Their results are committed
+//   (added to the library) in that order, or (`inOrder: false`, Import) as soon as each is done, so a finished copy
+//   never waits uncatalogued behind a slower one; photos done by then go in together (one catalog transaction instead
+//   of one each). At most `window` photos are started past the oldest one not yet committed, which bounds memory.
 
 import { isJpegName, pairTwins } from '../catalog/stacks'
 import { fullSidecarName, stemSidecarName } from '../sidecar/naming'
@@ -123,6 +123,12 @@ export interface PoolOptions<R> {
    */
   commit: (batch: { index: number; result: R }[]) => Promise<void>
   maxBatch?: number
+  /**
+   * Commit strictly in execution order (default). False: as soon as a copy is done (in batches of what is done), so a
+   * finished copy never waits, uncatalogued, behind a slower one (Import: nothing copied is left out of the library when
+   * the tab closes mid-import).
+   */
+  inOrder?: boolean
   /** Whether `index` may join a batch holding `batch` (default: yes). */
   joins?: (batch: number[], index: number) => boolean
   /** Stops starting new items (the ones running finish and are committed). */
@@ -138,8 +144,11 @@ export interface PoolOptions<R> {
 export function runOrdered<R>(o: PoolOptions<R>): Promise<number> {
   const pos = new Map(o.order.map((idx, p) => [idx, p]))
   const results = new Map<number, R>()
+  const inOrder = o.inOrder !== false
   let next = 0 // next position to start
-  let committed = 0 // positions committed so far
+  let low = 0 // the oldest position not yet committed
+  let count = 0 // positions committed
+  const committed = new Set<number>()
   let running = 0
   let committing = false
   let done = false
@@ -151,16 +160,21 @@ export function runOrdered<R>(o: PoolOptions<R>): Promise<number> {
       unsubscribe?.()
       resolve(next)
     }
+    const fail = (e: unknown) => {
+      done = true
+      unsubscribe?.()
+      reject(e)
+    }
     const stopped = () => !!o.signal?.aborted
     const depsDone = (idx: number) => o.deps[idx].every((d) => {
       const p = pos.get(d)
-      return p === undefined || p < committed
+      return p === undefined || committed.has(p)
     })
     const pump = () => {
       if (done) return
       const width = Math.max(1, o.workers())
       const window = o.window ?? width * 2
-      while (!stopped() && next < o.order.length && running < width && next - committed < window && depsDone(o.order[next])) {
+      while (!stopped() && next < o.order.length && running < width && next - low < window && depsDone(o.order[next])) {
         const p = next++
         const idx = o.order[p]
         running++
@@ -170,34 +184,40 @@ export function runOrdered<R>(o: PoolOptions<R>): Promise<number> {
             running--
             void drain()
           },
-          (e: unknown) => {
-            done = true
-            unsubscribe?.()
-            reject(e)
-          },
+          fail,
         )
       }
-      if (committed === next && running === 0 && (stopped() || next === o.order.length)) finish()
+      if (count === next && running === 0 && (stopped() || next === o.order.length)) finish()
+    }
+    /** The next batch: in order, the finished positions from `low` on; else every finished position, oldest first. */
+    const take = (): number[] => {
+      const ready = inOrder ? [] : [...results.keys()].sort((x, y) => x - y)
+      if (inOrder) for (let p = low; results.has(p); p++) ready.push(p)
+      const batch: number[] = []
+      for (const p of ready) {
+        if (batch.length >= (o.maxBatch ?? 1)) break
+        if (batch.length && !(o.joins?.(batch.map((q) => o.order[q]), o.order[p]) ?? true)) {
+          if (inOrder) break
+          continue
+        }
+        batch.push(p)
+      }
+      return batch
     }
     const drain = async () => {
       if (committing) return
       committing = true
       try {
-        while (results.has(committed)) {
-          const batch: { index: number; result: R }[] = []
-          let p = committed
-          while (results.has(p) && batch.length < (o.maxBatch ?? 1) && (!batch.length || (o.joins?.(batch.map((b) => b.index), o.order[p]) ?? true))) {
-            batch.push({ index: o.order[p], result: results.get(p) as R })
-            results.delete(p)
-            p++
-          }
-          await o.commit(batch)
-          committed = p
+        for (let batch = take(); batch.length; batch = take()) {
+          const items = batch.map((p) => ({ index: o.order[p], result: results.get(p) as R }))
+          for (const p of batch) results.delete(p)
+          await o.commit(items)
+          for (const p of batch) committed.add(p)
+          count += batch.length
+          while (committed.has(low)) low++
         }
       } catch (e) {
-        done = true
-        unsubscribe?.()
-        reject(e)
+        fail(e)
         return
       } finally {
         committing = false

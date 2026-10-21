@@ -241,4 +241,36 @@ describe('runOrdered', () => {
     expect(await done).toBe(6)
     expect(batches).toEqual([[0, 1, 2], [3, 4], [5]])
   })
+
+  it('commits as soon as photos are done when not in order, oldest first, and still waits for dependencies', async () => {
+    const gates = new Map<number, () => void>()
+    const batches: number[][] = []
+    const started: number[] = []
+    const done = runOrdered({
+      order: [0, 1, 2, 3],
+      deps: [[], [], [], [1]],
+      workers: () => 3,
+      maxBatch: 4,
+      inOrder: false,
+      run: (i) => {
+        started.push(i)
+        return new Promise<number>((r) => gates.set(i, () => r(i)))
+      },
+      commit: async (batch) => void batches.push(batch.map((b) => b.index)),
+    })
+    await tick()
+    expect(started).toEqual([0, 1, 2])
+    gates.get(2)!()
+    await tick()
+    expect(batches).toEqual([[2]]) // not waiting for 0 and 1
+    expect(started).toEqual([0, 1, 2]) // 3 waits for 1
+    gates.get(1)!()
+    await tick()
+    expect(batches).toEqual([[2], [1]])
+    expect(started).toEqual([0, 1, 2, 3])
+    gates.get(3)!()
+    gates.get(0)!()
+    expect(await done).toBe(4)
+    expect(batches.flat().sort()).toEqual([0, 1, 2, 3])
+  })
 })

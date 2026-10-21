@@ -418,7 +418,7 @@ export async function runImport(
   }
 
   /**
-   * Adds copied photos to the library, in the planned order: the photos copied by then together, in one catalog
+   * Adds copied photos to the library as their copies are checked: the photos copied by then together, in one catalog
    * transaction (each with what is left for the background), then each one's thumbnail and stacks.
    */
   const commit = async (batch: { index: number; result: Copied }[]) => {
@@ -512,6 +512,9 @@ export async function runImport(
   try {
     await runOrdered({
       order: plan.order, deps: plan.deps, workers, run: copyOne, commit, signal, maxBatch: COMMIT_BATCH,
+      // Each copy is added as soon as it is checked (with the others done by then), never waiting behind a slower one:
+      // a tab closed mid-import then leaves at most the copies in progress unfinished, as one at a time did.
+      inOrder: false,
       // Twins are added in separate batches, so the second one knows the first one's id (and is stacked with it).
       joins: (inBatch, index) => !inBatch.includes(plan.twin.get(index) ?? -1),
       onWake: (wake) => lease?.onChange(wake) ?? (() => {}),
