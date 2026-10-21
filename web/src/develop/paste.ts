@@ -8,7 +8,7 @@ import { pasteCrop, setAngle, withOrientation, type GeometrySettings } from '../
 import { DEFAULT_TRANSFORM, normalizeTransform, ZERO_PERSPECTIVE, type TransformSettings } from '../engine/develop/upright'
 import { DEFAULT_DETAIL, withDetail, type DetailSettings } from '../engine/detail/settings'
 import { CURVE_NORMS, DEFAULT_TONE_CURVE, isLinear, REGION_KEYS, REGION_NAMES, withToneCurve, type ToneCurveSettings } from '../engine/develop/tone-curve'
-import { describeSpots } from '../engine/develop/spots'
+import { describeSpots, spotsForOtherPhoto } from '../engine/develop/spots'
 import { bandsOf, describeMixer, describePoints, withColourMixer, withPoints } from '../engine/develop/colour-mixer'
 import { describeGrading, withColourGrading } from '../engine/develop/colour-grading'
 import { appendMasks, describeMasks, withMasksList } from '../engine/develop/masks'
@@ -315,7 +315,8 @@ export const PASTE_ITEMS: PasteItem[] = [
   },
   // Remove, Heal and Clone spots (Part 11): they belong to one photo, so the item is unticked by default. Ticked, the
   // spots replace the photo's own, at the same places on the sensor (sensor dust is at the same place on every photo
-  // of a camera) with the same sources; each photo's fill is then computed from its own pixels.
+  // of a camera) with the same sources; each photo's fill is then computed from its own pixels. AI Remove spots come
+  // without their generated patch (Part 26), which belongs to the photo it was made on: they wait for Generate.
   {
     key: 'spots',
     label: 'Remove, Heal & Clone spots',
@@ -323,7 +324,7 @@ export const PASTE_ITEMS: PasteItem[] = [
     copy: (to, from) => {
       const { spots: _own, ...rest } = to
       void _own
-      return from.spots?.length ? { ...rest, spots: from.spots.map((sp) => ({ ...sp, points: sp.points.map((p) => [...p] as [number, number]), offset: [...sp.offset] as [number, number] })) } : rest
+      return from.spots?.length ? { ...rest, spots: spotsForOtherPhoto(from.spots) } : rest
     },
     show: (s) => describeSpots(s.spots),
     changed: (a, b) => JSON.stringify(a.spots ?? []) !== JSON.stringify(b.spots ?? []),

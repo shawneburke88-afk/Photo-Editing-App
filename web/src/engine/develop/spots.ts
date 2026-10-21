@@ -272,6 +272,14 @@ export function strokeMiddle(points: [number, number][]): [number, number] {
   return points[points.length - 1]
 }
 
+/**
+ * Spots for another photo (paste, sync, presets): copies, and AI Remove spots without their patch (it was generated
+ * from the photo it belongs to); there they wait for a patch of their own (the Remove panel's Generate).
+ */
+export function spotsForOtherPhoto(spots: Spot[]): Spot[] {
+  return spots.map(({ ai: _ai, ...sp }) => (void _ai, { ...sp, points: sp.points.map((p) => [...p] as [number, number]), offset: [...sp.offset] as [number, number] }))
+}
+
 /** Lines for the history and the paste checklist. */
 export function describeSpots(spots: Spot[] | undefined): string {
   if (!spots?.length) return 'none'

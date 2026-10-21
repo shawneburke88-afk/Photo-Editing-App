@@ -80,6 +80,7 @@ import { cleanName, makeSnapshot, sortSnapshots, uniqueName, type Snapshot } fro
 import { snapshotsChanged } from './snapshotStore'
 import { useMasking } from './useMasking'
 import { renderSize, useDepth } from './useDepth'
+import { useAiRemove } from './useAiRemove'
 import { ModelDialog } from '../ai/ModelDialog'
 import { MaskOverlay } from './MaskOverlay'
 import { diagnostics } from '../diagnostics/recorder'
@@ -882,6 +883,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     const img = await gpuGate.foreground(() => engine.renderImage(displayUniforms(s), multipliers(s, inf), renderSize(g.size[0], g.size[1], input)))
     return { rgba: img.data, width: img.width, height: img.height, uvToSensor: g.uvToSensor, sensor: sensorSize() }
   })
+  /** AI Remove (PHASE3.md Part 26): Moebius for the Remove brush's AI mode; the spot being generated. */
+  const aiRemove = useAiRemove()
+  const [aiPending, setAiPending] = useState<Spot | null>(null)
   /** Masks (PHASE3.md Part 23): the masking tool on the photo and what it does to the photo's masks. */
   const masking = useMasking({
     settings: () => (historyRef.current ? current(historyRef.current) : latest.current.settings),
@@ -1485,6 +1489,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       seed: newSeed(),
     }
     const others = latest.current.settings.spots ?? []
+    if (spot.mode === 'ai') {
+      await generateAiSpot(spot, null)
+      return
+    }
     setPlacing(true)
     setSpotError(null)
     try {
@@ -1501,6 +1509,41 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     const name = { remove: 'Remove', heal: 'Heal', clone: 'Clone', ai: 'AI Remove' }[spot.mode]
     changeSpots(`${name} spot ${now.length + 1}`, [...now, spot])
     setSelectedSpot(spot.id)
+  }
+  /**
+   * AI Remove (Part 26): generates `spot`'s patch from the photo with the spots before it, then adds the spot (a new
+   * one, `replace` null) or gives an existing one its new patch (Try again, Generate, or a mode change to AI Remove),
+   * as one history step. Nothing changes if it is declined, cancelled or fails, or if another photo is opened meanwhile.
+   */
+  async function generateAiSpot(spot: Spot, replace: { label: string } | null) {
+    const engine = engineRef.current
+    const size = engine?.sceneSize()
+    const photo = latest.current.info
+    if (!engine || !size || aiRemove.running()) return
+    const list = latest.current.settings.spots ?? []
+    const at = replace ? list.findIndex((x) => x.id === spot.id) : list.length
+    if (at < 0) return
+    const others = list.slice(0, at)
+    setSpotError(null)
+    setAiPending(replace ? null : spot)
+    const fill = await aiRemove.fill(spot, size, (r) => engine.readSceneRegion(r, others)).finally(() => setAiPending(null))
+    if (!fill || engineRef.current !== engine || latest.current.info !== photo) return
+    const now = latest.current.settings.spots ?? []
+    const done: Spot = { ...spot, mode: 'ai', offset: [0, 0], ai: fill }
+    if (!replace) {
+      changeSpots(`AI Remove spot ${now.length + 1}`, [...now, done])
+      setSelectedSpot(done.id)
+      return
+    }
+    if (!now.some((x) => x.id === spot.id)) return
+    changeSpots(replace.label, now.map((x) => (x.id === spot.id ? { ...done, feather: x.feather, opacity: x.opacity } : x)))
+  }
+  /** AI Remove: a new patch for the selected spot (a new seed), or its first one (a pasted spot waits for it). */
+  function retryAiSpot() {
+    const list = latest.current.settings.spots ?? []
+    const i = selectedSpot ? list.findIndex((x) => x.id === selectedSpot) : -1
+    if (i < 0 || list[i].mode !== 'ai') return
+    void generateAiSpot({ ...list[i], seed: list[i].ai ? newSeed() : list[i].seed }, { label: `Spot ${i + 1}: ${list[i].ai ? 'AI Remove, try again' : 'AI Remove'}` })
   }
   function moveSource(id: string, [dx, dy]: [number, number]) {
     const [sw, sh] = sensorSize()
@@ -1522,6 +1565,31 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     }
     const [sw, sh] = sensorSize()
     const v = value as number
+    const cur = list[i]
+    if (what === 'mode' && value === cur.mode) return
+    // An AI Remove spot's patch was made for its shape: its size stays (paint a new spot, or delete it).
+    if (what === 'size' && cur.mode === 'ai') return
+    if (what === 'mode' && value === 'ai') {
+      void generateAiSpot({ ...cur, mode: 'ai' }, { label: `Spot ${i + 1}: AI Remove` })
+      return
+    }
+    if (what === 'mode' && cur.mode === 'ai') {
+      // Back to a patch-based mode: the generated patch goes, the source is picked again.
+      const { ai: _ai, ...plain } = cur
+      void _ai
+      const next: Spot = { ...plain, mode: value as SpotMode }
+      const engine = engineRef.current
+      setPlacing(true)
+      void (engine ? engine.pickSpotSource(next, list.slice(0, i)) : Promise.resolve([0, 0] as [number, number]))
+        .then(([dx, dy]) => {
+          next.offset = [Math.round((dx / sw) * 1e6) / 1e6, Math.round((dy / sh) * 1e6) / 1e6]
+          const now = latest.current.settings.spots ?? []
+          changeSpots(`Spot ${i + 1}: ${{ remove: 'Remove', heal: 'Heal', clone: 'Clone', ai: 'AI Remove' }[value as SpotMode]}`, now.map((x) => (x.id === cur.id ? next : x)))
+        })
+        .catch((e) => setSpotError(`Couldn’t find a source: ${e instanceof Error ? e.message : e}`))
+        .finally(() => setPlacing(false))
+      return
+    }
     const patch: Partial<Spot> =
       what === 'mode' ? { mode: value as SpotMode }
         : what === 'size' ? { size: Math.round((Math.min(SIZE_RANGE[1], Math.max(SIZE_RANGE[0], v)) / Math.min(sw, sh)) * 1e6) / 1e6 }
@@ -1549,13 +1617,15 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     const l = engine.layout(view, engine.canvas.width, engine.canvas.height)
     setView((v) => ({ zoom: v.zoom, center: panCenter(v.center, dx * dpr, dy * dpr, l, engine.canvas.width, engine.canvas.height) }))
   }
-  const spotStatus = placing
+  const spotStatus = aiRemove.busy
+    ? aiRemove.busy.text
+    : placing
     ? 'Finding where to take the fill from…'
     : retouch.busy && retouch.spot !== undefined
       ? `Filling spot ${retouch.spot + 1}… ${Math.round((retouch.fraction ?? 0) * 100)} %`
       : retouch.busy
         ? 'Applying spots…'
-        : spotError
+        : spotError ?? aiRemove.error
 
   const selectedTarget = targets.find((t) => t.id === targetId) ?? BUILT_IN_TARGETS[0]
   const infoLine = photo ? exposureText(photo) : ''
@@ -1931,6 +2001,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'remove.modeRemove': editSpot('mode', 'remove'); break
       case 'remove.modeHeal': editSpot('mode', 'heal'); break
       case 'remove.modeClone': editSpot('mode', 'clone'); break
+      case 'remove.modeAi': editSpot('mode', 'ai'); break
       case 'remove.clear': clearSpots(); break
       case 'develop.before': setBefore((b) => !b); break
       case 'develop.zoom': zoom.toggle(); break
@@ -2478,12 +2549,12 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   const v = (y - b.y) / b.h
                   return b.map ? displayToSensorAt(b.map, u, v) : engine.displayToSensor(u, v)
                 }}
-                spots={spots}
+                spots={aiPending ? [...spots, aiPending] : spots}
                 sensor={sensorSize()}
                 brush={{ radius: brush.size, feather: brush.feather / 100 }}
                 selected={selectedSpot}
                 showAll={showAllSpots.on}
-                progress={retouch.busy && retouch.spot !== undefined ? { spot: retouch.spot, fraction: retouch.fraction ?? 0 } : null}
+                progress={aiPending && aiRemove.busy ? { spot: spots.length, fraction: aiRemove.busy.fraction ?? 0 } : retouch.busy && retouch.spot !== undefined ? { spot: retouch.spot, fraction: retouch.fraction ?? 0 } : null}
                 onStroke={(pts) => {
                   setSelectedSpot(null)
                   void addSpot(pts)
@@ -2735,6 +2806,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   onShowAll={(on) => setShowAllSpots({ on })}
                   onDelete={deleteSpot}
                   onClear={clearSpots}
+                  ai={{ busy: aiRemove.busy, onCancel: aiRemove.cancel, onRetry: retryAiSpot }}
                 />
               ),
             },
@@ -2925,6 +2997,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         />
         </SectionEyeContext.Provider>
       </aside>
+      {aiRemove.ask && (
+        <ModelDialog model={aiRemove.ask.model} files={aiRemove.ask.files} purpose="AI Remove" onInstalled={(rec) => aiRemove.ask?.done(rec)} onClose={() => aiRemove.ask?.done(null)} />
+      )}
       {depth.ask && (
         <ModelDialog model={depth.ask.model} file={depth.ask.file} purpose="The Depth range mask" onInstalled={(rec) => depth.ask?.done(rec)} onClose={() => depth.ask?.done(null)} />
       )}

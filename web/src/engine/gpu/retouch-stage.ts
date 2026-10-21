@@ -24,8 +24,8 @@ import type { Completion } from '../retouch/completion'
 import { computeFills } from '../retouch/fill-pool'
 import { planSpots, pickRegion } from '../retouch/plan'
 import type { RetouchReply, RetouchRequest } from '../retouch/retouch.worker'
-import { tileRect, tilesOf, type HalfTile } from '../retouch/tiles'
-import { clipRect, hashString, spotBounds, spotPixels } from '../develop/spots'
+import { TileImage, tileRect, tilesOf, type HalfTile } from '../retouch/tiles'
+import { clipRect, hashString, spotBounds, spotPixels, type PxRect } from '../develop/spots'
 import { Retirement } from './retire'
 
 export interface RetouchHost {
@@ -303,6 +303,13 @@ export class RetouchStage {
         buf.destroy()
       }
     }
+  }
+
+  /** A rectangle of a texture's level 0 as linear RGB (interleaved), for AI Remove's model input. */
+  async readRegion(tex: GPUTexture, r: PxRect): Promise<Float32Array> {
+    const map = new Map<number, Uint16Array>()
+    await this.readTiles(tex, [...tilesOf(r, tex.width, tex.height)], map)
+    return new TileImage(tex.width, tex.height, [...map].map(([idx, data]) => ({ idx, data }))).read(r)
   }
 
   /**

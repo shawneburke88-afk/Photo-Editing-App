@@ -578,6 +578,13 @@ export const HELP: Record<string, ControlHelp> = {
     pitfalls: 'A very soft edge leaves a faint trace of what was removed near the edge; paint wider instead.',
     engine: 'darktable’s brush hardness (feather = 1 − hardness)',
   },
+  removeAiSize: {
+    hint: 'Fixed for an AI Remove spot',
+    what: 'An AI Remove spot keeps the size it was painted with, because its fill was drawn for that shape. To cover more, paint a new spot over it, or delete it and paint again.',
+    left: 'Smaller brush (for new spots).',
+    right: 'Larger brush (for new spots).',
+    engine: 'LightBench',
+  },
   removeOpacity: {
     hint: 'How strongly the spot covers',
     what: 'How much of the fill replaces the photo. With a spot selected, changes that spot.',

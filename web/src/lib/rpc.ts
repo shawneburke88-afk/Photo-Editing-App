@@ -9,6 +9,14 @@ export type RpcClient<H extends Handlers> = {
   [K in keyof H]: (...args: Parameters<H[K]>) => Promise<Awaited<ReturnType<H[K]>>>
 }
 
+/** Buffers the caller hands over to the worker (moved, not copied: a 907 MB model isn't held twice). Opt-in. */
+const handOver = new WeakSet<ArrayBuffer>()
+/** Marks a buffer to be moved to the worker by the next call that passes it (it is unusable here afterwards). */
+export function transfer<T extends ArrayBuffer>(buf: T): T {
+  handOver.add(buf)
+  return buf
+}
+
 /** Worker side: answers requests by calling the matching handler. */
 export function exposeRpc(handlers: Handlers) {
   self.onmessage = async (e: MessageEvent<Request>) => {
@@ -53,7 +61,8 @@ export function createRpcClient<H extends Handlers>(worker: Worker, onError?: (m
         new Promise((resolve, reject) => {
           const id = nextId++
           pending.set(id, { method, resolve, reject })
-          worker.postMessage({ id, method, args } satisfies Request)
+          const moved = args.filter((a): a is ArrayBuffer => a instanceof ArrayBuffer && handOver.has(a))
+          worker.postMessage({ id, method, args } satisfies Request, moved)
         }),
   })
 }
