@@ -507,6 +507,7 @@ async function runSam(m, variant, files, ep, inspect, photo) {
   const sam2 = m.id.startsWith('sam21')
   // SAM 2 (transformers Sam2Processor): resize to 1024 × 1024. SAM (SlimSAM): longest side to 1024, pad.
   const px = toNCHW(photo, S, S, sam2 ? {} : { fit: S })
+  savePixels(`${m.id}-${variant}-${photo.name}`, ep, px)
   const es = await session(enc.local, ep)
   const er = await timedRun(es, { [encIn.name]: tensorFor(encIn.type, px, [1, 3, S, S]) })
   const scale = sam2 ? [S / photo.w, S / photo.h] : [S / Math.max(photo.w, photo.h), S / Math.max(photo.w, photo.h)]
@@ -545,6 +546,13 @@ async function runSam(m, variant, files, ep, inspect, photo) {
   return finish(m, variant, ep, photo, map, mw, mh, er, dr, masks, { iou: iou.map((v) => +v.toFixed(4)), best, point: SAM_POINT })
 }
 
+/** The exact float32 input tensor of a CPU run, for the masks-prep2 checks (same input everywhere). */
+function savePixels(key, ep, px) {
+  if (ep !== 'cpu') return
+  mkdirSync(join(DIR, 'raw'), { recursive: true })
+  writeFileSync(join(DIR, 'raw', `${key}-pixel.f32`), Buffer.from(px.buffer, px.byteOffset, px.byteLength))
+}
+
 function finish(m, variant, ep, photo, map, mw, mh, er, dr, primary, extra) {
   const key = `${m.id}-${variant}-${photo.name}`
   const mask = saveMask(`${key}-${ep}`, map, mw, mh, photo)
@@ -570,7 +578,9 @@ async function runSingle(m, variant, file, ep, inspect, photo) {
   const num = (d, dflt) => (typeof d === 'number' && d > 0 ? d : dflt)
   if (m.kind === 'birefnet') {
     const S = num(inp.dims?.[2], 1024)
-    const r = await timedRun(s, { [inp.name]: tensorFor(inp.type, toNCHW(photo, S, S), [1, 3, S, S]) })
+    const px = toNCHW(photo, S, S)
+    savePixels(`${m.id}-${variant}-${photo.name}`, ep, px)
+    const r = await timedRun(s, { [inp.name]: tensorFor(inp.type, px, [1, 3, S, S]) })
     const names = Object.keys(r.out)
     const t = r.out[names[names.length - 1]]
     const d = asF32(t)

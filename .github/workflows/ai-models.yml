@@ -15,6 +15,8 @@ name: AI models
 #                  pins (commit, licence, LFS sha256), ONNX inspection against ORT 1.30.0's WebGPU kernels, one CPU run
 #                  each in onnxruntime-node, a WebGPU-EP run on software Vulkan, the MediaPipe TFLite comparison and
 #                  the EfficientViT-Seg export (web/scripts/masks-prep.mjs, web/scripts/masks-prep/). Commits nothing.
+#   masks-prep2    follow-up: SAM 2.1 fp32 WebGPU bisection and fix, BiRefNet_lite patch, both checked in onnxruntime-node
+#                  and in headless Chromium (web/scripts/masks-prep2.mjs, masks-prep/fix_models.py, browser-run.mjs).
 
 on:
   workflow_dispatch:
@@ -26,6 +28,7 @@ on:
           - pin-and-check
           - check
           - masks-prep
+          - masks-prep2
         default: pin-and-check
         required: true
       revision:
@@ -44,7 +47,7 @@ concurrency:
 jobs:
   models:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
     env:
       TASK: ${{ inputs.task }}
       REVISION: ${{ inputs.revision }}
@@ -57,7 +60,7 @@ jobs:
         id: code
         run: |
           echo "branch ${GITHUB_REF_NAME} at $(git rev-parse --short HEAD), task ${TASK}"
-          if [ "${TASK}" = "masks-prep" ]; then
+          if [ "${TASK}" = "masks-prep" ] || [ "${TASK}" = "masks-prep2" ]; then
             if [ -f web/scripts/masks-prep.mjs ]; then
               echo "found web/scripts/masks-prep.mjs"
               echo "present=true" >> "$GITHUB_OUTPUT"
@@ -88,7 +91,7 @@ jobs:
             exit 1
           fi
           case "${TASK}" in
-            pin-and-check|check|masks-prep) ;;
+            pin-and-check|check|masks-prep|masks-prep2) ;;
             *) echo "::error::unknown task '${TASK}' (pin-and-check, check or masks-prep)"; exit 1 ;;
           esac
           if [ -n "${REVISION}" ]; then
@@ -193,17 +196,17 @@ jobs:
 
       # ---------------------------------------------------------------- masks-prep (read-only; commits nothing)
       - uses: actions/setup-node@v4
-        if: steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        if: steps.code.outputs.present == 'true' && startsWith(inputs.task, 'masks-prep')
         with:
           node-version: 22
 
       - uses: actions/setup-python@v5
-        if: steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        if: steps.code.outputs.present == 'true' && startsWith(inputs.task, 'masks-prep')
         with:
           python-version: "3.12"
 
       - name: "masks-prep: install tools (runner only)"
-        if: steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        if: steps.code.outputs.present == 'true' && startsWith(inputs.task, 'masks-prep')
         run: |
           echo "MASKS_DIR=${RUNNER_TEMP}/masks" >> "$GITHUB_ENV"
           echo "ORT_NODE_DIR=${RUNNER_TEMP}/ortnode" >> "$GITHUB_ENV"
@@ -222,9 +225,21 @@ jobs:
           # Software Vulkan (Mesa lavapipe) so the WebGPU EP finds an adapter on a GPU-less runner.
           sudo apt-get update -q >/dev/null && sudo apt-get install -y -q mesa-vulkan-drivers libvulkan1 vulkan-tools >/dev/null || echo "::warning::lavapipe install failed"
           vulkaninfo --summary 2>/dev/null | grep -E 'deviceName|driverName|apiVersion|deviceType' || true
+          if [ "${TASK}" = "masks-prep2" ]; then
+            # onnxruntime-web 1.30.0 (the app's version) and Playwright's headless Chromium for the browser runs.
+            for i in 1 2 3 4 5; do
+              (cd "${RUNNER_TEMP}/ortnode" && ONNXRUNTIME_NODE_INSTALL=skip npm install --no-save --no-audit --no-fund --fetch-retries=5 onnxruntime-node@1.30.0 onnxruntime-web@1.30.0 playwright@1.56.1) && break
+              if [ "$i" = 5 ]; then exit 1; fi
+              sleep $((i * 15))
+            done
+            for i in 1 2 3; do (cd "${RUNNER_TEMP}/ortnode" && npx --yes playwright@1.56.1 install --with-deps chromium) && break; sleep 20; done
+            echo "PLAYWRIGHT_DIR=${RUNNER_TEMP}/ortnode/node_modules" >> "$GITHUB_ENV"
+            echo "ORT_WEB_DIST=${RUNNER_TEMP}/ortnode/node_modules/onnxruntime-web/dist" >> "$GITHUB_ENV"
+            node -e "console.log('onnxruntime-web', require('${RUNNER_TEMP}/ortnode/node_modules/onnxruntime-web/package.json').version)"
+          fi
 
       - name: "masks-prep: pin and download"
-        if: steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        if: steps.code.outputs.present == 'true' && startsWith(inputs.task, 'masks-prep')
         working-directory: web
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -247,11 +262,11 @@ jobs:
           python -I web/scripts/masks-prep/export_efficientvit.py --dir "${MASKS_DIR}" --repo "${RUNNER_TEMP}/efficientvit" --opset 17 --size 512
 
       - name: "masks-prep: inspect the ONNX graphs"
-        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        if: always() && steps.code.outputs.present == 'true' && startsWith(inputs.task, 'masks-prep')
         run: python -I web/scripts/masks-prep/inspect_models.py --dir "${MASKS_DIR}" --photos web/scripts/masks-prep
 
       - name: "masks-prep: one run each on the CPU (onnxruntime-node)"
-        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep'
+        if: always() && steps.code.outputs.present == 'true' && startsWith(inputs.task, 'masks-prep')
         working-directory: web
         run: node scripts/masks-prep.mjs run --dir "${MASKS_DIR}" --ep cpu
 
@@ -286,5 +301,92 @@ jobs:
         with:
           name: masks-prep-${{ github.run_id }}
           path: ${{ runner.temp }}/masks-artifact
+          if-no-files-found: warn
+          retention-days: 30
+
+      # ---------------------------------------------------------------- masks-prep2 (read-only; commits nothing)
+      - name: "masks-prep2: rewrite the models (SAM 2.1 fp32 Softmax chunks, BiRefNet_lite Split/Concat/Conv)"
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep2'
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          D="${MASKS_DIR}"; mkdir -p "$D/fixed"
+          F=web/scripts/masks-prep/fix_models.py
+          enc=$(node -p "require('$D/pins.json').models['sam21-tiny'].files['fp32/encoder'].local")
+          bf16=$(node -p "require('$D/pins.json').models['birefnet-lite'].files.fp16.local")
+          bf32=$(node -p "require('$D/pins.json').models['birefnet-lite'].files.fp32.local")
+          python -I $F sam-fix --model "$enc" --out "$D/fixed/sam21_vision_encoder_fp32_chunked.onnx" || echo "::warning::sam-fix failed"
+          python -I $F birefnet-fix --model "$bf16" --out "$D/fixed/birefnet_lite_fp16_patched.onnx" || echo "::warning::birefnet fp16 fix failed"
+          python -I $F birefnet-fix --model "$bf32" --out "$D/fixed/birefnet_lite_fp32_patched.onnx" || echo "::warning::birefnet fp32 fix failed"
+          node -e '
+            const fs = require("fs"); const d = process.argv[1]; const f = {};
+            const add = (k, n) => { if (fs.existsSync(d + "/fixed/" + n)) f[k] = "fixed/" + n };
+            add("samFp32", "sam21_vision_encoder_fp32_chunked.onnx"); add("birefnetfp16", "birefnet_lite_fp16_patched.onnx"); add("birefnetfp32", "birefnet_lite_fp32_patched.onnx");
+            fs.writeFileSync(d + "/fixed/files.json", JSON.stringify(f)); console.log(JSON.stringify(f))' "$D"
+          ls -la "$D/fixed"
+
+      - name: "masks-prep2: bisect SAM 2.1 fp32 encoder (CPU vs WebGPU EP, onnxruntime-node)"
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep2'
+        continue-on-error: true
+        timeout-minutes: 30
+        working-directory: web
+        run: node scripts/masks-prep2.mjs bisect --dir "${MASKS_DIR}"
+
+      - name: "masks-prep2: verify the rewritten models (onnxruntime-node CPU and WebGPU EP)"
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep2'
+        continue-on-error: true
+        timeout-minutes: 60
+        working-directory: web
+        run: node scripts/masks-prep2.mjs verify --dir "${MASKS_DIR}"
+
+      - name: "masks-prep2: headless Chromium + onnxruntime-web 1.30.0 /webgpu, adapter limits"
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep2'
+        continue-on-error: true
+        timeout-minutes: 60
+        working-directory: web
+        run: |
+          node scripts/masks-prep2.mjs browser-jobs --dir "${MASKS_DIR}"
+          node scripts/masks-prep/browser-run.mjs --dir "${MASKS_DIR}" --ort "${ORT_WEB_DIST}" --playwright "${PLAYWRIGHT_DIR}" \
+            --jobs "${MASKS_DIR}/browser-jobs.json" --out "${MASKS_DIR}/browser-native.json" --job-timeout 900
+
+      - name: "masks-prep2: headless Chromium at an emulated 128 MiB maxStorageBufferBindingSize"
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep2'
+        continue-on-error: true
+        timeout-minutes: 45
+        working-directory: web
+        run: |
+          node scripts/masks-prep/browser-run.mjs --dir "${MASKS_DIR}" --ort "${ORT_WEB_DIST}" --playwright "${PLAYWRIGHT_DIR}" \
+            --jobs "${MASKS_DIR}/browser-jobs-emulated.json" --out "${MASKS_DIR}/browser-emulated128.json" --job-timeout 900 --emulate-binding 134217728
+
+      - name: "masks-prep2: report"
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep2'
+        working-directory: web
+        run: node scripts/masks-prep2.mjs report --dir "${MASKS_DIR}"
+
+      - name: "masks-prep2: collect the artifacts"
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep2'
+        run: |
+          D="${MASKS_DIR}"; A="${RUNNER_TEMP}/masks2-artifact"; M="${RUNNER_TEMP}/masks2-models"
+          mkdir -p "$A" "$M"
+          cp "$D"/*.json "$A/" 2>/dev/null || true
+          cp "$D"/fixed/*.json "$A/" 2>/dev/null || true
+          cp -r "$D/out" "$A/" 2>/dev/null || true
+          cp "$D"/bisect/*.json "$A/" 2>/dev/null || true
+          cp "$D"/fixed/*.onnx "$M/" 2>/dev/null || true
+          (cd "$M" && sha256sum *.onnx 2>/dev/null | tee SHA256SUMS; ls -l)
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep2'
+        with:
+          name: masks-prep2-${{ github.run_id }}
+          path: ${{ runner.temp }}/masks2-artifact
+          if-no-files-found: warn
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep2'
+        with:
+          name: masks-prep2-models-${{ github.run_id }}
+          path: ${{ runner.temp }}/masks2-models
           if-no-files-found: warn
           retention-days: 30
