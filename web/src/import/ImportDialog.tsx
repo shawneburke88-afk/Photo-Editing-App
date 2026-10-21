@@ -70,9 +70,15 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
   destRef.current = dest
 
   const isDuplicate = (c: Candidate) => c.inCatalog || c.atDestination
-  /** Untouched photos are ticked unless they look already imported or failed. */
+  /**
+   * Copied before but not in the library: a file of the same name and size is in the destination folder, and the
+   * library has no such photo (e.g. an import stopped by closing the tab after the copy and before adding it). Ticked:
+   * importing it checks the file against the card and adds it without copying it again.
+   */
+  const copiedOnly = (c: Candidate) => c.atDestination && !c.inCatalog
+  /** Untouched photos are ticked unless they are already in the library, or failed. */
   const withAutoSelection = (c: Candidate): Candidate =>
-    c.touched ? c : { ...c, selected: c.status !== 'error' && !isDuplicate(c) }
+    c.touched ? c : { ...c, selected: c.status !== 'error' && !c.inCatalog }
 
   useEffect(() => {
     void loadImportPresets().then(setPresets)
@@ -329,7 +335,8 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
 
   const selected = cands.filter((c, i) => c.selected && importable(c, i))
   const reading = cands.filter((c) => c.status === 'reading').length
-  const already = cands.filter(isDuplicate).length
+  const already = cands.filter((c) => isDuplicate(c) && !copiedOnly(c)).length
+  const notInLibrary = cands.filter(copiedOnly).length
   const pairedCount = paired.size
   const shownCount = includePaired ? cands.length : cands.length - pairedCount
 
@@ -412,7 +419,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
             <h2>Import from card</h2>
             <p className="muted small">
               {source
-                ? `From “${source.name}” · ${shownCount} ${shownCount === 1 ? 'photo' : 'photos'} found${reading ? ` · reading ${reading}…` : ''}${already ? ` · ${already} already imported` : ''}`
+                ? `From “${source.name}” · ${shownCount} ${shownCount === 1 ? 'photo' : 'photos'} found${reading ? ` · reading ${reading}…` : ''}${already ? ` · ${already} already imported` : ''}${notInLibrary ? ` · ${notInLibrary} copied before but not in the library` : ''}`
                 : 'Choose your memory card (or any folder of photos) to see what can be imported.'}
             </p>
           </div>
@@ -453,7 +460,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
                 </div>
                 <div className="import-grid">
                   {visible.map(({ c, i }) => {
-                    const dup = isDuplicate(c)
+                    const dup = isDuplicate(c) && !copiedOnly(c)
                     return (
                       <button
                         key={i}
@@ -466,7 +473,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
                           {c.thumbUrl ? <img src={c.thumbUrl} alt="" draggable={false} /> : <span className="cand-placeholder">{c.status === 'error' ? 'Unreadable' : extensionOf(c.file.name).toUpperCase()}</span>}
                         </span>
                         <span className="cand-check" aria-hidden>{c.selected ? '✓' : ''}</span>
-                        {dup && <span className="cand-badge">Already imported</span>}
+                        {isDuplicate(c) && <span className="cand-badge">{copiedOnly(c) ? 'Copied, not in library' : 'Already imported'}</span>}
                         <span className="cand-name">{c.file.name}</span>
                       </button>
                     )
