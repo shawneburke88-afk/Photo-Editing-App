@@ -4,9 +4,13 @@
 [AI_MODELS.md](AI_MODELS.md) (2026-10-11), which covers masks, selection and AI Auto in depth. This document adds the
 owner's 2026-10-12 requests and re-checks the masking licences.
 
-**The owner's rules for AI models** (PLAN.md, Phase 4):
+**The owner's rules for AI models** (PLAN.md, Phase 4; the training-data part relaxed on 2026-10-21, see
+[Model rule relaxed](#model-rule-relaxed-owner-2026-10-21)):
 - **Permissive licences only.** Code and weights must allow any use, including commercial. No non-commercial,
   research-only or use-restricted ("responsible AI") licences. No SAM 3, also not as an optional download.
+- **Training data mostly named** (since 2026-10-21): a small unpublished share, or an unpublished foundation model the
+  weights build on, is allowed when the model info says so in plain words; well-known publishers that name no data only
+  as exceptions the owner approves one at a time.
 - **Everything runs locally**, on the user's GPU, in the browser.
 - **Nothing made up.** "(unverified)" marks anything not read at its primary source, and "(estimate)" marks numbers that
   weren't measured.
@@ -26,6 +30,7 @@ owner's 2026-10-12 requests and re-checks the masking licences.
 - [Model delivery](#model-delivery)
 - [WebGPU limits](#webgpu-limits-for-in-browser-inference)
 - [Excluded and why](#excluded-and-why)
+- [Owner's decisions](#owners-decisions-so-far-2026-10-13), including [the relaxed model rule](#model-rule-relaxed-owner-2026-10-21), [AI masks](#ai-masks-owner-2026-10-21) and [AI Remove's delivery](#ai-remove-delivery-and-licence-owner-2026-10-21) (2026-10-21)
 - [Open questions for the owner](#open-questions-for-the-owner)
 
 ---
@@ -353,6 +358,10 @@ branch with the AI code). The Action runs `pin`, then a real-model check in Node
 Pages' limits: 1 GB per site (the two DA-V2 files are about 149 MB), 100 GB a month soft bandwidth (about 800 fp32 or
 1,300 fp16 first installs a month, runtime included: arithmetic).
 
+**Moebius (AI Remove) is the exception (owner, 2026-10-21):** at about 1.24 GB it is downloaded in the app straight
+from Hugging Face at a pinned commit, with the same size and SHA-256 checks, not served from Pages
+([below](#ai-remove-delivery-and-licence-owner-2026-10-21)).
+
 **The plan (before the decision):** download on first use from LightBench's own pinned copy, the way Lensfun data is handled:
 - not precached by the service worker;
 - fetched once into Cache Storage under its own cache name;
@@ -437,7 +446,7 @@ For models, add a SHA-256 check and a licence dialog before download, as LightCr
 - **RawNIND (2026-10-13, after the Cowork report and the groundwork in [PHASE4_GROUNDWORK.md](PHASE4_GROUNDWORK.md)):** accepted under **GPL-3.0**. Its weights are offered as an optional download with credit given. Under either reading of "dual licensed GPL3 + CC-BY-4.0" GPL-3.0 use is allowed, and LightBench is itself GPL-3.0, so the author is not being asked. This is the one exception to the permissive-only rule for models. Not a legal opinion.
 - **AI denoise order (2026-10-13):** RawNIND first, as the opt-in AI Denoise; measure it against the profiled denoise on the owner's photos; train our own ([DENOISE_TRAINING_PLAN.md](DENOISE_TRAINING_PLAN.md)) only if RawNIND falls short on browser speed or size, or on the owner's cameras.
 - **RawNIND training-data check (2026-10-14, after Cowork batch 2):** an independent check found that RawNIND's clean "extraraw" set is rebuilt from all of raw.pixls.us without a licence filter, so the released weights may include CC BY-NC-SA images [unverified]; the Dataverse licence is still unread ([cowork-2026-10-13b/G_DENOISE_TRAINING_DATA.md](cowork-2026-10-13b/G_DENOISE_TRAINING_DATA.md)). **Owner's decision:** keep "RawNIND first", but verify its training data (Dataverse licence, and the author if needed) before integrating it, and decide then.
-- **Training-data rule clarified (2026-10-14, after Cowork batch 3):** for downloaded models, "training-data provenance must be known" means the training data is **publicly disclosed (named)**. Weights must still be permissive. Non-commercial or research-only terms on disclosed training sets don't disqualify permissive weights. This is the owner's policy, not a legal opinion. Under this rule, per [cowork-2026-10-14-batch3/](cowork-2026-10-14-batch3/INDEX.md):
+- **Training-data rule clarified (2026-10-14, after Cowork batch 3; relaxed on 2026-10-21, [below](#model-rule-relaxed-owner-2026-10-21)):** for downloaded models, "training-data provenance must be known" means the training data is **publicly disclosed (named)**. Weights must still be permissive. Non-commercial or research-only terms on disclosed training sets don't disqualify permissive weights. This is the owner's policy, not a legal opinion. Under this rule, per [cowork-2026-10-14-batch3/](cowork-2026-10-14-batch3/INDEX.md):
   - **Pass:** Depth Anything V2 Small (Apache-2.0; data named, including SA-1B and vKITTI2) and BlazeFace full-range (Apache-2.0, "consented images").
   - **Fail:** DINOv2 (LVD-142M undisclosed), DINOv3 (custom licence with use bans), MediaPipe Selfie Multiclass (no data source stated) and LAION-trained OpenCLIP (its own card excludes deployment).
   - **Depth Anything 3:** MONO-LARGE (student images undisclosed) and METRIC-LARGE (Waymo terms name trained models) are excluded.
@@ -447,7 +456,7 @@ For models, add a SHA-256 check and a licence dialog before download, as LightCr
   - **Model:** Moebius (HUST + vivo; UNet 226 M params) as an optional best-quality AI Remove. Its weights: "Both the code and the pretrained model weights of Moebius are released under the Apache License 2.0" (GitHub README; LICENSE "Copyright 2024 Moebius Authors"); its Hugging Face card is tagged MIT with no licence file. Shipped under Apache-2.0, noting the MIT tag.
   - **Second exception to the training-data rule** (after RawNIND): accepted even though not all training data is named. Facts for the model notice: the PixelHacker teacher was pre-trained on 14 M image–mask pairs from COCONut-Large, Object365V2, GoogleLandmarkV2 and "a natural scene dataset (7.49M images) that we curated and collected" (unnamed, about half the images), then fine-tuned on Places2, CelebA-HQ and FFHQ; Moebius's distillation data is not stated.
   - **VAE: the owner accepts PixelHacker's copy** (`hustvl/PixelHacker/vae`, fp16, 167 MB), as Moebius instructs, relying on its "License: mit" tag. Facts recorded: it is SDXL's VAE ("we use the pretrained SDXL-VAE", PixelHacker paper); its config matches `madebyollin/sdxl-vae-fp16-fix`; every standalone copy (PixelHacker, `stabilityai/sdxl-vae`, fp16-fix) is tagged MIT but none has a LICENSE file or copyright line; the same VAE family also ships inside SDXL base 1.0 under CreativeML Open RAIL++-M and SDXL 0.9 was under a research licence. Not a legal opinion.
-  - **Delivery: LightBench's own ONNX conversion, published as GitHub Release assets** by a manually run GitHub Action (each file < 2 GiB; Releases state no bandwidth limit, but GitHub's Acceptable Use Policies allow throttling "significantly excessive" use). The app shows the size, licences and the training-data note, links to the Release, the user downloads and picks the files, the app verifies SHA-256 and caches them on the device. Each Release carries the Apache-2.0 text, "converted to ONNX by LightBench", and the VAE's MIT tag with its sources (`hustvl/PixelHacker`, `stabilityai/sdxl-vae`) and the note that no upstream copyright line exists.
+  - **Delivery (replaced on 2026-10-21):** an **in-app download from Hugging Face at a pinned commit**, not LightBench's own GitHub Release assets picked by hand. See [AI Remove: delivery and licence](#ai-remove-delivery-and-licence-owner-2026-10-21).
   - **Build notes:** fp32 ≈ 1.24 GB (UNet 907 MB, VAE encoder 137 MB, decoder 198 MB, per the third-party `simonw/Moebius-ONNX`); try fp16 to cut it (the port reports fp16 VAE decoder instability). 20 DDIM steps with strength 0.99 (19 actual), 512 px, white = hole, 9-channel UNet input, class-id CFG with three conflicting upstream defaults (2.0, 2.5, 4.5): pick one and document it. Conv3d → Conv2d needed for Safari's WebGPU. No browser GPU timing has been published; measure.
   - **Mobile / small model: decide later.** Facts so far: MI-GAN passes the rule (weights MIT, inference path needs no NVIDIA code, trained on Places365-Standard and FFHQ, 512 ONNX ≈ 28–30 MB); LaMa's weights licence is still informal (≈ 208 MB, or 92.6 MB quantised by OpenCV); no newer small model qualifies.
 - **Face / blink runtime: decide at Phase 4 (owner, 2026-10-14).** Options recorded:
@@ -461,7 +470,80 @@ For models, add a SHA-256 check and a licence dialog before download, as LightCr
   step. The owner kept it as it is (2026-10-13). This is not a legal opinion.
 
 
+### Model rule relaxed (owner, 2026-10-21)
+
+After the AI masks check ([cowork-2026-10-21-ai-masks/AI_MASKS.md](cowork-2026-10-21-ai-masks/AI_MASKS.md)), which
+found that SAM 2.1, both MediaPipe models and DA3-Mono fail the 2026-10-14 rule ("training data publicly disclosed
+(named)"), the owner chose **option B**:
+- **Weights licence:** unchanged. It must stay permissive; non-commercial weights licences remain excluded.
+- **Training data must be mostly named.** A small unpublished share, or an unpublished foundation model or backbone
+  (e.g. DINOv2's LVD-142M, already accepted through Depth Anything V2 Small), is allowed if the model info says so in
+  plain words.
+- **Exceptions, one at a time:** well-known publishers that name no data can be approved by the owner case by case.
+  Exceptions so far: RawNIND, Moebius and, new, **MediaPipe Selfie Multiclass** (approved 2026-10-21).
+- **Named datasets with non-commercial or research-only terms:** allowed with a plain-words note (unchanged).
+
+This is the owner's policy, not a legal opinion. It replaces the 2026-10-14 wording above for every model; the
+RawNIND and Moebius exceptions stand.
+
+### AI masks (owner, 2026-10-21)
+
+Decided after [AI_MASKS.md](cowork-2026-10-21-ai-masks/AI_MASKS.md) (research date 2026-10-21; its facts are its own,
+not re-checked here).
+- **Eligible under the relaxed rule:** SAM 2.1 (Tiny / Base+; about 14.8 % of its training mix is Meta's internal
+  licensed video), DA3-Metric-Large (sky; 13 of the 14 datasets its paper counts are named; 669 MB fp16), RF-DETR-Seg
+  N/S (people) and MediaPipe Selfie Multiclass (hair, skin, clothes; the exception above), plus the models that passed
+  before: BiRefNet_lite, SlimSAM-77, YuNet and EfficientViT-Seg B1 (sky; needs an ONNX export of our own).
+- **Build order inside the AI masks build:** 1. click/hover select, 2. people/faces, 3. sky, 4. subject.
+- **Queue:** hardening → AI Remove → **AI masks** → AI Denoise → tool search → camera profiles → library gaps → 1.0.
+  AI masks are in 1.0.
+- **To settle in the build** (open items from the report): BiRefNet_lite's training-data list differs between its
+  Hugging Face card and its GitHub README; BiRefNet on WebGPU needs a patched graph; MediaPipe's community ONNX is
+  untested on ONNX Runtime Web; EfficientViT's ONNX export; DA3-Metric's size and browser support; transformers.js
+  4.3.1 uses ONNX Runtime 1.31-dev, while LightBench pins ONNX Runtime 1.30.0 directly.
+
+### AI Remove: delivery and licence (owner, 2026-10-21)
+
+Decided after a check of the Hugging Face repositories (Cowork's HF_MOEBIUS.md, which the AI Remove build adds to
+`docs/research/` with the delivery's implementation details in its own PHASE3 part). These replace the GitHub Release
+plan of 2026-10-17 above.
+- **Delivery:** an **in-app download from huggingface.co**, by `/resolve/<commit>/` URLs at a pinned commit, with the
+  user's agreement first, as for Depth Anything V2 Small. No Hugging Face token in the app. A 429 answer is honoured
+  through its `RateLimit` header.
+- **Licence:** LightBench relies on hustvl/Moebius's explicit Apache-2.0 statement on GitHub (code and weights, commit
+  `b88d462`, 2026-08-12). The model info and notices say in plain words that the Hugging Face repository is tagged MIT.
+- **Pinned files:** `simonw/Moebius-ONNX` at `5bf1ef5d2861ec01a727183a3f95dc64f352120e` (the Conv2d UNet; never
+  `9f6cfb3` or earlier):
+
+  | File | Bytes | SHA-256 |
+  |---|---|---|
+  | `unet.onnx` | 906,698,976 | `e3f90f52f72378339b990459fadb29a68d3c7b5c6851545ba42774f489160b08` |
+  | `vae_encoder.onnx` | 136,757,093 | `b8b81d41e757222a0707665ba9d826703987855e5bed056036b90b988968042f` |
+  | `vae_decoder.onnx` | 198,078,671 | `d90ef0b7f6c8c8b7234459c8b449d70be0033bf1576c842e8b9991baf3934280` |
+
+  1,241,534,740 bytes in all, shown as "about 1.24 GB" (plus the AI runtime if it isn't installed yet).
+- **Checks:** each file's size and SHA-256 are checked before it is kept; the cache is keyed by the pinned commit and
+  file name, never by the redirect URL.
+- **Checkpoint:** `ft_places2` (from the moebius-web export scripts at `080be6e`, not the model card).
+- **Updates:** checked by hand only. Compare each file's SHA-256 (`siblings[].lfs.sha256`) for the ONNX repository,
+  and the weight files' upload commit for hustvl/Moebius, not the repository's commit (README-only commits change it).
+  Baselines: hustvl/Moebius on Hugging Face `cd01f47` (weights `0fc199d`, June 18), GitHub `b88d462`; the ONNX
+  repository `5bf1ef5`.
+- **Strength:** 1.0 or 0.99, chosen by testing removal cases.
+- **Quality:** no parity figure is published for the current Conv2d `unet.onnx`, so LightBench runs its own parity and
+  quality check.
+- **Verification:** after PR #62 merged, the "AI models" Action gains a step that reads Hugging Face's real responses
+  (the redirect host, `Access-Control-Allow-Origin` with an `Origin` header, Range and preflight requests, the
+  `/api/models/<repo>/revision/main?blobs=true` fields, whether a token is needed). The owner runs one final test in
+  the browser when the build is ready.
+- **Timing:** AI Remove starts after #62 merges (it reuses the delivery and the runtime of Part 24).
+
 ## Open questions for the owner
+
+Answered since (see the decisions above): 1 (2026-10-14: named datasets with non-commercial terms don't disqualify
+permissive weights; the rule was relaxed further on 2026-10-21), 4 (Moebius as the best-quality option, 2026-10-17), 5
+(RawNIND under GPL-3.0, 2026-10-13) and 6 (LightBench's Pages site for Depth Anything V2 Small, 2026-10-17; Hugging Face
+at a pinned commit for Moebius, 2026-10-21). 2 and 3 (MI-GAN, LaMa) are "decide later"; 7–9 are still open.
 
 1. **Training-data policy.** Accept permissively licensed weights trained on Places2 (image terms unverified),
    CelebA-HQ, DIS5K or SA-1B? The same question as for SAM 2.1 and BiRefNet in AI_MODELS.md. FFHQ-trained checkpoints
