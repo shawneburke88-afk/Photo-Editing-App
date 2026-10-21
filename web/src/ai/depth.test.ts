@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import shipped from '../../models/manifest.json'
-import type { ModelEntry } from './manifest'
+import { depthInput, type ModelEntry } from './manifest'
 import { modelSize, renderSize, toSensorFrame, toTensor } from './depth'
 import { DEFAULT_GEOMETRY, resolveGeometry } from '../engine/develop/geometry'
 
 // Preparing the model's input and moving its output into the sensor frame (PHASE3.md Part 24).
 
-const input = (shipped.models[0] as unknown as ModelEntry).input!
+const input = depthInput(shipped.models[0] as unknown as ModelEntry)
 
 describe('the model input', () => {
   it('follows DA-V2’s "lower_bound" resize: short side 518, multiples of 14', () => {

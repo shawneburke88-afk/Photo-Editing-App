@@ -4,7 +4,7 @@
 
 import { useRef, useState } from 'react'
 import { computeDepth, Fp16InvalidError, renderSize, type AsShot } from '../ai/depth'
-import { chooseFile, modelPinned, type DepthInput, type ModelEntry, type ModelFile, type Variant } from '../ai/manifest'
+import { chooseFile, depthInput, modelPinned, type DepthInput, type ModelEntry, type ModelFile, type Variant } from '../ai/manifest'
 import { AI, depthModel, providerFor } from '../ai/models'
 import { runtimeMessage } from '../ai/runtime'
 import { installed, type InstalledModel } from '../ai/store'
@@ -69,7 +69,7 @@ export function useDepth(renderAsShot: (input: DepthInput) => Promise<AsShot | n
       }
       setStatus(p.provider === 'wasm' ? 'Computing the depth map on the CPU (once for this photo; no WebGPU here, so it takes longer)…' : 'Computing the depth map (once for this photo)…')
       const r0 = performance.now()
-      const shot = await renderAsShot(model.input!)
+      const shot = await renderAsShot(depthInput(model))
       if (!shot) return null
       const renderMs = performance.now() - r0
       // The model's GPU work counts as Develop's (Part 14's foreground gate): background work (Export, the batch

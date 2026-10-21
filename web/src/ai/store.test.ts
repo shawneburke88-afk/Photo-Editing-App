@@ -100,7 +100,7 @@ describe('the pinned manifest (web/models/manifest.json)', () => {
     expect(bad((m) => (m.models[0].files[1].variant = 'fp16'))).toThrow(/two fp16/)
     expect(bad((m) => (m.models[0].files[0].path = '../x'))).toThrow(/path/)
     expect(bad((m) => (m.models[0].licence = undefined))).toThrow(/licence/)
-    expect(bad((m) => (m.schema = 2))).toThrow(/schema/)
+    expect(bad((m) => (m.schema = 3))).toThrow(/schema/)
   })
 })
 

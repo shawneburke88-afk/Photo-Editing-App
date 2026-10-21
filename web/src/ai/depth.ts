@@ -14,7 +14,7 @@ import { applyMap } from '../engine/develop/geometry'
 import { invert, type Mat3 } from '../engine/color/matrix'
 import { encodeDepth, quantizeDisparity, type RasterData } from '../engine/develop/depth-map'
 import type { DepthShape } from '../engine/develop/masks'
-import type { DepthInput, ModelEntry } from './manifest'
+import { depthInput, type DepthInput, type ModelEntry } from './manifest'
 import { prepareModel, runModel } from './runtime'
 import type { Provider } from './runtime.worker'
 
@@ -158,7 +158,7 @@ export async function computeDepth(m: ModelEntry, shot: AsShot, provider: Provid
   const t0 = performance.now()
   const fixed = await prepareModel(m, provider)
   const loadMs = performance.now() - t0
-  const input = m.input!
+  const input = depthInput(m)
   const [mw, mh] = modelSize(shot.width, shot.height, input, fixed)
   const tensor = toTensor(shot.rgba, shot.width, shot.height, mw, mh, input.mean, input.std)
   const r = await runModel(m, tensor, [1, 3, mh, mw], provider)

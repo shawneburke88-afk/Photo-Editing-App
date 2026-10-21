@@ -61,7 +61,10 @@ export function createRpcClient<H extends Handlers>(worker: Worker, onError?: (m
         new Promise((resolve, reject) => {
           const id = nextId++
           pending.set(id, { method, resolve, reject })
-          const moved = args.filter((a): a is ArrayBuffer => a instanceof ArrayBuffer && handOver.has(a))
+          // Marked buffers passed directly, or as a field of an object passed (a graph's weights file).
+          const moved = args
+            .flatMap((a) => (a instanceof ArrayBuffer ? [a] : a && typeof a === 'object' && !ArrayBuffer.isView(a) ? Object.values(a as Record<string, unknown>) : []))
+            .filter((a): a is ArrayBuffer => a instanceof ArrayBuffer && handOver.has(a))
           worker.postMessage({ id, method, args } satisfies Request, moved)
         }),
   })
