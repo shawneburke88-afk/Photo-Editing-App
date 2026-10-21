@@ -6,12 +6,12 @@
 //  - after Shift+Reload, which bypasses the worker for that one load.
 // Replacing coi-serviceworker needs no reload: its page was already isolated and is already this version.
 
-import { newReleases, releaseNotes, type BuildInfo, type Release } from './notes'
+import { releaseNotes, updateInfo, type BuildInfo, type Release } from './notes'
 
 export type UpdateState =
   | { kind: 'none' }
-  /** A new version is downloaded and waiting for the user's Reload. */
-  | { kind: 'ready'; version: string; releases: Release[] }
+  /** A new version is downloaded and waiting for the user's Reload (`earlier`: the website went back to an earlier one). */
+  | { kind: 'ready'; version: string; releases: Release[]; earlier: boolean }
   /** Another LightBench window took the update; this one still runs the old version. */
   | { kind: 'elsewhere' }
 
@@ -88,7 +88,7 @@ export function startServiceWorker() {
     waiting = worker
     const info = await buildInfo(worker)
     if (waiting !== worker) return
-    set({ kind: 'ready', version: info?.version ?? '', releases: newReleases(info?.releases ?? [], releaseNotes) })
+    set({ kind: 'ready', ...updateInfo(info, __APP_VERSION__, releaseNotes) })
   }
 
   sw.register(url, { scope: import.meta.env.BASE_URL, updateViaCache: 'none' }).then(

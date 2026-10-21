@@ -11,6 +11,11 @@ export function UpdateNotice() {
     <div className="update-notice" role="status">
       {state.kind === 'elsewhere' ? (
         <p>LightBench was updated in another window. Reload to use the new version here too.</p>
+      ) : state.earlier ? (
+        <>
+          <h2>Earlier version ready</h2>
+          <p>The LightBench website went back to version {state.version.split('+')[0]}. Reload to use it.</p>
+        </>
       ) : (
         <>
           <h2>Update ready</h2>

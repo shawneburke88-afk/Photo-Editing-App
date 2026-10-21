@@ -1,0 +1,64 @@
+name: Speed check
+
+# Runs System Check's GPU benchmark (Quick, test images scaled to 0.3 MP) on GitHub's software GPU and compares it with
+# web/scripts/speed-baseline.json (docs/PHASE3.md, "Speed check on each release"). Warnings only: this workflow never
+# fails because of a result, and it is separate from "Build and deploy site", so it never holds up a deploy. The
+# comparison, what it measures and what it can't catch are in the run's summary.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: speed-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  speed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+
+      # Playwright isn't one of the app's dependencies: installed outside web/ (package.json and the lock file are untouched).
+      - name: Install headless Chromium
+        run: |
+          mkdir -p "${RUNNER_TEMP}/pw"
+          cd "${RUNNER_TEMP}/pw"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Run the benchmark
+        id: run
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          PLAYWRIGHT_FROM: ${{ runner.temp }}/pw/node_modules
+        run: node scripts/speed-gate.mjs run --out "${RUNNER_TEMP}/speed-result.json" --port 5530
+
+      - name: Compare with the baseline
+        if: always()
+        run: node scripts/speed-gate.mjs compare "${RUNNER_TEMP}/speed-result.json"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: speed-result
+          path: ${{ runner.temp }}/speed-result.json
+          if-no-files-found: ignore
+          retention-days: 30
