@@ -314,7 +314,7 @@ with the AI Remove decisions of the same day, is in [PHASE4_MODELS.md](PHASE4_MO
   exception), plus BiRefNet_lite, SlimSAM-77, YuNet and EfficientViT-Seg B1 (sky; needs our own ONNX export), which
   passed before.
 - **Order inside the AI masks build:** 1. click/hover select, 2. people/faces, 3. sky, 4. subject.
-- **When:** after AI Remove and before AI Denoise; AI masks are in 1.0 (the order is in [ROADMAP.md](../ROADMAP.md)).
+- **When:** after AI Remove and before Lens Blur and AI Denoise; AI masks are in 1.0 (the order is in [ROADMAP.md](../ROADMAP.md)).
 - **To settle in the build:** BiRefNet_lite's data list (its Hugging Face card and GitHub README differ); BiRefNet's
   WebGPU graph needs patching; MediaPipe's community ONNX is untested on ONNX Runtime Web; EfficientViT's ONNX export;
   DA3-Metric's size and browser support; transformers.js 4.3.1 uses ONNX Runtime 1.31-dev, while LightBench pins ONNX

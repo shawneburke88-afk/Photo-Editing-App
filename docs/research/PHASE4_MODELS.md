@@ -495,12 +495,20 @@ not re-checked here).
   N/S (people) and MediaPipe Selfie Multiclass (hair, skin, clothes; the exception above), plus the models that passed
   before: BiRefNet_lite, SlimSAM-77, YuNet and EfficientViT-Seg B1 (sky; needs an ONNX export of our own).
 - **Build order inside the AI masks build:** 1. click/hover select, 2. people/faces, 3. sky, 4. subject.
-- **Queue:** hardening → AI Remove → **AI masks** → AI Denoise → tool search → camera profiles → library gaps → 1.0.
+- **Queue:** hardening → AI Remove → **AI masks** → Lens Blur (added the same day, below) → AI Denoise → tool search → camera profiles → library gaps → 1.0.
   AI masks are in 1.0.
 - **To settle in the build** (open items from the report): BiRefNet_lite's training-data list differs between its
   Hugging Face card and its GitHub README; BiRefNet on WebGPU needs a patched graph; MediaPipe's community ONNX is
   untested on ONNX Runtime Web; EfficientViT's ONNX export; DA3-Metric's size and browser support; transformers.js
   4.3.1 uses ONNX Runtime 1.31-dev, while LightBench pins ONNX Runtime 1.30.0 directly.
+
+### Lens Blur queued (owner, 2026-10-21)
+
+**Lens Blur** (AI depth of field, [section 2](#2-ai-depth-of-field) and [DEPTH_OF_FIELD.md](DEPTH_OF_FIELD.md)) is queued
+right after the AI masks, because it needs their subject and person mattes: hardening → AI Remove → AI masks → **Lens
+Blur** → AI Denoise → tool search → camera profiles → library gaps → 1.0. Before it is released, a Cowork patent check
+runs first (Apple and Adobe hold patents in this area); after it, the owner decides whether to take legal advice. Facts
+only; this is not legal advice.
 
 ### AI Remove: delivery and licence (owner, 2026-10-21)
 

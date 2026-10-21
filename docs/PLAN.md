@@ -228,7 +228,7 @@ heal and clone (_built with the Remove brush, Part 11_), snapshots (_built, Part
 ### Phase 4 — Local AI
 Subject / sky / object / background masks, AI remove, AI denoise, assisted culling (eyes-open; sharpness, shake, exposure and look-alikes are built without AI, PHASE3.md Part 18), face grouping, content search. The first model is in: the AI Depth range mask (PHASE3.md Part 24, 0.6.13), with the delivery and runtime the others reuse.
 
-**Order (owner, 2026-10-21; [ROADMAP.md](ROADMAP.md)):** hardening → **AI Remove** (Moebius) → **AI masks** (click/hover select, people/faces, sky, subject; in 1.0) → **AI Denoise** (RawNIND) → tool search → camera profiles → library gaps → 1.0. Hardware for 1.0: the owner's laptop only. Lightroom interop ships unverified, said plainly.
+**Order (owner, 2026-10-21; [ROADMAP.md](ROADMAP.md)):** hardening → **AI Remove** (Moebius) → **AI masks** (click/hover select, people/faces, sky, subject; in 1.0) → **Lens Blur** (AI depth of field; a patent check first) → **AI Denoise** (RawNIND) → tool search → camera profiles → library gaps → 1.0. Hardware for 1.0: the owner's laptop only. Lightroom interop ships unverified, said plainly.
 
 Model licenses checked individually: **permissive only** — code and weights must allow any use, including commercial (owner, 2026-10-11, re-confirmed after the AI research even though LightBench won't be sold, because the public website's users are bound by each model's licence and the GPL allows no extra restrictions). Non-commercial, research-only and field-of-use-restricted models (e.g. SAM 3) are excluded, also as optional downloads. **Training data** (owner, 2026-10-21, option B): mostly named; a small unpublished share or an unpublished foundation model is allowed when the model info says so in plain words; publishers that name no data only as exceptions the owner approves one at a time (so far RawNIND, Moebius and MediaPipe Selfie Multiclass). Details in [research/PHASE4_MODELS.md](research/PHASE4_MODELS.md#model-rule-relaxed-owner-2026-10-21).
 
@@ -263,7 +263,7 @@ Owner's requests (2026-10-12), decided after discussion:
     Part 11) and could fill small areas.
 - **AI remove** joins the Remove brush as a fourth spot mode next to Remove, Heal and Clone (`SPOT_MODES` in
   `engine/develop/spots.ts`); a spot already stores its stroke, source and seed.
-- **AI depth of field (lens blur).** Blur that grows with distance from the focus plane, both in front and behind
+- **AI depth of field (lens blur).** _Queued right after the AI masks (owner, 2026-10-21), since it needs the subject and person mattes; a Cowork patent check comes before release (Apple and Adobe hold patents in this area), then the owner decides on legal advice. Facts only, not legal advice._ Blur that grows with distance from the focus plane, both in front and behind
   (more bokeh for objects further from the focus distance), not just "blur everything except the subject".
   - A **strength** slider; **click to set the focus point**, with a focus-range slider; **auto focus on the detected
     subject** to start; **refine the depth map with a brush** (hair, glass, fences); a choice of **bokeh shape**

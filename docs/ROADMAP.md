@@ -34,7 +34,7 @@ _First written on 2026-10-21 from `origin/main` at 0.6.9 and the open branches (
 | **AI Remove (Moebius)** | Decided; being built | Whether fp16 or fp32 (about 1.24 GB). Which guidance value (upstream gives 2.0, 2.5 and 4.5); strength 1.0 or 0.99 by test. A small model (MI-GAN) is "decide later". **Delivery decided 2026-10-21:** an in-app download from Hugging Face at a pinned commit ([research/PHASE4_MODELS.md](research/PHASE4_MODELS.md#ai-remove-delivery-and-licence-owner-2026-10-21)); the old "GitHub Release assets picked by hand" text is replaced. |
 | **AI masks: click/hover, people/faces, sky, subject** | Decided 2026-10-21; in 1.0, after AI Remove | Under the relaxed model rule (option B), SAM 2.1, DA3-Metric-Large (sky), RF-DETR-Seg (people), MediaPipe Selfie Multiclass (an approved exception) and the models that passed before are eligible. Settle in the build: BiRefNet_lite's conflicting data lists, its WebGPU graph, MediaPipe's community ONNX on ONNX Runtime Web, an EfficientViT ONNX export, DA3-Metric's size and browser support ([research/AI_MODELS.md](research/AI_MODELS.md#owners-decisions-2026-10-21-ai-masks)). |
 | **AI Denoise (RawNIND)** | Decided (GPL-3.0 exception) | Measure it against today's denoise on the owner's photos. Write the training-data notice. |
-| **AI depth of field** | Researched; the depth model is now in | Apple's patent claims are unread. Which bokeh shapes to offer. |
+| **Lens Blur (AI depth of field)** | Queued right after the AI masks (owner, 2026-10-21): it needs their subject and person mattes | Before release, a Cowork patent check (Apple and Adobe hold patents in this area), then the owner decides on legal advice (facts only; not legal advice). Which bokeh shapes to offer. The depth model is in. |
 | **Clipped highlight/shadow fill** | Needs decisions | MI-GAN's provenance and LaMa's licence; whether to start with highlights only. |
 | **AI Auto, Auto for a mask** | Waits for the AI masks | — |
 | **Faces and blinks** | Needs a decision | ONNX BlazeFace, or MediaPipe (which has telemetry). No embedding model passes the rule. YuNet passes for face boxes (AI_MASKS.md). |
@@ -69,13 +69,14 @@ At most two builds at a time.
 1. **Hardening and cleanup**: Develop's GPU error guard, the speed check, rollback and the docs refresh. Branch pruning is the owner's; the control registry moves to tool search.
 2. **AI Remove** (Moebius). The largest download, and its speed is unmeasured, so measure first. Started after #62 merged, next to step 1.
 3. **AI masks**, in this order inside the build: click/hover select, people/faces, sky, subject. In 1.0.
-4. **AI Denoise** (RawNIND). It reuses the AI runtime, and as an opt-in tool it leaves old edits unchanged.
-5. **Tool search**, with the control registry it needs (naming decided: other apps' names find LightBench's tools; only LightBench's names are shown).
-6. **Camera profiles and looks**: version 1 has all three: LightBench's own looks, with today's look kept as "Standard"; importing `.cube` looks; and reading DCP camera profiles, after a licence check. Old edits stay unchanged: an edit with no profile set means Standard.
-7. **Library and data gaps**: missing files, keyword renaming, preset export, keeping copied settings.
-8. **1.0 release**: published minimum browsers and GPUs, the trust promise, notices, and a decision on patent advice.
+4. **Lens Blur** (AI depth of field). It needs the AI masks' subject and person mattes. A Cowork patent check runs before release (Apple and Adobe hold patents in this area); after it the owner decides on legal advice. Facts only; not legal advice.
+5. **AI Denoise** (RawNIND). It reuses the AI runtime, and as an opt-in tool it leaves old edits unchanged.
+6. **Tool search**, with the control registry it needs (naming decided: other apps' names find LightBench's tools; only LightBench's names are shown).
+7. **Camera profiles and looks**: version 1 has all three: LightBench's own looks, with today's look kept as "Standard"; importing `.cube` looks; and reading DCP camera profiles, after a licence check. Old edits stay unchanged: an edit with no profile set means Standard.
+8. **Library and data gaps**: missing files, keyword renaming, preset export, keeping copied settings.
+9. **1.0 release**: published minimum browsers and GPUs, the trust promise, notices, and a decision on patent advice.
 
-The first version of this roadmap had an owner feedback batch, AI Denoise before AI Remove and a verification pass (another GPU class, Firefox and Safari, Lightroom-written sidecars, the card tests) before 1.0. The owner's order above has none of them: hardware is the owner's laptop only and Lightroom interop ships unverified. Where Firefox and Safari testing and the card tests go was not decided. AI depth of field and faces/blinks were "after 1.0 unless the owner says otherwise", and nothing has changed that.
+The first version of this roadmap had an owner feedback batch, AI Denoise before AI Remove and a verification pass (another GPU class, Firefox and Safari, Lightroom-written sidecars, the card tests) before 1.0. The owner's order above has none of them: hardware is the owner's laptop only and Lightroom interop ships unverified. Where Firefox and Safari testing and the card tests go was not decided. AI depth of field was "after 1.0 unless the owner says otherwise"; on 2026-10-21 the owner queued it (as Lens Blur) right after the AI masks. Faces/blinks stay after 1.0.
 
 ## 5. Questions for the owner
 
@@ -92,9 +93,10 @@ The first version of this roadmap had an owner feedback batch, AI Denoise before
 - Hardware before 1.0: **the owner's laptop only**.
 - Lightroom interop: **ship unverified** (say so plainly).
 - AI subject/sky masks in 1.0: the owner asked whether research was done; it was (docs/research/AI_MODELS.md, 2026-10-11), and a check of the training data followed ([research/cowork-2026-10-21-ai-masks/AI_MASKS.md](research/cowork-2026-10-21-ai-masks/AI_MASKS.md)).
-- **AI masks (2026-10-21, after AI_MASKS.md):** the model rule is relaxed to option B; MediaPipe Selfie Multiclass is approved as an exception; the AI masks build goes after AI Remove and before AI Denoise, and is in 1.0. Recorded in [research/PHASE4_MODELS.md](research/PHASE4_MODELS.md#model-rule-relaxed-owner-2026-10-21) and [research/AI_MODELS.md](research/AI_MODELS.md#owners-decisions-2026-10-21-ai-masks).
+- **AI masks (2026-10-21, after AI_MASKS.md):** the model rule is relaxed to option B; MediaPipe Selfie Multiclass is approved as an exception; the AI masks build goes after AI Remove and before AI Denoise, and is in 1.0.
+- **Lens Blur (2026-10-21):** queued right after the AI masks (it needs their subject and person mattes); a Cowork patent check runs before release (Apple and Adobe hold patents here), then the owner decides on legal advice. Facts only; not legal advice. Recorded in [research/PHASE4_MODELS.md](research/PHASE4_MODELS.md#model-rule-relaxed-owner-2026-10-21) and [research/AI_MODELS.md](research/AI_MODELS.md#owners-decisions-2026-10-21-ai-masks).
 - **AI Remove (2026-10-21, after the Hugging Face check):** an in-app download from Hugging Face at a pinned commit, recorded in [research/PHASE4_MODELS.md](research/PHASE4_MODELS.md#ai-remove-delivery-and-licence-owner-2026-10-21).
-- **The order:** hardening → AI Remove → AI masks (click/hover, people/faces, sky, subject) → AI Denoise → tool search → camera profiles → library gaps → 1.0.
+- **The order:** hardening → AI Remove → AI masks (click/hover, people/faces, sky, subject) → Lens Blur → AI Denoise → tool search → camera profiles → library gaps → 1.0.
 - **Tool search naming (2026-10-21):** typing another app's name (e.g. "Clarity", "Shadows") finds the matching LightBench tool, but results show only LightBench's own names; no other app is named in the UI.
 - **Camera profiles v1 (2026-10-21):** version 1 has all three: LightBench's own looks, with today's look kept as "Standard"; importing `.cube` looks; and reading DCP camera profiles, after a licence check. Old edits stay unchanged: an edit with no profile set means Standard.
 - No roadmap questions remain open.

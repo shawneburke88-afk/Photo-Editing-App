@@ -277,8 +277,9 @@ From the owner's answers to the roadmap ([ROADMAP.md](ROADMAP.md), section 6) an
 | Question | Owner's answer |
 |---|---|
 | What comes next? | **Hardening and cleanup**, no visible features: Develop's GPU error guard (plain messages), the speed check, one-click rollback, and these docs brought up to date. |
-| The order to 1.0 | Hardening → AI Remove → AI masks (click/hover, people/faces, sky, subject) → AI Denoise → tool search → camera profiles → library gaps → 1.0. |
+| The order to 1.0 | Hardening → AI Remove → AI masks (click/hover, people/faces, sky, subject) → Lens Blur → AI Denoise → tool search → camera profiles → library gaps → 1.0. |
 | AI subject/sky masks in 1.0? | **Yes**, after AI Remove and before AI Denoise. |
+| Lens Blur (AI depth of field) | Queued right after the AI masks, which it needs (subject and person mattes). A Cowork patent check runs before release (Apple and Adobe hold patents in this area); then the owner decides on legal advice. Facts only, not legal advice. |
 | Model rule | Relaxed (option B): weights still permissive; training data mostly named, with plain-words notes for an unpublished share or foundation model; exceptions approved one at a time (MediaPipe Selfie Multiclass approved). |
 | AI Remove's download | In the app, from Hugging Face at a pinned commit (about 1.24 GB), not from GitHub Release files picked by hand. |
 | Hardware before 1.0 | The owner's laptop only. |
