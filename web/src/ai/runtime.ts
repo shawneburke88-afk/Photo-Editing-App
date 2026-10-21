@@ -33,6 +33,9 @@ export interface GpuProbe {
   webgpu: boolean
   f16: boolean
   adapter: string
+  /** The adapter's largest buffer and storage-buffer binding (bytes; 0 without WebGPU). */
+  maxBufferSize?: number
+  maxStorageBufferBindingSize?: number
 }
 
 let worker: Worker | null = null
@@ -72,9 +75,15 @@ export function probeGpu(): Promise<GpuProbe> {
   probed ??= (async () => {
     const gpu = (globalThis.navigator as Navigator & { gpu?: GPU } | undefined)?.gpu
     const a = gpu ? await gpu.requestAdapter().catch(() => null) : null
-    if (!a) return { webgpu: false, f16: false, adapter: '' }
+    if (!a) return { webgpu: false, f16: false, adapter: '', maxBufferSize: 0, maxStorageBufferBindingSize: 0 }
     const i = a.info
-    return { webgpu: true, f16: a.features.has('shader-f16'), adapter: [i?.vendor, i?.architecture, i?.device, i?.description].filter(Boolean).join(' ') }
+    return {
+      webgpu: true,
+      f16: a.features.has('shader-f16'),
+      adapter: [i?.vendor, i?.architecture, i?.device, i?.description].filter(Boolean).join(' '),
+      maxBufferSize: a.limits?.maxBufferSize ?? 0,
+      maxStorageBufferBindingSize: a.limits?.maxStorageBufferBindingSize ?? 0,
+    }
   })()
   return probed
 }

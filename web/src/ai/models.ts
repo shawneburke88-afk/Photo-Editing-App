@@ -11,6 +11,7 @@ import type { Provider } from './runtime.worker'
 export const AI: AiInfo | null = typeof __LB_AI__ === 'undefined' ? null : __LB_AI__
 
 export const depthModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'depth') ?? null
+export const inpaintModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'inpaint') ?? null
 
 /**
  * The CPU fallback (ONNX Runtime's WebAssembly provider, up to 4 threads) where there is no WebGPU. On: a random-weight
@@ -29,9 +30,35 @@ export async function removeModel(m: ModelEntry) {
   modelsChanged()
 }
 
+/**
+ * AI Remove's CPU fallback (no WebGPU): ONNX Runtime's WebAssembly provider. Its speed was measured by the "AI models"
+ * workflow's moebius-check (PHASE3.md Part 26, "Speed"); when on, the panel says plainly that it will be slow.
+ */
+export const INPAINT_WASM_FALLBACK = false
+
+const fmtMiB = (n: number) => `${Math.round(n / 2 ** 20)} MiB`
+
+/** Why this GPU can't hold a model (its buffer limits are below what the model needs), or null. */
+export function gpuShortfall(m: ModelEntry, gpu: GpuProbe): string | null {
+  const need = m.gpu
+  if (!need || !gpu.webgpu) return null
+  const binding = gpu.maxStorageBufferBindingSize ?? 0
+  const buffer = gpu.maxBufferSize ?? 0
+  if (binding >= need.maxStorageBufferBindingSize && buffer >= need.maxBufferSize) return null
+  return `This GPU can’t hold ${m.name}: it allows GPU buffers of up to ${fmtMiB(Math.min(binding, buffer))}, and the model needs ${fmtMiB(Math.max(need.maxStorageBufferBindingSize, need.maxBufferSize))}. A computer with a more capable graphics card (or a newer browser) can run it.`
+}
+
 /** Where a model can run here: 'webgpu', 'wasm' (the fallback, if on), or null with the reason. */
-export async function providerFor(): Promise<{ provider: Provider | null; gpu: GpuProbe; why: string | null }> {
+export async function providerFor(m?: ModelEntry | null): Promise<{ provider: Provider | null; gpu: GpuProbe; why: string | null; slow?: boolean }> {
   const gpu = await probeGpu()
+  if (m?.task === 'inpaint') {
+    if (gpu.webgpu) {
+      const short = gpuShortfall(m, gpu)
+      return short ? { provider: null, gpu, why: short } : { provider: 'webgpu', gpu, why: null }
+    }
+    if (INPAINT_WASM_FALLBACK) return { provider: 'wasm', gpu, why: null, slow: true }
+    return { provider: null, gpu, why: 'AI Remove needs WebGPU, which this browser or computer doesn’t offer (Chrome or Edge on Windows, macOS or Android have it; Safari and Firefox mostly don’t yet). Remove, Heal and Clone work everywhere.' }
+  }
   if (gpu.webgpu) return { provider: 'webgpu', gpu, why: null }
   if (WASM_FALLBACK) return { provider: 'wasm', gpu, why: null }
   return { provider: null, gpu, why: 'The AI Depth mask needs WebGPU, which this browser or computer doesn’t offer (Chrome or Edge on Windows, macOS or Android have it; Safari and Firefox mostly don’t yet).' }
