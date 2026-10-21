@@ -356,6 +356,12 @@ export function migrate(d: Database) {
       }
       stmt.finalize()
     }
+    if (version < 17) {
+      // Import's background details (import/details.ts, docs/PHASE3.md "Import speed"): a photo the import has copied and
+      // added whose sidecar, embedded metadata and RAW+JPEG stacking are still to be applied, with what to apply (JSON).
+      // Deleted when done, or with the photo. A new table only, so nothing else in the catalog changes.
+      d.exec(IMPORT_PENDING_TABLE)
+    }
     d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     d.exec('COMMIT')
   } catch (err) {
@@ -365,6 +371,14 @@ export function migrate(d: Database) {
     d.exec('PRAGMA foreign_keys = ON')
   }
 }
+
+/** The import_pending table (schema 17). */
+export const IMPORT_PENDING_TABLE = `
+  CREATE TABLE import_pending (
+    photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+    details TEXT NOT NULL
+  );
+`
 
 /** The photo_analysis table (schema 14). */
 export const ANALYSIS_TABLE = `
@@ -497,7 +511,9 @@ function addPhotos(photos: NewPhoto[]): (number | null)[] {
       ])
       stmt.step()
       stmt.reset()
-      ids.push(d.changes() > 0 ? Number(d.selectValue('SELECT last_insert_rowid()')) : null)
+      const id = d.changes() > 0 ? Number(d.selectValue('SELECT last_insert_rowid()')) : null
+      if (id !== null && p.importDetails !== undefined) d.exec({ sql: 'INSERT OR REPLACE INTO import_pending (photo_id, details) VALUES (?, ?)', bind: [id, p.importDetails] })
+      ids.push(id)
     }
     stmt.finalize()
     d.exec('COMMIT')
@@ -1515,6 +1531,22 @@ function isEdited(photoId: number): boolean {
   return conn().selectValue('SELECT 1 FROM edits WHERE photo_id = ?', [photoId]) !== undefined
 }
 
+/** Imported photos whose details are still to be applied (import/details.ts), oldest first, at most `limit`. */
+function importPending(limit: number): { id: number; details: string }[] {
+  return conn().selectObjects('SELECT photo_id AS id, details FROM import_pending ORDER BY photo_id LIMIT ?', [limit]) as unknown as { id: number; details: string }[]
+}
+
+/** How many imported photos still wait for their details. */
+function importPendingCount(): number {
+  return Number(conn().selectValue('SELECT count(*) FROM import_pending'))
+}
+
+/** Their details were applied. */
+function importDone(ids: number[]) {
+  if (!ids.length) return
+  conn().exec({ sql: `DELETE FROM import_pending WHERE photo_id IN (${ids.map(() => '?').join(',')})`, bind: ids })
+}
+
 /**
  * Photos still waiting for the one-time refresh after the extras bundle (library/refresh.ts), grouped by file in
  * the order they are read: library folder, folder, file, then virtual copies after their original.
@@ -1758,6 +1790,9 @@ export const handlers = {
   deleteEdit,
   isEdited,
   extrasPending,
+  importPending,
+  importPendingCount,
+  importDone,
   saveExtras,
   saveAnalyses,
   analysisPending,
