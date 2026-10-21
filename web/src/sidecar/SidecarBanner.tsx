@@ -63,7 +63,7 @@ export function SidecarBanner() {
         <div key={r.rootId} className="banner">
           <span>
             LightBench saves ratings, labels and edits in <strong>.xmp</strong> files next to your photos, so other apps
-            (Lightroom, Bridge, darktable) can read them and nothing is lost if browser storage is cleared. Allow it to write
+            can read them and nothing is lost if browser storage is cleared. Allow it to write
             in “{r.name}”?
           </span>
           <button className="button small primary" onClick={() => void sidecars.allow(r.rootId)}>Allow</button>

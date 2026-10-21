@@ -347,7 +347,7 @@ export function useMasking(o: Options) {
     const comp = m?.components.find((x) => x.id === sel.comp)
     if (!m || comp?.shape.kind !== 'colour') return
     const cur = comp.shape as ColourShape
-    if (add && cur.samples.length >= MAX_SAMPLES) return setMessage(`A colour range takes up to ${MAX_SAMPLES} samples (as Lightroom’s).`)
+    if (add && cur.samples.length >= MAX_SAMPLES) return setMessage(`A colour range takes up to ${MAX_SAMPLES} samples.`)
     changeShape(comp.id, { ...cur, samples: add ? [...cur.samples, lab] : [lab] }, `${m.name}: colour sample`)
   }
 

@@ -9,6 +9,7 @@
 // are the handles under the graph.
 
 import { useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { openSections, useOpen } from './panelState'
 import type { ImageStats } from '../engine/gpu/develop-engine'
 import {
   CURVE_NORMS,
@@ -71,7 +72,7 @@ interface Props {
 }
 
 const VIEWS: { id: string; label: string; view: CurveView; title: string; colour?: string }[] = [
-  { id: 'regions', label: 'Regions', view: { mode: 'regions', channel: 'rgb' }, title: 'Regions: Highlights, Lights, Darks and Shadows sliders with movable split points (Lightroom’s parametric curve)' },
+  { id: 'regions', label: 'Regions', view: { mode: 'regions', channel: 'rgb' }, title: 'Regions: Highlights, Lights, Darks and Shadows sliders with movable split points' },
   { id: 'rgb', label: 'RGB', view: { mode: 'point', channel: 'rgb' }, title: 'Point curve for brightness (RGB)' },
   { id: 'red', label: 'R', view: { mode: 'point', channel: 'red' }, title: 'Red channel point curve', colour: '#e5675f' },
   { id: 'green', label: 'G', view: { mode: 'point', channel: 'green' }, title: 'Green channel point curve', colour: '#5fbf77' },
@@ -149,7 +150,7 @@ export function ToneCurvePanel(p: Props) {
   const dragRef = useRef<Drag | null>(null)
   const [pointer, setPointer] = useState<[number, number] | null>(null)
   const [bandFor, setBandFor] = useState<RegionKey | null>(null)
-  const [advanced, setAdvanced] = useState(false)
+  const [advanced, setAdvanced] = useOpen(openSections, 'curve.advanced')
   const [announce, setAnnounce] = useState('')
   const live = useId()
   const sel = selected && selected.channel === channel && pts && selected.index < pts.length ? selected.index : null
@@ -755,7 +756,7 @@ export function ToneCurvePanel(p: Props) {
                 ))}
               </select>
             </label>
-            <p className="small muted">{CURVE_NORMS.find((n) => n.id === cur.norm)?.help} How the RGB curve and Regions read a pixel’s brightness (darktable’s “preserve colors”).</p>
+            <p className="small muted">{CURVE_NORMS.find((n) => n.id === cur.norm)?.help} How the RGB curve and Regions read a pixel’s brightness.</p>
             <label className="check small">
               <input type="checkbox" checked={p.clipWhileDragging} onChange={(e) => p.onClipWhileDragging(e.target.checked)} />
               Show clipping on the photo while dragging the curve

@@ -41,11 +41,11 @@ export const CURVE_CHANNELS: CurveChannel[] = ['rgb', 'red', 'green', 'blue']
 /** How the RGB curve measures a pixel's brightness (darktable's preserve-colors norms, normalised), or per channel. */
 export type CurveNorm = 'power' | 'luminance' | 'max' | 'average' | 'norm' | 'channels'
 export const CURVE_NORMS: { id: CurveNorm; label: string; help: string }[] = [
-  { id: 'max', label: 'Largest channel', help: 'darktable’s “max RGB” (default): with Refine Saturation at 100 % this is Adobe’s film-like, hue-keeping curve. Never pushes a colour out of range; can darken saturated blues.' },
-  { id: 'power', label: 'Balanced (power)', help: 'darktable’s “basic power” norm: weighted towards the brightest channel. Keeps hue; a compromise for skies and skin.' },
-  { id: 'luminance', label: 'Luminance', help: 'darktable’s “luminance” (its rgb curve default): saturated reds and blues read dark, so a contrast curve crushes them.' },
-  { id: 'average', label: 'Average', help: 'darktable’s “average RGB”.' },
-  { id: 'norm', label: 'Euclidean norm', help: 'darktable’s “norm RGB”, scaled so a grey reads its own value.' },
+  { id: 'max', label: 'Largest channel', help: 'The brightest of red, green and blue (default): with Refine Saturation at 100 % this is a film-like, hue-keeping curve. Never pushes a colour out of range; can darken saturated blues.' },
+  { id: 'power', label: 'Balanced (power)', help: 'Weighted towards the brightest channel. Keeps hue; a compromise for skies and skin.' },
+  { id: 'luminance', label: 'Luminance', help: 'Saturated reds and blues read dark, so a contrast curve crushes them.' },
+  { id: 'average', label: 'Average', help: 'The average of red, green and blue.' },
+  { id: 'norm', label: 'Euclidean norm', help: 'The length of the red, green and blue values, scaled so a grey reads its own value.' },
   { id: 'channels', label: 'Per channel (classic RGB)', help: 'The curve on R, G and B separately, as most editors once did: hues shift (orange towards yellow, sky towards cyan) and colours get stronger.' },
 ]
 

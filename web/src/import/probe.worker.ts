@@ -9,6 +9,7 @@ import { readJpegIptc } from '../engine/meta/iptc'
 import { embeddedPreviewColorSpace, jpegFileBlob, tagPreview } from '../engine/meta/preview-space'
 import { exposeRpc } from '../lib/rpc'
 import { extractJpegXmp } from '../sidecar/xmp-packet'
+import { cameraClockSeconds } from './capture-time'
 
 export interface ProbeResult {
   meta: PhotoMeta
@@ -99,7 +100,8 @@ async function probeRaw(file: File): Promise<ProbeResult> {
       fileName: file.name,
       fileSize: file.size,
       fileModified: Math.floor(file.lastModified / 1000),
-      capturedAt: Number(other.timestamp),
+      // LibRaw reads the camera's clock as this computer's local time; kept as the camera's clock (capture-time.ts).
+      capturedAt: cameraClockSeconds(Number(other.timestamp)),
       fileType: extension(file.name),
       cameraMake: ip.normalized_make || ip.make,
       cameraModel: ip.normalized_model || ip.model,

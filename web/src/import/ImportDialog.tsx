@@ -11,6 +11,7 @@ import { dateFolder, dateString, extensionOf, findRawJpegPairs, renamedFile, typ
 import { ProbePool } from './probe'
 import { findAtDestination, photoTime, runImport, type ImportItem, type ImportProgress } from './run'
 import { scanSource, type ScannedFile } from './scan'
+import { clickDate, dateCounts } from './dates'
 
 interface Candidate {
   file: ScannedFile
@@ -20,7 +21,6 @@ interface Candidate {
   error?: string
   inCatalog: boolean
   atDestination: boolean
-  pairedJpeg: boolean
   selected: boolean
   /** True once the user ticked/unticked it, so automatic duplicate marking won't override them. */
   touched: boolean
@@ -44,7 +44,10 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
   const [renameText, setRenameText] = useState('')
   const [renameStart, setRenameStart] = useState(1)
   const [includePaired, setIncludePaired] = useState(true)
-  const [dayFilter, setDayFilter] = useState<string | null>(null)
+  const [stackPairs, setStackPairs] = useState(true)
+  /** The dates whose photos are shown (empty: all dates). */
+  const [shownDays, setShownDays] = useState<ReadonlySet<string>>(new Set())
+  const dayAnchor = useRef<string | null>(null)
   const [progress, setProgress] = useState<ImportProgress | null>(null)
   const [finished, setFinished] = useState(false)
   const [presets, setPresets] = useState<ImportPreset[]>([])
@@ -108,7 +111,8 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
     for (const c of candsRef.current) if (c.thumbUrl) URL.revokeObjectURL(c.thumbUrl)
     setSource(dir)
     setCands([])
-    setDayFilter(null)
+    setShownDays(new Set())
+    dayAnchor.current = null
     setScanning(1)
     let files: ScannedFile[]
     try {
@@ -123,13 +127,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
       setError(`No photos found in “${dir.name}”. Choose the card's DCIM folder or a folder containing RAW or JPEG files.`)
       return
     }
-    const paired = findRawJpegPairs(files)
-    setCands(
-      files.map((file, i) => ({
-        file, status: 'reading', inCatalog: false, atDestination: false,
-        pairedJpeg: paired.has(i), selected: true, touched: false,
-      })),
-    )
+    setCands(files.map((file) => ({ file, status: 'reading', inCatalog: false, atDestination: false, selected: true, touched: false })))
     readAll(files)
   }
 
@@ -213,6 +211,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
     setRenameStart(p.rename.start)
     setBackupOn(p.backup)
     setIncludePaired(p.includePaired)
+    setStackPairs(p.stackPairs !== false)
     setNewPhotosPreset(p.developPreset)
     setNewPhotosMetadataPreset(p.metadataPreset)
     const folders = await importPresetFolders(id)
@@ -243,6 +242,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
           rename: { kind: renameKind, text: renameText, start: renameStart },
           backup: backupOn,
           includePaired,
+          stackPairs,
           developPreset: newPhotosPreset(),
           metadataPreset: newPhotosMetadataPreset(),
         },
@@ -265,26 +265,42 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
     setPresetId(null)
   }
 
-  const days = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const c of cands) if (c.item) m.set(dateString(photoTime(c.item.meta)), (m.get(dateString(photoTime(c.item.meta))) ?? 0) + 1)
-    return [...m.entries()].sort((a, b) => b[0].localeCompare(a[0]))
-  }, [cands])
+  /** JPEGs shot alongside a RAW (same name; once read, the same capture time too). */
+  const paired = useMemo(
+    () => findRawJpegPairs(cands.map((c) => ({ dir: c.file.dir, name: c.file.name, capturedAt: c.item?.meta.capturedAt ?? 0 }))),
+    [cands],
+  )
+  const dayOf = (c: Candidate) => (c.item ? dateString(photoTime(c.item.meta)) : null)
+  const importable = (c: Candidate, i: number) => c.status === 'ready' && (includePaired || !paired.has(i))
+  const listed = (i: number) => includePaired || !paired.has(i)
+
+  // Photos per date, with how many are ticked: (selected / total).
+  const days = useMemo(
+    () => dateCounts(cands.flatMap((c, i) => (listed(i) ? [{ day: dayOf(c), selected: c.selected && importable(c, i) }] : []))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cands, includePaired, paired],
+  )
 
   const visible = useMemo(
     () =>
       cands
         .map((c, i) => ({ c, i }))
-        .filter(({ c }) => (includePaired || !c.pairedJpeg) && (!dayFilter || (c.item && dateString(photoTime(c.item.meta)) === dayFilter))),
-    [cands, includePaired, dayFilter],
+        .filter(({ c, i }) => listed(i) && (!shownDays.size || shownDays.has(dayOf(c) ?? ''))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cands, includePaired, paired, shownDays],
   )
 
-  const importable = (c: Candidate) => c.status === 'ready' && (includePaired || !c.pairedJpeg)
-  const selected = cands.filter((c) => c.selected && importable(c))
+  const selected = cands.filter((c, i) => c.selected && importable(c, i))
   const reading = cands.filter((c) => c.status === 'reading').length
   const already = cands.filter(isDuplicate).length
-  const pairedCount = cands.filter((c) => c.pairedJpeg).length
+  const pairedCount = paired.size
   const shownCount = includePaired ? cands.length : cands.length - pairedCount
+
+  function pickDay(day: string, e: React.MouseEvent) {
+    const toggle = e.ctrlKey || e.metaKey
+    setShownDays((s) => clickDate(s, days.map((d) => d.day), day, { toggle, range: e.shiftKey }, dayAnchor.current))
+    if (!e.shiftKey) dayAnchor.current = day
+  }
 
   function toggle(index: number, shift: boolean) {
     setCands((cs) => {
@@ -341,7 +357,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
       await runImport(
         catalog,
         items,
-        { source, destination: dest, rename, backup: backupOn ? (backup ?? undefined) : undefined },
+        { source, destination: dest, rename, backup: backupOn ? (backup ?? undefined) : undefined, stackPairs },
         setProgress,
         abort.signal,
       )
@@ -426,11 +442,13 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
                   <button className="button small" onClick={() => setAll(false)}>Select none</button>
                   <span className="muted small">Shift-click to select a range.</span>
                   {days.length > 1 && (
-                    <div className="chips" role="group" aria-label="Filter by date">
-                      <button className={`chip ${dayFilter === null ? 'on' : ''}`} onClick={() => setDayFilter(null)}>All dates</button>
-                      {days.map(([d, n]) => (
-                        <button key={d} className={`chip ${dayFilter === d ? 'on' : ''}`} onClick={() => setDayFilter(d)}>
-                          {d} <span className="muted">({n})</span>
+                    <div className="chips import-dates" role="group" aria-label="Filter by date" title="Click a date to show its photos. Ctrl-click (⌘-click on a Mac) adds or removes a date; Shift-click shows a range of dates. (selected / total) counts the photos ticked for import.">
+                      <button className={`chip ${shownDays.size === 0 ? 'on' : ''}`} aria-pressed={shownDays.size === 0} onClick={() => { setShownDays(new Set()); dayAnchor.current = null }}>
+                        All dates <span className="muted">({selected.length} / {days.reduce((n, d) => n + d.total, 0)})</span>
+                      </button>
+                      {days.map((d) => (
+                        <button key={d.day} className={`chip ${shownDays.has(d.day) ? 'on' : ''}`} aria-pressed={shownDays.has(d.day)} onClick={(e) => pickDay(d.day, e)} data-day={d.day}>
+                          {d.day} <span className="muted">({d.selected} / {d.total})</span>
                         </button>
                       ))}
                     </div>
@@ -575,7 +593,13 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
                   <input type="checkbox" checked={includePaired} onChange={(e) => { setIncludePaired(e.target.checked); edited() }} />
                   Also import the {pairedCount === 1 ? 'JPEG' : `${pairedCount} JPEGs`} shot alongside RAW files
                 </label>
-                <p className="muted small">Each JPEG is stacked under its RAW, so the grid shows one photo per shot (as darktable does).</p>
+                <label className="check">
+                  <input type="checkbox" checked={stackPairs} disabled={!includePaired} onChange={(e) => { setStackPairs(e.target.checked); edited() }} />
+                  Stack each JPEG under its RAW
+                </label>
+                <p className="muted small">
+                  {stackPairs ? 'The library shows one photo per shot; open the stack to see the JPEG.' : 'The RAW and the JPEG show as separate photos.'}
+                </p>
               </fieldset>
             )}
           </aside>

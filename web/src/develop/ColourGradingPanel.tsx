@@ -10,6 +10,7 @@
 // Home resets; changes are announced.
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { openSections, useOpen } from './panelState'
 import {
   DEFAULT_GRADING,
   DEFAULT_GRADING_ADVANCED,
@@ -199,7 +200,7 @@ export function ColourGradingPanel(p: Props) {
   const { disabled } = p
   const g = p.grading ?? DEFAULT_GRADING
   const adv = g.advanced ?? DEFAULT_GRADING_ADVANCED
-  const [advanced, setAdvanced] = useState(false)
+  const [advanced, setAdvanced] = useOpen(openSections, 'grading.advanced')
   const [announce, setAnnounce] = useState('')
   const live = useId()
   const set = (patch: Partial<ColourGradingSettings>) => ({ ...g, ...patch })
@@ -385,19 +386,17 @@ export function ColourGradingPanel(p: Props) {
         </div>
         {advanced && (
           <div className="curve-advanced grade-advanced">
-            <p className="small muted">darktable’s color balance rgb, which the wheels drive (its “4 ways” tab). Hue shift, vibrance, contrast and the per-range chroma, saturation and brilliance are its “master” tab; the fall-offs and fulcrums its “masks” tab.</p>
-            {advSlider('Hue shift', adv.hueShift, (v) => setAdv('hue shift', { hueShift: Math.round(v) }), { hint: 'Turns every hue', what: 'darktable’s hue shift: turns every colour’s hue by the same angle (in its Yrg space).', left: 'Turns hues one way.', right: 'The other way.', engine: 'darktable color balance rgb: hue shift' }, { min: -180, max: 180, format: (v) => `${v > 0 ? '+' : ''}${Math.round(v)}°` })}
-            {advSlider('Vibrance', adv.vibrance, (v) => setAdv('vibrance', { vibrance: Math.round(v) }), { hint: 'Boosts pale colours more', what: 'darktable’s global vibrance: more chroma for the less saturated colours. Not Basic’s Vibrance (a separate, simpler control).', left: 'Less.', right: 'More.', engine: 'darktable color balance rgb: global vibrance' })}
-            {advSlider('Contrast', adv.contrast, (v) => setAdv('contrast', { contrast: Math.round(v) }), { hint: 'Around the contrast fulcrum', what: 'darktable’s contrast: a power on luminance around the contrast grey fulcrum. Not Basic’s Contrast (the sigmoid).', left: 'Flatter.', right: 'Punchier.', engine: 'darktable color balance rgb: contrast' })}
-            {list('chroma', 'Linear chroma', 'darktable’s linear chroma: scales colourfulness at constant luminance, in the range’s mask.')}
-            {list('saturation', 'Perceptual saturation', 'darktable’s perceptual saturation (darktable UCS): more or less colourful, keeping perceived brightness.')}
-            {list('brilliance', 'Perceptual brilliance', 'darktable’s perceptual brilliance (darktable UCS): brighter or darker, keeping saturation. darktable warns that beyond ±20 % it can create artefacts.')}
+            {advSlider('Hue shift', adv.hueShift, (v) => setAdv('hue shift', { hueShift: Math.round(v) }), { hint: 'Turns every hue', what: 'Turns every colour’s hue by the same angle.', left: 'Turns hues one way.', right: 'The other way.', engine: 'darktable color balance rgb: hue shift' }, { min: -180, max: 180, format: (v) => `${v > 0 ? '+' : ''}${Math.round(v)}°` })}
+            {advSlider('Vibrance', adv.vibrance, (v) => setAdv('vibrance', { vibrance: Math.round(v) }), { hint: 'Boosts pale colours more', what: 'More colour for the less saturated colours. Not Basic’s Vibrance (a separate, simpler control).', left: 'Less.', right: 'More.', engine: 'darktable color balance rgb: global vibrance' })}
+            {advSlider('Contrast', adv.contrast, (v) => setAdv('contrast', { contrast: Math.round(v) }), { hint: 'Around the contrast fulcrum', what: 'Contrast around the contrast grey fulcrum. Not Basic’s Contrast (the sigmoid).', left: 'Flatter.', right: 'Punchier.', engine: 'darktable color balance rgb: contrast' })}
+            {list('chroma', 'Linear chroma', 'Scales colourfulness at constant brightness, in this range.')}
+            {list('saturation', 'Perceptual saturation', 'More or less colourful, keeping perceived brightness.')}
+            {list('brilliance', 'Perceptual brilliance', 'Brighter or darker, keeping saturation. Beyond ±20 % it can create artefacts.')}
             <h4>Masks</h4>
-            {advSlider('Shadows fall-off', adv.shadowsFalloff ?? fromBlending, (v) => setAdv('shadows fall-off', { shadowsFalloff: Math.round(v * 100) / 100 }), { hint: adv.shadowsFalloff === undefined ? 'From Blending' : 'Set here, not from Blending', what: 'darktable’s shadows fall-off: how steeply the shadows mask fades. Follows Blending until set here.', left: 'Softer (wider overlap).', right: 'Steeper.', engine: 'darktable color balance rgb: shadows fall-off' }, { min: 0, max: 3, step: 0.01, def: fromBlending, format: (v) => v.toFixed(2) })}
-            {advSlider('Highlights fall-off', adv.highlightsFalloff ?? fromBlending, (v) => setAdv('highlights fall-off', { highlightsFalloff: Math.round(v * 100) / 100 }), { hint: adv.highlightsFalloff === undefined ? 'From Blending' : 'Set here, not from Blending', what: 'darktable’s highlights fall-off: how steeply the highlights mask fades. Follows Blending until set here.', left: 'Softer.', right: 'Steeper.', engine: 'darktable color balance rgb: highlights fall-off' }, { min: 0, max: 3, step: 0.01, def: fromBlending, format: (v) => v.toFixed(2) })}
-            {advSlider('White fulcrum', adv.whiteFulcrum, (v) => setAdv('white fulcrum', { whiteFulcrum: Math.round(v * 100) / 100 }), { hint: 'Where the Midtones power pivots at the top', what: 'darktable’s white fulcrum: the luminance the Midtones power keeps fixed at the bright end (and the perceptual steps’ white).', left: 'Lower.', right: 'Higher.', engine: 'darktable color balance rgb: white fulcrum' }, { min: -4, max: 8, step: 0.05, format: (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)} EV` })}
-            {advSlider('Contrast fulcrum', adv.contrastFulcrum, (v) => setAdv('contrast fulcrum', { contrastFulcrum: Math.round(v * 100) / 100 }), { hint: 'The grey Contrast pivots on', what: 'darktable’s contrast grey fulcrum: the luminance Advanced Contrast leaves unchanged (18.45 % by default).', left: 'Darker pivot.', right: 'Brighter pivot.', engine: 'darktable color balance rgb: contrast gray fulcrum' }, { min: 1, max: 100, step: 0.05, def: DEFAULT_GRADING_ADVANCED.contrastFulcrum, format: (v) => `${v.toFixed(2)} %` })}
-            <p className="small muted">Not offered: darktable’s JzAzBz saturation formula (darktable UCS, its default, is used) and its checkerboard mask previews. Balance is the masks’ middle-grey fulcrum (±2 EV).</p>
+            {advSlider('Shadows fall-off', adv.shadowsFalloff ?? fromBlending, (v) => setAdv('shadows fall-off', { shadowsFalloff: Math.round(v * 100) / 100 }), { hint: adv.shadowsFalloff === undefined ? 'From Blending' : 'Set here, not from Blending', what: 'How steeply the shadows mask fades. Follows Blending until set here.', left: 'Softer (wider overlap).', right: 'Steeper.', engine: 'darktable color balance rgb: shadows fall-off' }, { min: 0, max: 3, step: 0.01, def: fromBlending, format: (v) => v.toFixed(2) })}
+            {advSlider('Highlights fall-off', adv.highlightsFalloff ?? fromBlending, (v) => setAdv('highlights fall-off', { highlightsFalloff: Math.round(v * 100) / 100 }), { hint: adv.highlightsFalloff === undefined ? 'From Blending' : 'Set here, not from Blending', what: 'How steeply the highlights mask fades. Follows Blending until set here.', left: 'Softer.', right: 'Steeper.', engine: 'darktable color balance rgb: highlights fall-off' }, { min: 0, max: 3, step: 0.01, def: fromBlending, format: (v) => v.toFixed(2) })}
+            {advSlider('White fulcrum', adv.whiteFulcrum, (v) => setAdv('white fulcrum', { whiteFulcrum: Math.round(v * 100) / 100 }), { hint: 'Where the Midtones power pivots at the top', what: 'The brightness the Midtones power keeps fixed at the bright end (and the perceptual steps’ white).', left: 'Lower.', right: 'Higher.', engine: 'darktable color balance rgb: white fulcrum' }, { min: -4, max: 8, step: 0.05, format: (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)} EV` })}
+            {advSlider('Contrast fulcrum', adv.contrastFulcrum, (v) => setAdv('contrast fulcrum', { contrastFulcrum: Math.round(v * 100) / 100 }), { hint: 'The grey Contrast pivots on', what: 'The brightness Advanced Contrast leaves unchanged (18.45 % by default).', left: 'Darker pivot.', right: 'Brighter pivot.', engine: 'darktable color balance rgb: contrast gray fulcrum' }, { min: 1, max: 100, step: 0.05, def: DEFAULT_GRADING_ADVANCED.contrastFulcrum, format: (v) => `${v.toFixed(2)} %` })}
             <button className="button small" disabled={disabled || !g.advanced} onClick={() => p.onChange('Colour grading: Advanced reset', set({ advanced: undefined }), true)}>Reset Advanced</button>
           </div>
         )}

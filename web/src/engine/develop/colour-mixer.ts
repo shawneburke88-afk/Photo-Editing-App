@@ -779,7 +779,7 @@ export function blendColourMixer(before: ColourMixerSettings | undefined, after:
 
 /** The mixer in words (the paste checklist). */
 export function describeMixer(m: ColourMixerSettings | undefined): string {
-  if (!m || !bandsActive(m)) return m?.advanced ? 'no band moved (darktable settings changed)' : 'none'
+  if (!m || !bandsActive(m)) return m?.advanced ? 'no band moved (Advanced settings changed)' : 'none'
   const parts: string[] = []
   for (const ch of MIXER_CHANNELS) {
     const moved = BAND_NAMES.map((n, i) => [n, m[ch][i]] as const).filter(([, v]) => v !== 0)

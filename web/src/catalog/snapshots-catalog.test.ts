@@ -55,11 +55,11 @@ function v14(): Database {
 
 describe('schema 15', () => {
   it('upgrades a version-14 catalog by adding an empty snapshots table, nothing else', () => {
-    expect(SCHEMA_VERSION).toBe(15)
+    expect(SCHEMA_VERSION).toBe(16)
     const d = v14()
     const before = dump(d)
     migrate(d)
-    expect(d.selectValue('PRAGMA user_version')).toBe(15)
+    expect(d.selectValue('PRAGMA user_version')).toBe(SCHEMA_VERSION)
     expect(dump(d, true)).toEqual(before)
     expect(d.selectValue('SELECT COUNT(*) FROM snapshots')).toBe(0)
     expect(d.selectValue('PRAGMA foreign_key_check')).toBeUndefined()

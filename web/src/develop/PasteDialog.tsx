@@ -45,8 +45,8 @@ export function PasteDialog({ mode, clip, targets, onConfirm, onClose }: Props) 
   const kindNote = !targets || !sameKindChecked || targets.kind === clip.sourceKind
     ? ''
     : targets.kind === undefined
-      ? 'The advanced darktable modules only go to photos of the same file type as this one (RAW or JPEG).'
-      : `${targets.kind === 'mixed' ? 'Some of these photos are' : count === 1 ? 'This photo is' : 'These photos are'} a different file type from ${clip.sourceName}; the advanced darktable modules only go to photos of the same type.`
+      ? 'The Advanced settings only go to photos of the same file type as this one (RAW or JPEG).'
+      : `${targets.kind === 'mixed' ? 'Some of these photos are' : count === 1 ? 'This photo is' : 'These photos are'} a different file type from ${clip.sourceName}; the Advanced settings only go to photos of the same type.`
 
   const toggle = (k: PasteKey, on: boolean) => {
     const next = new Set(keys)

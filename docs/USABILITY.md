@@ -96,12 +96,12 @@ The owner settled these on 2026-10-11; the outcome is under each item and in the
 
 ### Develop panel layout
 
-The right panel is one scrolling stack in workflow order, with Crop & Lens first (owner's decision). Groups are collapsible, and the jump bar at the top reaches any group in one click.
+The right panel is one scrolling stack in workflow order, with Crop & Lens first (owner's decision). Groups are collapsible, and the jump bar at the top reaches any group in one click. Since the owner's first real use (2026-10-19) every group, and the secondary sections inside them (Advanced, Lens, Transform), start closed and stay as the user leaves them ([PHASE3.md](PHASE3.md#develop-groups-start-collapsed-owner-2026-10-19)).
 
 | Order | Group | Contents | Engine (darktable) | Status |
 |---|---|---|---|---|
 | 1 | **Crop & Lens** | Crop, Straighten, Transform/Upright; Lens profile, Chromatic aberration, Vignetting correction | crop, rotate and perspective (ashift), lens correction (lensfun), CA correction | Crop, straighten, rotate 90° and flip: **built** (Phase 3, Part 1; [PHASE3.md](PHASE3.md)), shown as the **Crop** group; Transform/Upright and lens corrections: later in Phase 3 (the group becomes Crop & Lens) |
-| 2 | **Basic** (open by default) | Auto + look; White balance (preset, **Pick**, Temp, Tint); Tone (Exposure, Contrast, Highlights, Shadows, Whites, Blacks); Presence (Texture, Clarity, Dehaze, Vibrance, Saturation) | temperature, exposure, sigmoid, tone equalizer, colour balance rgb, local contrast, haze removal, contrast & texture | Built, except colour balance rgb; Texture, Clarity (darktable's contrast & texture) and Dehaze (darktable's haze removal) **built** in Phase 3, Part 25 ([PHASE3.md](PHASE3.md#part-25-effects)), their darktable settings under Advanced |
+| 2 | **Basic** | Auto + look; White balance (preset, **Pick**, Temp, Tint); Tone (Exposure, Contrast, Highlights, Shadows, Whites, Blacks); Presence (Texture, Clarity, Dehaze, Vibrance, Saturation) | temperature, exposure, sigmoid, tone equalizer, colour balance rgb, local contrast, haze removal, contrast & texture | Built, except colour balance rgb; Texture, Clarity (darktable's contrast & texture) and Dehaze (darktable's haze removal) **built** in Phase 3, Part 25 ([PHASE3.md](PHASE3.md#part-25-effects)), their darktable settings under Advanced |
 | 3 | **Tone curve** | Regions (parametric) + point, RGB, Red, Green, Blue; Auto (contrast, colour, suggestions) | after the sigmoid, as darktable's tone curve sits and its Lightroom importer puts Lightroom's curve; darktable's monotone spline and preserve-colors norms | **Built** (Phase 3, Part 12; [PHASE3.md](PHASE3.md#part-12-the-tone-curve)); Auto row (LightBench's own methods) in Part 21 ([PHASE3.md](PHASE3.md#part-21-section-eyes-and-tone-curve-auto)) |
 | 4 | **Colour** | Colour mixer (HSL), Colour grading, Point colour | colour equalizer, colour balance rgb | Colour mixer and Point colour (a tab of the mixer, as in Lightroom): **built** (Phase 3, Part 15; [PHASE3.md](PHASE3.md#part-15-colour-mixer-and-point-color)); Colour grading: **built** (Phase 3, Part 17; [PHASE3.md](PHASE3.md#part-17-colour-grading)), its own group after the mixer (jump bar "Grading"), on colour balance rgb |
 | 5 | **Detail** | Sharpening, Noise reduction | diffuse or sharpen / sharpen, denoise (profiled) | Phase 3 |
@@ -120,10 +120,22 @@ Every group follows the same rules:
 - **Tooltip** on hover or keyboard focus. It says:
   - what the control does;
   - what moving it left or right does;
-  - the **pitfalls**, in amber;
-  - the darktable module behind it.
+  - the **pitfalls**, in amber.
+  The darktable module behind each control stays in `help.ts` (`engine`) for the code's readers and isn't shown (see the next section).
 - Every text must match what the engine really does. The texts live in `web/src/develop/help.ts` and are reviewed whenever the engine changes.
 - Warnings appear in context. For example, the clipping triangles and the **J** overlay show where detail is lost; tooltips point to J.
+
+### No notes in the UI (owner, 2026-10-19)
+
+The owner's rule: **remove all such notes.** Visible text (panels, dialogs, wizards, tooltips, hints, messages, menu and shortcut labels) says what a control does in plain words. It doesn't say which other app it imitates or how it is built: no "as darktable does", "(darktable's …)", "Lightroom-style", "like Lightroom", Adobe, Camera Raw, Capture One or LightCraft comparisons, module or algorithm names used as explanations, or "this number isn't published" notes.
+
+What stays:
+- Required legal notices: licences, THIRD_PARTY_NOTICES, the Adobe DNG notice in System Check and Settings, and the Lensfun attribution with its licence under the Lens section.
+- Names of options and of the user's own data from another app: the **Lightroom Classic** shortcut set, messages about what was read from or written to Lightroom's `.xmp` (crop, Transform, tone curve, masks, the `.acr` file), history steps named after them, and colour space names such as Adobe RGB (1998).
+- Diagnostics meant for bug reports (System Check's RAW details, the Benchmark page, error messages from the RAW decoder).
+- Code comments and docs, which aren't UI. Release notes are written separately.
+
+New text follows the rule; review it when adding panels. The strings changed for it are listed in the commit "No notes in the UI" (feedback-1).
 
 ### Interaction rules
 

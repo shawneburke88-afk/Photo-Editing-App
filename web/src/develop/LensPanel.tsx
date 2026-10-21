@@ -10,6 +10,8 @@ import type { LensMeta } from '../engine/lens/meta'
 import { HELP } from './help'
 import { Slider } from './Slider'
 import { SectionEye } from './SectionEye'
+import { openSections, useOpen } from './panelState'
+import { SectionTitle } from './SectionTitle'
 
 interface Props {
   lens: LensSettings
@@ -36,6 +38,8 @@ export function LensPanel({ lens, status, meta, db, disabled, showHint, onLoadDb
   const loaded = db && typeof db === 'object' ? db : null
   const usesLensfun = !!meta && (lens.source === 'lensfun' || !meta.embedded)
   const off = disabled || !lens.enabled
+  // A secondary section of Crop & Lens: closed until opened (remembered).
+  const [open, setOpen] = useOpen(openSections, 'crop.lens')
 
   // Cameras by maker, and the lenses that fit the camera's mount, for picking by hand.
   const pickedCamera = loaded && lens.camera && meta && lens.pickedFor === pickKey(meta) ? loaded.cameras.find((c) => lensfunKey(c) === lens.camera) ?? null : null
@@ -80,7 +84,8 @@ export function LensPanel({ lens, status, meta, db, disabled, showHint, onLoadDb
   return (
     <div className="dpanel lens-panel">
       <section>
-        <div className="section-head"><h3>Lens</h3><SectionEye id="crop.lens" /></div>
+        <div className="section-head"><SectionTitle title="Lens" open={open} onToggle={() => setOpen(!open)} summary={meta ? (lens.enabled ? 'On' : 'Off') : undefined} /><SectionEye id="crop.lens" /></div>
+        {open && (<>
         <label className="lens-check" title="Corrects the lens’s distortion, chromatic aberration and dark corners with a profile of the lens">
           <input type="checkbox" checked={lens.enabled} disabled={disabled || !meta} onChange={(e) => set(e.target.checked ? 'Lens corrections on' : 'Lens corrections off', { enabled: e.target.checked })} />
           Lens corrections
@@ -200,6 +205,7 @@ export function LensPanel({ lens, status, meta, db, disabled, showHint, onLoadDb
             copy of {LENSFUN_INFO.date}; downloaded the first time it is needed, then kept for offline use.
           </p>
         )}
+        </>)}
       </section>
     </div>
   )
