@@ -11,16 +11,20 @@ name: AI models
 #                  web/models/manifest.json, and nothing else, to the branch it ran on (only if it changed and the
 #                  check passed).
 #   check          only the real-model check, of the files the branch's manifest pins (downloaded from Hugging Face).
+#   hf-check       read-only: what a browser on LightBench's site would get from Hugging Face for the AI Remove files
+#                  (redirect host, CORS, Range requests, preflight) and the Hub API the update check reads
+#                  (web/scripts/hf-check.mjs). Results in the run's summary; commits nothing.
 
 on:
   workflow_dispatch:
     inputs:
       task:
-        description: "pin-and-check: pin web/models/manifest.json, check the real model and commit the manifest to this branch. check: only check the files the manifest pins."
+        description: "pin-and-check: pin web/models/manifest.json, check the real model and commit the manifest to this branch. check: only check the files the manifest pins. hf-check: read-only check of Hugging Face's responses for the AI Remove files and update check."
         type: choice
         options:
           - pin-and-check
           - check
+          - hf-check
         default: pin-and-check
         required: true
       revision:
@@ -74,8 +78,8 @@ jobs:
             exit 1
           fi
           case "${TASK}" in
-            pin-and-check|check) ;;
-            *) echo "::error::unknown task '${TASK}' (pin-and-check or check)"; exit 1 ;;
+            pin-and-check|check|hf-check) ;;
+            *) echo "::error::unknown task '${TASK}' (pin-and-check, check or hf-check)"; exit 1 ;;
           esac
           if [ -n "${REVISION}" ]; then
             if ! [[ "${REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
@@ -100,8 +104,13 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      - name: Hugging Face responses (hf-check)
+        if: steps.code.outputs.present == 'true' && inputs.task == 'hf-check'
+        working-directory: web
+        run: node scripts/hf-check.mjs --origin "https://${GITHUB_REPOSITORY_OWNER}.github.io"
+
       - name: Install
-        if: steps.code.outputs.present == 'true'
+        if: steps.code.outputs.present == 'true' && inputs.task != 'hf-check'
         working-directory: web
         run: npm ci
 
@@ -125,7 +134,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check the real model
-        if: steps.code.outputs.present == 'true'
+        if: steps.code.outputs.present == 'true' && inputs.task != 'hf-check'
         working-directory: web
         run: |
           if [ "${TASK}" = "pin-and-check" ]; then
