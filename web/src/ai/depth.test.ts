@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import shipped from '../../models/manifest.json'
 import { depthInput, type ModelEntry } from './manifest'
-import { modelSize, renderSize, toSensorFrame, toTensor } from './depth'
+import { depthLargestTensor, modelSize, renderSize, toSensorFrame, toTensor } from './depth'
 import { DEFAULT_GEOMETRY, resolveGeometry } from '../engine/develop/geometry'
 
 // Preparing the model's input and moving its output into the sensor frame (PHASE3.md Part 24).
@@ -56,5 +56,19 @@ describe('the output in the sensor frame', () => {
     expect([b.w, b.h]).toEqual([6, 4])
     // Every value of the as-shot map lands once in the sensor-frame map (a permutation: nothing resampled away).
     expect([...b.px].sort((x, y) => x - y)).toEqual([...Array(24).keys()])
+  })
+})
+
+describe('the largest tensor against the GPU\'s binding limit (ONNX Runtime 1.30.0, MASKS_PREP_2.md)', () => {
+  it('fits 128 MiB for a 3:2 photo; not in fp32 for 16:9 and wider', () => {
+    const MiB128 = 128 * 2 ** 20
+    const [w32, h32] = modelSize(6000, 4000, input)
+    expect(depthLargestTensor(w32, h32, 'fp32')).toBe(6 * (56 * 37 + 1) ** 2 * 4)
+    expect(depthLargestTensor(w32, h32, 'fp32')).toBeLessThan(MiB128)
+    const [w169, h169] = modelSize(6000, 3375, input)
+    expect(depthLargestTensor(w169, h169, 'fp32')).toBeGreaterThan(MiB128)
+    expect(depthLargestTensor(w169, h169, 'fp16')).toBeLessThan(MiB128)
+    const [wp, hp] = modelSize(9000, 3000, input)
+    expect(depthLargestTensor(wp, hp, 'fp16')).toBeGreaterThan(MiB128)
   })
 })

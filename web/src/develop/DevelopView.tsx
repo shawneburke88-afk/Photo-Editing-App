@@ -3110,7 +3110,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         </SectionEyeContext.Provider>
       </aside>
       {aiRemove.ask && (
-        <ModelDialog model={aiRemove.ask.model} files={aiRemove.ask.files} purpose={aiRemove.ask.slow ? 'AI Remove (without WebGPU here it runs on the processor: several minutes per spot)' : 'AI Remove'} onInstalled={(rec) => aiRemove.ask?.done(rec)} onClose={() => aiRemove.ask?.done(null)} />
+        <ModelDialog model={aiRemove.ask.model} files={aiRemove.ask.files} purpose={aiRemove.ask.slow ? 'AI Remove (on this computer it runs on the processor: several minutes per spot)' : 'AI Remove'} onInstalled={(rec) => aiRemove.ask?.done(rec)} onClose={() => aiRemove.ask?.done(null)} />
       )}
       {objectSel.ask && (
         <ModelDialog model={objectSel.ask.model} files={objectSel.ask.files} purpose={objectSel.ask.slow ? 'Object select (on this computer it runs on the processor, without a suitable graphics card: preparing each photo takes longer)' : 'Object select'} onInstalled={(rec) => objectSel.ask?.done(rec)} onClose={() => objectSel.ask?.done(null)} />

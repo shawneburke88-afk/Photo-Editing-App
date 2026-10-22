@@ -36,6 +36,19 @@ export function modelSize(w: number, h: number, input: DepthInput, fixed: [numbe
   return [multipleOf(s * w, input.multiple, input.shortSide), multipleOf(s * h, input.multiple, input.shortSide)]
 }
 
+/**
+ * The largest tensor Depth Anything V2 Small makes at this input size (bytes): its attention scores, [1, 6, T, T] with
+ * T = the 14 × 14 patches + 1 (ViT-S/14: 6 heads; the DPT head's largest feature map, about 32 × the input, is far
+ * smaller). ONNX Runtime 1.30.0's WebGPU Softmax computes a tensor larger than the GPU's `maxStorageBufferBindingSize`
+ * wrong (models.ts `SAM_FP32_MIN_BINDING`), so such a photo runs on the processor instead. At a 128 MiB limit: a 3:2
+ * photo (784 × 518: 103 MB fp32) fits; 16:9 (924 × 518: 143 MB fp32) and wider don't in fp32; fp16 halves it.
+ * Inferred from the architecture: the export's own graph wasn't inspected here.
+ */
+export function depthLargestTensor(mw: number, mh: number, variant: 'fp16' | 'fp32'): number {
+  const t = Math.floor(mw / 14) * Math.floor(mh / 14) + 1
+  return 6 * t * t * (variant === 'fp16' ? 2 : 4)
+}
+
 /** The size Develop should render the photo at: its long edge for `modelSize`, a little larger for a clean resize. */
 export function renderSize(w: number, h: number, input: DepthInput): number {
   const [mw, mh] = modelSize(w, h, input)

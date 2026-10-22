@@ -71,8 +71,8 @@
         }
       },
       "gpu": {
-        "maxStorageBufferBindingSize": 134217728,
-        "maxBufferSize": 134217728
+        "maxStorageBufferBindingSize": 1073741824,
+        "maxBufferSize": 1073741824
       },
       "files": [
         { "variant": "fp32", "part": "vae_encoder", "path": "vae_encoder.onnx", "bytes": 136757093, "sha256": "b8b81d41e757222a0707665ba9d826703987855e5bed056036b90b988968042f" },

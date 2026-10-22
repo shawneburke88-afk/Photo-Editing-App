@@ -175,8 +175,8 @@ export interface AiPrompt {
 /**
  * An AI selection (PHASE3.md Part 27): the matte an AI model made for this photo, kept in the edit (so in the .xmp)
  * and drawn from there: drawing never runs the model, and another computer draws the same mask without it. The matte
- * is 8 bits in the SENSOR frame (255 = selected; depth-map.ts's encoding), at most 2048 texels on its long side (owner's
- * AI-masks decision 4). Without a matte (pasted from another photo, from a preset, or damaged) the part is kept and its
+ * is 8 bits in the SENSOR frame (255 = selected; depth-map.ts's encoding), at most 1024 texels on its long side (owner,
+ * 2026-10-22). Without a matte (pasted from another photo, from a preset, or damaged) the part is kept and its
  * mask waits for "Compute for this photo". A SHAPE kind (owner's AI-masks decision 1).
  */
 export interface AiShape {
@@ -253,13 +253,14 @@ export const MAX_COMPONENTS = 32
 export const MAX_DABS = 10000
 export const MAX_SAMPLES = 5
 /**
- * AI selections (Part 27): the matte's long side (owner's AI-masks decision 4: up to 2048), and caps on what an edit
- * may hold: per matte (2048 × 2048 texels, 4 MB of text) and for all of a photo's AI mattes together (16 MB of text:
- * a real matte takes tens of kB; a file over the total is damaged or hostile, and the rest wait). Prompt points per part.
+ * AI selections (Part 27): the matte's long side, at most 1024 for every AI part (owner, 2026-10-22, after the real
+ * model's mattes measured about 171 kB at 2048 and 67 kB at 1024; the model's own detail is 256 × 256 over the photo),
+ * and caps on what an edit may hold: per matte (1024 × 1024 texels, 1 MB of text) and for all of a photo's AI mattes
+ * together (8 MB of text: a file over the total is damaged or hostile, and the rest wait). Prompt points per part.
  */
-export const AI_RASTER_LONG = 2048
-export const AI_RASTER_CAPS: RasterCaps = { side: 2048, pixels: 2048 * 2048, chars: 4 << 20 }
-export const MAX_AI_CHARS = 16 << 20
+export const AI_RASTER_LONG = 1024
+export const AI_RASTER_CAPS: RasterCaps = { side: 1024, pixels: 1024 * 1024, chars: 1 << 20 }
+export const MAX_AI_CHARS = 8 << 20
 export const MAX_AI_POINTS = 64
 
 export const isKnownKind = (k: unknown): k is ShapeKind => typeof k === 'string' && (KNOWN_KINDS as string[]).includes(k)
@@ -626,10 +627,15 @@ export function appendMasks(own: LocalMask[] | undefined, pasted: LocalMask[] | 
   return out.length ? out : undefined
 }
 
-/** Presets may hold gradients and range masks, not brush strokes (owner's decision 7): masks with a brush are left out. */
+/**
+ * Presets may hold gradients and range masks, not brush strokes (owner's decision 7): masks with a brush are left out,
+ * and so are masks with an Object selection (owner, 2026-10-22: its points belong to one photo, like brush strokes;
+ * paste still carries it, waiting).
+ */
 export function presetMasks(masks: LocalMask[] | undefined): LocalMask[] | undefined {
-  // Depth ranges are kept without the photo's depth map (each photo gets its own when the preset is applied).
-  const out = withoutDepthMaps((masks ?? []).filter((m) => !m.components.some((c) => c.shape.kind === 'brush')))
+  const photoBound = (c: MaskComponent) => c.shape.kind === 'brush' || (c.shape.kind === 'ai' && (c.shape as AiShape).what === 'object')
+  // Depth ranges (and later AI parts) are kept without the photo's map (each photo gets its own when applied).
+  const out = withoutDepthMaps((masks ?? []).filter((m) => !m.components.some(photoBound)))
   return out.length ? out : undefined
 }
 

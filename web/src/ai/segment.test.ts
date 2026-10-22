@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_GEOMETRY, resolveGeometry } from '../engine/develop/geometry'
+import { AI_RASTER_LONG } from '../engine/develop/masks'
 import { bestMask, coverage, matteAlpha, encoderInput, logitAt, matteSize, matteToSensor, outlinePath, pickMask, previewGrid, promptFeeds, promptToShot, quantiles, renderLong, sensorToShot, shotToSensor, type Logits } from './segment'
 
 // Object select's pre- and post-processing (PHASE3.md Part 27), as SAM 2 does it: the photo stretched to 1024²,
@@ -91,9 +92,10 @@ describe('the decoder output', () => {
     expect(logitAt(l, 0, 1)).toBeCloseTo(20)
   })
 
-  it('makes the matte in the sensor frame, at most 2048 on the long side, with the selection where the point was', () => {
-    expect(matteSize([6000, 4000], 2048)).toEqual([2048, 1365])
-    expect(matteSize([1600, 1072], 2048)).toEqual([1600, 1072])
+  it('makes the matte in the sensor frame, at most 1024 on the long side, with the selection where the point was', () => {
+    expect(matteSize([6000, 4000], AI_RASTER_LONG)).toEqual([1024, 683])
+    expect(matteSize([800, 536], AI_RASTER_LONG)).toEqual([800, 536])
+    expect(AI_RASTER_LONG).toBe(1024)
     const same = resolveGeometry(DEFAULT_GEOMETRY, 600, 400, 0)
     const l = disc(256, 256, 0.3, 0.6, 0.15)
     const m = matteToSensor(l, same.uvToSensor, [600, 400], 300)

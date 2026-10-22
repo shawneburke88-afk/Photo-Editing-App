@@ -136,7 +136,7 @@ export class MaskStage {
 
   /**
    * A depth map or AI matte as an r8unorm texture (sampled bilinearly), uploaded once and kept while drawings use it.
-   * Up to KEEP_MAPS of them and KEEP_MAP_BYTES together (an edit may hold several AI mattes of up to 2048 × 2048: Part
+   * Up to KEEP_MAPS of them and KEEP_MAP_BYTES together (an edit may hold several AI mattes of up to 1024 × 1024: Part
    * 27); the oldest past that is handed to the engine's retirement (retire.ts): another drawing open now may have
    * encoded with it.
    */

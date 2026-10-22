@@ -54,11 +54,14 @@ export function gpuShortfall(m: ModelEntry, gpu: GpuProbe): string | null {
 // ---- Object select (SAM 2.1 Hiera Tiny; PHASE3.md Part 27)
 
 /**
- * SAM 2.1's fp32 graphs on WebGPU: off. On Mesa's software Vulkan (lavapipe) ONNX Runtime 1.30.0's WebGPU provider gave
- * the encoder's third image embedding wrong (about ±6600 where the CPU gives ±1.8; MASKS_PREP.md), so the mask came
- * out wrong; fp16 matched the CPU. The cause is being investigated; once fixed and checked, this turns on.
+ * SAM 2.1's fp32 graphs on WebGPU only where the GPU binds at least this much in one storage buffer (512 MiB). ONNX
+ * Runtime 1.30.0's WebGPU provider splits a tensor larger than the adapter's `maxStorageBufferBindingSize` into 128 MiB
+ * segments, and its Softmax (also LayerNormalization, Pad, Where) ignores them: the result is silently wrong
+ * (MASKS_PREP_2.md, runs 39658959631 and 39712936224; onnxruntime PR #32897 is the upstream fix, not merged). SAM 2.1
+ * fp32's global-attention Softmax is 256 MiB: correct in a browser at a 1 GiB limit, wrong at 128 MiB. In fp16 it is
+ * exactly 128 MiB, so the fp16 file is unaffected. 512 MiB leaves room above the 256 MiB tensor.
  */
-export const SAM_FP32_WEBGPU = false
+export const SAM_FP32_MIN_BINDING = 512 * 2 ** 20
 
 /**
  * Object select on the processor (ONNX Runtime's WebAssembly provider, up to 4 threads) when there is no GPU it can
@@ -81,13 +84,13 @@ export interface ObjectPlan {
 }
 
 /**
- * Where Object select runs here and which files it needs: the one place that decides (so the fp32-on-WebGPU fix
- * changes only SAM_FP32_WEBGPU). fp16 on WebGPU where the GPU has `shader-f16`; fp32 on WebGPU without it only when
- * SAM_FP32_WEBGPU; else fp32 on the processor if OBJECT_WASM_FALLBACK; else not here, said plainly.
+ * Where Object select runs here and which files it needs: the one place that decides. fp16 on WebGPU where the GPU has
+ * `shader-f16`; fp32 on WebGPU without it where the GPU binds at least SAM_FP32_MIN_BINDING; else fp32 on the
+ * processor if OBJECT_WASM_FALLBACK; else not here, said plainly.
  */
 export function objectPlan(m: ModelEntry, gpu: GpuProbe): ObjectPlan {
   if (gpu.webgpu && gpu.f16 && variantPinned(m, 'fp16')) return { provider: 'webgpu', variant: 'fp16', gpu, why: null }
-  if (gpu.webgpu && SAM_FP32_WEBGPU && variantPinned(m, 'fp32')) return { provider: 'webgpu', variant: 'fp32', gpu, why: null }
+  if (gpu.webgpu && (gpu.maxStorageBufferBindingSize ?? 0) >= SAM_FP32_MIN_BINDING && variantPinned(m, 'fp32')) return { provider: 'webgpu', variant: 'fp32', gpu, why: null }
   if (OBJECT_WASM_FALLBACK && variantPinned(m, 'fp32')) return { provider: 'wasm', variant: 'fp32', gpu, why: null, slow: true }
   return {
     provider: null,
@@ -109,7 +112,11 @@ export async function providerFor(m?: ModelEntry | null): Promise<{ provider: Pr
   if (m?.task === 'inpaint') {
     if (gpu.webgpu) {
       const short = gpuShortfall(m, gpu)
-      return short ? { provider: null, gpu, why: short } : { provider: 'webgpu', gpu, why: null }
+      if (!short) return { provider: 'webgpu', gpu, why: null }
+      // A GPU below the model's limits (its tensors wouldn't fit one binding, and ONNX Runtime 1.30.0 would then compute
+      // them wrong: SAM_FP32_MIN_BINDING's note) runs it on the processor, as without WebGPU.
+      if (INPAINT_WASM_FALLBACK) return { provider: 'wasm', gpu, why: null, slow: true }
+      return { provider: null, gpu, why: short }
     }
     if (INPAINT_WASM_FALLBACK) return { provider: 'wasm', gpu, why: null, slow: true }
     return { provider: null, gpu, why: 'AI Remove needs WebGPU, which this browser or computer doesn’t offer (Chrome or Edge on Windows, macOS or Android have it; Safari and Firefox mostly don’t yet). Remove, Heal and Clone work everywhere.' }

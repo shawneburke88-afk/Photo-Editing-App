@@ -14,7 +14,7 @@
 //    thresholds the logits at 0. LightBench keeps a soft edge: the matte ramps from 0 to 255 over logits −2…+2
 //    (`matteAlpha`), so the edge stays where SAM puts it (½ at logit 0) and the inside and outside are flat. A plain
 //    sigmoid left SAM's uneven inside and outside values in the matte, which made it compress about 4 times worse in
-//    the edit (sam-check, GitHub Actions run 39702229699: 514,000 characters for a 2048 × 2048 matte).
+//    the edit (sam-check, GitHub Actions run 39702229699: 514,000 characters for a 2048 × 2048 matte, against 175,000).
 // The photo is the one the Depth map uses (ai/depth.ts): Develop's rendering as shot, in the camera's orientation; the
 // prompt and the matte are moved between it and the SENSOR frame through the rendering's uv → sensor map.
 

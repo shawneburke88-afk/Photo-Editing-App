@@ -75,7 +75,7 @@ export function useAiRemove() {
         if (!(await askFor(model, files, p.provider === 'wasm'))) return null
       }
       if (ctl.signal.aborted) return null
-      const cpu = p.provider === 'wasm' ? ' (on the processor, without WebGPU: this takes several minutes)' : ''
+      const cpu = p.provider === 'wasm' ? ' (on the processor: this takes several minutes)' : ''
       setBusy({ text: `AI Remove: getting ready${cpu}…` })
       const r = await makeAiFill(model, spot, size, readCrop, {
         seed: spot.seed,

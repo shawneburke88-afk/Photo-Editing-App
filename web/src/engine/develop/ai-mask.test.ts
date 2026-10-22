@@ -88,21 +88,23 @@ describe('the matte in the edit and the sidecar', () => {
     const bad = [
       mask('a', [{ ...aiShape(), raster: { ...raster, data: 'not base64 !' } }]),
       mask('b', [{ ...aiShape(), raster: { ...raster, width: AI_RASTER_CAPS.side + 1 } }]),
-      mask('c', [{ ...aiShape(), raster: { ...raster, width: 2048, height: 2049 } }]),
+      mask('c', [{ ...aiShape(), raster: { ...raster, width: 1024, height: 1025 } }]),
       mask('d', [{ ...aiShape(), raster: { ...raster, data: 'A'.repeat(AI_RASTER_CAPS.chars + 4) } }]),
     ]
     const s = normalizeSettings({ ...DEFAULT_SETTINGS, exposure: 0.3, masks: bad })
     expect(s.exposure).toBe(0.3)
     expect(s.masks!.map((x) => x.name)).toEqual(['a', 'b', 'c', 'd'])
     expect(s.masks!.every(needsAi)).toBe(true)
-    // A 2048 × 2048 matte is allowed.
-    expect(normalizeMask(mask('e', [{ ...aiShape(), raster: { ...raster, width: 2048, height: 2048 } }]))!.components[0].shape).toHaveProperty('raster')
+    // A 1024 × 1024 matte is allowed (the long side is at most 1024 for every AI part: owner, 2026-10-22); 2048 isn't.
+    expect(AI_RASTER_CAPS.side).toBe(1024)
+    expect(normalizeMask(mask('e', [{ ...aiShape(), raster: { ...raster, width: 1024, height: 1024 } }]))!.components[0].shape).toHaveProperty('raster')
+    expect(normalizeMask(mask('f', [{ ...aiShape(), raster: { ...raster, width: 2048, height: 1365 } }]))!.components[0].shape).not.toHaveProperty('raster')
     // All AI mattes of an edit together: past MAX_AI_CHARS the rest wait.
     const big = { ...raster, data: 'A'.repeat(AI_RASTER_CAPS.chars - 4) }
-    const list = normalizeMasks(Array.from({ length: 6 }, (_, i) => mask(`m${i}`, [{ ...aiShape(), raster: big }])))!
+    const list = normalizeMasks(Array.from({ length: 12 }, (_, i) => mask(`m${i}`, [{ ...aiShape(), raster: big }])))!
     expect(list.filter((x) => !needsAi(x))).toHaveLength(Math.floor(MAX_AI_CHARS / big.data.length))
     expect(aiChars(list)).toBeLessThanOrEqual(MAX_AI_CHARS)
-    expect(capMessage(list, { addAiChars: 8 << 20 })).toMatch(/AI selections/)
+    expect(capMessage(list, { addAiChars: MAX_AI_CHARS })).toMatch(/AI selections/)
     // A newer build's AI selection (another "what") is kept and drawn: it is a matte like any other.
     const later = normalizeMask(mask('s', [aiShape(true, 'sky')]))!
     expect(hasUnknown(later)).toBe(false)
@@ -146,10 +148,11 @@ describe('paste, presets and the history', () => {
     expect(onto[0].components[1].shape.kind).toBe('brush')
   })
 
-  it('presets keep AI selections without their mattes (they wait too); brush masks are left out as before', () => {
-    const p = presetMasks([mask('Object 1', [aiShape()]), mask('Brush', [brush])])!
-    expect(p.map((m) => m.name)).toEqual(['Object 1'])
-    expect(needsAi(p[0])).toBe(true)
+  it('presets leave Object selections out, as brush masks (owner, 2026-10-22); a later AI part is kept, waiting', () => {
+    expect(presetMasks([mask('Object 1', [aiShape()]), mask('Brush', [brush]), mask('Object 2', [radial, aiShape()], undefined, ['add', 'subtract'])])).toBeUndefined()
+    const p = presetMasks([mask('Object 1', [aiShape()]), mask('Radial', [radial]), mask('Sky 1', [aiShape(true, 'sky')])])!
+    expect(p.map((m) => m.name)).toEqual(['Radial', 'Sky 1'])
+    expect(needsAi(p[1])).toBe(true)
     expect(withoutRasters([mask('o', [aiShape()])])[0].components[0].shape).not.toHaveProperty('raster')
   })
 
