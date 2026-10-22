@@ -62,6 +62,13 @@ export function useObjectSelect(o: Options) {
   const running = useRef(false)
   const stats = useRef({ moves: 0, decodes: 0, dropped: 0, ms: [] as number[] })
   const live = useRef(true)
+  /** Decoder runs one at a time (a session runs one call at a time): the hover loop's and a click's queue here. */
+  const chain = useRef<Promise<unknown>>(Promise.resolve())
+  const serial = <T,>(fn: () => Promise<T>): Promise<T> => {
+    const run = chain.current.then(fn, fn)
+    chain.current = run.catch(() => {})
+    return run
+  }
 
   const askFor = (model: ModelEntry, files: ModelFile[], slow: boolean) => new Promise<InstalledModel | null>((resolve) => setAsk({ model, files, slow, done: (rec) => { setAsk(null); resolve(rec) } }))
 
@@ -127,8 +134,11 @@ export function useObjectSelect(o: Options) {
     }
   }, [])
 
+  /** The decoder on the encoded photo, one run at a time. */
+  const decode = (prompt: AiPrompt) => serial(() => decodeNow(prompt))
+
   /** The decoder on the encoded photo; the embeddings gone (freed for another model): encoded again, once. */
-  async function decode(prompt: AiPrompt): Promise<{ logits: Logits; ms: number; e: Encoded } | null> {
+  async function decodeNow(prompt: AiPrompt): Promise<{ logits: Logits; ms: number; e: Encoded } | null> {
     const model = segmentModel()
     let e = await prepare()
     if (!model || !e) return null
@@ -188,6 +198,8 @@ export function useObjectSelect(o: Options) {
     const model = segmentModel()
     if (!model || !AI) return null
     const t0 = performance.now()
+    // A click: the hover previews still waiting are dropped (the click's result replaces them).
+    pending.current = null
     try {
       const r = await decode(prompt)
       if (!r) return null
@@ -215,6 +227,7 @@ export function useObjectSelect(o: Options) {
     if (s.moves) {
       const q = quantiles(s.ms)
       hoverSummaries.push({ moves: s.moves, decodes: s.decodes, dropped: s.dropped, median: q.median, p95: q.p95 })
+      console.info(`Object select: hover: ${s.moves} moves, ${s.decodes} previews, ${s.dropped} dropped while one ran; ${q.median} ms median, ${q.p95} ms p95`)
       diagnostics.log('ai-mask', { what: 'object', step: 'hover', moves: s.moves, decodes: s.decodes, dropped: s.dropped, medianMs: q.median, p95Ms: q.p95 })
     }
     stats.current = { moves: 0, decodes: 0, dropped: 0, ms: [] }
