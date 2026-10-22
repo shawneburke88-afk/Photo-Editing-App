@@ -20,18 +20,26 @@ name: AI models
 #                  each graph's operators and largest tensor (the GPU limits it needs) and checks unet.onnx against
 #                  the authors' PyTorch model (web/scripts/moebius-parity.py). The pictures go into the run's
 #                  "moebius-check" artifact. Read-only; commits nothing. Takes up to an hour.
+#   sam-check      Object select's real model (docs/PHASE3.md Part 27): downloads SAM 2.1 Hiera Tiny's pinned files (fp16
+#                  and fp32, graphs and weights) and checks their size and SHA-256, runs the app's own pre- and
+#                  post-processing (web/scripts/sam-check.mjs) with the app's WebAssembly runtime (its CPU fallback,
+#                  timed against the 15 s rule) and with onnxruntime-node, on the committed public-domain photo with a
+#                  point, a removed point, an added point and a box, then compares each selection with Meta's own
+#                  PyTorch SAM 2.1 (web/scripts/sam-parity.py). Mattes and overlays go into the run's "sam-check"
+#                  artifact. Read-only; commits nothing.
 
 on:
   workflow_dispatch:
     inputs:
       task:
-        description: "pin-and-check: pin web/models/manifest.json, check the real model and commit the manifest to this branch. check: only check the files the manifest pins. hf-check: read-only check of Hugging Face's responses for the AI Remove files and update check. moebius-check: AI Remove's real model through the app's own code on the CPU (read-only, up to an hour)."
+        description: "pin-and-check: pin web/models/manifest.json, check the real model and commit the manifest to this branch. check: only check the files the manifest pins. hf-check: read-only check of Hugging Face's responses for the AI Remove files and update check. moebius-check: AI Remove's real model through the app's own code on the CPU (read-only, up to an hour). sam-check: Object select's real model through the app's own code on the CPU, and against Meta's PyTorch model (read-only)."
         type: choice
         options:
           - pin-and-check
           - check
           - hf-check
           - moebius-check
+          - sam-check
         default: pin-and-check
         required: true
       revision:
@@ -86,8 +94,8 @@ jobs:
             exit 1
           fi
           case "${TASK}" in
-            pin-and-check|check|hf-check|moebius-check) ;;
-            *) echo "::error::unknown task '${TASK}' (pin-and-check, check, hf-check or moebius-check)"; exit 1 ;;
+            pin-and-check|check|hf-check|moebius-check|sam-check) ;;
+            *) echo "::error::unknown task '${TASK}' (pin-and-check, check, hf-check, moebius-check or sam-check)"; exit 1 ;;
           esac
           if [ -n "${REVISION}" ]; then
             if ! [[ "${REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
@@ -197,6 +205,51 @@ jobs:
         with:
           name: moebius-check
           path: ${{ runner.temp }}/moebius-check
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Object select's model through the app's code (sam-check)
+        if: steps.code.outputs.present == 'true' && inputs.task == 'sam-check'
+        working-directory: web
+        run: |
+          if [ ! -f scripts/sam-check.mjs ]; then
+            echo "::error::this branch has no web/scripts/sam-check.mjs (run sam-check on the AI masks branch)"
+            exit 1
+          fi
+          # The app's own WebAssembly runtime (its CPU fallback), 4 threads: the files, the cases and the timing.
+          node scripts/sam-check.mjs --files "${RUNNER_TEMP}/sam-files" --out "${RUNNER_TEMP}/sam-check" --threads 4
+
+      - name: Object select's model with ONNX Runtime's native CPU build (sam-check)
+        if: steps.code.outputs.present == 'true' && inputs.task == 'sam-check' && !cancelled()
+        continue-on-error: true
+        timeout-minutes: 20
+        working-directory: web
+        run: |
+          npm install --no-save --no-audit --no-fund onnxruntime-node@1.30.0
+          node scripts/sam-check.mjs --backend node --files "${RUNNER_TEMP}/sam-files" --out "${RUNNER_TEMP}/sam-check-node" --threads 4
+
+      - name: Object select against Meta's PyTorch SAM 2.1 (sam-check)
+        if: steps.code.outputs.present == 'true' && inputs.task == 'sam-check' && !cancelled()
+        continue-on-error: true
+        timeout-minutes: 40
+        working-directory: web
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/venv"
+          V="${RUNNER_TEMP}/venv/bin"
+          "$V/pip" install --quiet torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cpu
+          # Meta's SAM 2 at the commit whose README states the licence (2b90b9f), without its optional CUDA extension.
+          SAM2_BUILD_CUDA=0 "$V/pip" install --quiet "git+https://github.com/facebookresearch/sam2.git@2b90b9f5ceec907a1c18123530e92e794ad901a4"
+          curl -fsSL --retry 4 -o "${RUNNER_TEMP}/sam2.1_hiera_tiny.pt" "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt"
+          "$V/python" scripts/sam-parity.py "${RUNNER_TEMP}/sam2.1_hiera_tiny.pt" scripts/fixtures/ai-masks/astronaut.png "${RUNNER_TEMP}/sam-check"
+
+      - name: Keep Object select's mattes (sam-check)
+        if: steps.code.outputs.present == 'true' && inputs.task == 'sam-check' && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sam-check
+          path: |
+            ${{ runner.temp }}/sam-check
+            ${{ runner.temp }}/sam-check-node
           retention-days: 14
           if-no-files-found: warn
 
