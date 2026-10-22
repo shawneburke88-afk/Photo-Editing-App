@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.6.16",
+    "date": "2026-10-22",
+    "newFeatures": [
+      "Masks: a new Object button selects things for you. Move the pointer over the photo to see what would be selected, then click. Shift-click adds to the selection, Alt-click takes away, and you can drag a box around something instead. On a touch screen, tap and then choose Select, Add or Remove.",
+      "Object selections work like other shapes: add to them or subtract from them with brushes and gradients. They are saved with the edit and in the .xmp, so they look the same on any computer.",
+      "The Object model (about 78 MB, or 155 MB on graphics cards without half-precision support) is downloaded from LightBench's own site only if you agree. The download window explains its licence and training data.",
+      "Pasted Object selections wait for you to click Compute for this photo. Presets leave Object selections out, as they do brush masks."
+    ],
+    "bugFixes": [
+      "On graphics cards that only allow small memory blocks, AI Remove and the AI Depth mask could produce wrong results without saying so. They now run on the processor on those cards (slower, but correct)."
+    ]
+  },
+  {
     "version": "0.6.15",
     "date": "2026-10-22",
     "newFeatures": [
