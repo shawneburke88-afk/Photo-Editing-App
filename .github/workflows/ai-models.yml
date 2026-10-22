@@ -321,15 +321,10 @@ jobs:
             ss=$(node -p "require('$D/pins.json').models['slimsam-77'].files['$v/encoder'].local")
             python -I $F sam-fix --model "$ss" --out "$D/fixed/slimsam_vision_encoder_${v}_chunked.onnx" || echo "::warning::slimsam $v sam-fix failed"
           done
-          for v in fp32; do
+          for v in fp16 fp32; do
             src=$bf16; [ "$v" = fp32 ] && src=$bf32
-            # Stage 1: wide Split -> Slices, wide Concat -> tree, Convs over 128 MiB -> channel chunks.
-            python -I $F birefnet-fix --model "$src" --out "$D/fixed/birefnet_lite_${v}_stage1.onnx" || { echo "::warning::birefnet $v fix failed"; continue; }
-            # Stage 2: Softmax / LayerNormalization / Pad / Where over 128 MiB -> chunks (shapes: ONNX inference + probe).
-            python -I $F shapes --model "$D/fixed/birefnet_lite_${v}_stage1.onnx" --out "$D/fixed/birefnet_${v}.shapes.json" --probe-batch 6 \
-              && python -I $F chunk-big --model "$D/fixed/birefnet_lite_${v}_stage1.onnx" --out "$D/fixed/birefnet_lite_${v}_patched.onnx" --shapes "$D/fixed/birefnet_${v}.shapes.json" \
-              || { echo "::warning::birefnet $v chunk-big failed; using stage 1"; cp "$D/fixed/birefnet_lite_${v}_stage1.onnx" "$D/fixed/birefnet_lite_${v}_patched.onnx"; }
-            rm -f "$D/fixed/birefnet_lite_${v}_stage1.onnx"
+            # Wide Split -> Slices, wide Concat -> tree, Convs over 128 MiB -> channel chunks of multiples of 8.
+            python -I $F birefnet-fix --model "$src" --out "$D/fixed/birefnet_lite_${v}_patched.onnx" || echo "::warning::birefnet $v fix failed"
           done
           node -e '
             const fs = require("fs"); const d = process.argv[1]; const f = {};
@@ -343,7 +338,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 60
         working-directory: web
-        run: node scripts/masks-prep2.mjs verify --dir "${MASKS_DIR}" --only "slimsam-fp32-chunked/cpu,slimsam-fp32-chunked/webgpu,slimsam-fp16-chunked/cpu,slimsam-fp16-chunked/webgpu"
+        run: node scripts/masks-prep2.mjs verify --dir "${MASKS_DIR}" --only "sam21-fp32-chunked/cpu,sam21-fp32-chunked/webgpu,slimsam-fp32-chunked/cpu,slimsam-fp32-chunked/webgpu,slimsam-fp16-chunked/webgpu,birefnet-fp32-patched/cpu,birefnet-fp32-patched/webgpu,birefnet-fp16-patched/cpu,birefnet-fp16-patched/webgpu"
 
       - name: "masks-prep2: bisect patched BiRefNet_lite fp32 with prefix models (CPU vs WebGPU EP)"
         if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep2'
@@ -362,9 +357,9 @@ jobs:
         run: |
           node scripts/masks-prep2.mjs browser-jobs --dir "${MASKS_DIR}"
           node scripts/masks-prep/browser-run.mjs --dir "${MASKS_DIR}" --ort "${ORT_WEB_DIST}" --playwright "${PLAYWRIGHT_DIR}" \
-            --jobs "${MASKS_DIR}/browser-jobs.json" --only slimsam-fp32-chunked --out "${MASKS_DIR}/browser-native.json" --job-timeout 1500
+            --jobs "${MASKS_DIR}/browser-jobs.json" --only slimsam-fp32-chunked,sam21-fp32-chunked --out "${MASKS_DIR}/browser-native.json" --job-timeout 1500
           node scripts/masks-prep/browser-run.mjs --dir "${MASKS_DIR}" --ort "${ORT_WEB_DIST}" --playwright "${PLAYWRIGHT_DIR}" \
-            --jobs "${MASKS_DIR}/browser-jobs.json" --only slimsam-fp32-original,slimsam-fp32-chunked --out "${MASKS_DIR}/browser-emulated128.json" --job-timeout 1500 --emulate-binding 134217728
+            --jobs "${MASKS_DIR}/browser-jobs.json" --only sam21-fp32-chunked --out "${MASKS_DIR}/browser-emulated128.json" --job-timeout 1500 --emulate-binding 134217728
 
       - name: "masks-prep2: report"
         if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep2'

@@ -169,45 +169,98 @@ def cmd_instrument():
     print(f"exposed {len(names)} tensors -> {a.out}")
 
 
+def concat_tree(parts, axis, out_name, namer, emit, maxio=6):
+    level = list(parts)
+    while len(level) > maxio:
+        nxt = []
+        for g in range(0, len(level), maxio):
+            grp = level[g : g + maxio]
+            if len(grp) == 1:
+                nxt.append(grp[0])
+                continue
+            o = namer("concat_part")
+            emit(h.make_node("Concat", grp, [o], axis=axis, name=namer("mp_concat")))
+            nxt.append(o)
+        level = nxt
+    emit(h.make_node("Concat", level, [out_name], axis=axis, name=namer("mp_concat")))
+
+
 def cmd_sam_fix():
+    """Every Softmax whose input is larger than --target: row chunks (axis -2). When the Softmax output feeds only a
+    MatMul as its first input (attention: softmax(QK^T) @ V), possibly through a Cast, each chunk runs
+    Slice -> Softmax -> (Cast) -> MatMul with V and the small results are joined by a Concat tree, so the large
+    probabilities tensor is never bound whole and no kernel binds many segments. Exact: row-independent."""
     m = load(a.model)
     types = types_of(m)
     sm = [n for n in m.graph.node if n.op_type == "Softmax"]
     shapes = probe(m, [n.input[0] for n in sm], types)
     namer = Namer(m)
-    new_nodes = []
-    report = []
+    cons = collections.defaultdict(list)
     for n in m.graph.node:
-        if n.op_type != "Softmax":
-            new_nodes.append(n)
-            continue
+        for i in n.input:
+            cons[i].append(n)
+    plan = {}
+    skip = set()
+    report = []
+    for n in sm:
         shp = shapes.get(n.input[0])
         et = types.get(n.input[0], 1)
         axis = next((h.get_attribute_value(x) for x in n.attribute if x.name == "axis"), -1)
         rank = len(shp) if shp else 0
         size = nbytes(shp, et) if shp else 0
-        if not shp or size <= a.target or axis not in (-1, rank - 1) or rank < 2:
-            new_nodes.append(n)
+        if not shp or size <= a.target or rank < 2 or axis not in (-1, rank - 1):
             continue
         rows = shp[-2]
         k = min(rows, math.ceil(size / a.target))
-        sizes = [rows // k + (1 if i < rows % k else 0) for i in range(k)]
-        sp = namer(n.name or "softmax") + "_split"
-        m.graph.initializer.append(nh.from_array(np.array(sizes, np.int64), sp))
-        parts = [namer("sm_in") for _ in sizes]
-        outs = [namer("sm_out") for _ in sizes]
-        new_nodes.append(h.make_node("Split", [n.input[0], sp], parts, axis=rank - 2, name=namer("mp_split")))
-        for p, o in zip(parts, outs):
-            new_nodes.append(h.make_node("Softmax", [p], [o], axis=-1, name=namer("mp_softmax")))
-        new_nodes.append(h.make_node("Concat", outs, [n.output[0]], axis=rank - 2, name=namer("mp_concat")))
-        report.append({"node": n.name, "shape": shp, "bytes": size, "chunks": k, "chunkBytes": nbytes([*shp[:-2], max(sizes), shp[-1]], et)})
+        b = [(i * rows // k, (i + 1) * rows // k) for i in range(k)]
+        c1 = cons.get(n.output[0], [])
+        cast = c1[0] if len(c1) == 1 and c1[0].op_type == "Cast" else None
+        c2 = cons.get(cast.output[0], []) if cast else c1
+        mm = c2[0] if len(c2) == 1 and c2[0].op_type == "MatMul" and c2[0].input[0] == (cast.output[0] if cast else n.output[0]) else None
+        plan[id(mm) if mm else id(n)] = (n, cast, mm, b, rank)
+        if mm:
+            skip.add(id(n))
+            if cast:
+                skip.add(id(cast))
+        report.append({"node": n.name, "shape": shp, "bytes": size, "chunks": k, "chunkBytes": nbytes([*shp[:-2], max(e - s0 for s0, e in b), shp[-1]], et), "withMatMul": bool(mm), "cast": bool(cast)})
+    out = []
+    emit = out.append
+    for node in m.graph.node:
+        if id(node) in skip:
+            continue
+        if id(node) not in plan:
+            emit(node)
+            continue
+        n, cast, mm, b, rank = plan[id(node)]
+        parts = []
+        for r0, r1 in b:
+            x = namer("sm_in")
+            emit(h.make_node("Slice", [n.input[0], const_init(m, namer, "st", [r0]), const_init(m, namer, "en", [r1]), const_init(m, namer, "ax", [rank - 2])], [x], name=namer("mp_slice")))
+            p = namer("sm_out")
+            emit(h.make_node("Softmax", [x], [p], axis=-1, name=namer("mp_softmax")))
+            if mm:
+                if cast:
+                    q = namer("sm_cast")
+                    emit(h.make_node("Cast", [p], [q], name=namer("mp_cast"), **{x.name: h.get_attribute_value(x) for x in cast.attribute}))
+                    p = q
+                y = namer("att_out")
+                emit(h.make_node("MatMul", [p, mm.input[1]], [y], name=namer("mp_matmul")))
+                p = y
+            parts.append(p)
+        concat_tree(parts, -2, (mm or n).output[0], namer, emit)
     del m.graph.node[:]
-    m.graph.node.extend(new_nodes)
+    m.graph.node.extend(out)
     check(m)
     save(m, a.out)
     rep = {"softmaxNodes": len(sm), "softmaxInputShapes": {k: v for k, v in shapes.items()}, "rewritten": report}
     json.dump(rep, open(a.out + ".json", "w"), indent=1)
     print("SAM_FIX", json.dumps(rep))
+
+
+def const_init(m, namer, name, arr):
+    n = namer(name)
+    m.graph.initializer.append(nh.from_array(np.asarray(arr, dtype=np.int64), n))
+    return n
 
 
 def cmd_birefnet_fix():
@@ -337,8 +390,16 @@ def cmd_birefnet_fix():
                 hw_out = int(np.prod(ys[2:])) * ES.get(et, 4)
                 kin = max(1, math.ceil(cin_full * hw_in / a.limit))
                 kout = max(1, math.ceil(ys[1] * hw_out / a.limit))
-                cin_chunks = [(i * cin_full // kin, (i + 1) * cin_full // kin) for i in range(kin)]
-                cout_chunks = [(i * ys[1] // kout, (i + 1) * ys[1] // kout) for i in range(kout)]
+                # Chunk boundaries at multiples of 8 channels: ORT 1.30.0's WebGPU Conv gives wrong results with 6, 9 or
+                # 15 input channels (tested on lavapipe; cf. onnxruntime issue #32928, "nine input channels").
+                def bounds(total, per_channel):
+                    if total * per_channel <= a.limit:
+                        return [(0, total)]
+                    step = max(8, a.limit // per_channel // 8 * 8)
+                    return [(b, min(total, b + step)) for b in range(0, total, step)]
+                cin_chunks = bounds(cin_full, hw_in)
+                cout_chunks = bounds(ys[1], hw_out)
+                kin, kout = len(cin_chunks), len(cout_chunks)
                 outs = []
                 for oc in cout_chunks:
                     parts = [conv_part(n, xin, ic, w_arr, b_arr, oc, cin_full) for ic in cin_chunks]

@@ -475,7 +475,7 @@ function report() {
   const r = {
     fixedFiles: files, samFix: readJson(join(DIR, 'fixed', 'sam21_vision_encoder_fp32_chunked.onnx.json')),
     slimsamFix: Object.fromEntries(['fp32', 'fp16'].map((v) => [v, (({ softmaxInputShapes, ...x }) => x)(readJson(join(DIR, 'fixed', `slimsam_vision_encoder_${v}_chunked.onnx.json`), {}))])),
-    birefnetFix: Object.fromEntries(['fp16', 'fp32'].map((v) => [v, { stage1: readJson(join(DIR, 'fixed', `birefnet_lite_${v}_stage1.onnx.json`)), chunkBig: readJson(join(DIR, 'fixed', `birefnet_lite_${v}_patched.onnx.chunk.json`)) }])),
+    birefnetFix: Object.fromEntries(['fp16', 'fp32'].map((v) => [v, { patch: readJson(join(DIR, 'fixed', `birefnet_lite_${v}_patched.onnx.json`)), chunkBig: readJson(join(DIR, 'fixed', `birefnet_lite_${v}_patched.onnx.chunk.json`)) }])),
     bisectBirefnet: Object.fromEntries(['fp32', 'fp16'].map((v) => [v, (({ checks, ...x }) => ({ ...x, checks: checks?.map((c) => [c.i, c.op, c.node, c.dims?.join('x'), c.rel, c.bad, c.error]) }))(readJson(join(DIR, `bisect-birefnet-${v}.json`), {}))])),
     bisect: (({ passes, ...x }) => ({ ...x, pass1: passes?.[0]?.results?.map((q) => [q.i, q.op, q.dims?.join('x'), q.rel]) }))(readJson(join(DIR, 'bisect.json'), {})),
     verify: readJson(join(DIR, 'verify.json')),
