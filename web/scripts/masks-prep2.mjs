@@ -49,15 +49,17 @@ function cmp(a, b) {
   let sum = 0
   let ref = 0
   let nf = 0
+  let rsum = 0
   for (let i = 0; i < a.length; i++) {
     const d = Math.abs(a[i] - b[i])
     if (!(d <= mx)) mx = d
     sum += d
     const r = Math.abs(b[i])
+    rsum += r
     if (r > ref) ref = r
     if (!Number.isFinite(a[i])) nf++
   }
-  return { maxAbsDiff: mx, meanAbsDiff: sum / a.length, refMaxAbs: ref, rel: mx / (1 + ref), nonFinite: nf }
+  return { maxAbsDiff: mx, meanAbsDiff: sum / a.length, refMaxAbs: ref, refMeanAbs: rsum / a.length, rel: mx / (1 + ref), meanRel: sum / a.length / (1e-6 + rsum / a.length), nonFinite: nf }
 }
 /** IoU of (a > 0) and (b > 0) over [offset, offset + n). */
 function iou(a, b, offset = 0, n = a.length) {
@@ -217,7 +219,11 @@ async function bisectPrefix() {
   const maxSteps = Number(opt('--max-steps', 26))
   const out = { model, nodes: nodes.length, candidates: cand.length, checks: [] }
   const cache = new Map()
-  const bad = (r) => r.error || r.nonFinite > 0 || r.rel > 1e-3
+  // --criterion max: max|Δ| / (1 + max|ref|) > 1e-3. mean: mean|Δ| / mean|ref| > 1e-3 (ignores a few flipped
+  // values of discontinuous ops such as Floor, whose effect downstream is continuous in a bilinear sampler).
+  const crit = opt('--criterion', 'max')
+  const bad = (r) => r.error || r.nonFinite > 0 || (crit === 'mean' ? r.meanRel > 1e-3 : r.rel > 1e-3)
+  out.criterion = crit
   async function check(t) {
     if (cache.has(t)) return cache.get(t)
     if (out.checks.length >= maxSteps) throw new Error('step limit')
@@ -242,7 +248,7 @@ async function bisectPrefix() {
     cache.set(t, r)
     out.checks.push(r)
     writeJson(outPath, out)
-    console.log(`check ${out.checks.length}: ${r.i} ${r.op} ${r.node} ${JSON.stringify(r.dims)} rel ${r.rel} ${r.bad ? 'BAD' : 'ok'}`)
+    console.log(`check ${out.checks.length}: ${r.i} ${r.op} ${r.node} ${JSON.stringify(r.dims)} rel ${r.rel} meanRel ${r.meanRel} ${r.bad ? 'BAD' : 'ok'}`)
     return r
   }
   try {
@@ -339,12 +345,12 @@ async function birefnetCase(model, variant, ep) {
   return { ep, model: relative(DIR, model), loadMs, runMs: ms, vsOriginalCpu: cmp(d, ref), maskIoUvsOriginalCpu: iou(d, ref) }
 }
 
-async function slimCase(v, ep) {
+async function slimCase(v, ep, encoder) {
   const f = pins().models['slimsam-77'].files
   const T = O().Tensor
   const key = `slimsam-77-${v}-astronaut`
   const t0 = performance.now()
-  const e = await sess(f[`${v}/encoder`].local, ep)
+  const e = await sess(encoder ? join(DIR, encoder) : f[`${v}/encoder`].local, ep)
   const eo = await e.run({ pixel_values: new T('float32', raw(`${key}-pixel.f32`), [1, 3, 1024, 1024]) })
   const res = { ep, variant: v, encMs: Math.round(performance.now() - t0), outputs: {} }
   for (const k of ['image_embeddings', 'image_positional_embeddings']) res.outputs[k] = cmp(f32(eo[k]), raw(`${key}-enc-${k}-cpu.f32`))
@@ -361,7 +367,7 @@ async function slimCase(v, ep) {
 }
 
 async function runCase(c) {
-  if (c.kind === 'slimsam') return slimCase(c.variant, c.ep)
+  if (c.kind === 'slimsam') return slimCase(c.variant, c.ep, c.model)
   if (c.kind === 'sam') return samCase(join(DIR, c.model), c.ep)
   return birefnetCase(join(DIR, c.model), c.variant, c.ep)
 }
@@ -393,7 +399,11 @@ async function verify() {
     if (!f) continue
     for (const ep of ['cpu', 'webgpu']) cases.push({ key: `birefnet-${v}-patched/${ep}`, kind: 'birefnet', model: f, variant: v, ep })
   }
-  for (const v of ['fp32', 'fp16']) if (p.models['slimsam-77'].files[`${v}/encoder`]?.local) cases.push({ key: `slimsam-${v}/webgpu`, kind: 'slimsam', variant: v, ep: 'webgpu' })
+  for (const v of ['fp32', 'fp16']) {
+    if (p.models['slimsam-77'].files[`${v}/encoder`]?.local) cases.push({ key: `slimsam-${v}/webgpu`, kind: 'slimsam', variant: v, ep: 'webgpu' })
+    const fx = fixed[`slimsam${v}`]
+    if (fx) for (const ep of ['cpu', 'webgpu']) cases.push({ key: `slimsam-${v}-chunked/${ep}`, kind: 'slimsam', variant: v, ep, model: fx })
+  }
   const only = opt('--only')
   const out = {}
   for (const c of cases.filter((x) => !only || only.split(',').includes(x.key))) {
@@ -438,6 +448,10 @@ function browserJobs() {
         compare: { pred_masks: 'raw/slimsam-77-fp32-astronaut-dec-pred_masks-cpu.f32', iou_scores: 'raw/slimsam-77-fp32-astronaut-dec-iou_scores-cpu.f32' }, iou: ['pred_masks'] },
     })
   }
+  if (fixed.slimsamfp32) {
+    const o = jobs.find((j) => j.key === 'slimsam-fp32-original')
+    if (o) jobs.push({ ...o, key: 'slimsam-fp32-chunked', model: fixed.slimsamfp32 })
+  }
   const bf = p.models['birefnet-lite'].files
   for (const v of ['fp16', 'fp32']) {
     const base = { feeds: [{ name: 'input_image', type: 'float32', dims: [1, 3, 1024, 1024], url: `raw/birefnet-lite-${v}-astronaut-pixel.f32` }], compare: { output_image: `raw/birefnet-lite-${v}-astronaut-dec-output_image-cpu.f32` }, iou: ['output_image'] }
@@ -447,7 +461,7 @@ function browserJobs() {
   writeJson(join(DIR, 'browser-jobs.json'), jobs)
   // At an emulated 128 MiB binding limit only fp32 has tensors above the limit (SAM 2.1 scores: 256 MiB; BiRefNet:
   // 64-channel 1024² maps), so only those are re-run there.
-  const emu = ['sam21-fp32-original', 'sam21-fp32-chunked', 'birefnet-fp32-patched', 'birefnet-fp32-original']
+  const emu = ['slimsam-fp32-original', 'slimsam-fp32-chunked', 'sam21-fp32-original', 'sam21-fp32-chunked', 'birefnet-fp32-patched', 'birefnet-fp32-original']
   writeJson(join(DIR, 'browser-jobs-emulated.json'), emu.map((k) => jobs.find((j) => j.key === k)).filter(Boolean))
   console.log(`${jobs.length} browser jobs`)
 }
@@ -460,6 +474,7 @@ function report() {
   for (const [k, v] of Object.entries(fixed)) if (typeof v === 'string' && existsSync(join(DIR, v))) files[k] = { path: v, bytes: statSync(join(DIR, v)).size, sha256: sha256File(join(DIR, v)) }
   const r = {
     fixedFiles: files, samFix: readJson(join(DIR, 'fixed', 'sam21_vision_encoder_fp32_chunked.onnx.json')),
+    slimsamFix: Object.fromEntries(['fp32', 'fp16'].map((v) => [v, (({ softmaxInputShapes, ...x }) => x)(readJson(join(DIR, 'fixed', `slimsam_vision_encoder_${v}_chunked.onnx.json`), {}))])),
     birefnetFix: Object.fromEntries(['fp16', 'fp32'].map((v) => [v, { stage1: readJson(join(DIR, 'fixed', `birefnet_lite_${v}_stage1.onnx.json`)), chunkBig: readJson(join(DIR, 'fixed', `birefnet_lite_${v}_patched.onnx.chunk.json`)) }])),
     bisectBirefnet: Object.fromEntries(['fp32', 'fp16'].map((v) => [v, (({ checks, ...x }) => ({ ...x, checks: checks?.map((c) => [c.i, c.op, c.node, c.dims?.join('x'), c.rel, c.bad, c.error]) }))(readJson(join(DIR, `bisect-birefnet-${v}.json`), {}))])),
     bisect: (({ passes, ...x }) => ({ ...x, pass1: passes?.[0]?.results?.map((q) => [q.i, q.op, q.dims?.join('x'), q.rel]) }))(readJson(join(DIR, 'bisect.json'), {})),

@@ -317,6 +317,11 @@ jobs:
           bf32=$(node -p "require('$D/pins.json').models['birefnet-lite'].files.fp32.local")
           python -I $F sam-fix --model "$enc" --out "$D/fixed/sam21_vision_encoder_fp32_chunked.onnx" || echo "::warning::sam-fix failed"
           for v in fp16 fp32; do
+            # The SlimSAM encoders have the same over-128 MiB Softmax (global attention, 4096 tokens).
+            ss=$(node -p "require('$D/pins.json').models['slimsam-77'].files['$v/encoder'].local")
+            python -I $F sam-fix --model "$ss" --out "$D/fixed/slimsam_vision_encoder_${v}_chunked.onnx" || echo "::warning::slimsam $v sam-fix failed"
+          done
+          for v in fp32; do
             src=$bf16; [ "$v" = fp32 ] && src=$bf32
             # Stage 1: wide Split -> Slices, wide Concat -> tree, Convs over 128 MiB -> channel chunks.
             python -I $F birefnet-fix --model "$src" --out "$D/fixed/birefnet_lite_${v}_stage1.onnx" || { echo "::warning::birefnet $v fix failed"; continue; }
@@ -329,7 +334,7 @@ jobs:
           node -e '
             const fs = require("fs"); const d = process.argv[1]; const f = {};
             const add = (k, n) => { if (fs.existsSync(d + "/fixed/" + n)) f[k] = "fixed/" + n };
-            add("samFp32", "sam21_vision_encoder_fp32_chunked.onnx"); add("birefnetfp16", "birefnet_lite_fp16_patched.onnx"); add("birefnetfp32", "birefnet_lite_fp32_patched.onnx");
+            add("samFp32", "sam21_vision_encoder_fp32_chunked.onnx"); add("slimsamfp32", "slimsam_vision_encoder_fp32_chunked.onnx"); add("slimsamfp16", "slimsam_vision_encoder_fp16_chunked.onnx"); add("birefnetfp16", "birefnet_lite_fp16_patched.onnx"); add("birefnetfp32", "birefnet_lite_fp32_patched.onnx");
             fs.writeFileSync(d + "/fixed/files.json", JSON.stringify(f)); console.log(JSON.stringify(f))' "$D"
           ls -la "$D/fixed"
 
@@ -338,7 +343,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 60
         working-directory: web
-        run: node scripts/masks-prep2.mjs verify --dir "${MASKS_DIR}" --only "sam21-fp32-chunked/webgpu,birefnet-fp16-patched/cpu,birefnet-fp16-patched/webgpu,birefnet-fp32-patched/cpu,birefnet-fp32-patched/webgpu,slimsam-fp32/webgpu,slimsam-fp16/webgpu"
+        run: node scripts/masks-prep2.mjs verify --dir "${MASKS_DIR}" --only "slimsam-fp32-chunked/cpu,slimsam-fp32-chunked/webgpu,slimsam-fp16-chunked/cpu,slimsam-fp16-chunked/webgpu"
 
       - name: "masks-prep2: bisect patched BiRefNet_lite fp32 with prefix models (CPU vs WebGPU EP)"
         if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep2'
@@ -347,9 +352,9 @@ jobs:
         working-directory: web
         run: |
           node scripts/masks-prep2.mjs bisect-prefix --dir "${MASKS_DIR}" --model "${MASKS_DIR}/fixed/birefnet_lite_fp32_patched.onnx" --input input_image \
-            --raw "${MASKS_DIR}/raw/birefnet-lite-fp32-astronaut-pixel.f32" --dims 1,3,1024,1024 --out "${MASKS_DIR}/bisect-birefnet-fp32.json" --max-steps 26
+            --raw "${MASKS_DIR}/raw/birefnet-lite-fp32-astronaut-pixel.f32" --dims 1,3,1024,1024 --out "${MASKS_DIR}/bisect-birefnet-fp32.json" --max-steps 30 --criterion mean
 
-      - name: "masks-prep2: headless Chromium + onnxruntime-web 1.30.0 /webgpu (SlimSAM fp32, patched BiRefNet_lite fp32)"
+      - name: "masks-prep2: headless Chromium + onnxruntime-web 1.30.0 /webgpu (SlimSAM fp32, native and emulated 128 MiB)"
         if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep2'
         continue-on-error: true
         timeout-minutes: 60
@@ -357,16 +362,9 @@ jobs:
         run: |
           node scripts/masks-prep2.mjs browser-jobs --dir "${MASKS_DIR}"
           node scripts/masks-prep/browser-run.mjs --dir "${MASKS_DIR}" --ort "${ORT_WEB_DIST}" --playwright "${PLAYWRIGHT_DIR}" \
-            --jobs "${MASKS_DIR}/browser-jobs.json" --only slimsam-fp32-original,birefnet-fp32-patched --out "${MASKS_DIR}/browser-native.json" --job-timeout 2700
-
-      - name: "masks-prep2: bisect patched BiRefNet_lite fp16 with prefix models"
-        if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep2'
-        continue-on-error: true
-        timeout-minutes: 50
-        working-directory: web
-        run: |
-          node scripts/masks-prep2.mjs bisect-prefix --dir "${MASKS_DIR}" --model "${MASKS_DIR}/fixed/birefnet_lite_fp16_patched.onnx" --input input_image \
-            --raw "${MASKS_DIR}/raw/birefnet-lite-fp16-astronaut-pixel.f32" --dims 1,3,1024,1024 --out "${MASKS_DIR}/bisect-birefnet-fp16.json" --max-steps 20
+            --jobs "${MASKS_DIR}/browser-jobs.json" --only slimsam-fp32-chunked --out "${MASKS_DIR}/browser-native.json" --job-timeout 1500
+          node scripts/masks-prep/browser-run.mjs --dir "${MASKS_DIR}" --ort "${ORT_WEB_DIST}" --playwright "${PLAYWRIGHT_DIR}" \
+            --jobs "${MASKS_DIR}/browser-jobs.json" --only slimsam-fp32-original,slimsam-fp32-chunked --out "${MASKS_DIR}/browser-emulated128.json" --job-timeout 1500 --emulate-binding 134217728
 
       - name: "masks-prep2: report"
         if: always() && steps.code.outputs.present == 'true' && inputs.task == 'masks-prep2'
