@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_GEOMETRY, resolveGeometry } from '../engine/develop/geometry'
-import { bestMask, coverage, encoderInput, logitAt, matteSize, matteToSensor, outlinePath, pickMask, previewGrid, promptFeeds, promptToShot, quantiles, renderLong, sensorToShot, shotToSensor, type Logits } from './segment'
+import { bestMask, coverage, matteAlpha, encoderInput, logitAt, matteSize, matteToSensor, outlinePath, pickMask, previewGrid, promptFeeds, promptToShot, quantiles, renderLong, sensorToShot, shotToSensor, type Logits } from './segment'
 
 // Object select's pre- and post-processing (PHASE3.md Part 27), as SAM 2 does it: the photo stretched to 1024²,
 // coordinates scaled the same way, the best of three masks by predicted IoU, logits enlarged bilinearly, and the matte
@@ -72,6 +72,15 @@ describe('the decoder output', () => {
     expect(m.iou).toBeCloseTo(0.9)
     expect(m.object).toBe(3)
     expect(() => pickMask(new Float32Array(10), [1, 1, 1, 4, 4], new Float32Array(1), null)).toThrow()
+  })
+
+  it('keeps the edge where SAM puts it (½ at logit 0) and flattens the inside and outside', () => {
+    expect(matteAlpha(0)).toBe(0.5)
+    expect(matteAlpha(1)).toBe(0.75)
+    expect(matteAlpha(2)).toBe(1)
+    expect(matteAlpha(13)).toBe(1)
+    expect(matteAlpha(-2)).toBe(0)
+    expect(matteAlpha(-20)).toBe(0)
   })
 
   it('enlarges logits bilinearly with half-pixel centres, clamped at the edges', () => {

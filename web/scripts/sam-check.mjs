@@ -405,10 +405,12 @@ async function main(args) {
     if (boxed) log(`box (input_boxes) vs the suit's selection: IoU ${iouOf(boxed.matte.px, suit.matte.px).toFixed(3)}`)
     if (corners) log(`box (corners) vs the suit's selection: IoU ${iouOf(corners.matte.px, suit.matte.px).toFixed(3)}`)
     // A stored matte at the decision's 2048 px (as for a 2048 × 2048 sensor): the sidecar's size.
-    const big = app.segment.matteToSensor(suit.logits, app.resolveGeometry(app.DEFAULT_GEOMETRY, 2048, 2048, 0).uvToSensor, [2048, 2048], 2048)
-    const bigChars = (await app.encodeDepth(big.px, big.w, big.h)).data.length
-    log(`the suit's matte stored at 2048 × 2048: ${bigChars} characters`)
-    md.push(`| ${v} | suit at 2048 × 2048 | (stored size only) | | | | | ${bigChars.toLocaleString('en')} |`)
+    for (const side of [2048, 1024]) {
+      const big = app.segment.matteToSensor(suit.logits, app.resolveGeometry(app.DEFAULT_GEOMETRY, side, side, 0).uvToSensor, [side, side], side)
+      const bigChars = (await app.encodeDepth(big.px, big.w, big.h)).data.length
+      log(`the suit's matte stored at ${side} × ${side}: ${bigChars} characters`)
+      md.push(`| ${v} | suit at ${side} × ${side} | (stored size only) | | | | | ${bigChars.toLocaleString('en')} |`)
+    }
     for (const s of Object.values(sess)) await s.release().catch(() => {})
   }
   md.push('')

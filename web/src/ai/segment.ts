@@ -11,7 +11,10 @@
 //    and gives three candidate masks as logits over a 256 × 256 grid of the same stretched image, a predicted IoU for
 //    each, and an object score (above 0: there is an object there);
 //  - the masks are enlarged bilinearly (half-pixel centres, `align_corners=False`) to the photo's size; SAM 2 then
-//    thresholds the logits at 0. LightBench keeps the edge: the matte is the logits' sigmoid, 8 bits.
+//    thresholds the logits at 0. LightBench keeps a soft edge: the matte ramps from 0 to 255 over logits −2…+2
+//    (`matteAlpha`), so the edge stays where SAM puts it (½ at logit 0) and the inside and outside are flat. A plain
+//    sigmoid left SAM's uneven inside and outside values in the matte, which made it compress about 4 times worse in
+//    the edit (sam-check, GitHub Actions run 39702229699: 514,000 characters for a 2048 × 2048 matte).
 // The photo is the one the Depth map uses (ai/depth.ts): Develop's rendering as shot, in the camera's orientation; the
 // prompt and the matte are moved between it and the SENSOR frame through the rendering's uv → sensor map.
 
@@ -122,7 +125,10 @@ export function logitAt(l: Pick<Logits, 'data' | 'w' | 'h'>, u: number, v: numbe
   return (d[y0 * l.w + x0] * (1 - fx) + d[y0 * l.w + x1] * fx) * (1 - fy) + (d[y1 * l.w + x0] * (1 - fx) + d[y1 * l.w + x1] * fx) * fy
 }
 
-const sigmoid = (x: number) => 1 / (1 + Math.exp(-x))
+/** The logit range over which the matte goes from nothing (−) to fully selected (+). */
+export const MATTE_RAMP = 2
+/** A logit's selection 0…1: ½ at SAM's threshold (0), a linear ramp over ±MATTE_RAMP, flat beyond. */
+export const matteAlpha = (logit: number) => Math.min(1, Math.max(0, 0.5 + logit / (2 * MATTE_RAMP)))
 
 /** The matte's size in the sensor frame: the sensor's aspect, `long` texels on its long side (not more than the sensor). */
 export function matteSize(sensor: [number, number], long: number): [number, number] {
@@ -132,7 +138,7 @@ export function matteSize(sensor: [number, number], long: number): [number, numb
 
 /**
  * The matte stored in the edit: each sensor-frame texel's centre mapped to as-shot uv (the inverse of the rendering's
- * uv → sensor map), the logits read there bilinearly, their sigmoid in 8 bits (255 = selected). No object (object
+ * uv → sensor map), the logits read there bilinearly, `matteAlpha` in 8 bits (255 = selected). No object (object
  * score ≤ 0): all 0.
  */
 export function matteToSensor(l: Logits, uvToSensor: Mat3, sensor: [number, number], long: number): { px: Uint8Array; w: number; h: number } {
@@ -143,7 +149,7 @@ export function matteToSensor(l: Logits, uvToSensor: Mat3, sensor: [number, numb
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) {
       const [u, v] = applyMap(toShot, (i + 0.5) / w, (j + 0.5) / h)
-      out[j * w + i] = Math.round(255 * sigmoid(logitAt(l, u, v)))
+      out[j * w + i] = Math.round(255 * matteAlpha(logitAt(l, u, v)))
     }
   }
   return { px: out, w, h }
@@ -183,7 +189,7 @@ export function previewGrid(l: Logits, gw: number, gh: number, toShot: (u: numbe
   for (let j = 0; j < gh; j++) {
     for (let i = 0; i < gw; i++) {
       const s = toShot((i + 0.5) / gw, (j + 0.5) / gh)
-      out[j * gw + i] = s && s[0] >= 0 && s[1] >= 0 && s[0] <= 1 && s[1] <= 1 ? sigmoid(logitAt(l, s[0], s[1])) : 0
+      out[j * gw + i] = s && s[0] >= 0 && s[1] >= 0 && s[0] <= 1 && s[1] <= 1 ? matteAlpha(logitAt(l, s[0], s[1])) : 0
     }
   }
   return out
