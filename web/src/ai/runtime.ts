@@ -7,7 +7,7 @@ import { AI_ADAPTER_OPTIONS, type GpuName } from './adapter'
 import { createRpcClient, transfer, type RpcClient } from '../lib/rpc'
 import type { ModelEntry, Variant } from './manifest'
 import { installed, load as loadFiles, loadPart } from './store'
-import type { Feed, Provider, RuntimeApi } from './runtime.worker'
+import type { Feed, NamedFeed, NamedResult, NamedRun, Provider, RuntimeApi } from './runtime.worker'
 
 /** End the worker after this long without a run. */
 export const IDLE_MS = 120_000
@@ -42,10 +42,40 @@ export interface GpuProbe {
 let worker: Worker | null = null
 let rpc: RpcClient<RuntimeApi> | null = null
 let loaded: { key: string; provider: Provider; inputShape: (number | string)[]; gpu: GpuName | null } | null = null
-/** Graphs of a model made of several (AI Remove) loaded in the worker, by key. */
-const graphs = new Map<string, Provider>()
+
+// ---- memory policy (docs/PHASE3.md Part 27)
+//
+// Several models can be loaded in the one worker: the depth model, AI Remove's graphs, Object select's encoder and
+// decoder. Each loaded graph is recorded with its model and the size of its weights. After a graph of one model is
+// loaded, other models' graphs are freed, least recently used first, until the weights loaded add up to no more than
+// RESIDENT_BYTES; models held by an open tool (`holdModel`: the masking tool's Object select) go last. A model's own
+// graphs are never freed for each other here (AI Remove frees its phases itself). Freeing comes after the new graph
+// has loaded, because ONNX Runtime ends its GPU device when its last session goes (Part 26). Outputs kept in the
+// worker for a model (Object select's image embeddings) go with its graphs. The worker still ends after IDLE_MS
+// unused, unless a model is held; any failure ends it.
+
+/**
+ * The weights the worker keeps loaded across models (bytes). SAM 2.1 Tiny (78 MB fp16, 155 MB fp32) and Depth
+ * Anything V2 Small (50 / 99 MB) fit together; AI Remove's 1.24 GB doesn't, so starting it frees the others, and the
+ * others free it.
+ */
+export const RESIDENT_BYTES = 600e6
+
+interface Loaded {
+  model: string
+  provider: Provider
+  bytes: number
+  used: number
+}
+/** Graphs loaded in the worker, by key (`<model id>:<part or variant>:<revision>`). */
+const graphs = new Map<string, Loaded>()
+/** Outputs kept in the worker, by handle (each handle starts with its model's id and a colon). */
+const keptHere = new Set<string>()
+/** Models an open tool holds (not freed first, and the worker isn't ended while one is held). */
+const holds = new Map<string, number>()
 let idle: ReturnType<typeof setTimeout> | null = null
 let probed: Promise<GpuProbe> | null = null
+let useCount = 0
 
 function client(): RpcClient<RuntimeApi> {
   if (!rpc) {
@@ -64,11 +94,82 @@ export function stopRuntime() {
   rpc = null
   loaded = null
   graphs.clear()
+  keptHere.clear()
 }
 
 function touch() {
   if (idle) clearTimeout(idle)
-  idle = setTimeout(stopRuntime, IDLE_MS)
+  // While a tool holds a model, the worker (and what it keeps) stays; the timer looks again later.
+  idle = setTimeout(() => (holds.size ? touch() : stopRuntime()), IDLE_MS)
+}
+
+/** An open tool holds a model: it is freed last, and the worker isn't ended for being idle. Returns the release. */
+export function holdModel(id: string): () => void {
+  holds.set(id, (holds.get(id) ?? 0) + 1)
+  let done = false
+  return () => {
+    if (done) return
+    done = true
+    const n = (holds.get(id) ?? 1) - 1
+    if (n > 0) holds.set(id, n)
+    else holds.delete(id)
+    if (rpc) touch()
+  }
+}
+
+/** The graphs loaded now (keys, model, provider, bytes), for the panels' tests and the console. */
+export const loadedGraphs = () => [...graphs.entries()].map(([key, g]) => ({ key, ...g }))
+
+/** An output the worker keeps for this handle (it goes with its model's graphs, or when the worker ends). */
+export const isKept = (handle: string) => keptHere.has(handle)
+
+function noteLoaded(key: string, model: string, provider: Provider, bytes: number) {
+  graphs.set(key, { model, provider, bytes, used: ++useCount })
+}
+
+/** Frees every graph of a model (and the outputs kept for it). */
+async function freeModel(id: string) {
+  const keys = [...graphs.entries()].filter(([, g]) => g.model === id).map(([k]) => k)
+  for (const k of keys) {
+    graphs.delete(k)
+    if (loaded?.key === k) loaded = null
+  }
+  const handles = [...keptHere].filter((h) => h.startsWith(`${id}:`))
+  for (const h of handles) keptHere.delete(h)
+  if (!rpc) return
+  const r = rpc
+  await Promise.race([
+    (async () => {
+      if (handles.length) await r.dropKept(`${id}:`).catch(() => {})
+      for (const k of keys) await r.release(k).catch(() => {})
+    })(),
+    new Promise((ok) => setTimeout(ok, 10_000)),
+  ])
+}
+
+/**
+ * The memory policy after a graph of `id` loaded: other models freed, least recently used first (held ones last),
+ * while the loaded weights exceed RESIDENT_BYTES. Returns the models freed.
+ */
+export function modelsToFree(list: { model: string; bytes: number; used: number }[], id: string, held: ReadonlySet<string>, budget = RESIDENT_BYTES): string[] {
+  const by = new Map<string, { bytes: number; used: number }>()
+  for (const g of list) {
+    const x = by.get(g.model) ?? { bytes: 0, used: 0 }
+    by.set(g.model, { bytes: x.bytes + g.bytes, used: Math.max(x.used, g.used) })
+  }
+  let total = [...by.values()].reduce((n, x) => n + x.bytes, 0)
+  const order = [...by.entries()].filter(([m]) => m !== id).sort((a, b) => Number(held.has(a[0])) - Number(held.has(b[0])) || a[1].used - b[1].used)
+  const out: string[] = []
+  for (const [m, x] of order) {
+    if (total <= budget) break
+    out.push(m)
+    total -= x.bytes
+  }
+  return out
+}
+
+async function fitMemory(id: string) {
+  for (const m of modelsToFree([...graphs.values()], id, new Set(holds.keys()))) await freeModel(m)
 }
 
 /**
@@ -110,11 +211,16 @@ async function ensure(m: ModelEntry, provider: Provider): Promise<{ key: string;
   const rec = await installed(m)
   if (!rec) throw new Error(`${m.name} isn’t on this device.`)
   const key = `${m.id}:${rec.variant}:${rec.revision}`
-  if (loaded && loaded.key === key && loaded.provider === provider) return { key, variant: rec.variant }
+  if (loaded && loaded.key === key && loaded.provider === provider && graphs.has(key)) {
+    graphs.get(key)!.used = ++useCount
+    return { key, variant: rec.variant }
+  }
   const files = await loadFiles(m)
   // One thread for WebGPU (the GPU does the work; no pthread workers to start), up to 4 for the CPU provider.
   const d = await withTimeout(client().load(key, files.model, files.wasm, provider, provider === 'wasm' ? threads() : 1), RUN_TIMEOUT_MS)
   loaded = { key, provider, inputShape: d.inputShape, gpu: d.gpu }
+  noteLoaded(key, m.id, provider, rec.model.bytes)
+  await fitMemory(m.id)
   return { key, variant: rec.variant }
 }
 
@@ -143,34 +249,47 @@ export async function runModel(m: ModelEntry, data: Float32Array, dims: number[]
 export const GRAPH_LOAD_TIMEOUT_MS = 300_000
 export const GRAPH_RUN_TIMEOUT_MS = { webgpu: 180_000, wasm: 900_000 }
 
-const graphKey = (m: ModelEntry, part: string, revision: string) => `${m.id}:${part}:${revision}`
+const graphKey = (m: ModelEntry, part: string, variant: Variant, revision: string) => `${m.id}:${part}${variant === 'fp32' ? '' : `-${variant}`}:${revision}`
 
-/** Loads one graph of an installed model into the worker (read from this device and checked first). */
-export async function loadGraph(m: ModelEntry, part: string, provider: Provider): Promise<{ key: string; ms: number }> {
+/**
+ * Loads one graph of an installed model into the worker (read from this device and checked first; with its weights
+ * file when it has one). Then the memory policy frees other models if needed.
+ */
+export async function loadGraph(m: ModelEntry, part: string, provider: Provider): Promise<{ key: string; ms: number; gpu: GpuName | null }> {
   const t0 = performance.now()
   try {
     const rec = await installed(m)
     if (!rec) throw new Error(`${m.name} isn’t on this device.`)
-    const key = graphKey(m, part, rec.revision)
-    if (graphs.get(key) === provider) return { key, ms: 0 }
+    const key = graphKey(m, part, rec.variant, rec.revision)
+    const have = graphs.get(key)
+    if (have?.provider === provider) {
+      have.used = ++useCount
+      return { key, ms: 0, gpu: gpuOf.get(key) ?? null }
+    }
     const files = await loadPart(m, part)
-    await withTimeout(client().load(key, transfer(files.model), files.wasm, provider, provider === 'wasm' ? threads() : 1), GRAPH_LOAD_TIMEOUT_MS)
-    graphs.set(key, provider)
+    const weights = files.file.bytes + (files.data?.bytes.byteLength ?? 0)
+    const data = files.data ? { name: files.data.name, bytes: transfer(files.data.bytes) } : undefined
+    const d = await withTimeout(client().load(key, transfer(files.model), files.wasm, provider, provider === 'wasm' ? threads() : 1, data), GRAPH_LOAD_TIMEOUT_MS)
+    noteLoaded(key, m.id, provider, weights)
+    gpuOf.set(key, d.gpu)
+    await fitMemory(m.id)
     touch()
-    return { key, ms: performance.now() - t0 }
+    return { key, ms: performance.now() - t0, gpu: d.gpu }
   } catch (e) {
     stopRuntime()
     probed = null
     throw e
   }
 }
+const gpuOf = new Map<string, GpuName | null>()
 
 /** One run of a loaded graph with named inputs; the first output. */
 export async function runGraph(key: string, feeds: Record<string, Feed>): Promise<{ data: Float32Array; ms: number }> {
   try {
-    const provider = graphs.get(key)
-    if (!provider) throw new Error('The model isn’t loaded.')
-    const r = await withTimeout(client().runFeeds(key, feeds), GRAPH_RUN_TIMEOUT_MS[provider])
+    const g = graphs.get(key)
+    if (!g) throw new Error('The model isn’t loaded.')
+    g.used = ++useCount
+    const r = await withTimeout(client().runFeeds(key, feeds), GRAPH_RUN_TIMEOUT_MS[g.provider])
     touch()
     return { data: r.data, ms: r.ms }
   } catch (e) {
@@ -180,10 +299,55 @@ export async function runGraph(key: string, feeds: Record<string, Feed>): Promis
   }
 }
 
+/** A kept output asked for by a run is no longer in the worker (freed, or the worker ended): compute it again. */
+export class KeptMissingError extends Error {
+  constructor(handle: string) {
+    super(`kept-missing: ${handle}`)
+    this.name = 'KeptMissingError'
+  }
+}
+
+/**
+ * One run of a loaded graph with named inputs (sent, or kept in the worker), several named outputs back, and some
+ * outputs kept in the worker under handles (each handle must start with the model's id and a colon). A kept input
+ * that is gone fails with KeptMissingError, without ending the worker.
+ */
+export async function runGraphNamed(key: string, feeds: Record<string, NamedFeed>, o: NamedRun = {}): Promise<NamedResult> {
+  const g = graphs.get(key)
+  if (!g) throw new Error('The model isn’t loaded.')
+  for (const f of Object.values(feeds)) if ('kept' in f && !keptHere.has(f.kept)) throw new KeptMissingError(f.kept)
+  for (const h of Object.values(o.keep ?? {})) if (!h.startsWith(`${g.model}:`)) throw new Error(`A kept output’s handle must start with "${g.model}:"`)
+  try {
+    g.used = ++useCount
+    const r = await withTimeout(client().runNamed(key, feeds, o), GRAPH_RUN_TIMEOUT_MS[g.provider])
+    for (const h of Object.values(o.keep ?? {})) keptHere.add(h)
+    touch()
+    return r
+  } catch (e) {
+    if (e instanceof Error && /^kept-missing: /.test(e.message)) {
+      keptHere.delete(e.message.slice('kept-missing: '.length))
+      throw new KeptMissingError(e.message.slice('kept-missing: '.length))
+    }
+    stopRuntime()
+    probed = null
+    throw e
+  }
+}
+
+/** Forgets kept outputs whose handle starts with `prefix`. */
+export async function dropKept(prefix: string): Promise<void> {
+  for (const h of [...keptHere]) if (h.startsWith(prefix)) keptHere.delete(h)
+  await rpc?.dropKept(prefix).catch(() => {})
+}
+
+/** Whether a graph is loaded (its key from loadGraph) with this provider. */
+export const graphLoaded = (key: string, provider?: Provider) => !!graphs.get(key) && (!provider || graphs.get(key)!.provider === provider)
+
 /** Frees one graph (its GPU memory) without ending the worker. */
 export async function releaseGraph(key: string): Promise<void> {
   if (!graphs.has(key) || !rpc) return
   graphs.delete(key)
+  gpuOf.delete(key)
   // Freeing is best effort: never wait long for it (the next phase doesn't depend on it).
   await Promise.race([rpc.release(key).catch(() => {}), new Promise((r) => setTimeout(r, 10_000))])
 }

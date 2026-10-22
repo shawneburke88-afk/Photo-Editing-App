@@ -3,7 +3,8 @@
 //   node scripts/models.mjs fetch --out dist [--from DIR]
 //       The deploy workflow, after `npm run build`: downloads every pinned file of web/models/manifest.json from
 //       https://huggingface.co/<repo>/resolve/<revision>/<path>, checks its byte count and SHA-256 and writes it to
-//       dist/models/<id>/<revision 7>/<variant>.onnx (what the app downloads, on the user's opt-in). Any mismatch
+//       dist/models/<id>/<revision 7>/<variant>.onnx, or <file name> for a model of several graphs and weights files
+//       (Object select's SAM 2.1, PHASE3.md Part 27) (what the app downloads, on the user's opt-in). Any mismatch
 //       fails the build. A model that isn't pinned yet is skipped with a warning (the app then says it isn't available).
 //       A model delivered from Hugging Face ("delivery": "huggingface": AI Remove's Moebius, about 1.24 GB, over Pages'
 //       1 GB site limit) is skipped with a note: the app downloads it itself (PHASE3.md Part 26).
@@ -17,8 +18,8 @@
 //       For the owner, on a machine that can reach huggingface.co: takes the repository's current commit (or the one
 //       given), reads each file's Git LFS pointer (its sha256 and size) at that commit, downloads the file, checks it
 //       against the pointer, and writes the revision, sizes and hashes into the manifest. --save keeps the files (e.g.
-//       in models/local for the dev server). Models delivered from Hugging Face are left as they are (pinned by the
-//       owner's decision; scripts/moebius-check.mjs checks them).
+//       in models/local for the dev server). Models delivered from Hugging Face, and models whose source says
+//       "pinnedBy": "owner" (SAM 2.1, pinned from the checked run in MASKS_PREP.md), are left as they are.
 //
 // The checks are kept in sync with src/ai/manifest.ts (same layout, same hash format).
 
@@ -34,7 +35,9 @@ export const PAGES_LIMIT = 1e9
 
 export const sha256 = (buf) => createHash('sha256').update(buf).digest('hex')
 export const pinned = (m, f) => /^[0-9a-f]{40}$/.test(m.source?.revision ?? '') && /^[0-9a-f]{64}$/.test(f.sha256 ?? '')
-export const servedPath = (m, f) => `models/${m.id}/${m.source.revision.slice(0, 7)}/${f.variant}.onnx`
+/** "<variant>.onnx" for a one-file model, else the file's own name (a graph, or its weights beside it: schema 2). */
+export const servedName = (f) => (f.part ? f.path.slice(f.path.lastIndexOf('/') + 1) : `${f.variant}.onnx`)
+export const servedPath = (m, f) => `models/${m.id}/${m.source.revision.slice(0, 7)}/${servedName(f)}`
 export const sourceUrl = (m, f) => `https://huggingface.co/${m.source.repo}/resolve/${m.source.revision}/${f.path}`
 export const pointerUrl = (m, f, rev) => `https://huggingface.co/${m.source.repo}/raw/${rev}/${f.path}`
 /** Served by LightBench's site (the deploy fetches it), or downloaded by the app from Hugging Face (never deployed). */
@@ -52,7 +55,7 @@ export function plan(manifest) {
     }
     for (const f of m.files) {
       if (pinned(m, f)) files.push({ model: m, file: f, url: sourceUrl(m, f), path: servedPath(m, f) })
-      else unpinned.push(`${m.id} ${f.variant}`)
+      else unpinned.push(`${m.id} ${f.variant}${f.part ? ` ${f.part}${f.data ? ' weights' : ''}` : ''}`)
     }
   }
   return { files, unpinned, fromHub }
@@ -109,7 +112,7 @@ export async function fetchModels(manifest, out, from) {
     const buf = from ? readFileSync(join(from, x.path.slice('models/'.length))) : await download(x.url)
     const why = check(buf, x.file)
     if (why) {
-      console.error(`${x.model.id} ${x.file.variant} (${from ? 'local' : x.url}): ${why}`)
+      console.error(`${x.model.id} ${x.file.variant}${x.file.part ? ` ${x.file.path}` : ''} (${from ? 'local' : x.url}): ${why}`)
       bad++
       continue
     }
@@ -177,7 +180,7 @@ export function describePins(manifest, markdown = false) {
   const out = []
   for (const m of manifest.models) {
     const how = deployed(m) ? '' : ' (downloaded by the app from Hugging Face; not deployed)'
-    const name = (f) => (f.part ? `${f.variant} ${f.part}` : f.variant)
+    const name = (f) => (f.part ? `${f.variant} ${f.part}${f.data ? ' weights' : ''}` : f.variant)
     if (markdown) {
       out.push(`\`${m.source.repo}\` @ \`${m.source.revision ?? 'not pinned'}\`${how}`, '', '| file | path | bytes | SHA-256 |', '|---|---|---|---|')
       for (const f of m.files) out.push(`| ${name(f)} | \`${f.path}\` | ${f.bytes} | ${f.sha256 ? `\`${f.sha256}\`` : 'not pinned'} |`)
@@ -194,6 +197,10 @@ async function pin(manifest, revision, save, path = MANIFEST) {
   for (const m of manifest.models) {
     if (!deployed(m)) {
       console.log(`${m.id}: left as it is (delivered from Hugging Face and pinned by the owner's decision)`)
+      continue
+    }
+    if (m.source.pinnedBy === 'owner') {
+      console.log(`${m.id}: left as it is (pinned by the owner's decision at ${m.source.revision})`)
       continue
     }
     let rev = revision
@@ -218,7 +225,7 @@ async function pin(manifest, revision, save, path = MANIFEST) {
       f.sha256 = ptr.sha256
       console.log(`${m.id} ${f.variant}: ${f.bytes} bytes sha256 ${f.sha256}`)
       if (save) {
-        const dest = join(save, `${m.id}/${rev.slice(0, 7)}/${f.variant}.onnx`)
+        const dest = join(save, `${m.id}/${rev.slice(0, 7)}/${servedName(f)}`)
         mkdirSync(dirname(dest), { recursive: true })
         writeFileSync(dest, buf)
       }

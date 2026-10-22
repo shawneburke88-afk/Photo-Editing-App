@@ -8,7 +8,14 @@ import { deliveryOf, filesBytes, formatBytes, type ModelEntry, type ModelFile } 
 import { AI, modelsChanged } from './models'
 import { install, installHf, installSize, IntegrityError, partialDownload, SpaceError, type HfProgress, type InstalledModel } from './store'
 
-const PART_NAMES: Record<string, string> = { vae_encoder: 'image encoder', unet: 'denoiser', vae_decoder: 'image decoder' }
+const PART_NAMES: Record<string, string> = { vae_encoder: 'image encoder', unet: 'denoiser', vae_decoder: 'image decoder', encoder: 'image encoder', decoder: 'prompt decoder' }
+
+/** A file's name in the model info: "fp16 image encoder, weights (onnx/…)", "image encoder (vae_encoder.onnx)", "fp32". */
+function fileName(m: ModelEntry, f: ModelFile): string {
+  if (!f.part) return f.variant
+  const several = new Set(m.files.map((x) => x.variant)).size > 1
+  return `${several ? `${f.variant} ` : ''}${PART_NAMES[f.part] ?? f.part}${f.data ? ', weights' : ''} (${f.path})`
+}
 
 /** "about 1.24 GB" for a big download (its exact size is in About this model). */
 const about = (n: number) => (n >= 1e9 ? `about ${formatBytes(n)}` : formatBytes(n))
@@ -16,6 +23,7 @@ const about = (n: number) => (n >= 1e9 ? `about ${formatBytes(n)}` : formatBytes
 export function ModelInfo({ model, file, files }: { model: ModelEntry; file?: ModelFile | null; files?: ModelFile[] }) {
   const rt = AI?.runtime
   const chosen = new Set((files ?? (file ? [file] : [])).map((f) => f.path))
+  const variants = new Set(model.files.map((f) => f.variant)).size
   const hub = deliveryOf(model) === 'huggingface'
   return (
     <dl className="model-info small">
@@ -45,9 +53,9 @@ export function ModelInfo({ model, file, files }: { model: ModelEntry; file?: Mo
       <dt>Files</dt>
       <dd>
         {model.files.map((f) => (
-          <span key={`${f.variant}${f.part ?? ''}`} className={`model-file ${chosen.has(f.path) && !f.part ? 'chosen' : ''}`}>
-            {f.part ? `${PART_NAMES[f.part] ?? f.part} (${f.path})` : f.variant}: {formatBytes(f.bytes)}{f.sha256 ? <>, SHA-256 <code title={f.sha256}>{f.sha256.slice(0, 16)}…</code></> : ' (not published with this build)'}
-            {chosen.has(f.path) && !f.part ? ' — the one for this GPU' : ''}
+          <span key={f.path} className={`model-file ${chosen.has(f.path) && (!f.part || variants > 1) ? 'chosen' : ''}`}>
+            {fileName(model, f)}: {formatBytes(f.bytes)}{f.sha256 ? <>, SHA-256 <code title={f.sha256}>{f.sha256.slice(0, 16)}…</code></> : ' (not published with this build)'}
+            {chosen.has(f.path) && (!f.part || variants > 1) ? ' — for this computer' : ''}
           </span>
         ))}
         <span className="muted">
@@ -74,6 +82,8 @@ export function ModelDialog({ model, file, files: filesIn, purpose, onInstalled,
   const files = useMemo(() => filesIn ?? (file ? [file] : []), [filesIn, file])
   const hub = deliveryOf(model) === 'huggingface'
   const modelBytes = filesBytes(files)
+  // A model that comes in fp16 and fp32 with several files each (Object select): which one this computer gets.
+  const variantNote = files.length > 1 && new Set(model.files.map((f) => f.variant)).size > 1 ? `${files[0].variant}, ` : ''
   const [size, setSize] = useState<{ bytes: number; runtime: number; done: number } | null>(null)
   const [progress, setProgress] = useState<HfProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -83,7 +93,7 @@ export function ModelDialog({ model, file, files: filesIn, purpose, onInstalled,
     if (!AI || !files.length) return
     let live = true
     void (async () => {
-      const s = await installSize(AI, model, files[0])
+      const s = await installSize(AI, model, files)
       const runtime = s.items.find((i) => i.what === 'runtime')?.bytes ?? 0
       const part = hub ? await partialDownload(model, files) : { done: 0 }
       if (live) setSize({ bytes: modelBytes + runtime, runtime, done: part.done })
@@ -106,7 +116,7 @@ export function ModelDialog({ model, file, files: filesIn, purpose, onInstalled,
     try {
       const rec = hub
         ? await installHf(AI, model, files, (p) => setProgress({ ...p }), abort.current.signal)
-        : await install(AI, model, files[0], (p) => setProgress({ done: p.done, total: p.total, what: p.what }), abort.current.signal)
+        : await install(AI, model, files, (p) => setProgress({ done: p.done, total: p.total, what: p.what }), abort.current.signal)
       modelsChanged()
       onInstalled(rec)
     } catch (e) {
@@ -143,8 +153,8 @@ export function ModelDialog({ model, file, files: filesIn, purpose, onInstalled,
         <p className="model-size">
           Download: <strong>{about(total)}</strong>
           {size?.runtime
-            ? ` (the model${files.length > 1 ? `, ${files.length} files` : `, ${files[0]?.variant}`}: ${about(modelBytes)}; the runtime it needs, ${AI?.runtime.name} ${AI?.runtime.version}: ${formatBytes(size.runtime)}${hub ? ', from LightBench’s own site' : ''})`
-            : files.length > 1 ? ` (${files.length} files)` : ` (${files[0]?.variant})`}.
+            ? ` (the model${files.length > 1 ? `, ${variantNote}${files.length} files` : `, ${files[0]?.variant}`}: ${about(modelBytes)}; the runtime it needs, ${AI?.runtime.name} ${AI?.runtime.version}: ${formatBytes(size.runtime)}${hub ? ', from LightBench’s own site' : ''})`
+            : files.length > 1 ? ` (${variantNote}${files.length} files)` : ` (${files[0]?.variant})`}.
           {resuming && <> Already downloaded: {formatBytes(size!.done)}; the download continues from there.</>}
         </p>
         {hub && (

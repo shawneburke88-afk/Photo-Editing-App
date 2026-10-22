@@ -49,8 +49,8 @@ describe('stored masks', () => {
     expect(m.adjust).toEqual({ exposure: 4, whites: 13 })
   })
 
-  it('keep kinds from a newer LightBench (an AI raster) without rendering them', () => {
-    const m = normalizeMask(mask([radial(), { id: 'd', op: 'intersect', invert: false, shape: { kind: 'ai', what: 'subject', raster: { width: 2, height: 2, encoding: 'x', data: 'AA' } } } as never]))!
+  it('keep kinds from a newer LightBench without rendering them', () => {
+    const m = normalizeMask(mask([radial(), { id: 'd', op: 'intersect', invert: false, shape: { kind: 'hologram', what: 'subject', raster: { width: 2, height: 2, encoding: 'x', data: 'AA' } } } as never]))!
     expect(m.components).toHaveLength(2)
     expect(hasUnknown(m)).toBe(true)
     expect(describeMasks([m])).toContain('newer LightBench')

@@ -14,7 +14,7 @@ import { applyMap } from '../engine/develop/geometry'
 import { invert, type Mat3 } from '../engine/color/matrix'
 import { encodeDepth, quantizeDisparity, type RasterData } from '../engine/develop/depth-map'
 import type { DepthShape } from '../engine/develop/masks'
-import type { DepthInput, ModelEntry } from './manifest'
+import { depthInput, type DepthInput, type ModelEntry } from './manifest'
 import { prepareModel, runModel } from './runtime'
 import type { Provider } from './runtime.worker'
 
@@ -34,6 +34,19 @@ export function modelSize(w: number, h: number, input: DepthInput, fixed: [numbe
   if (fixed) return [fixed[1], fixed[0]]
   const s = Math.max(input.shortSide / w, input.shortSide / h)
   return [multipleOf(s * w, input.multiple, input.shortSide), multipleOf(s * h, input.multiple, input.shortSide)]
+}
+
+/**
+ * The largest tensor Depth Anything V2 Small makes at this input size (bytes): its attention scores, [1, 6, T, T] with
+ * T = the 14 × 14 patches + 1 (ViT-S/14: 6 heads; the DPT head's largest feature map, about 32 × the input, is far
+ * smaller). ONNX Runtime 1.30.0's WebGPU Softmax computes a tensor larger than the GPU's `maxStorageBufferBindingSize`
+ * wrong (models.ts `SAM_FP32_MIN_BINDING`), so such a photo runs on the processor instead. At a 128 MiB limit: a 3:2
+ * photo (784 × 518: 103 MB fp32) fits; 16:9 (924 × 518: 143 MB fp32) and wider don't in fp32; fp16 halves it.
+ * Inferred from the architecture: the export's own graph wasn't inspected here.
+ */
+export function depthLargestTensor(mw: number, mh: number, variant: 'fp16' | 'fp32'): number {
+  const t = Math.floor(mw / 14) * Math.floor(mh / 14) + 1
+  return 6 * t * t * (variant === 'fp16' ? 2 : 4)
 }
 
 /** The size Develop should render the photo at: its long edge for `modelSize`, a little larger for a clean resize. */
@@ -158,7 +171,7 @@ export async function computeDepth(m: ModelEntry, shot: AsShot, provider: Provid
   const t0 = performance.now()
   const fixed = await prepareModel(m, provider)
   const loadMs = performance.now() - t0
-  const input = m.input!
+  const input = depthInput(m)
   const [mw, mh] = modelSize(shot.width, shot.height, input, fixed)
   const tensor = toTensor(shot.rgba, shot.width, shot.height, mw, mh, input.mean, input.std)
   const r = await runModel(m, tensor, [1, 3, mh, mw], provider)

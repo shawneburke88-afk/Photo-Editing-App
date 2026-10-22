@@ -3,14 +3,15 @@
 // stroke or a handle drag is one step of its own). DevelopView renders the panel (MasksPanel) and the on-photo overlay
 // (MaskOverlay) from this.
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Vec3 } from '../engine/color/matrix'
 import type { DevelopSettings } from '../engine/develop/settings'
 import { lstar, oklab, REC2020_Y } from '../engine/develop/mask-math'
 import {
-  canAdd, capMessage, dabCount, existingDepth, KIND_LABELS, KIND_SHORT, LOCAL_LABELS, MAX_DABS, MAX_SAMPLES, needsDepth, newComponentId, newMask, newMaskId, refuseReason, withDepthMap, withMasksList,
-  type BrushShape, type ColourShape, type DepthShape, type KnownShape, type LinearShape, type LocalKey, type LocalMask, type LuminanceShape, type MaskComponent, type MaskOp, type RadialShape, type ShapeKind,
+  canAdd, capMessage, dabCount, existingDepth, KIND_LABELS, KIND_SHORT, LOCAL_LABELS, MAX_AI_POINTS, MAX_DABS, MAX_SAMPLES, needsAi, needsDepth, newComponentId, newMask, newMaskId, partLabel, refuseReason, withDepthMap, withMasksList,
+  type AiPrompt, type AiShape, type BrushShape, type ColourShape, type DepthShape, type KnownShape, type LinearShape, type LocalKey, type LocalMask, type LuminanceShape, type MaskComponent, type MaskOp, type RadialShape, type ShapeKind,
 } from '../engine/develop/masks'
+import type { ObjectSelect } from './useObjectSelect'
 import { decodeDepth, depthPosition, sampleDepth } from '../engine/develop/depth-map'
 import type { DepthMap } from './useDepth'
 import { useStoredJson } from '../lib/useStoredJson'
@@ -37,7 +38,12 @@ interface Options {
   depth: () => Promise<DepthMap | null>
   /** Displayed-image uv → sensor uv (0…1), for the depth under a click. */
   toSensorUv: (uv: [number, number]) => [number, number] | null
+  /** Object select (Part 27): the model, the photo's encoding, the hover preview and the matte of a selection. */
+  object: ObjectSelect
 }
+
+/** How a click with Object select acts: a new selection, or a point added to or removed from the selected one. */
+export type ObjectClick = 'new' | 'add' | 'remove'
 
 /** A new Depth range: the nearest 30 % fully, fading out by 50 % (LightBench's choice; Lightroom's default not checked). */
 export const DEFAULT_DEPTH_RANGE: DepthShape['range'] = [0, 0, 30, 50]
@@ -49,7 +55,11 @@ export function useMasking(o: Options) {
   const [active, setActive] = useState(false)
   const [sel, setSel] = useState<{ mask: string | null; comp: string | null }>({ mask: null, comp: null })
   const [creating, setCreating] = useState<Creating | null>(null)
-  const [picking, setPicking] = useState<'colour' | 'luminance' | 'depth' | null>(null)
+  const [picking, setPicking] = useState<'colour' | 'luminance' | 'depth' | 'object' | null>(null)
+  /** Object select is computing a selection (one at a time). */
+  const [objectBusy, setObjectBusy] = useState(false)
+  /** On touch (no hover): the last tap, previewed, waiting for the panel's Select / Add / Remove (sensor uv). */
+  const [touchPoint, setTouchPoint] = useState<[number, number] | null>(null)
   /** The selected Depth range's map shown instead of the photo (a view, never saved). */
   const [depthView, setDepthView] = useState(false)
   const [depthBusy, setDepthBusy] = useState(false)
@@ -65,6 +75,23 @@ export function useMasking(o: Options) {
   const [pins, setPins] = useStoredJson<{ on: boolean }>('lightbench.masks.pins', { on: true })
   const opts = useRef(o)
   opts.current = o
+  /** Object select's picker is on: a new selection (with the op when it is a part of the selected mask) or refining. */
+  const objectMode: 'new' | 'part' | 'refine' | null = creating?.kind === 'ai' ? (creating.op ? 'part' : 'new') : picking === 'object' ? 'refine' : null
+  const objectOn = objectMode !== null
+  useEffect(() => {
+    if (objectOn) {
+      // The picker is on: the model ready and the photo encoded now (asking to download first), so the first pointer
+      // move previews at once. Declined or failed: the picker ends (the panel says why).
+      void opts.current.object.prepare().then((e) => {
+        if (e) return
+        setCreating((c) => (c?.kind === 'ai' ? null : c))
+        setPicking((p) => (p === 'object' ? null : p))
+      })
+      return
+    }
+    // The picker ended: its hover summary goes to Diagnostics and the model is no longer held.
+    opts.current.object.end()
+  }, [objectOn])
 
   const masks = (): LocalMask[] => opts.current.settings().masks ?? []
   const commit = (label: string, next: LocalMask[], separate = true) => {
@@ -90,6 +117,8 @@ export function useMasking(o: Options) {
 
   /** Clears the tool's state for another photo. */
   const resetForPhoto = useCallback(() => {
+    opts.current.object.resetForPhoto()
+    setTouchPoint(null)
     setSel({ mask: null, comp: null })
     setCreating(null)
     setPicking(null)
@@ -116,6 +145,14 @@ export function useMasking(o: Options) {
       void newDepth()
       return
     }
+    if (kind === 'ai') {
+      // Object select: the picker on the photo; the photo is encoded now, so the first pointer move previews at once.
+      setCreating({ kind: 'ai' })
+      setPicking(null)
+      setTouchPoint(null)
+      setSel((s) => ({ ...s, comp: null }))
+      return
+    }
     if (kind === 'luminance') {
       // A luminance range starts on the brighter half; a click on the photo then centres it on that tone.
       const m = newMask(masks(), { kind: 'luminance', range: [40, 60, 100, 100] })
@@ -140,6 +177,12 @@ export function useMasking(o: Options) {
     setMessage(null)
     if (kind === 'depth') {
       void addDepth(m.id, op)
+      return
+    }
+    if (kind === 'ai') {
+      setCreating({ kind: 'ai', op })
+      setPicking(null)
+      setTouchPoint(null)
       return
     }
     if (kind === 'luminance') {
@@ -198,6 +241,126 @@ export function useMasking(o: Options) {
     const d = await depthMap()
     if (!d) return
     commit('Depth map for the Depth ranges', withDepthMap(masks(), d))
+  }
+
+  // ---- Object select (Part 27)
+
+  /** The selected part when it is an AI selection (the one Shift-click and Alt-click refine). */
+  const selectedAi = (): { m: LocalMask; c: MaskComponent; s: AiShape } | null => {
+    const m = masks().find((x) => x.id === sel.mask)
+    const c = m?.components.find((x) => x.id === sel.comp)
+    return m && c && c.shape.kind === 'ai' ? { m, c, s: c.shape as AiShape } : null
+  }
+
+  /** What a click (or a hover, for the preview) at sensor point `pt` would select. */
+  function objectPrompt(pt: [number, number] | null, how: ObjectClick, box?: [number, number, number, number]): AiPrompt {
+    const cur = how !== 'new' && objectMode === 'refine' ? selectedAi()?.s.prompt : undefined
+    if (box) return { box }
+    const p: [number, number, 0 | 1] = [Math.round(pt![0] * 1e6) / 1e6, Math.round(pt![1] * 1e6) / 1e6, how === 'remove' ? 0 : 1]
+    return cur ? { ...cur, points: [...(cur.points ?? []), p].slice(-MAX_AI_POINTS) } : { points: [p] }
+  }
+
+  /** How a click acts: Shift adds to and Alt removes from the selected AI selection while refining; else a new one. */
+  const clickKind = (shift: boolean, alt: boolean): ObjectClick => (objectMode === 'refine' && selectedAi() ? (alt ? 'remove' : shift ? 'add' : 'new') : 'new')
+
+  /** A pointer move with the picker on (null: it left the photo): the preview of what a click would select. */
+  function onObjectHover(pt: [number, number] | null, shift = false, alt = false) {
+    if (!objectMode || !pt) return opts.current.object.hover(null)
+    opts.current.object.hover(objectPrompt(pt, clickKind(shift, alt)))
+  }
+
+  /** A click (or a box dragged) with the picker on: one history step. */
+  async function onObjectClick(pt: [number, number] | null, shift = false, alt = false, box?: [number, number, number, number]) {
+    if (!objectMode || objectBusy) return
+    const how = box ? 'new' : clickKind(shift, alt)
+    const prompt = objectPrompt(pt, how, box)
+    const mode = objectMode
+    const op = creating?.op
+    const target = how === 'new' ? null : selectedAi()
+    setObjectBusy(true)
+    setTouchPoint(null)
+    try {
+      const r = await opts.current.object.compute(prompt, how === 'new' ? (mode === 'part' ? 'part' : box ? 'box' : 'new') : how)
+      if (!r) return
+      if ('none' in r) return setMessage('Nothing to select there. Point at something else in the photo.')
+      const shape: AiShape = { kind: 'ai', what: 'object', ...r, prompt }
+      const list = masks()
+      if (target) {
+        const label = `${target.m.name}: ${how === 'remove' ? 'remove from selection' : 'add to selection'}`
+        commit(label, list.map((x) => (x.id === target.m.id ? { ...x, components: x.components.map((c) => (c.id === target.c.id ? { ...c, shape } : c)) } : x)))
+        return
+      }
+      if (mode === 'part' && op) {
+        const m = list.find((x) => x.id === sel.mask)
+        if (!m || !canAdd(m, 'ai')) return
+        const cap = capMessage(list, { maskId: m.id, addComponent: true, addAiChars: r.raster.data.length })
+        if (cap) return setMessage(cap)
+        const comp: MaskComponent = { id: newComponentId(), op, invert: false, shape }
+        updateMask(m.id, `${m.name}: ${OP_WORD[op]} ${partLabel(shape)}`, (x) => ({ ...x, components: [...x.components, comp] }))
+        setSel({ mask: m.id, comp: comp.id })
+      } else {
+        const cap = capMessage(list, { addMask: true, addAiChars: r.raster.data.length })
+        if (cap) return setMessage(cap)
+        const m = newMask(list, shape)
+        commit(`New mask: ${m.name}`, [...list, m])
+        setSel({ mask: m.id, comp: m.components[0].id })
+      }
+      // Keep the picker: Shift-click and Alt-click now refine this selection.
+      setCreating(null)
+      setPicking('object')
+    } finally {
+      setObjectBusy(false)
+    }
+  }
+
+  /** AI selections pasted, from a preset, or damaged get their mattes for this photo, from their prompts (one step). */
+  async function computeMissingAi() {
+    if (!masks().some(needsAi) || objectBusy) return
+    setObjectBusy(true)
+    try {
+      let next = masks()
+      let none = 0
+      let unknown = 0
+      for (const m of next) {
+        for (const c of m.components) {
+          const s = c.shape as AiShape
+          if (s.kind !== 'ai' || s.raster) continue
+          if (s.what !== 'object' || !s.prompt) {
+            unknown++
+            continue
+          }
+          const r = await opts.current.object.compute(s.prompt, 'compute')
+          if (!r) return
+          if ('none' in r) {
+            none++
+            continue
+          }
+          next = next.map((x) => (x.id === m.id ? { ...x, components: x.components.map((y) => (y.id === c.id ? { ...y, shape: { ...s, ...r } } : y)) } : x))
+        }
+      }
+      if (next !== masks()) commit('AI selections computed for this photo', next)
+      if (none) setMessage(`${none === 1 ? 'One selection finds' : `${none} selections find`} nothing at the same place on this photo: ${none === 1 ? 'it waits' : 'they wait'}. Delete ${none === 1 ? 'it' : 'them'}, or make a new selection.`)
+      else if (unknown) setMessage('Some AI selections were made with a newer LightBench and can’t be computed here.')
+    } finally {
+      setObjectBusy(false)
+    }
+  }
+
+  /** The selected AI selection made again from its prompt (after a model update, or to check it): one step. */
+  async function recomputeAi(compId: string) {
+    const m = masks().find((x) => x.components.some((c) => c.id === compId))
+    const c = m?.components.find((x) => x.id === compId)
+    const s = c?.shape as AiShape | undefined
+    if (!m || !c || s?.kind !== 'ai' || !s.prompt || objectBusy) return
+    setObjectBusy(true)
+    try {
+      const r = await opts.current.object.compute(s.prompt, 'recompute')
+      if (!r) return
+      if ('none' in r) return setMessage('The model finds nothing there now.')
+      commit(`${m.name}: compute the selection again`, masks().map((x) => (x.id === m.id ? { ...x, components: x.components.map((y) => (y.id === compId ? { ...y, shape: { ...s, ...r } } : y)) } : x)))
+    } finally {
+      setObjectBusy(false)
+    }
   }
 
   /** A component made on the photo (a gradient drawn, a colour picked, a first brush stroke). */
@@ -365,6 +528,9 @@ export function useMasking(o: Options) {
     sel, select, creating, setCreating, picking, setPicking, draft, message, setMessage,
     hidden,
     depthView, setDepthView, depthBusy, computeMissingDepth,
+    objectMode, objectBusy, onObjectHover, onObjectClick, computeMissingAi, recomputeAi, setTouchPoint,
+    /** The tapped point waiting for the panel's buttons (touch), while the picker is on. */
+    touchPoint: objectMode ? touchPoint : null,
     toggleHidden: (id: string) => setHidden((h) => {
       const n = new Set(h)
       if (n.has(id)) n.delete(id)

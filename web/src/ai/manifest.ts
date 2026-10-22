@@ -11,6 +11,10 @@
 // Either way the app downloads a model only when the user says so, once, checks the same SHA-256, keeps it on the
 // device (ai/store.ts) and works offline afterwards. Nothing here touches the network.
 //
+// Schema 2 (AI masks, docs/PHASE3.md Part 27): a model may be made of several graphs (`part`), each with its weights in a
+// separate file beside it (`data`: ONNX external data, as the SAM 2.1 export has), served from the site as well as from
+// Hugging Face; `task` names what the app uses it for. Schema 1 manifests (one file per variant) still parse.
+//
 // fp16 or fp32: ONNX Runtime's WebGPU EP fails on fp16 graphs when the adapter lacks `shader-f16` ("requires f16 but the
 // device does not support it"; it doesn't upcast: docs/research/cowork-2026-10-13b/F_MODEL_DELIVERY.md, F9), so a
 // device without `shader-f16` gets the fp32 file and one with it the fp16 file (half the download).
@@ -20,7 +24,13 @@ export const SHA256_RE = /^[0-9a-f]{64}$/
 export const REVISION_RE = /^[0-9a-f]{40}$/
 
 export type Variant = 'fp16' | 'fp32'
-export type Task = 'depth' | 'inpaint'
+/**
+ * What the app uses a model for: the Depth range mask, AI Remove, and Object select (AI masks part 1: a promptable
+ * segmenter with an image encoder and a prompt decoder). The later AI mask models (people, faces, sky, subject) add
+ * their task here and a check below.
+ */
+export const TASKS = ['depth', 'inpaint', 'segment'] as const
+export type Task = (typeof TASKS)[number]
 export type Delivery = 'site' | 'huggingface'
 
 export interface ModelFile {
@@ -30,14 +40,26 @@ export interface ModelFile {
   bytes: number
   /** Lower-case hex; null until pinned. */
   sha256: string | null
-  /** A model made of several graphs (AI Remove: "vae_encoder", "unet", "vae_decoder"): which one this file is. */
+  /** A model made of several graphs (AI Remove: "vae_encoder", "unet", "vae_decoder"; Object select: "encoder", "decoder"): which one this file is. */
   part?: string
+  /**
+   * This file holds the weights of the graph `part` of the same variant (ONNX external data, beside the graph file).
+   * ONNX Runtime is given it under its own file name (the name the graph refers to).
+   */
+  data?: true
 }
 
 /** The depth model's preprocessing (Depth Anything V2's own). */
 export interface DepthInput {
   shortSide: number
   multiple: number
+  mean: [number, number, number]
+  std: [number, number, number]
+}
+
+/** A promptable segmenter's preprocessing (SAM 2.1's own: the photo resized to size × size, ImageNet mean and std). */
+export interface SegmentInput {
+  size: number
   mean: [number, number, number]
   std: [number, number, number]
 }
@@ -59,9 +81,13 @@ export interface ModelEntry {
   credit: string
   /** In plain words: what it was trained on (owner's rule: the sets must be named publicly, or an owner's exception). */
   trainingData: string
-  source: { host: 'huggingface'; repo: string; revision: string | null }
-  /** The depth model only. */
-  input?: DepthInput
+  /**
+   * `pinnedBy: "owner"`: pinned by the owner's decision from a checked run (Object select's SAM 2.1: MASKS_PREP.md);
+   * `models.mjs pin` leaves it alone, as it leaves the models delivered from Hugging Face.
+   */
+  source: { host: 'huggingface'; repo: string; revision: string | null; pinnedBy?: 'owner' }
+  /** The depth model's (DepthInput) or the segmenter's (SegmentInput) preprocessing. */
+  input?: DepthInput | SegmentInput
   /** Which checkpoint of the original weights the files are, and where that is stated. */
   checkpoint?: { name: string; source: string }
   updates?: UpdateBaseline
@@ -73,9 +99,20 @@ export interface ModelEntry {
   files: ModelFile[]
 }
 
+/** The depth model's preprocessing (parseManifest checked it is there). */
+export const depthInput = (m: ModelEntry) => m.input as DepthInput
+/** The segmenter's preprocessing (parseManifest checked it is there). */
+export const segmentInput = (m: ModelEntry) => m.input as SegmentInput
+
 export interface Manifest {
-  schema: 1
+  schema: 1 | 2
   models: ModelEntry[]
+}
+
+/** The graphs a model of the task is made of (the files of one variant must hold each, plus any weights beside them). */
+export const TASK_PARTS: Partial<Record<Task, readonly string[]>> = {
+  inpaint: ['vae_encoder', 'unet', 'vae_decoder'],
+  segment: ['encoder', 'decoder'],
 }
 
 /** The shared runtime (one for every model, as PHASE4_MODELS.md plans): ONNX Runtime Web's WebAssembly file. */
@@ -103,7 +140,7 @@ export function parseManifest(json: unknown): Manifest {
   }
   if (!json || typeof json !== 'object') fail('not an object')
   const o = json as Record<string, unknown>
-  if (o.schema !== 1) fail('schema must be 1')
+  if (o.schema !== 1 && o.schema !== 2) fail('schema must be 1 or 2')
   if (!Array.isArray(o.models)) fail('models must be a list')
   const ids = new Set<string>()
   const models = (o.models as unknown[]).map((v, i) => {
@@ -113,7 +150,7 @@ export function parseManifest(json: unknown): Manifest {
     const id = m.id as string
     if (ids.has(id)) fail(`duplicate id ${id}`)
     ids.add(id)
-    if (m.task !== 'depth' && m.task !== 'inpaint') fail(`${id}: unknown task`)
+    if (!(TASKS as readonly unknown[]).includes(m.task)) fail(`${id}: unknown task`)
     if (m.delivery !== undefined && m.delivery !== 'site' && m.delivery !== 'huggingface') fail(`${id}: unknown delivery`)
     for (const k of ['name', 'summary', 'credit', 'trainingData'] as const) if (!isStr(m[k])) fail(`${id}: ${k} missing`)
     const lic = m.licence as Record<string, unknown> | undefined
@@ -122,8 +159,10 @@ export function parseManifest(json: unknown): Manifest {
     if (!src || src.host !== 'huggingface' || !isStr(src.repo) || !/^[\w.-]+\/[\w.-]+$/.test(src.repo)) fail(`${id}: source incomplete`)
     const rev = src!.revision
     if (rev !== null && !(isStr(rev) && REVISION_RE.test(rev))) fail(`${id}: revision must be a 40-digit commit or null`)
+    if (src!.pinnedBy !== undefined && src!.pinnedBy !== 'owner') fail(`${id}: pinnedBy must be "owner"`)
     const inp = m.input as Record<string, unknown> | undefined
     if (m.task === 'depth' && (!inp || !isNum(inp.shortSide) || !isNum(inp.multiple) || !isTriple(inp.mean) || !isTriple(inp.std))) fail(`${id}: input incomplete`)
+    if (m.task === 'segment' && (!inp || !isNum(inp.size) || inp.size < 64 || inp.size > 4096 || !isTriple(inp.mean) || !isTriple(inp.std))) fail(`${id}: input incomplete`)
     const up = (m.updates as { upstream?: Record<string, unknown> } | undefined)?.upstream
     if (m.updates !== undefined && (!up || !isStr(up.repo) || !REVISION_RE.test(String(up.revision)) || !isStr(up.path) || !isNum(up.bytes) || !SHA256_RE.test(String(up.sha256)))) fail(`${id}: updates incomplete`)
     const gpu = m.gpu as Record<string, unknown> | undefined
@@ -134,25 +173,43 @@ export function parseManifest(json: unknown): Manifest {
       const x = (f ?? {}) as Record<string, unknown>
       if (x.variant !== 'fp16' && x.variant !== 'fp32') fail(`${id}: file variant must be fp16 or fp32`)
       if (x.part !== undefined && !(isStr(x.part) && /^[a-z0-9_]+$/.test(x.part))) fail(`${id}: bad file part`)
-      const slot = `${x.variant as string}${x.part ? ` ${x.part as string}` : ''}`
+      if (x.data !== undefined && (x.data !== true || !x.part)) fail(`${id}: a weights file (data) must name its graph (part)`)
+      const slot = `${x.variant as string}${x.part ? ` ${x.part as string}` : ''}${x.data ? ' data' : ''}`
       if (variants.has(slot)) fail(`${id}: two ${slot} files`)
       variants.add(slot)
       if (!isStr(x.path) || x.path.includes('..') || x.path.startsWith('/')) fail(`${id}: bad file path`)
       if (!isNum(x.bytes) || x.bytes <= 0 || !Number.isInteger(x.bytes)) fail(`${id}: bad byte count`)
       if (x.sha256 !== null && !(isStr(x.sha256) && SHA256_RE.test(x.sha256))) fail(`${id}: sha256 must be 64 hex digits or null`)
-      return { variant: x.variant, path: x.path, bytes: x.bytes, sha256: x.sha256, ...(x.part ? { part: x.part } : {}) } as ModelFile
+      return { variant: x.variant, path: x.path, bytes: x.bytes, sha256: x.sha256, ...(x.part ? { part: x.part } : {}), ...(x.data ? { data: true } : {}) } as ModelFile
     })
-    if (m.task === 'inpaint' && !['vae_encoder', 'unet', 'vae_decoder'].every((p) => files.some((f) => f.part === p))) fail(`${id}: an inpainting model needs vae_encoder, unet and vae_decoder files`)
-    return { ...(m as unknown as ModelEntry), source: { host: 'huggingface', repo: src!.repo as string, revision: rev as string | null }, files } as ModelEntry
+    // Two files served under one name would overwrite each other on the site.
+    if (new Set(files.map((f) => servedName(f))).size !== files.length) fail(`${id}: two files with the same name`)
+    for (const f of files) if (f.data && !files.some((g) => g.variant === f.variant && g.part === f.part && !g.data)) fail(`${id}: weights for ${f.variant} ${f.part}, which has no graph file`)
+    const parts = TASK_PARTS[m.task as Task]
+    if (parts) {
+      for (const v of new Set(files.map((f) => f.variant))) {
+        if (!parts.every((p) => files.some((f) => f.variant === v && f.part === p && !f.data))) fail(`${id}: ${v} needs the graphs ${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`)
+      }
+    } else if (files.some((f) => f.part)) fail(`${id}: a ${m.task as string} model is one file per variant`)
+    return { ...(m as unknown as ModelEntry), source: { host: 'huggingface', repo: src!.repo as string, revision: rev as string | null, ...(src!.pinnedBy ? { pinnedBy: 'owner' as const } : {}) }, files } as ModelEntry
   })
-  return { schema: 1, models }
+  return { schema: o.schema as 1 | 2, models }
 }
 
 /** A file can be served and downloaded: its model's revision and its own hash are pinned. */
 export const filePinned = (m: ModelEntry, f: ModelFile) => !!m.source.revision && !!f.sha256
 
-/** The model has at least one pinned file (a model of several graphs: all of them). */
-export const modelPinned = (m: ModelEntry) => (m.task === 'inpaint' ? m.files.every((f) => filePinned(m, f)) : m.files.some((f) => filePinned(m, f)))
+/** The variants a model's files come in, in the manifest's order. */
+export const variantsOf = (m: ModelEntry): Variant[] => [...new Set(m.files.map((f) => f.variant))]
+
+/** Every file of one variant (a model of several graphs: each graph and its weights). */
+export const filesOf = (m: ModelEntry, v: Variant): ModelFile[] => m.files.filter((f) => f.variant === v)
+
+/** A variant can be downloaded: every one of its files is pinned. */
+export const variantPinned = (m: ModelEntry, v: Variant) => filesOf(m, v).length > 0 && filesOf(m, v).every((f) => filePinned(m, f))
+
+/** The model has at least one variant whose files are all pinned. */
+export const modelPinned = (m: ModelEntry) => variantsOf(m).some((v) => variantPinned(m, v))
 
 export const deliveryOf = (m: ModelEntry): Delivery => m.delivery ?? 'site'
 
@@ -166,10 +223,15 @@ export function cachePath(m: ModelEntry, f: ModelFile): string {
   return deliveryOf(m) === 'huggingface' ? `models/${m.id}/${m.source.revision}/${f.path}` : servedPath(m, f)
 }
 
-/** Where the deploy puts a file on LightBench's site, relative to the site root. */
+/** A file's name on the site: "<variant>.onnx" for a one-file model, else its own file name (graphs and weights). */
+export const servedName = (f: ModelFile) => (f.part ? baseName(f.path) : `${f.variant}.onnx`)
+
+export const baseName = (path: string) => path.slice(path.lastIndexOf('/') + 1)
+
+/** Where the deploy puts a file on LightBench's site, relative to the site root. Kept in sync with scripts/models.mjs. */
 export function servedPath(m: ModelEntry, f: ModelFile): string {
   if (!m.source.revision) throw new Error(`${m.id} is not pinned`)
-  return `models/${m.id}/${m.source.revision.slice(0, 7)}/${f.variant}.onnx`
+  return `models/${m.id}/${m.source.revision.slice(0, 7)}/${servedName(f)}`
 }
 
 /** The file's pinned source URL (what the deploy workflow fetches; the app never does). */
@@ -197,13 +259,19 @@ export const PARTS = ['vae_encoder', 'unet', 'vae_decoder'] as const
  * several (fp32 only: AI Remove's conversion is published in fp32). Empty: none usable or not pinned.
  */
 export function chooseFiles(m: ModelEntry, gpu: { f16: boolean }, prefer?: Variant): ModelFile[] {
-  if (m.task !== 'inpaint') {
-    const f = chooseFile(m, gpu, prefer)
-    return f ? [f] : []
+  if (m.task === 'inpaint') {
+    if (!modelPinned(m)) return []
+    const fp32 = m.files.filter((f) => f.variant === 'fp32')
+    return PARTS.map((p) => fp32.find((f) => f.part === p)).filter((f): f is ModelFile => !!f)
   }
-  if (!modelPinned(m)) return []
-  const fp32 = m.files.filter((f) => f.variant === 'fp32')
-  return PARTS.map((p) => fp32.find((f) => f.part === p)).filter((f): f is ModelFile => !!f)
+  if (TASK_PARTS[m.task]) {
+    // A model of several graphs that comes in variants (Object select): the variant is chosen by the caller (the run
+    // plan in ai/models.ts), else fp16 with `shader-f16` and fp32 without; every file of that variant.
+    const v = prefer ?? (gpu.f16 && variantPinned(m, 'fp16') ? 'fp16' : 'fp32')
+    return variantPinned(m, v) ? filesOf(m, v) : []
+  }
+  const f = chooseFile(m, gpu, prefer)
+  return f ? [f] : []
 }
 
 export const filesBytes = (files: ModelFile[]) => files.reduce((n, f) => n + f.bytes, 0)
@@ -214,13 +282,15 @@ export interface DownloadItem {
   path: string
   bytes: number
   sha256: string
+  /** The model file it is (absent for the runtime). */
+  file?: ModelFile
 }
 
-/** What installing a model downloads (the runtime only if it isn't on the device yet). */
-export function downloadPlan(info: AiInfo, m: ModelEntry, f: ModelFile, runtimeInstalled: boolean): DownloadItem[] {
+/** What installing a model downloads from the site (the runtime only if it isn't on the device yet), file by file. */
+export function downloadPlan(info: AiInfo, m: ModelEntry, f: ModelFile | ModelFile[], runtimeInstalled: boolean): DownloadItem[] {
   const items: DownloadItem[] = []
   if (!runtimeInstalled) items.push({ what: 'runtime', path: info.runtime.wasm.path, bytes: info.runtime.wasm.bytes, sha256: info.runtime.wasm.sha256 })
-  items.push({ what: 'model', path: servedPath(m, f), bytes: f.bytes, sha256: f.sha256! })
+  for (const x of Array.isArray(f) ? f : [f]) items.push({ what: 'model', path: servedPath(m, x), bytes: x.bytes, sha256: x.sha256!, file: x })
   return items
 }
 

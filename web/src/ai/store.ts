@@ -6,15 +6,17 @@
 // it never serves from this one (the app reads it itself). A record of what is installed sits in the same cache.
 // Nothing in this file is called before the user's opt-in except `installed` and `usage`, which only read the cache.
 
-import { cachePath, deliveryOf, downloadPlan, filesBytes, formatBytes, sha256Hex, sourceUrl, type AiInfo, type DownloadItem, type ModelEntry, type ModelFile, type Variant } from './manifest'
+import { baseName, cachePath, deliveryOf, downloadPlan, filesBytes, formatBytes, sha256Hex, sourceUrl, type AiInfo, type DownloadItem, type ModelEntry, type ModelFile, type Variant } from './manifest'
 import { Sha256 } from '../lib/sha256'
 
 export const CACHE = 'ai-models'
 const RECORD = 'installed.json'
 
 export interface InstalledFile {
-  /** Which graph of a model made of several (AI Remove); absent for a one-file model. */
+  /** Which graph of a model made of several (AI Remove, Object select); absent for a one-file model. */
   part?: string
+  /** The graph's weights, kept beside it (ONNX external data; manifest schema 2). */
+  data?: true
   /** Cache path relative to the site root (models/<id>/<commit>/<file> for a file from Hugging Face). */
   path: string
   bytes: number
@@ -30,7 +32,7 @@ export interface InstalledModel {
   /** Paths relative to the site root, as in the manifest. A model of several files: its largest one. */
   model: { path: string; bytes: number; sha256: string }
   runtime: { path: string; bytes: number; sha256: string }
-  /** Every file of the model (models delivered from Hugging Face). */
+  /** Every file of the model (models of several files: delivered from Hugging Face, or graphs with their weights). */
   files?: InstalledFile[]
   at: number
 }
@@ -120,9 +122,14 @@ export async function installed(m: ModelEntry, env: StoreEnv = defaultEnv()): Pr
   // An entry from another revision of the manifest is outdated: treated as not installed (the panel offers the new one).
   if (rec.revision !== m.source.revision) return null
   if (rec.files) {
-    // Every file of the manifest, with the hash it pins, and every part of it, must be here.
-    if (!m.files.every((f) => rec.files!.some((x) => x.path === cachePath(m, f) && x.sha256 === f.sha256 && x.bytes === f.bytes))) return null
-    for (const f of rec.files) for (let i = 0; i < (f.chunks ?? 0); i++) if (!(await cache.match(url(env, chunkPath(f.path, i))))) return null
+    // Every file of the manifest for the installed variant, with the hash it pins, and every part of it, must be here.
+    const want = m.files.filter((f) => f.variant === rec.variant)
+    if (!want.length || !want.every((f) => rec.files!.some((x) => x.path === cachePath(m, f) && x.sha256 === f.sha256 && x.bytes === f.bytes))) return null
+    for (const f of rec.files) {
+      if (f.chunks) {
+        for (let i = 0; i < f.chunks; i++) if (!(await cache.match(url(env, chunkPath(f.path, i))))) return null
+      } else if (!(await cache.match(url(env, f.path)))) return null
+    }
     if (!(await cache.match(url(env, rec.runtime.path)))) return null
     return rec
   }
@@ -137,7 +144,7 @@ async function runtimeHere(env: StoreEnv, cache: Cache, info: AiInfo): Promise<b
 }
 
 /** The bytes the next install would download (runtime included if it isn't here yet). Reads only. */
-export async function installSize(info: AiInfo, m: ModelEntry, f: ModelFile, env: StoreEnv = defaultEnv()): Promise<{ items: DownloadItem[]; bytes: number }> {
+export async function installSize(info: AiInfo, m: ModelEntry, f: ModelFile | ModelFile[], env: StoreEnv = defaultEnv()): Promise<{ items: DownloadItem[]; bytes: number }> {
   let have = false
   try {
     have = await runtimeHere(env, await env.caches.open(CACHE), info)
@@ -182,13 +189,15 @@ async function fetchChecked(env: StoreEnv, item: DownloadItem, onBytes: (n: numb
 }
 
 /**
- * Downloads a model (and the runtime if needed), checks every file's size and SHA-256 and keeps them. Call only after
- * the user agreed. A file that doesn't match is not kept, and nothing is recorded as installed.
+ * Downloads a model from LightBench's site (and the runtime if needed): one file, or every file of one variant of a
+ * model made of several (graphs and their weights: Object select). Checks every file's size and SHA-256 and keeps
+ * them. Call only after the user agreed. A file that doesn't match is not kept, and nothing is recorded as installed.
  */
-export async function install(info: AiInfo, m: ModelEntry, f: ModelFile, onProgress: (p: Progress) => void = () => {}, signal?: AbortSignal, env: StoreEnv = defaultEnv()): Promise<InstalledModel> {
-  if (!m.source.revision || !f.sha256) throw new Error(`${m.name} isn’t available in this build of LightBench.`)
+export async function install(info: AiInfo, m: ModelEntry, f: ModelFile | ModelFile[], onProgress: (p: Progress) => void = () => {}, signal?: AbortSignal, env: StoreEnv = defaultEnv()): Promise<InstalledModel> {
+  const files = Array.isArray(f) ? f : [f]
+  if (!m.source.revision || !files.length || files.some((x) => !x.sha256) || new Set(files.map((x) => x.variant)).size !== 1) throw new Error(`${m.name} isn’t available in this build of LightBench.`)
   const cache = await env.caches.open(CACHE)
-  const items = downloadPlan(info, m, f, await runtimeHere(env, cache, info))
+  const items = downloadPlan(info, m, files, await runtimeHere(env, cache, info))
   const total = items.reduce((n, x) => n + x.bytes, 0)
   let done = 0
   for (const item of items) {
@@ -199,17 +208,26 @@ export async function install(info: AiInfo, m: ModelEntry, f: ModelFile, onProgr
     await cache.put(url(env, item.path), new Response(buf, { headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(buf.byteLength) } }))
   }
   const rec = await readRecord(env, cache)
+  const kept = items.filter((x) => x.what === 'model')
+  const largest = kept.reduce((a, b) => (b.bytes > a.bytes ? b : a))
+  const several = files.length > 1 || files.some((x) => x.part)
   const entry: InstalledModel = {
     id: m.id,
-    variant: f.variant,
+    variant: files[0].variant,
     revision: m.source.revision,
-    model: { path: items[items.length - 1].path, bytes: f.bytes, sha256: f.sha256 },
+    model: { path: largest.path, bytes: largest.bytes, sha256: largest.sha256 },
     runtime: { path: info.runtime.wasm.path, bytes: info.runtime.wasm.bytes, sha256: info.runtime.wasm.sha256 },
+    ...(several ? { files: kept.map((x) => ({ ...(x.file?.part ? { part: x.file.part } : {}), ...(x.file?.data ? { data: true as const } : {}), path: x.path, bytes: x.bytes, sha256: x.sha256 })) } : {}),
     at: Date.now(),
   }
   // The old files of this model (another variant or revision) go.
   const old = rec.models.find((x) => x.id === m.id)
-  if (old && old.model.path !== entry.model.path) await cache.delete(url(env, old.model.path))
+  if (old && old.model.path !== entry.model.path && !kept.some((x) => x.path === old.model.path)) await cache.delete(url(env, old.model.path))
+  if (several || old?.files) {
+    const mine = new Set(kept.map((x) => url(env, x.path)))
+    const prefix = url(env, `models/${m.id}/`)
+    for (const k of await cache.keys()) if (k.url.startsWith(prefix) && !mine.has(k.url)) await cache.delete(k)
+  }
   await writeRecord(env, cache, { models: [...rec.models.filter((x) => x.id !== m.id), entry] })
   // Ask the browser to keep the site's storage (Chromium decides by itself and shows no prompt; MDN).
   await globalThis.navigator?.storage?.persist?.().catch(() => false)
@@ -477,31 +495,50 @@ export async function installHf(info: AiInfo, m: ModelEntry, files: ModelFile[],
   return entry
 }
 
-/** One file of an installed model from Hugging Face, put together from its parts and checked against its SHA-256. */
-export async function loadPart(m: ModelEntry, part: string, env: StoreEnv = defaultEnv()): Promise<{ model: ArrayBuffer; wasm: ArrayBuffer; rec: InstalledModel; file: InstalledFile }> {
+/** A kept file's bytes (put together from its parts when it came from Hugging Face), checked against its SHA-256. */
+async function readKept(env: StoreEnv, cache: Cache, m: ModelEntry, file: InstalledFile): Promise<ArrayBuffer> {
+  const missing = () => new Error(`${m.name}’s files are missing on this device. Download it again in Settings → AI models.`)
+  const damaged = () => new IntegrityError(`${m.name}’s files on this device are damaged. Remove it in Settings → AI models and download it again.`)
+  let out: Uint8Array<ArrayBuffer>
+  if (file.chunks) {
+    out = new Uint8Array(file.bytes)
+    let at = 0
+    for (let i = 0; i < file.chunks; i++) {
+      const r = await cache.match(url(env, chunkPath(file.path, i)))
+      if (!r) throw missing()
+      const b = new Uint8Array(await r.arrayBuffer())
+      if (at + b.length > out.length) throw damaged()
+      out.set(b, at)
+      at += b.length
+    }
+    if (at !== file.bytes) throw damaged()
+  } else {
+    const r = await cache.match(url(env, file.path))
+    if (!r) throw missing()
+    out = new Uint8Array(await r.arrayBuffer())
+  }
+  if (out.length !== file.bytes || (await sha256Hex(out)) !== file.sha256) throw damaged()
+  return out.buffer
+}
+
+/**
+ * One graph of an installed model of several (AI Remove's from Hugging Face, Object select's from the site), and its
+ * weights file when it has one (ONNX external data, named as the graph refers to it), each checked against its SHA-256.
+ */
+export async function loadPart(m: ModelEntry, part: string, env: StoreEnv = defaultEnv()): Promise<{ model: ArrayBuffer; wasm: ArrayBuffer; rec: InstalledModel; file: InstalledFile; data?: { name: string; bytes: ArrayBuffer } }> {
   const rec = await installed(m, env)
   if (!rec?.files) throw new Error(`${m.name} isn’t on this device.`)
-  const file = rec.files.find((f) => f.part === part)
+  const file = rec.files.find((f) => f.part === part && !f.data)
   if (!file) throw new Error(`${m.name} has no ${part} file on this device.`)
+  const weights = rec.files.find((f) => f.part === part && f.data)
   const cache = await env.caches.open(CACHE)
-  const missing = () => new Error(`${m.name}’s files are missing on this device. Download it again in Settings → AI models.`)
-  const out = new Uint8Array(file.bytes)
-  let at = 0
-  for (let i = 0; i < (file.chunks ?? 0); i++) {
-    const r = await cache.match(url(env, chunkPath(file.path, i)))
-    if (!r) throw missing()
-    const b = new Uint8Array(await r.arrayBuffer())
-    if (at + b.length > out.length) throw new IntegrityError(`${m.name}’s files on this device are damaged. Remove it in Settings → AI models and download it again.`)
-    out.set(b, at)
-    at += b.length
-  }
-  const damaged = () => new IntegrityError(`${m.name}’s files on this device are damaged. Remove it in Settings → AI models and download it again.`)
-  if (at !== file.bytes || (await sha256Hex(out)) !== file.sha256) throw damaged()
+  const model = await readKept(env, cache, m, file)
+  const data = weights ? { name: baseName(weights.path), bytes: await readKept(env, cache, m, weights) } : undefined
   const w = await cache.match(url(env, rec.runtime.path))
-  if (!w) throw missing()
+  if (!w) throw new Error(`${m.name}’s files are missing on this device. Download it again in Settings → AI models.`)
   const wasm = await w.arrayBuffer()
-  if ((await sha256Hex(wasm)) !== rec.runtime.sha256) throw damaged()
-  return { model: out.buffer, wasm, rec, file }
+  if ((await sha256Hex(wasm)) !== rec.runtime.sha256) throw new IntegrityError(`${m.name}’s files on this device are damaged. Remove it in Settings → AI models and download it again.`)
+  return { model, wasm, rec, file, ...(data ? { data } : {}) }
 }
 
 /** The installed files' bytes, checked against their SHA-256 again (a damaged cache entry is reported, not used). */

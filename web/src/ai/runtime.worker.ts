@@ -7,6 +7,10 @@
 // - The WebAssembly file comes from the app's own cache (ai/store.ts), passed in as bytes (`env.wasm.wasmBinary`), so
 //   nothing is fetched here and it works offline.
 // - The WebAssembly CPU provider is the fallback the client may ask for when there is no WebGPU.
+// - Graphs whose weights sit in a file beside them (ONNX external data: SAM 2.1) get those bytes with the graph.
+// - Runs may take named inputs of several types, return several named outputs, and keep outputs here under a handle
+//   (`runNamed`), so a later run of another graph can use them without them crossing to the page and back: Object
+//   select's image embeddings (about 16 MB) stay here while the prompt decoder runs on every pointer move (Part 27).
 
 import * as ort from 'onnxruntime-web/webgpu'
 import { exposeRpc } from '../lib/rpc'
@@ -16,6 +20,8 @@ export type Provider = 'webgpu' | 'wasm'
 
 let wasmSet = false
 const sessions = new Map<string, { session: ort.InferenceSession; provider: Provider }>()
+/** Outputs kept between runs, by handle (CPU tensors: the data stays in this worker). */
+const kept = new Map<string, ort.Tensor>()
 let lostMessage: string | null = null
 
 /** What this worker's GPU offers (for the fp16/fp32 choice). */
@@ -37,6 +43,7 @@ async function watchDevice() {
       lostMessage = info.message || 'The GPU device was lost.'
       for (const s of sessions.values()) void s.session.release().catch(() => {})
       sessions.clear()
+      kept.clear()
     })
   } catch {
     // no device: nothing to watch
@@ -53,7 +60,13 @@ async function deviceGpu(provider: Provider): Promise<GpuName | null> {
   }
 }
 
-async function load(key: string, model: ArrayBuffer, wasm: ArrayBuffer, provider: Provider, threads: number): Promise<{ inputs: string[]; outputs: string[]; inputShape: (number | string)[]; gpu: GpuName | null }> {
+/** A graph's weights file (ONNX external data): the name the graph refers to it by, and its bytes. */
+export interface ExternalData {
+  name: string
+  bytes: ArrayBuffer
+}
+
+async function load(key: string, model: ArrayBuffer, wasm: ArrayBuffer, provider: Provider, threads: number, data?: ExternalData): Promise<{ inputs: string[]; outputs: string[]; inputShape: (number | string)[]; gpu: GpuName | null }> {
   if (lostMessage) throw new Error(`gpu-lost: ${lostMessage}`)
   if (!wasmSet) {
     ort.env.wasm.wasmBinary = wasm
@@ -68,7 +81,12 @@ async function load(key: string, model: ArrayBuffer, wasm: ArrayBuffer, provider
   const old = sessions.get(key)
   if (old && old.provider === provider) return { ...describe(old.session), gpu: await deviceGpu(provider) }
   if (old) await old.session.release().catch(() => {})
-  const session = await ort.InferenceSession.create(new Uint8Array(model), { executionProviders: [provider], graphOptimizationLevel: 'all', logSeverityLevel: 3 })
+  const session = await ort.InferenceSession.create(new Uint8Array(model), {
+    executionProviders: [provider],
+    graphOptimizationLevel: 'all',
+    logSeverityLevel: 3,
+    ...(data ? { externalData: [{ path: data.name, data: new Uint8Array(data.bytes) }] } : {}),
+  })
   sessions.set(key, { session, provider })
   if (provider === 'webgpu') await watchDevice()
   return { ...describe(session), gpu: await deviceGpu(provider) }
@@ -114,6 +132,74 @@ async function runFeeds(key: string, feeds: Record<string, Feed>): Promise<{ dat
   return res
 }
 
+/** An input of `runNamed`: a tensor sent with the call, or an output kept here by an earlier run. */
+export type NamedFeed = Feed | { kept: string }
+
+export interface NamedRun {
+  /** Outputs to keep in this worker (output name → handle), replacing what a handle held. */
+  keep?: Record<string, string>
+  /** Outputs to send back (default: every output not kept). */
+  want?: string[]
+}
+
+export interface NamedResult {
+  outputs: Record<string, { data: Float32Array; dims: number[] }>
+  ms: number
+}
+
+/**
+ * One run with named inputs (sent, or kept here), several named outputs back, and some outputs kept here for later
+ * runs. A missing kept input fails with "kept-missing" (the client computes it again).
+ */
+async function runNamed(key: string, feeds: Record<string, NamedFeed>, o: NamedRun = {}): Promise<NamedResult> {
+  if (lostMessage) throw new Error(`gpu-lost: ${lostMessage}`)
+  const s = sessions.get(key)
+  if (!s) throw new Error('The model isn’t loaded.')
+  const tensors: Record<string, ort.Tensor> = {}
+  for (const [name, f] of Object.entries(feeds)) {
+    if ('kept' in f) {
+      const t = kept.get(f.kept)
+      if (!t) throw new Error(`kept-missing: ${f.kept}`)
+      tensors[name] = t
+    } else tensors[name] = f.type === 'int64' ? new ort.Tensor('int64', f.data, f.dims) : new ort.Tensor('float32', f.data, f.dims)
+  }
+  const t0 = performance.now()
+  const out = await s.session.run(tensors)
+  const outputs: NamedResult['outputs'] = {}
+  const keepNames = new Set(Object.keys(o.keep ?? {}))
+  for (const [name, t] of Object.entries(out)) {
+    if (keepNames.has(name)) {
+      // Kept as a CPU tensor (its data read back once), usable as an input of any session here.
+      const d = (await t.getData()) as Float32Array
+      const handle = o.keep![name]
+      kept.get(handle)?.dispose()
+      kept.set(handle, new ort.Tensor('float32', d instanceof Float32Array ? d : Float32Array.from(d as ArrayLike<number>), [...t.dims]))
+      if (t.location !== 'cpu') t.dispose()
+      continue
+    }
+    if (o.want ? o.want.includes(name) : true) {
+      const d = (await t.getData()) as Float32Array
+      outputs[name] = { data: d instanceof Float32Array ? d : Float32Array.from(d as ArrayLike<number>), dims: [...t.dims] }
+    }
+    t.dispose()
+  }
+  const ms = performance.now() - t0
+  if (lostMessage) throw new Error(`gpu-lost: ${lostMessage}`)
+  return { outputs, ms }
+}
+
+/** Forgets kept outputs: those whose handle starts with `prefix`, or all. */
+function dropKept(prefix?: string) {
+  for (const [k, t] of kept) {
+    if (prefix && !k.startsWith(prefix)) continue
+    t.dispose()
+    kept.delete(k)
+  }
+}
+
+/** The handles kept now (for the client's checks and the tests). */
+const keptHandles = () => [...kept.keys()]
+
 async function release(key?: string) {
   for (const [k, s] of sessions) {
     if (key && k !== key) continue
@@ -122,7 +208,7 @@ async function release(key?: string) {
   }
 }
 
-const handlers = { probe, load, run, runFeeds, release, version: () => ort.env.versions?.web ?? '' }
+const handlers = { probe, load, run, runFeeds, runNamed, dropKept, keptHandles, release, version: () => ort.env.versions?.web ?? '' }
 export type RuntimeApi = typeof handlers
 // ONNX Runtime's WebAssembly threads are workers started from this same script (in a build, its code is in this chunk)
 // with the name "em-pthread…": they run ONNX Runtime's own message loop, which the RPC handler must not replace.

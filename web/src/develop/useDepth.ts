@@ -3,9 +3,9 @@
 // a Depth range stores. The panel shows what is happening and why it can't (no WebGPU, not in this build, …).
 
 import { useRef, useState } from 'react'
-import { computeDepth, Fp16InvalidError, renderSize, type AsShot } from '../ai/depth'
-import { chooseFile, modelPinned, type DepthInput, type ModelEntry, type ModelFile, type Variant } from '../ai/manifest'
-import { AI, depthModel, providerFor } from '../ai/models'
+import { computeDepth, depthLargestTensor, Fp16InvalidError, modelSize, renderSize, type AsShot } from '../ai/depth'
+import { chooseFile, depthInput, modelPinned, type DepthInput, type ModelEntry, type ModelFile, type Variant } from '../ai/manifest'
+import { AI, depthModel, providerFor, WASM_FALLBACK } from '../ai/models'
 import { runtimeMessage } from '../ai/runtime'
 import { installed, type InstalledModel } from '../ai/store'
 import { diagnostics } from '../diagnostics/recorder'
@@ -69,12 +69,24 @@ export function useDepth(renderAsShot: (input: DepthInput) => Promise<AsShot | n
       }
       setStatus(p.provider === 'wasm' ? 'Computing the depth map on the CPU (once for this photo; no WebGPU here, so it takes longer)…' : 'Computing the depth map (once for this photo)…')
       const r0 = performance.now()
-      const shot = await renderAsShot(model.input!)
+      const shot = await renderAsShot(depthInput(model))
       if (!shot) return null
       const renderMs = performance.now() - r0
+      // A photo whose attention tensor wouldn't fit the GPU's largest binding runs on the processor (ONNX Runtime
+      // 1.30.0 computes such tensors wrong on WebGPU: depth.ts `depthLargestTensor`).
+      let provider = p.provider
+      const [mw, mh] = modelSize(shot.width, shot.height, depthInput(model))
+      const binding = p.gpu.maxStorageBufferBindingSize ?? 0
+      if (provider === 'webgpu' && binding > 0 && depthLargestTensor(mw, mh, rec.variant) > binding) {
+        if (!WASM_FALLBACK) {
+          setError('This photo’s shape is too large for this GPU’s AI runtime. The other masks work as before.')
+          return null
+        }
+        provider = 'wasm'
+        setStatus('Computing the depth map on the CPU (once for this photo; this photo is too large for this GPU’s AI runtime, so it takes longer)…')
+      }
       // The model's GPU work counts as Develop's (Part 14's foreground gate): background work (Export, the batch
       // developer) waits for it, up to the gate's limit, as it waits for Develop's drawings.
-      const provider = p.provider
       const version = AI.runtime.version
       const res = await gpuGate.foreground(() => computeDepth(model, shot, provider, version))
       const run: LastRun = { inferMs: res.inferMs, totalMs: res.totalMs, provider: res.provider, variant: rec.variant, size: res.size, bytes: res.depth.raster.data.length }

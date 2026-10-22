@@ -42,8 +42,9 @@ struct Pass {
 @group(0) @binding(7) var<storage, read_write> loOut: array<vec4f>;
 @group(0) @binding(8) var<storage, read_write> guide: array<f32>;
 @group(0) @binding(9) var<storage, read_write> planes: array<vec4f>;
-// Depth ranges (PHASE3.md Part 24): the drawn image's uv → sensor uv at (n + 1)² grid points (mask-render.ts
-// `sensorGrid`), and the depth map in the sensor frame (r8unorm, 1 = nearest; depth-map.ts).
+// Depth ranges (PHASE3.md Part 24) and AI selections (Part 27): the drawn image's uv → sensor uv at (n + 1)² grid points
+// (mask-render.ts `sensorGrid`), and the component's map in the sensor frame (r8unorm): the depth map (1 = nearest) or
+// the AI selection's matte (1 = selected).
 @group(0) @binding(10) var<storage, read> grid: array<vec2f>;
 @group(0) @binding(11) var depthTex: texture_2d<f32>;
 
@@ -171,6 +172,10 @@ fn componentValue(i: vec2u) -> f32 {
       let near = textureSampleLevel(depthTex, samp, sensorUv(p, u32(P.p1.y)), 0.0).r;
       if (P.p1.x > 0.5) { return near; }
       return trapezoid(100.0 * (1.0 - near), P.p0);
+    }
+    case 7u: {
+      // An AI selection: its matte at the pixel's sensor uv (bilinear); p1.y = grid cells.
+      return textureSampleLevel(depthTex, samp, sensorUv(p, u32(P.p1.y)), 0.0).r;
     }
     default: { return 0.0; }
   }

@@ -81,6 +81,7 @@ import { cleanName, makeSnapshot, sortSnapshots, uniqueName, type Snapshot } fro
 import { snapshotsChanged } from './snapshotStore'
 import { useMasking } from './useMasking'
 import { renderSize, useDepth } from './useDepth'
+import { useObjectSelect } from './useObjectSelect'
 import { useAiRemove } from './useAiRemove'
 import { ModelDialog } from '../ai/ModelDialog'
 import { MaskOverlay } from './MaskOverlay'
@@ -948,16 +949,22 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
    * no crop, angle, perspective, flips, lens correction, masks or effects (Part 25: Texture, Clarity, Dehaze, vignette,
    * grain, Glow); the camera's orientation), and its uv → sensor map.
    */
-  const depth = useDepth(async (input) => {
+  const renderAsShot = async (long: (w: number, h: number) => number) => {
     const engine = engineRef.current
     const x = latest.current
     const inf = x.info
     if (!engine || !inf) return null
     const s: DevelopSettings = withMasksList({ ...x.settings, geometry: DEFAULT_GEOMETRY, lens: { ...x.settings.lens, enabled: false }, detail: undefined, effects: undefined }, undefined)
     const g = engine.geometry(DEFAULT_GEOMETRY)
-    const img = await gpuGate.foreground(() => engine.renderImage(displayUniforms(s), multipliers(s, inf), renderSize(g.size[0], g.size[1], input)))
+    const img = await gpuGate.foreground(() => engine.renderImage(displayUniforms(s), multipliers(s, inf), long(g.size[0], g.size[1])))
     return { rgba: img.data, width: img.width, height: img.height, uvToSensor: g.uvToSensor, sensor: sensorSize() }
-  })
+  }
+  const depth = useDepth((input) => renderAsShot((w, h) => renderSize(w, h, input)))
+  /**
+   * Object select (PHASE3.md Part 27): the photo rendered as shot, as for the depth map, with its long side at the
+   * encoder's 1.5 × (not larger than the photo).
+   */
+  const objectSel = useObjectSelect({ renderAsShot: (long) => renderAsShot((w, h) => Math.min(Math.max(w, h), long)), photo: () => (status.kind === 'ready' ? String(id) : null) })
   /** AI Remove (PHASE3.md Part 26): Moebius for the Remove brush's AI mode; the spot being generated. */
   const aiRemove = useAiRemove()
   const [aiPending, setAiPending] = useState<Spot | null>(null)
@@ -993,6 +1000,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       setReveal({ id: 'masks', n: Date.now() })
     },
     depth: depth.obtain,
+    object: objectSel,
     toSensorUv: (uv) => {
       const engine = engineRef.current
       if (!engine) return null
@@ -2095,7 +2103,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   })
   // While masking on the photo, Develop listens to 'mask' (PHASE3.md Part 23).
   const maskNew = (cmd: string) => {
-    const kind = ({ 'develop.maskBrush': 'brush', 'develop.maskLinear': 'linear', 'develop.maskRadial': 'radial', 'develop.maskColour': 'colour', 'develop.maskLuminance': 'luminance', 'develop.maskDepth': 'depth' } as const)[cmd as 'develop.maskBrush']
+    const kind = ({ 'develop.maskBrush': 'brush', 'develop.maskLinear': 'linear', 'develop.maskRadial': 'radial', 'develop.maskColour': 'colour', 'develop.maskLuminance': 'luminance', 'develop.maskDepth': 'depth', 'develop.maskObject': 'ai' } as const)[cmd as 'develop.maskBrush']
     if (!kind || status.kind !== 'ready') return false
     masking.newOf(kind)
     return true
@@ -2116,7 +2124,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'develop.maskRadial':
       case 'develop.maskColour':
       case 'develop.maskLuminance':
-      case 'develop.maskDepth': maskNew(cmd); break
+      case 'develop.maskDepth':
+      case 'develop.maskObject': maskNew(cmd); break
       case 'mask.overlay': masking.setOverlay({ ...masking.overlay, on: !masking.overlay.on }); break
       case 'mask.overlayColour': masking.nextOverlayColour(); break
       case 'mask.overlayMode': masking.nextOverlayMode(); break
@@ -2149,7 +2158,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'develop.maskRadial':
       case 'develop.maskColour':
       case 'develop.maskLuminance':
-      case 'develop.maskDepth': maskNew(cmd); break
+      case 'develop.maskDepth':
+      case 'develop.maskObject': maskNew(cmd); break
       case 'develop.grid': onLibrary(); break
       case 'develop.curveTarget': toggleCurveTarget(); break
       case 'develop.curveReset': changeCurve('Reset tone curve', undefined, true); break
@@ -2678,12 +2688,30 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                 onStroke={masking.onStroke}
                 onPick={(uv, add) => void masking.onPick(uv, add)}
                 onPan={(dx, dy) => panBy(dx, dy)}
+                object={masking.objectMode ? {
+                  mode: masking.objectMode,
+                  ready: objectSel.ready && !masking.objectBusy,
+                  preview: objectSel.preview,
+                  touchPoint: masking.touchPoint,
+                  onHover: masking.onObjectHover,
+                  onClick: (pt, shift, alt, box) => void masking.onObjectClick(pt, shift, alt, box),
+                  onTap: (pt) => {
+                    masking.setTouchPoint(pt)
+                    masking.onObjectHover(pt)
+                  },
+                } : null}
               />
             )
           })()}
           {masking.active && !draft && !guiding && (
             <div className="dbadge crop-hint">
-              {before || bypass.masks ? 'Masks hidden' : 'Masking: K brush · M linear · Shift+M radial · Shift+J colour · Shift+Q luminance · O overlay · Alt-drag erases · Enter finishes'}
+              {before || bypass.masks
+                ? 'Masks hidden'
+                : masking.objectMode
+                  ? masking.objectMode === 'refine'
+                    ? 'Object select: click selects something new · Shift-click adds · Alt-click removes · drag selects inside a box · Esc ends'
+                    : 'Object select: point at something to preview it · click selects it · drag selects inside a box · Esc ends'
+                  : 'Masking: K brush · M linear · Shift+M radial · Shift+J colour · Shift+Q luminance · O overlay · Alt-drag erases · Enter finishes'}
             </div>
           )}
           {removing && !draft && !guiding && (
@@ -2906,6 +2934,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   masks={masking.draft ?? settings.masks ?? []}
                   m={masking}
                   depth={depth}
+                  object={objectSel}
                   disabled={status.kind !== 'ready'}
                   showHint={hintsPref === 1}
                   acr={acr}
@@ -3081,7 +3110,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         </SectionEyeContext.Provider>
       </aside>
       {aiRemove.ask && (
-        <ModelDialog model={aiRemove.ask.model} files={aiRemove.ask.files} purpose={aiRemove.ask.slow ? 'AI Remove (without WebGPU here it runs on the processor: several minutes per spot)' : 'AI Remove'} onInstalled={(rec) => aiRemove.ask?.done(rec)} onClose={() => aiRemove.ask?.done(null)} />
+        <ModelDialog model={aiRemove.ask.model} files={aiRemove.ask.files} purpose={aiRemove.ask.slow ? 'AI Remove (on this computer it runs on the processor: several minutes per spot)' : 'AI Remove'} onInstalled={(rec) => aiRemove.ask?.done(rec)} onClose={() => aiRemove.ask?.done(null)} />
+      )}
+      {objectSel.ask && (
+        <ModelDialog model={objectSel.ask.model} files={objectSel.ask.files} purpose={objectSel.ask.slow ? 'Object select (on this computer it runs on the processor, without a suitable graphics card: preparing each photo takes longer)' : 'Object select'} onInstalled={(rec) => objectSel.ask?.done(rec)} onClose={() => objectSel.ask?.done(null)} />
       )}
       {depth.ask && (
         <ModelDialog model={depth.ask.model} file={depth.ask.file} purpose="The Depth range mask" onInstalled={(rec) => depth.ask?.done(rec)} onClose={() => depth.ask?.done(null)} />

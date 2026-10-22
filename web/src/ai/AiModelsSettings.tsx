@@ -22,7 +22,8 @@ export function AiModelsSettings() {
   )
 }
 
-const PURPOSE: Record<string, string> = { depth: 'The Depth range mask', inpaint: 'AI Remove' }
+const PURPOSE: Record<string, string> = { depth: 'The Depth range mask', inpaint: 'AI Remove', segment: 'Object select' }
+const TITLE_NOTE: Record<string, string> = { inpaint: ' (AI Remove)', segment: ' (Object select)' }
 
 function ModelRow({ id }: { id: string }) {
   const model = AI!.models.find((m) => m.id === id)!
@@ -36,7 +37,7 @@ function ModelRow({ id }: { id: string }) {
   const [update, setUpdate] = useState<{ checking: boolean; text: string | null }>({ checking: false, text: null })
   useEffect(() => {
     void providerFor(model).then((p) => {
-      setFiles(chooseFiles(model, p.gpu))
+      setFiles(model.task === 'segment' && !p.provider ? [] : chooseFiles(model, p.gpu, p.variant))
       setWhy(p.why)
     })
   }, [model])
@@ -62,12 +63,12 @@ function ModelRow({ id }: { id: string }) {
   }
   return (
     <div className="model-row">
-      <h3>{model.name}{model.task === 'inpaint' ? ' (AI Remove)' : ''}</h3>
+      <h3>{model.name}{TITLE_NOTE[model.task] ?? ''}</h3>
       <p className="small" role="status">
         {st.loading
           ? 'Checking…'
           : rec
-            ? `On this device (${rec.files ? `${rec.files.length} files` : rec.variant}, ${formatBytes(installedBytes(rec))} with the runtime; ${formatBytes(st.bytes)} for all AI models).`
+            ? `On this device (${rec.files ? `${new Set(model.files.map((f) => f.variant)).size > 1 ? `${rec.variant}, ` : ''}${rec.files.length} files` : rec.variant}, ${formatBytes(installedBytes(rec))} with the runtime; ${formatBytes(st.bytes)} for all AI models).`
             : !st.available
               ? 'Not available in this build of LightBench: its files haven’t been published with it yet.'
               : partial
