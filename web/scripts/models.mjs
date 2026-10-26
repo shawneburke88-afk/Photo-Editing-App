@@ -2,7 +2,9 @@
 //
 //   node scripts/models.mjs fetch --out dist [--from DIR]
 //       The deploy workflow, after `npm run build`: downloads every pinned file of web/models/manifest.json from
-//       https://huggingface.co/<repo>/resolve/<revision>/<path>, checks its byte count and SHA-256 and writes it to
+//       https://huggingface.co/<repo>/resolve/<revision>/<path> (or, for a model published on GitHub in Git LFS,
+//       https://media.githubusercontent.com/media/<repo>/<revision>/<path>: YuNet, PHASE3.md Part 28), checks its byte
+//       count and SHA-256 and writes it to
 //       dist/models/<id>/<revision 7>/<variant>.onnx, or <file name> for a model of several graphs and weights files
 //       (Object select's SAM 2.1, PHASE3.md Part 27) (what the app downloads, on the user's opt-in). Any mismatch
 //       fails the build. A model that isn't pinned yet is skipped with a warning (the app then says it isn't available).
@@ -38,8 +40,18 @@ export const pinned = (m, f) => /^[0-9a-f]{40}$/.test(m.source?.revision ?? '') 
 /** "<variant>.onnx" for a one-file model, else the file's own name (a graph, or its weights beside it: schema 2). */
 export const servedName = (f) => (f.part ? f.path.slice(f.path.lastIndexOf('/') + 1) : `${f.variant}.onnx`)
 export const servedPath = (m, f) => `models/${m.id}/${m.source.revision.slice(0, 7)}/${servedName(f)}`
-export const sourceUrl = (m, f) => `https://huggingface.co/${m.source.repo}/resolve/${m.source.revision}/${f.path}`
-export const pointerUrl = (m, f, rev) => `https://huggingface.co/${m.source.repo}/raw/${rev}/${f.path}`
+/**
+ * The pinned file's URL: Hugging Face's `/resolve/<commit>/`, or for a model from GitHub (`"host": "github"`: YuNet, in
+ * OpenCV Zoo's Git LFS) `media.githubusercontent.com/media/<repo>/<commit>/` (raw.githubusercontent.com serves the LFS
+ * pointer, not the file). Kept in sync with src/ai/manifest.ts.
+ */
+export const sourceUrl = (m, f) =>
+  m.source.host === 'github'
+    ? `https://media.githubusercontent.com/media/${m.source.repo}/${m.source.revision}/${f.path}`
+    : `https://huggingface.co/${m.source.repo}/resolve/${m.source.revision}/${f.path}`
+/** The Git LFS pointer of a file at a commit (its sha256 and size). */
+export const pointerUrl = (m, f, rev) =>
+  m.source.host === 'github' ? `https://raw.githubusercontent.com/${m.source.repo}/${rev}/${f.path}` : `https://huggingface.co/${m.source.repo}/raw/${rev}/${f.path}`
 /** Served by LightBench's site (the deploy fetches it), or downloaded by the app from Hugging Face (never deployed). */
 export const deployed = (m) => (m.delivery ?? 'site') === 'site'
 
@@ -218,7 +230,7 @@ async function pin(manifest, revision, save, path = MANIFEST) {
       const r = await fetch(pointerUrl(m, f, rev))
       if (!r.ok) throw new Error(`${pointerUrl(m, f, rev)}: HTTP ${r.status}`)
       const ptr = parsePointer(await r.text())
-      const buf = await download(`https://huggingface.co/${m.source.repo}/resolve/${rev}/${f.path}`)
+      const buf = await download(sourceUrl({ ...m, source: { ...m.source, revision: rev } }, f))
       const got = sha256(buf)
       if (buf.length !== ptr.bytes || got !== ptr.sha256) throw new Error(`${m.id} ${f.variant}: download (${buf.length}, ${got}) doesn't match its LFS pointer (${ptr.bytes}, ${ptr.sha256})`)
       f.bytes = ptr.bytes

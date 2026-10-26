@@ -25,13 +25,19 @@ export const REVISION_RE = /^[0-9a-f]{40}$/
 
 export type Variant = 'fp16' | 'fp32'
 /**
- * What the app uses a model for: the Depth range mask, AI Remove, and Object select (AI masks part 1: a promptable
- * segmenter with an image encoder and a prompt decoder). The later AI mask models (people, faces, sky, subject) add
- * their task here and a check below.
+ * What the app uses a model for: the Depth range mask, AI Remove, Object select (AI masks part 1: a promptable
+ * segmenter with an image encoder and a prompt decoder), and People (part 2, docs/PHASE3.md Part 28): finding people
+ * ("detect": RF-DETR-Seg Nano), their faces ("face": YuNet) and their parts ("parse": MediaPipe Selfie Multiclass).
+ * The later AI mask models (sky, subject) add their task here and a check below.
  */
-export const TASKS = ['depth', 'inpaint', 'segment'] as const
+export const TASKS = ['depth', 'inpaint', 'segment', 'detect', 'face', 'parse'] as const
 export type Task = (typeof TASKS)[number]
 export type Delivery = 'site' | 'huggingface'
+/**
+ * Where a model's files are published: Hugging Face, or a GitHub repository (YuNet: OpenCV Zoo, its files in Git LFS,
+ * fetched by the deploy from `media.githubusercontent.com` at the pinned commit; the app gets them from LightBench's site).
+ */
+export type SourceHost = 'huggingface' | 'github'
 
 export interface ModelFile {
   variant: Variant
@@ -85,8 +91,11 @@ export interface ModelEntry {
    * `pinnedBy: "owner"`: pinned by the owner's decision from a checked run (Object select's SAM 2.1: MASKS_PREP.md);
    * `models.mjs pin` leaves it alone, as it leaves the models delivered from Hugging Face.
    */
-  source: { host: 'huggingface'; repo: string; revision: string | null; pinnedBy?: 'owner' }
-  /** The depth model's (DepthInput) or the segmenter's (SegmentInput) preprocessing. */
+  source: { host: SourceHost; repo: string; revision: string | null; pinnedBy?: 'owner' }
+  /**
+   * The depth model's (DepthInput) or the segmenter's (SegmentInput) preprocessing; the people models ("detect",
+   * "parse") give theirs as a SegmentInput too: a square input of `size`, (RGB / 255 − mean) / std.
+   */
   input?: DepthInput | SegmentInput
   /** Which checkpoint of the original weights the files are, and where that is stated. */
   checkpoint?: { name: string; source: string }
@@ -113,6 +122,10 @@ export interface Manifest {
 export const TASK_PARTS: Partial<Record<Task, readonly string[]>> = {
   inpaint: ['vae_encoder', 'unet', 'vae_decoder'],
   segment: ['encoder', 'decoder'],
+  // The People models are one graph each, recorded as a part named "model" (so they load as the graphs above do).
+  detect: ['model'],
+  face: ['model'],
+  parse: ['model'],
 }
 
 /** The shared runtime (one for every model, as PHASE4_MODELS.md plans): ONNX Runtime Web's WebAssembly file. */
@@ -156,13 +169,13 @@ export function parseManifest(json: unknown): Manifest {
     const lic = m.licence as Record<string, unknown> | undefined
     if (!lic || !isStr(lic.id) || !isStr(lic.url) || !isStr(lic.statement)) fail(`${id}: licence incomplete`)
     const src = m.source as Record<string, unknown> | undefined
-    if (!src || src.host !== 'huggingface' || !isStr(src.repo) || !/^[\w.-]+\/[\w.-]+$/.test(src.repo)) fail(`${id}: source incomplete`)
+    if (!src || (src.host !== 'huggingface' && src.host !== 'github') || !isStr(src.repo) || !/^[\w.-]+\/[\w.-]+$/.test(src.repo)) fail(`${id}: source incomplete`)
     const rev = src!.revision
     if (rev !== null && !(isStr(rev) && REVISION_RE.test(rev))) fail(`${id}: revision must be a 40-digit commit or null`)
     if (src!.pinnedBy !== undefined && src!.pinnedBy !== 'owner') fail(`${id}: pinnedBy must be "owner"`)
     const inp = m.input as Record<string, unknown> | undefined
     if (m.task === 'depth' && (!inp || !isNum(inp.shortSide) || !isNum(inp.multiple) || !isTriple(inp.mean) || !isTriple(inp.std))) fail(`${id}: input incomplete`)
-    if (m.task === 'segment' && (!inp || !isNum(inp.size) || inp.size < 64 || inp.size > 4096 || !isTriple(inp.mean) || !isTriple(inp.std))) fail(`${id}: input incomplete`)
+    if ((m.task === 'segment' || m.task === 'detect' || m.task === 'parse') && (!inp || !isNum(inp.size) || inp.size < 64 || inp.size > 4096 || !isTriple(inp.mean) || !isTriple(inp.std))) fail(`${id}: input incomplete`)
     const up = (m.updates as { upstream?: Record<string, unknown> } | undefined)?.upstream
     if (m.updates !== undefined && (!up || !isStr(up.repo) || !REVISION_RE.test(String(up.revision)) || !isStr(up.path) || !isNum(up.bytes) || !SHA256_RE.test(String(up.sha256)))) fail(`${id}: updates incomplete`)
     const gpu = m.gpu as Record<string, unknown> | undefined
@@ -191,7 +204,8 @@ export function parseManifest(json: unknown): Manifest {
         if (!parts.every((p) => files.some((f) => f.variant === v && f.part === p && !f.data))) fail(`${id}: ${v} needs the graphs ${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`)
       }
     } else if (files.some((f) => f.part)) fail(`${id}: a ${m.task as string} model is one file per variant`)
-    return { ...(m as unknown as ModelEntry), source: { host: 'huggingface', repo: src!.repo as string, revision: rev as string | null, ...(src!.pinnedBy ? { pinnedBy: 'owner' as const } : {}) }, files } as ModelEntry
+    if (src!.host === 'github' && (m.delivery ?? 'site') !== 'site') fail(`${id}: a model from GitHub is served by LightBench's site`)
+    return { ...(m as unknown as ModelEntry), source: { host: src!.host as SourceHost, repo: src!.repo as string, revision: rev as string | null, ...(src!.pinnedBy ? { pinnedBy: 'owner' as const } : {}) }, files } as ModelEntry
   })
   return { schema: o.schema as 1 | 2, models }
 }
@@ -234,9 +248,14 @@ export function servedPath(m: ModelEntry, f: ModelFile): string {
   return `models/${m.id}/${m.source.revision.slice(0, 7)}/${servedName(f)}`
 }
 
-/** The file's pinned source URL (what the deploy workflow fetches; the app never does). */
+/**
+ * The file's pinned source URL (what the deploy workflow fetches; the app fetches it itself only for a model delivered
+ * from Hugging Face). A GitHub file kept in Git LFS is served at media.githubusercontent.com (raw.githubusercontent.com
+ * gives its LFS pointer). Kept in sync with scripts/models.mjs.
+ */
 export function sourceUrl(m: ModelEntry, f: ModelFile): string {
   if (!m.source.revision) throw new Error(`${m.id} is not pinned`)
+  if (m.source.host === 'github') return `https://media.githubusercontent.com/media/${m.source.repo}/${m.source.revision}/${f.path}`
   return `https://huggingface.co/${m.source.repo}/resolve/${m.source.revision}/${f.path}`
 }
 
