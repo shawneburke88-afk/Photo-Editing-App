@@ -37,6 +37,7 @@ See [PLAN.md](PLAN.md#phase-3--editing-depth) for the whole phase and [USABILITY
   - [Hardening and cleanup (owner, 2026-10-21)](#hardening-and-cleanup-owner-2026-10-21)
 - [Part 26: AI Remove](#part-26-ai-remove)
 - [Part 27: AI masks, part 1: groundwork and Object select](#part-27-ai-masks-part-1-groundwork-and-object-select)
+- [Part 29: AI masks, part 3: Sky](#part-29-ai-masks-part-3-sky)
 
 ## Part 1: Process versions, the tool stack, and Crop
 
@@ -3667,3 +3668,98 @@ Headless Chromium, SwiftShader WebGPU (no `shader-f16`), `?gpu=readback`, the st
 ### Files
 
 New: `web/src/ai/segment.ts`, `objectSelect.ts`, `src/develop/useObjectSelect.ts`, `web/scripts/sam-check.mjs`, `sam-parity.py`, `web/scripts/fixtures/ai-masks/` (astronaut.png and SOURCE.md), `web/models/notices/sam2.LICENSE.txt`; tests `src/ai/manifest2.test.ts`, `segment.test.ts`, `src/engine/develop/ai-mask.test.ts`, `web/scripts/sam-check.test.mjs`. Changed: `web/models/manifest.json` (schema 2, SAM 2.1), `src/ai/manifest.ts`, `store.ts`, `runtime.ts`, `runtime.worker.ts`, `models.ts`, `ModelDialog.tsx`, `AiModelsSettings.tsx`, `depth.ts` (input accessor), `src/lib/rpc.ts` (buffers handed over inside an argument), `src/engine/develop/masks.ts`, `mask-render.ts`, `depth-map.ts` (caps per kind, decoder cache), `src/engine/gpu/mask-stage.ts`, `mask.wgsl` (case 7), `src/develop/MasksPanel.tsx`, `MaskOverlay.tsx`, `useMasking.ts`, `maskUi.ts`, `help.ts`, `DevelopView.tsx`, `useDepth.ts`, `src/settings/actions.ts`, `src/bench/run.ts`, `src/index.css`, `web/scripts/models.mjs` (+ test), `.github/workflows/ai-models.yml` (`sam-check`), THIRD_PARTY_NOTICES.md, docs/USABILITY.md. Not changed: release notes and the version.
+
+## Part 29: AI masks, part 3: Sky
+
+**What it does.** A **Sky** button in the Masks group's AI row finds the sky in the photo and makes it a mask ("Sky 1") in one history step. The model is **EfficientViT-Seg B1 trained on ADE20K** (MIT Han Lab; Apache-2.0), in **LightBench's own ONNX conversion**, published as a GitHub Release of this repository and served from LightBench's site like the other models. The model's coarse answer (one class per 8 × 8 input pixels) is refined against the photo so branches, wires and lattices against the sky come out of the mask. Like every AI mask (Part 27) the matte is kept in the edit and the .xmp (at most 1024 px on its long side), so it draws everywhere without the model; old edits are unchanged (below). Part 2 (People) is Part 28, built in parallel.
+
+### Owner's decisions and how they are built
+
+| Decision | Built as |
+|---|---|
+| Sky model: EfficientViT-Seg B1 ADE20K, **our own ONNX export** | `web/scripts/sky/export_efficientvit.py`, run on GitHub's runner by the "AI models" workflow's new **`efficientvit-export`** task: the checkpoint the manifest pins (`convertedFrom`: `han-cai/efficientvit-seg` at `cf3ccaf9…`, `efficientvit_seg_b1_ade20k.pt`, 19,339,726 bytes, SHA-256 `59cca6a7…`) is downloaded and checked, the model is built with the authors' code at its pinned commit (`mit-han-lab/efficientvit` `de7d7733…`; `create_efficientvit_seg_model` loads every weight strictly; the authors' own `onnx_export.py` uses `pretrained=False`), and exported with `torch.onnx.export` (torch 2.5.1, TorchScript exporter, opset 17, onnx-simplifier 0.8.1) with **height and width free**: input `pixel_values` float32 [1, 3, H, W], output `logits` [1, 150, H/8, W/8]. The candidate check (MASKS_PREP.md) exported a fixed 512 × 512 graph; a free size lets each photo keep its aspect as the authors' ADE20K evaluation does. |
+| Licence and training data | Apache-2.0 (`web/models/notices/efficientvit.LICENSE.txt`, the repository's LICENSE at `de7d773`; checked byte for byte against the clone in the export job). Training data in plain words in the manifest, the download dialog and Settings → AI models: ADE20K (about 20,000 scene photos outlined into 150 kinds of thing, published by MIT; non-commercial research and education only) and ImageNet-1K for the backbone (likewise non-commercial research and education only); both named. Credit: Cai, Li, Hu, Gan and Han, ICCV 2023. |
+| Hosting: **GitHub Release assets in this repo**; the deploy copies them into the site | Manifest `"source": { "host": "github-release", "repo": "shawneburke88-afk/Photo-Editing-App", "tag": "models-efficientvit-seg-b1-ade20k-1", "revision": "36abc1dd…" }` (the commit the tag points at). `models.mjs` (`releaseUrl`, `sourceUrl`) fetches `https://github.com/<repo>/releases/download/<tag>/<asset>` and checks size and SHA-256 like any other file; `pin` leaves it alone; `parseManifest` requires the tag, plain asset names and site delivery. Served at `models/efficientvit-seg-b1-ade20k/36abc1d/efficientvit_seg_b1_ade20k.onnx` with `LICENSE.txt` beside it. |
+| Publishing: the workflow's token, `contents: write` scoped to that job, `gh release`, only when the check passes, never overwriting | The workflow's default permission is now **read**; the `models` job keeps `contents: write` (it commits the pinned manifest), the export-and-check job `sky` is read-only, and a separate **`sky-publish`** job, the only other one with `contents: write`, runs only for `efficientvit-export` with **publish** ticked and only when the `sky` job's PyTorch comparison **and** the app's sky-check passed. It re-checks the artifact's SHA-256 against the `sky` job's output, refuses if the release **or** the tag exists ("never overwritten: give a new export a new tag"), runs `gh release create <tag> --target <commit> --latest=false` with the ONNX file, `LICENSE.txt`, `SOURCE.md` (where it came from, how it was made and checked, licence, training data) and `export.json`, then downloads the asset by its public URL and checks the bytes. |
+| Mattes are shapes, at most 1024 px; pasted parts wait for Compute | `kind: 'ai'`, `what: 'sky'` (`AI_WHATS`), no prompt; stored as Part 27's mattes. Paste drops the matte (`withoutRasters`) and the part waits; **Compute for this photo** finds the photo's sky once and gives it to every waiting Sky part (one history step). |
+| Presets keep Sky parts, waiting | `presetMasks` already kept AI parts other than Object selections without their matte (Part 27); a preset with a Sky mask (its sliders, Invert, its other parts) applies it waiting for Compute. Tested in `sky-mask.test.ts` and the e2e. |
+| No notes in the UI; a tooltip on every new control; the legal notices kept | Tooltips on the Sky button, the Sky part's two buttons and the "Part to combine" list; the dialog's licence and training data; THIRD_PARTY_NOTICES.md has the model's row and licence section. |
+
+### Using it
+
+| Behaviour | Detail |
+|---|---|
+| The AI row | **Object**, **Depth**, **Sky**. Sky's tooltip says what it does, that the model runs on this computer, and (in the help) that Invert gives "everything except the sky". No keyboard shortcut (as Object and Depth have none by default). |
+| First use | The download dialog (below). Nothing is fetched before Download; Not now: no mask, no step. |
+| A click | "Finding the sky…" (or "…on the processor (…)" with the reason), then **Sky 1**: one history step "New mask: Sky 1", undone by one Undo. |
+| As a part | Part to combine → **Sky (AI)** → + Add / − Subtract / ∩ Intersect: e.g. a Linear gradient minus the sky. The photo's sky is found once while the photo is open and reused; **Find the sky again** runs the model again (one step). |
+| Everything except the sky | The Sky part's **Everything except the sky** button (shown when the sky is the mask's only part) is the mask's Invert, one step ("Sky 1: invert"); with other parts, the part's own **Invert** leaves the sky out. |
+| Messages | Not in this build; no WebGPU or a GPU limit too small (it runs on the processor and says so); Part 24's runtime messages; each with a link to Settings → AI models. |
+| Settings → AI models | "EfficientViT-Seg B1 (ADE20K) (Sky mask)": status, Download…, Remove, About this model (what it does, licence, training data, credit, the file with its size and SHA-256, and "LightBench's own conversion of efficientvit_seg_b1_ade20k.pt (han-cai/efficientvit-seg at cf3ccaf, SHA-256 …) with the authors' code (mit-han-lab/efficientvit at de7d773), published as the release models-efficientvit-seg-b1-ade20k-1 …; served by LightBench's own site"). |
+
+### Download dialog
+
+"Download EfficientViT-Seg B1 (ADE20K)?": the Sky mask needs it; downloaded **once**, from **LightBench's own site**, only if the user agrees, checked against SHA-256, kept on the device, removable; the size: **19.3 MB** for the model (fp32, the only variant) plus ONNX Runtime Web's 26.8 MB if it isn't on the device yet; **Licence: Apache-2.0** with the note that the file is LightBench's own conversion published with the licence and a note of where it came from; **Training data, in plain words** (above); About this model.
+
+### The pipeline (`ai/sky.ts`, `ai/skySelect.ts`, `develop/useSky.ts`)
+
+| Step | Detail |
+|---|---|
+| Photo | Develop's rendering **as shot** (Part 24's), its long side 1024 (or the model's input if larger; never more than the photo). |
+| Input | EfficientViT's ADE20K evaluation: the **short side 512**, the long side up to the next multiple of 32 at the same scale (a 3:2 photo: 768 × 512), at most 2048 (a panorama is squeezed a little); area resize; RGB / 255 minus ImageNet's mean, over its std. |
+| Scores to one number | Per cell, the sky's **margin over the strongest other class**, z_sky − max z_other: positive exactly where the model's own answer is sky. (The softmax log-odds against all 149 others stayed below 0 where many classes scored a little; dropped.) |
+| Enlarged | Bilinear (half-pixel centres) to the rendering's size, then the logistic function. |
+| Edges, a: two-colour fit | Within about two model cells of each pixel, the typical sky colour (colours weighted p²) and the typical other colour ((1 − p)²); where they differ by at least 0.06 (sRGB 0…1), the pixel's colour projected on the line between them gives its sky share, mixed in as far as both are present (fully from a 5 % share each), so inside the sky (clouds included) and inside the land the model's answer stands. A pixel rises into the sky only as far as its colour is like the photo's sky (Mahalanobis distance in the spread of the colours the model is surest are sky, fading beyond 3); and where the model is unsure (below 0.95) and the colour is nothing like the sky, the pixel leaves the sky first (the launch pad's lamps and their glare). |
+| Edges, b: the guided filter | The engine's guided filter as the masks' Refine slider runs it (`mask-math.ts refineCpu`: He and Sun's fast guided filter on the photo's log luminance), radius 2 px, eps 1e-4, its rises gated the same way. |
+| Stored | Into the sensor frame through the rendering's uv → sensor map, 8 bits, at most 1024 px long (`AI_RASTER_LONG`), Part 24's encoding. |
+| Tried and dropped | The guided filter alone at one or two cells: the synthetic edge error went only from 0.21 to 0.19 (the model's matte barely varies where a thin branch crosses the sky). Dehaze's colour guided filter (`effects.ts guidedFilterCpu`): worse, its darktable guard against a near-singular 3 × 3 solve turns it into a box blur at a clean two-colour edge unless eps is large. A two-tone fit on luminance only: missed the dark lattices against the dark twilight sky of `rocket.jpg` and let its lamps into the sky. |
+| Edge quality | Synthetic test (`sky.test.ts`: branches and twigs 1–3 px against a sky gradient, the model's view stood in for by the truth averaged over 8 px cells): edge error **0.209 → 0.003** (an easy case: the tree is far from the sky in colour). The real model's `rocket.jpg` matte, looked at by eye: all four lattice towers come out crisp where the plain enlargement was a grey blur; the lamps stay out. Not tuned on a set of real photos. |
+
+### The GPU limit gate
+
+The export job measured every node's output at 768 × 512 (ONNX Runtime, CPU): the largest tensor is **25,165,824 bytes = 64 bytes per input pixel** (`/backbone/stages.0/op_list.0/main/inverted_conv/conv`, [1, 64, 256, 384], and its HardSwish); the next is half that. The manifest's `input.bytesPerPixel: 64` gives `skyLargestTensor(mw, mh)`; `models.ts skyPlan` runs the model on WebGPU only where that fits the adapter's `maxStorageBufferBindingSize` (part 1's gate: ONNX Runtime 1.30.0's WebGPU kernels compute a larger tensor wrong), else on the processor (`SKY_WASM_FALLBACK`, on). At 3:2 the default input needs 25 MB, the capped 2048 × 512 panorama 64 MB: both fit WebGPU's minimum 128 MiB, so the gate matters only for a GPU reporting less (tested with 16 MiB in the e2e). The graph has Shape, Gather, Unsqueeze and Concat nodes for its free size; on WebGPU ONNX Runtime places such int64 shape arithmetic on the CPU (MASKS_PREP.md); the candidate check ran the fixed-size export's 243 nodes all on WebGPU (lavapipe), the free-size graph's placement in a browser is **unverified**.
+
+### Input size: quality against speed
+
+The app's own code with the app's WebAssembly runtime (4 threads) on GitHub's runner (run 40407134681), model run (second run) and the share of cells the model calls sky:
+
+| Short side (input, 3:2) | rocket.jpg | astronaut.png | trees (CC0, 1280 × 1707) |
+|---|---|---|---|
+| 384 (576 × 384) | 266 ms, 0.891 | 493 ms, 0 | 285 ms, 0.794 |
+| **512 (768 × 512), the app's** | **385 ms, 0.885** | **263 ms, 0** | **356 ms, 0.794** |
+| 640 (960 × 640) | 577 ms, 0.877 | 412 ms, 0 | 530 ms, 0.797 |
+| 768 (1152 × 768) | 831 ms, 0.849 | 556 ms, 0 | 753 ms, 0.802 |
+| 1024 (1536 × 1024) | 2,256 ms, 0.882 | 956 ms, 0 | 1,236 ms, 0.803 |
+
+The model was trained and evaluated at 512 on the short side; larger inputs cost 1.5–6 × the time and don't make the class map better (rocket's sky share even dips at 768), and the edges come from the refinement at the guide's resolution, not from the model. **512 stays.** (Run 1, an earlier refinement: 225 ms at 512 for rocket; runner times vary about 2 ×.) The matte step took 0.2–0.3 s for rocket (640 × 427) and about 1.5 s for the trees photo, which sky-check refines at its full 1280 × 1707 (2.2 Mpx); the app refines at most 1024 px on the long side (0.7 Mpx for a 3:4 photo), on the page's main thread (**unmeasured in a browser**; a worker would move it off).
+
+### The real model on GitHub's servers
+
+Two runs of the "AI models" workflow (logs, extracts: `scratchpad/ams/action-logs/`):
+
+| Run | Result |
+|---|---|
+| **40403890988** (`efficientvit-export`, publish ticked, `36abc1d`) | Export and checks **passed**; the release was **published**. PyTorch against ONNX (onnxruntime 1.31.0, CPU): random 512 × 512, 768 × 512 and 512 × 768 inputs, max difference 1.8e-4 / 1.3e-4 / 2.9e-4, **the same class in every cell**; rocket at the app's 768 × 512: 2.4e-5, sky share 0.8846 both; rocket stretched to 512 × 512: sky 0.8979 (the candidate check: 0.8975); astronaut: no sky; the trees photo at 512 × 704: 0.7953. File 19,277,968 bytes, SHA-256 `00dfc79ab211ae8cb9a354ffce864a669b57d53eff07669d8f626e1659a6d1df`, 326 nodes (Add 30, Concat 21, Constant 4, Conv 86, Div 7, Gather 14, HardSwish 36, MatMul 14, Mul 7, Pad 7, Relu 14, Reshape 14, Resize 2, Shape 7, Slice 35, Transpose 7, Unsqueeze 21). The app's sky-check on the fresh file: all checks passed (rocket 0.8849 sky cells against PyTorch's 0.8846 with a bicubic resize). The publish job created the release, but its own check download a fraction of a second later got **404** (a new release's asset isn't served at once) and the job failed after publishing; the step now retries for up to two minutes. The assets were then downloaded from here and match: `efficientvit_seg_b1_ade20k.onnx` 19,277,968 `00dfc79a…`, `LICENSE.txt` 11,341 `3c3976a8…`, `SOURCE.md` 3,992 `f714f6c4…`, `export.json` 5,377 `5c0fb301…`; the tag points at `36abc1dd9370ebeac3697a483e91d5c13f65e70b`. |
+| **40407134681** (`sky-check`, `222fe9e`) | **Passed.** The deploy's own `models.mjs fetch` got the asset from the release and checked it; the app's final code ran on it (the table above; coverage after refinement: rocket 0.835, astronaut 0, trees 0.787; all outputs finite; the stored mattes decode to themselves; sky shares within 0.0011 of PyTorch's). |
+
+Test photos: `astronaut.png` (Part 27's), **`rocket.jpg`** (SpaceX's DSCOVR launch, public domain, committed unchanged from scikit-image v0.24.0 with a SOURCE note; trees and lattice towers against a twilight sky), and a **trees-against-the-sky photo found by the run on Wikimedia Commons** (`web/scripts/sky/commons_photo.py`: the first JPEG of fixed searches whose licence Commons gives as public domain or CC0): "File:Silhouetted pruned trees against bright sky.jpg" by ReetiSingh14, **CC0** (Creative Commons Zero, Public Domain Dedication), 3024 × 4032, used at Commons' 1280-px copy (353,505 bytes, SHA-256 `1771116e…`). It is recorded in the runs, not committed (this machine can't reach Commons). Its matte was read only as a text picture in the log; the PNGs are in the runs' artifacts, which can't be downloaded here.
+
+### Diagnostics
+
+`ai-mask` entries with `what: "sky"`: the step (new, part, compute, recompute), GPU or CPU, the variant, the model's input size, `gate: "binding"` when the limit sent it to the processor, the model, matte and total times and those of the rendering and loading, the matte's size and characters, the model and the card; or the error. The times come first, so an entry over the recorder's 600-character limit keeps them. No pixels or names.
+
+### Checks
+
+FILLED_BELOW
+
+### Limitations and unverified
+
+- **A real GPU:** the free-size graph has run on the CPU (ONNX Runtime 1.31.0 in Python, 1.30.0's WebAssembly in Node) and on SwiftShader's WebGPU in headless Chromium with the stand-in; the real model has not run on WebGPU in a browser or on a real GPU here.
+- **Edge refinement** is LightBench's own, tuned on one synthetic scene and one real photo by eye (`rocket.jpg`); the trees photo was seen only as a text picture. Dark storm clouds or sunset colours near the horizon that the model is unsure of and that differ from the rest of the sky could leave the mask; snow or white walls the same colour as an overcast sky can't be told apart by colour. Not tested on a set of real photos.
+- **Speed in a browser:** the model's speed is from Node on GitHub's runner; the matte step runs on the main thread (about 0.3 s for 640 × 427 in Node) and its time for a 1024-px guide in a browser tab is unmeasured.
+- **Release permanence:** the release's tag points at `36abc1d` on this branch; the commit stays reachable through the tag whatever the merge does.
+- ADE20K's and ImageNet's terms are summarised from their published terms of use, not legal advice.
+
+### Files
+
+New: `web/src/ai/sky.ts`, `skySelect.ts`, `src/develop/useSky.ts`, `web/scripts/sky-check.mjs`, `web/scripts/sky/export_efficientvit.py`, `commons_photo.py`, `web/scripts/fixtures/ai-masks/rocket.jpg`, `web/models/notices/efficientvit.LICENSE.txt`; tests `src/ai/sky.test.ts`, `sky-manifest.test.ts`, `src/engine/develop/sky-mask.test.ts`. Changed: `.github/workflows/ai-models.yml`, `web/models/manifest.json`, `web/scripts/models.mjs` (+ test), `src/ai/manifest.ts`, `models.ts`, `ModelDialog.tsx`, `AiModelsSettings.tsx`, `src/develop/MasksPanel.tsx`, `useMasking.ts`, `DevelopView.tsx`, `help.ts`, `src/engine/develop/masks.ts`, the fixtures' `SOURCE.md`, two of part 1's tests (a later build's AI part is now "subject"), THIRD_PARTY_NOTICES.md, USABILITY.md.
