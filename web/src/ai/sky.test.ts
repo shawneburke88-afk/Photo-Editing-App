@@ -163,14 +163,14 @@ describe('ai/sky', () => {
     const refined = skyMatte(lo, rgba, w, h)
     const ePlain = edgeError(plain, sky, w, h)
     const eRefined = edgeError(refined, sky, w, h)
-    // 0.21 → about 0.024 (PHASE3.md Part 29).
+    // 0.21 → 0.003 here (PHASE3.md Part 29); the synthetic tree is far from the sky in colour, an easy case.
     expect(ePlain).toBeGreaterThan(0.15)
     expect(eRefined).toBeLessThan(ePlain * 0.2)
     // Inside the sky and the ground (far from edges) it stays put.
     expect(refined[5 * w + 5]).toBeGreaterThan(0.97)
     expect(refined[(h - 5) * w + 5]).toBeLessThan(0.03)
     for (const v of refined) expect(Number.isFinite(v) && v >= 0 && v <= 1).toBe(true)
-    // The two-tone step alone does most of it; the guided filter after it changes little.
+    // The two-colour step alone does most of it; the guided filter after it changes little.
     const toneOnly = skyMatte(lo, rgba, w, h, { ...SKY_REFINE, fineRadius: 0 })
     expect(edgeError(toneOnly, sky, w, h)).toBeLessThan(ePlain * 0.2)
   })

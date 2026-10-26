@@ -14,21 +14,28 @@
 //     although the sky wins, and the stand-in model's matte covered half of what its answer did.)
 //  2. The margins enlarged to the guide's size (bilinear, half-pixel centres) and turned into a probability (the
 //     logistic function), so the edge stays where the model puts it (½) while the model's 8-pixel cells don't show.
-//  3. The edges refined against the photo as shot, in two steps on its log luminance (the guide of the masks' Refine:
-//     engine/develop/mask-math.ts `guideValue`):
-//     a. A local two-tone fit, a guided filter whose two references come from the model: within about two model cells
-//        of each pixel, the photo's typical sky tone (the guide averaged with the weights p²) and its typical other tone
-//        (weights (1 − p)²); where they differ clearly, the pixel's own tone between them says how much of it is sky.
-//        It moves only where both are present nearby (the edges), so the model's answer stands inside the sky (clouds
-//        included) and inside the land. This is what puts thin branches, and the sky between leaves, back into the
-//        matte: the model sees the photo in cells of 8 × 8 of its input pixels and can't.
-//     b. The engine's guided filter (mask-math.ts `refineCpu`: He and Sun's fast guided filter, as the masks' Refine
-//        slider runs it), radius 2 pixels, which smooths what step a leaves noisy while keeping the edges on the photo's.
-//     (The guided filter alone, at one or two cells, was tried first: in the synthetic test (sky.test.ts) it lowered the
-//     error at the edges only from 0.21 to 0.19, because the model's matte barely varies where a thin branch crosses the
-//     sky; with step a it is 0.024. Dehaze's colour guided filter, effects.ts `guidedFilterCpu`, made edges worse: its
-//     guard against a nearly singular 3 × 3 solve, kept from darktable, makes it a box blur at a clean edge between two
-//     flat colours unless eps is large.)
+//  3. The edges refined against the photo as shot, in two steps:
+//     a. A local two-colour fit, a guided filter whose two references come from the model: within about two model
+//        cells of each pixel, the photo's typical sky colour (its colours averaged with the weights p²) and its typical
+//        other colour (weights (1 − p)²); where they differ clearly, the pixel's own colour, placed on the line between
+//        them, says how much of it is sky. It moves only where both are present nearby (the edges), so the model's answer
+//        stands inside the sky (clouds included) and inside the land. This puts thin branches, wires and lattices back
+//        out of the sky, and the sky between leaves back in: the model sees the photo in cells of 8 × 8 of its input
+//        pixels and can't. A pixel is let INTO the sky only as far as its colour is like the sky's colours in the
+//        whole photo (a distance in the spread of the colours the model is surest are sky, beyond 3 of which it fades
+//        out), so lamps, flares and white walls near the horizon stay out; and where the model is unsure (below 0.95)
+//        and a pixel's colour is nothing like the sky's, it leaves the sky before the fit (the lamps' glare, which the
+//        model half-counts as sky).
+//     b. The engine's guided filter (engine/develop/mask-math.ts `refineCpu`: He and Sun's fast guided filter on the
+//        photo's log luminance, as the masks' Refine slider runs it), radius 2 pixels, which smooths what step a leaves
+//        noisy while keeping the edges on the photo's. It too lets a pixel rise into the sky only as far as its colour is
+//        like the sky's (its local linear fit on luminance otherwise pushed the launch pad's lamps in).
+//     Tried first and dropped: the guided filter alone at one or two cells lowered the error at the edges only from
+//     0.21 to 0.19 in the synthetic test (sky.test.ts), because the model's matte barely varies where a thin branch
+//     crosses the sky; Dehaze's colour guided filter (effects.ts `guidedFilterCpu`) made edges worse (its guard against
+//     a nearly singular 3 × 3 solve, kept from darktable, makes it a box blur at a clean edge between two flat colours
+//     unless eps is large); a two-tone fit on luminance alone missed a dark lattice against a dark twilight sky and let
+//     the launch pad's lamps into the sky of the real model's rocket.jpg matte (PHASE3.md Part 29).
 // The guide is the photo as shot (Develop's rendering in the camera's orientation, as for the Depth map and Object
 // select), at most 1024 pixels on its long side; the matte is then moved into the SENSOR frame through the rendering's
 // uv → sensor map and stored at most 1024 texels on its long side (owner, 2026-10-22), 8 bits, like every AI matte.
@@ -124,20 +131,22 @@ const logistic = (z: number) => 1 / (1 + Math.exp(-z))
 
 /** The edge refinement's settings (see the top of this file). */
 export interface SkyRefine {
-  /** Step a: the window's half-width in model cells, the weights' power, and the least tone difference (0…1 guide). */
+  /** Step a: the window's half-width in model cells, the weights' power, the least colour difference (0…1 sRGB). */
   cells: number
   power: number
   minContrast: number
+  /** How far (in the spread of the sky's colours) a pixel's colour may be from the sky's and still be let in. */
+  kappa: number
   /** Step b: the guided filter's radius in guide pixels and its eps; radius 0 skips it. */
   fineRadius: number
   fineEps: number
 }
 /**
  * LightBench's choice, from the synthetic test in sky.test.ts (a tree's branches and twigs against a sky that brightens
- * towards the horizon, the model's view stood in for by the true matte averaged over 8-pixel cells): the error at the
- * edges falls from 0.21 (the enlargement alone) to about 0.024. Not tuned on real photos (docs/PHASE3.md Part 29).
+ * towards the horizon, the model's view stood in for by the true matte averaged over 8-pixel cells) and the real model's
+ * matte of rocket.jpg looked at by eye (docs/PHASE3.md Part 29). Not tuned on a set of real photos.
  */
-export const SKY_REFINE: SkyRefine = { cells: 2, power: 2, minContrast: 0.03, fineRadius: 2, fineEps: 1e-4 }
+export const SKY_REFINE: SkyRefine = { cells: 2, power: 2, minContrast: 0.06, kappa: 3, fineRadius: 2, fineEps: 1e-4 }
 
 /**
  * The matte over the guide (w × h, 0…1): the margins enlarged and made a probability, then refined against the photo
@@ -148,10 +157,22 @@ export function skyMatte(lo: Grid, rgba: Uint8ClampedArray | Uint8Array, w: numb
   let p: Float32Array = new Float32Array(n)
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) p[y * w + x] = logistic(gridAt(lo, (x + 0.5) / w, (y + 0.5) / h))
   if (refine) {
-    const guide = skyGuide(rgba, n)
     const cell = Math.max(w / lo.w, h / lo.h)
-    p = twoTone(p, guide, w, h, Math.max(1, Math.round(refine.cells * cell)), refine.power, refine.minContrast)
-    if (refine.fineRadius > 0) p = refineCpu(p, guide, w, h, refine.fineRadius, refine.fineEps)
+    const like = skyLikeness(p, rgba, refine.kappa)
+    // Where the model is unsure (below 0.95) and the colour is nothing like the sky's (lamps and their glare at the
+    // horizon), the pixel leaves the sky; where the model is sure, its answer stands (clouds, the sun).
+    for (let i = 0; i < n; i++) {
+      const sure = Math.min(1, Math.max(0, (p[i] - 0.8) / 0.15))
+      p[i] *= like[i] + (1 - like[i]) * sure
+    }
+    p = twoColour(p, rgba, w, h, Math.max(1, Math.round(refine.cells * cell)), refine, like)
+    if (refine.fineRadius > 0) {
+      // The guided filter's local linear fit can push a pixel far brighter than its window (a lamp) up into the sky:
+      // as in step a, a rise only as far as the colour is like the sky's.
+      const f = refineCpu(p, skyGuide(rgba, n), w, h, refine.fineRadius, refine.fineEps)
+      for (let i = 0; i < n; i++) f[i] = f[i] > p[i] ? p[i] + (f[i] - p[i]) * like[i] : f[i]
+      p = f
+    }
   }
   return p
 }
@@ -183,41 +204,94 @@ export function boxSum(a: Float32Array, w: number, h: number, r: number): Float3
 }
 
 /**
- * Step a (see the top of this file): per pixel, the sky's and the rest's typical guide tones within radius r (weights
- * p^k and (1 − p)^k); where they differ by at least `minContrast`, the pixel's tone placed between them (0 the rest, 1
- * the sky), mixed in as far as both are present (fully from a 5 % share of the window each).
+ * How like the sky each pixel's colour is (0…1): the colours the model is surest are sky (weights p⁴) give a mean and
+ * a spread (covariance); a pixel within `kappa` of the spread (Mahalanobis distance) is 1, fading out beyond.
  */
-export function twoTone(p: Float32Array, g: Float32Array, w: number, h: number, r: number, k: number, minContrast: number): Float32Array {
+export function skyLikeness(p: Float32Array, rgba: Uint8ClampedArray | Uint8Array, kappa: number): Float32Array {
+  const n = p.length
+  let sw = 0
+  const mu = [0, 0, 0]
+  for (let i = 0; i < n; i++) {
+    const wt = p[i] ** 4
+    sw += wt
+    for (let c = 0; c < 3; c++) mu[c] += wt * rgba[4 * i + c]
+  }
+  const out = new Float32Array(n)
+  if (sw < 1) return out.fill(1)
+  for (let c = 0; c < 3; c++) mu[c] /= sw * 255
+  const cov = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+  for (let i = 0; i < n; i++) {
+    const wt = p[i] ** 4
+    const d = [rgba[4 * i] / 255 - mu[0], rgba[4 * i + 1] / 255 - mu[1], rgba[4 * i + 2] / 255 - mu[2]]
+    for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) cov[3 * a + b] += wt * d[a] * d[b]
+  }
+  for (let k = 0; k < 9; k++) cov[k] = cov[k] / sw + (k % 4 === 0 ? 1e-4 : 0)
+  const inv = invert(cov as unknown as Mat3)
+  const k2 = kappa * kappa
+  for (let i = 0; i < n; i++) {
+    const d0 = rgba[4 * i] / 255 - mu[0]
+    const d1 = rgba[4 * i + 1] / 255 - mu[1]
+    const d2 = rgba[4 * i + 2] / 255 - mu[2]
+    const m = d0 * (inv[0] * d0 + inv[1] * d1 + inv[2] * d2) + d1 * (inv[3] * d0 + inv[4] * d1 + inv[5] * d2) + d2 * (inv[6] * d0 + inv[7] * d1 + inv[8] * d2)
+    out[i] = Math.exp(-Math.max(0, m - k2) / (2 * k2))
+  }
+  return out
+}
+
+/**
+ * Step a (see the top of this file): per pixel, the sky's and the rest's typical colours within radius r (weights p^k
+ * and (1 − p)^k); where they differ by at least `minContrast`, the pixel's colour placed on the line between them (0
+ * the rest, 1 the sky), mixed in as far as both are present (fully from a 5 % share of the window each); a rise into
+ * the sky only as far as the colour is like the sky's (`skyLikeness`).
+ */
+export function twoColour(p: Float32Array, rgba: Uint8ClampedArray | Uint8Array, w: number, h: number, r: number, o: Pick<SkyRefine, 'power' | 'minContrast' | 'kappa'>, like = skyLikeness(p, rgba, o.kappa)): Float32Array {
   const n = w * h
+  const k = o.power
   const ws = new Float32Array(n)
   const wg = new Float32Array(n)
-  const wsI = new Float32Array(n)
-  const wgI = new Float32Array(n)
+  const wsc = [new Float32Array(n), new Float32Array(n), new Float32Array(n)]
+  const wgc = [new Float32Array(n), new Float32Array(n), new Float32Array(n)]
   for (let i = 0; i < n; i++) {
     const s = p[i] ** k
     const q = (1 - p[i]) ** k
     ws[i] = s
     wg[i] = q
-    wsI[i] = s * g[i]
-    wgI[i] = q * g[i]
+    for (let c = 0; c < 3; c++) {
+      const v = rgba[4 * i + c] / 255
+      wsc[c][i] = s * v
+      wgc[c][i] = q * v
+    }
   }
   const S = boxSum(ws, w, h, r)
   const G = boxSum(wg, w, h, r)
-  const SI = boxSum(wsI, w, h, r)
-  const GI = boxSum(wgI, w, h, r)
+  const SC = wsc.map((a) => boxSum(a, w, h, r))
+  const GC = wgc.map((a) => boxSum(a, w, h, r))
   const N = (2 * r + 1) ** 2
+  const min2 = o.minContrast * o.minContrast
   const out = new Float32Array(n)
   for (let i = 0; i < n; i++) {
     const share = Math.min(S[i], G[i]) / N
-    const ms = SI[i] / Math.max(S[i], 1e-6)
-    const mg = GI[i] / Math.max(G[i], 1e-6)
-    const c = ms - mg
-    if (share < 1e-3 || Math.abs(c) < minContrast) {
+    if (share < 1e-3) {
       out[i] = p[i]
       continue
     }
-    const t = Math.min(1, Math.max(0, (g[i] - mg) / c))
-    out[i] = p[i] + (t - p[i]) * Math.min(1, share * 20)
+    const s1 = 1 / Math.max(S[i], 1e-6)
+    const g1 = 1 / Math.max(G[i], 1e-6)
+    let dd = 0
+    let dot = 0
+    for (let c = 0; c < 3; c++) {
+      const mg = GC[c][i] * g1
+      const d = SC[c][i] * s1 - mg
+      dd += d * d
+      dot += (rgba[4 * i + c] / 255 - mg) * d
+    }
+    if (dd < min2) {
+      out[i] = p[i]
+      continue
+    }
+    const t = Math.min(1, Math.max(0, dot / dd))
+    const gate = t > p[i] ? like[i] : 1
+    out[i] = p[i] + (t - p[i]) * Math.min(1, share * 20) * gate
   }
   return out
 }
