@@ -214,6 +214,8 @@ export function usePeople(o: Options) {
    * everyone found here, one person from whoever stands where that person's box was. Null: declined or failed.
    */
   async function compute(s: AiShape, step: string): Promise<PeopleResult | null> {
+    // "Compute again" runs the models again on this photo; parts made for a pasted edit share one run.
+    if (step === 'recompute' && cache.current?.photo === opts.current.photo()) cache.current = null
     const f = await find(false)
     if (!f) return null
     const what = s.what as PeoplePart
@@ -230,6 +232,7 @@ export function usePeople(o: Options) {
   const resetForPhoto = useCallback(() => {
     cache.current = null
     setFound(null)
+    setHot(null)
     setError(null)
   }, [])
 
