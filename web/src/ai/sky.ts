@@ -145,7 +145,7 @@ export const SKY_REFINE: SkyRefine = { cells: 2, power: 2, minContrast: 0.03, fi
  */
 export function skyMatte(lo: Grid, rgba: Uint8ClampedArray | Uint8Array, w: number, h: number, refine: SkyRefine | null = SKY_REFINE): Float32Array {
   const n = w * h
-  let p = new Float32Array(n)
+  let p: Float32Array = new Float32Array(n)
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) p[y * w + x] = logistic(gridAt(lo, (x + 0.5) / w, (y + 0.5) / h))
   if (refine) {
     const guide = skyGuide(rgba, n)
