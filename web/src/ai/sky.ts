@@ -8,9 +8,11 @@
 // its std. The model gives 150 class scores per cell of 8 × 8 input pixels (ADE20K's classes; sky is class 2).
 //
 // LightBench's matte, in three steps:
-//  1. Per cell, the sky's log-odds against all other classes: z_sky − log Σ_{c ≠ sky} e^{z_c} (the logit of the sky's
-//     softmax probability), so the 150 scores become one number per cell.
-//  2. The log-odds enlarged to the guide's size (bilinear, half-pixel centres) and turned into a probability (the
+//  1. Per cell, the sky's margin over the strongest other class: z_sky − max_{c ≠ sky} z_c, so the 150 scores become one
+//     number per cell that is positive exactly where the model's own answer (the highest score) is the sky. (The sky's
+//     softmax log-odds against all 149 others was tried first: where many classes score a little, it stays below 0
+//     although the sky wins, and the stand-in model's matte covered half of what its answer did.)
+//  2. The margins enlarged to the guide's size (bilinear, half-pixel centres) and turned into a probability (the
 //     logistic function), so the edge stays where the model puts it (½) while the model's 8-pixel cells don't show.
 //  3. The edges refined against the photo as shot, in two steps on its log luminance (the guide of the masks' Refine:
 //     engine/develop/mask-math.ts `guideValue`):
@@ -73,10 +75,10 @@ export interface Grid {
 }
 
 /**
- * The sky's log-odds per cell from the model's scores ([1, classes, lh, lw]): z_sky − log Σ_{c ≠ sky} e^{z_c}, computed
- * stably. Positive where the model finds sky more likely than not.
+ * The sky's margin per cell from the model's scores ([1, classes, lh, lw]): z_sky − max_{c ≠ sky} z_c. Positive exactly
+ * where the sky has the highest score (the model's answer); its size says how sure the model is.
  */
-export function skyLogOdds(scores: Float32Array, dims: readonly number[], skyClass: number): Grid {
+export function skyMargin(scores: Float32Array, dims: readonly number[], skyClass: number): Grid {
   const lh = dims[dims.length - 2]
   const lw = dims[dims.length - 1]
   const classes = dims[dims.length - 3]
@@ -86,9 +88,7 @@ export function skyLogOdds(scores: Float32Array, dims: readonly number[], skyCla
   for (let i = 0; i < n; i++) {
     let mx = -Infinity
     for (let c = 0; c < classes; c++) if (c !== skyClass && scores[c * n + i] > mx) mx = scores[c * n + i]
-    let s = 0
-    for (let c = 0; c < classes; c++) if (c !== skyClass) s += Math.exp(scores[c * n + i] - mx)
-    out[i] = scores[skyClass * n + i] - (mx + Math.log(s))
+    out[i] = scores[skyClass * n + i] - mx
   }
   return { data: out, w: lw, h: lh }
 }
@@ -140,7 +140,7 @@ export interface SkyRefine {
 export const SKY_REFINE: SkyRefine = { cells: 2, power: 2, minContrast: 0.03, fineRadius: 2, fineEps: 1e-4 }
 
 /**
- * The matte over the guide (w × h, 0…1): the log-odds enlarged and made a probability, then refined against the photo
+ * The matte over the guide (w × h, 0…1): the margins enlarged and made a probability, then refined against the photo
  * (RGBA 8-bit). `refine` null: the plain enlargement (for comparisons).
  */
 export function skyMatte(lo: Grid, rgba: Uint8ClampedArray | Uint8Array, w: number, h: number, refine: SkyRefine | null = SKY_REFINE): Float32Array {

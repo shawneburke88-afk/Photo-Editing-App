@@ -6,7 +6,7 @@ import { skyInput, type ModelEntry } from './manifest'
 import { loadGraph, runGraphNamed } from './runtime'
 import type { GpuName } from './adapter'
 import type { Provider } from './runtime.worker'
-import { finiteAll, skyArgmaxShare, skyLogOdds, skyMatte, skyModelSize, skyTensor, skyToSensor, SKY_IO } from './sky'
+import { finiteAll, skyArgmaxShare, skyMargin, skyMatte, skyModelSize, skyTensor, skyToSensor, SKY_IO } from './sky'
 
 export class SkyInvalidError extends Error {
   constructor() {
@@ -26,7 +26,7 @@ export interface SkyRun {
   gpu: GpuName | null
   loadMs: number
   inferMs: number
-  /** The matte made from the model's scores (log-odds, enlarging, refining, the sensor frame). */
+  /** The matte made from the model's scores (margins, enlarging, refining, the sensor frame). */
   postMs: number
 }
 
@@ -44,7 +44,7 @@ export async function computeSky(m: ModelEntry, provider: Provider, shot: AsShot
   if (!out) throw new Error('The model gave no scores.')
   if (!finiteAll(out.data)) throw new SkyInvalidError()
   const t1 = performance.now()
-  const lo = skyLogOdds(out.data, out.dims, input.skyClass)
+  const lo = skyMargin(out.data, out.dims, input.skyClass)
   const matte = skyMatte(lo, shot.rgba, shot.width, shot.height)
   const px = skyToSensor(matte, shot.width, shot.height, shot.uvToSensor, shot.sensor, long)
   return { matte: px, size, argmaxShare: skyArgmaxShare(out.data, out.dims, input.skyClass), provider, gpu: g.gpu, loadMs, inferMs: r.ms, postMs: performance.now() - t1 }

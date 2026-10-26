@@ -1,7 +1,7 @@
 // The Sky mask's pre- and post-processing (PHASE3.md Part 29).
 import { describe, expect, it } from 'vitest'
 import { resolveGeometry, DEFAULT_GEOMETRY } from '../engine/develop/geometry'
-import { boxSum, gridAt, skyArgmaxShare, skyLargestTensor, skyLogOdds, skyMatte, skyModelSize, skyRenderLong, skyTensor, skyToSensor, SKY_REFINE, type Grid } from './sky'
+import { boxSum, gridAt, skyArgmaxShare, skyLargestTensor, skyMargin, skyMatte, skyModelSize, skyRenderLong, skyTensor, skyToSensor, SKY_REFINE, type Grid } from './sky'
 
 const INPUT = { shortSide: 512, multiple: 32, maxLong: 2048, bytesPerPixel: 64, mean: [0.485, 0.456, 0.406] as [number, number, number], std: [0.229, 0.224, 0.225] as [number, number, number] }
 
@@ -122,24 +122,20 @@ describe('ai/sky', () => {
     expect(t[2]).toBeCloseTo((128 / 255 - 0.406) / 0.225, 5)
   })
 
-  it('turns 150 scores into the sky’s log-odds, stably', () => {
+  it('turns 150 scores into the sky’s margin over the strongest other class', () => {
     const classes = 150
     const n = 3
     const scores = new Float32Array(classes * n)
     // Cell 0: sky far ahead; cell 1: tree far ahead; cell 2: all equal.
     scores[2 * n + 0] = 10
     scores[4 * n + 1] = 10
-    const lo = skyLogOdds(scores, [1, classes, 1, n], 2)
+    scores[7 * n + 0] = 3
+    const lo = skyMargin(scores, [1, classes, 1, n], 2)
     expect(lo.w).toBe(3)
-    expect(lo.data[0]).toBeCloseTo(10 - Math.log(149), 4)
-    expect(lo.data[1]).toBeCloseTo(-Math.log(Math.exp(10) + 148), 4)
-    expect(lo.data[2]).toBeCloseTo(-Math.log(149), 4)
-    // Large scores don't overflow.
-    const big = new Float32Array(classes).fill(500)
-    big[2] = 520
-    expect(skyLogOdds(big, [1, classes, 1, 1], 2).data[0]).toBeCloseTo(20 - Math.log(149), 3)
+    expect(Array.from(lo.data)).toEqual([7, -10, 0])
+    // Positive exactly where the sky is the model's answer.
     expect(skyArgmaxShare(scores, [1, classes, 1, n], 2)).toBeCloseTo(1 / 3)
-    expect(() => skyLogOdds(scores, [1, 10, 1, n], 2)).toThrow(/shape/)
+    expect(() => skyMargin(scores, [1, 10, 1, n], 2)).toThrow(/shape/)
   })
 
   it('sums boxes with the edges repeated', () => {
