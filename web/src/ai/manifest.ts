@@ -11,6 +11,11 @@
 // Either way the app downloads a model only when the user says so, once, checks the same SHA-256, keeps it on the
 // device (ai/store.ts) and works offline afterwards. Nothing here touches the network.
 //
+// Sky (AI masks part 3, docs/PHASE3.md Part 29): LightBench's own ONNX conversion of a model whose authors publish
+// PyTorch weights only, published as a GitHub Release asset of LightBench's own repository ("host": "github-release",
+// the release's `tag` and the commit it points at as `revision`), with the licence and a note of where it came from. The
+// deploy fetches it from the release and checks its SHA-256, and the site serves it like the others.
+//
 // Schema 2 (AI masks, docs/PHASE3.md Part 27): a model may be made of several graphs (`part`), each with its weights in a
 // separate file beside it (`data`: ONNX external data, as the SAM 2.1 export has), served from the site as well as from
 // Hugging Face; `task` names what the app uses it for. Schema 1 manifests (one file per variant) still parse.
@@ -29,9 +34,14 @@ export type Variant = 'fp16' | 'fp32'
  * segmenter with an image encoder and a prompt decoder). The later AI mask models (people, faces, sky, subject) add
  * their task here and a check below.
  */
-export const TASKS = ['depth', 'inpaint', 'segment'] as const
+export const TASKS = ['depth', 'inpaint', 'segment', 'sky'] as const
 export type Task = (typeof TASKS)[number]
 export type Delivery = 'site' | 'huggingface'
+/**
+ * Where the deploy fetches a model's files: Hugging Face (`/resolve/<revision>/<path>`), or a GitHub Release of a
+ * repository ("github-release": `/releases/download/<tag>/<path>`; LightBench's own conversions, Part 29).
+ */
+export type SourceHost = 'huggingface' | 'github-release'
 
 export interface ModelFile {
   variant: Variant
@@ -64,6 +74,30 @@ export interface SegmentInput {
   std: [number, number, number]
 }
 
+/**
+ * The Sky model's preprocessing and labels (EfficientViT-Seg's own ADE20K evaluation: the short side to `shortSide`,
+ * the long side up to a multiple of `multiple`; RGB 0…1 minus ImageNet's mean, over its std). Its output is `classes`
+ * scores per cell, one cell per `stride` input pixels; `skyClass` is the sky's index. `bytesPerPixel`: the largest
+ * tensor the graph makes, in bytes per input pixel (for the GPU limit gate). `maxLong` caps the long side (panoramas).
+ */
+export interface SkyInput {
+  shortSide: number
+  multiple: number
+  maxLong: number
+  stride: number
+  classes: number
+  skyClass: number
+  bytesPerPixel: number
+  mean: [number, number, number]
+  std: [number, number, number]
+}
+
+/** What a conversion LightBench made itself was made from: the authors' weights file and code, pinned. */
+export interface ConvertedFrom {
+  weights: { repo: string; revision: string; path: string; bytes: number; sha256: string }
+  code: { repo: string; revision: string }
+}
+
 /** What the manual update check compares (Settings → AI models; never automatic). */
 export interface UpdateBaseline {
   /** The weights the conversion was made from: a file of another Hugging Face repository and its pinned LFS hash. */
@@ -85,9 +119,11 @@ export interface ModelEntry {
    * `pinnedBy: "owner"`: pinned by the owner's decision from a checked run (Object select's SAM 2.1: MASKS_PREP.md);
    * `models.mjs pin` leaves it alone, as it leaves the models delivered from Hugging Face.
    */
-  source: { host: 'huggingface'; repo: string; revision: string | null; pinnedBy?: 'owner' }
-  /** The depth model's (DepthInput) or the segmenter's (SegmentInput) preprocessing. */
-  input?: DepthInput | SegmentInput
+  source: { host: SourceHost; repo: string; revision: string | null; pinnedBy?: 'owner'; tag?: string }
+  /** A conversion LightBench made itself (Sky, Part 29): what it was made from. */
+  convertedFrom?: ConvertedFrom
+  /** The depth model's (DepthInput), the segmenter's (SegmentInput) or the Sky model's (SkyInput) preprocessing. */
+  input?: DepthInput | SegmentInput | SkyInput
   /** Which checkpoint of the original weights the files are, and where that is stated. */
   checkpoint?: { name: string; source: string }
   updates?: UpdateBaseline
@@ -103,6 +139,8 @@ export interface ModelEntry {
 export const depthInput = (m: ModelEntry) => m.input as DepthInput
 /** The segmenter's preprocessing (parseManifest checked it is there). */
 export const segmentInput = (m: ModelEntry) => m.input as SegmentInput
+/** The Sky model's preprocessing and labels (parseManifest checked they are there). */
+export const skyInput = (m: ModelEntry) => m.input as SkyInput
 
 export interface Manifest {
   schema: 1 | 2
@@ -113,6 +151,8 @@ export interface Manifest {
 export const TASK_PARTS: Partial<Record<Task, readonly string[]>> = {
   inpaint: ['vae_encoder', 'unet', 'vae_decoder'],
   segment: ['encoder', 'decoder'],
+  // The Sky model is one graph, recorded as a part named "model" (loaded and run as the graphs above are).
+  sky: ['model'],
 }
 
 /** The shared runtime (one for every model, as PHASE4_MODELS.md plans): ONNX Runtime Web's WebAssembly file. */
@@ -156,12 +196,17 @@ export function parseManifest(json: unknown): Manifest {
     const lic = m.licence as Record<string, unknown> | undefined
     if (!lic || !isStr(lic.id) || !isStr(lic.url) || !isStr(lic.statement)) fail(`${id}: licence incomplete`)
     const src = m.source as Record<string, unknown> | undefined
-    if (!src || src.host !== 'huggingface' || !isStr(src.repo) || !/^[\w.-]+\/[\w.-]+$/.test(src.repo)) fail(`${id}: source incomplete`)
+    if (!src || (src.host !== 'huggingface' && src.host !== 'github-release') || !isStr(src.repo) || !/^[\w.-]+\/[\w.-]+$/.test(src.repo)) fail(`${id}: source incomplete`)
+    if (src!.host === 'github-release' && !(isStr(src!.tag) && /^[\w.-]+$/.test(src!.tag))) fail(`${id}: a GitHub Release source needs its tag`)
+    if (src!.host === 'github-release' && (m.delivery ?? 'site') !== 'site') fail(`${id}: a model from a GitHub Release is served by LightBench's site`)
     const rev = src!.revision
     if (rev !== null && !(isStr(rev) && REVISION_RE.test(rev))) fail(`${id}: revision must be a 40-digit commit or null`)
     if (src!.pinnedBy !== undefined && src!.pinnedBy !== 'owner') fail(`${id}: pinnedBy must be "owner"`)
     const inp = m.input as Record<string, unknown> | undefined
     if (m.task === 'depth' && (!inp || !isNum(inp.shortSide) || !isNum(inp.multiple) || !isTriple(inp.mean) || !isTriple(inp.std))) fail(`${id}: input incomplete`)
+    if (m.task === 'sky' && (!inp || ![inp.shortSide, inp.multiple, inp.maxLong, inp.stride, inp.classes, inp.skyClass, inp.bytesPerPixel].every((x) => isNum(x) && x >= 0) || (inp.shortSide as number) < 32 || (inp.maxLong as number) < (inp.shortSide as number) || (inp.skyClass as number) >= (inp.classes as number) || !isTriple(inp.mean) || !isTriple(inp.std))) fail(`${id}: input incomplete`)
+    const cf = m.convertedFrom as { weights?: Record<string, unknown>; code?: Record<string, unknown> } | undefined
+    if (cf !== undefined && (!cf.weights || !isStr(cf.weights.repo) || !REVISION_RE.test(String(cf.weights.revision)) || !isStr(cf.weights.path) || !isNum(cf.weights.bytes) || !SHA256_RE.test(String(cf.weights.sha256)) || !cf.code || !isStr(cf.code.repo) || !REVISION_RE.test(String(cf.code.revision)))) fail(`${id}: convertedFrom incomplete`)
     if (m.task === 'segment' && (!inp || !isNum(inp.size) || inp.size < 64 || inp.size > 4096 || !isTriple(inp.mean) || !isTriple(inp.std))) fail(`${id}: input incomplete`)
     const up = (m.updates as { upstream?: Record<string, unknown> } | undefined)?.upstream
     if (m.updates !== undefined && (!up || !isStr(up.repo) || !REVISION_RE.test(String(up.revision)) || !isStr(up.path) || !isNum(up.bytes) || !SHA256_RE.test(String(up.sha256)))) fail(`${id}: updates incomplete`)
@@ -182,6 +227,8 @@ export function parseManifest(json: unknown): Manifest {
       if (x.sha256 !== null && !(isStr(x.sha256) && SHA256_RE.test(x.sha256))) fail(`${id}: sha256 must be 64 hex digits or null`)
       return { variant: x.variant, path: x.path, bytes: x.bytes, sha256: x.sha256, ...(x.part ? { part: x.part } : {}), ...(x.data ? { data: true } : {}) } as ModelFile
     })
+    // A release's assets have plain names (no folders).
+    if (src!.host === 'github-release' && files.some((f) => f.path.includes('/'))) fail(`${id}: a release asset's name has no folders`)
     // Two files served under one name would overwrite each other on the site.
     if (new Set(files.map((f) => servedName(f))).size !== files.length) fail(`${id}: two files with the same name`)
     for (const f of files) if (f.data && !files.some((g) => g.variant === f.variant && g.part === f.part && !g.data)) fail(`${id}: weights for ${f.variant} ${f.part}, which has no graph file`)
@@ -191,7 +238,7 @@ export function parseManifest(json: unknown): Manifest {
         if (!parts.every((p) => files.some((f) => f.variant === v && f.part === p && !f.data))) fail(`${id}: ${v} needs the graphs ${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`)
       }
     } else if (files.some((f) => f.part)) fail(`${id}: a ${m.task as string} model is one file per variant`)
-    return { ...(m as unknown as ModelEntry), source: { host: 'huggingface', repo: src!.repo as string, revision: rev as string | null, ...(src!.pinnedBy ? { pinnedBy: 'owner' as const } : {}) }, files } as ModelEntry
+    return { ...(m as unknown as ModelEntry), source: { host: src!.host as SourceHost, repo: src!.repo as string, revision: rev as string | null, ...(src!.pinnedBy ? { pinnedBy: 'owner' as const } : {}), ...(src!.host === 'github-release' ? { tag: src!.tag as string } : {}) }, files } as ModelEntry
   })
   return { schema: o.schema as 1 | 2, models }
 }
@@ -237,8 +284,12 @@ export function servedPath(m: ModelEntry, f: ModelFile): string {
 /** The file's pinned source URL (what the deploy workflow fetches; the app never does). */
 export function sourceUrl(m: ModelEntry, f: ModelFile): string {
   if (!m.source.revision) throw new Error(`${m.id} is not pinned`)
+  if (m.source.host === 'github-release') return releaseUrl(m.source.repo, m.source.tag!, f.path)
   return `https://huggingface.co/${m.source.repo}/resolve/${m.source.revision}/${f.path}`
 }
+
+/** A GitHub Release asset's download URL. Kept in sync with scripts/models.mjs. */
+export const releaseUrl = (repo: string, tag: string, asset: string) => `https://github.com/${repo}/releases/download/${tag}/${asset}`
 
 /**
  * The file this device should download: fp16 when the adapter has `shader-f16` (half the size), else fp32; a pinned

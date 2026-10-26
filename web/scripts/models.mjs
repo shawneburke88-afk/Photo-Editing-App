@@ -8,6 +8,9 @@
 //       fails the build. A model that isn't pinned yet is skipped with a warning (the app then says it isn't available).
 //       A model delivered from Hugging Face ("delivery": "huggingface": AI Remove's Moebius, about 1.24 GB, over Pages'
 //       1 GB site limit) is skipped with a note: the app downloads it itself (PHASE3.md Part 26).
+//       A model LightBench converted itself ("host": "github-release": the Sky model's ONNX export, PHASE3.md Part 29) is
+//       fetched from its GitHub Release, https://github.com/<repo>/releases/download/<tag>/<asset>, and checked the same
+//       way; the release's tag points at the commit recorded as its revision.
 //       --from DIR reads the files from DIR (same layout as under dist/models/) instead of downloading: a dry run.
 //   node scripts/models.mjs verify --dir DIR
 //       Checks files laid out as under dist/models/ against the manifest (no network).
@@ -19,7 +22,8 @@
 //       given), reads each file's Git LFS pointer (its sha256 and size) at that commit, downloads the file, checks it
 //       against the pointer, and writes the revision, sizes and hashes into the manifest. --save keeps the files (e.g.
 //       in models/local for the dev server). Models delivered from Hugging Face, and models whose source says
-//       "pinnedBy": "owner" (SAM 2.1, pinned from the checked run in MASKS_PREP.md), are left as they are.
+//       "pinnedBy": "owner" (SAM 2.1, pinned from the checked run in MASKS_PREP.md), and models from a GitHub Release
+//       (pinned from the release the "AI models" workflow's efficientvit-export task published), are left as they are.
 //
 // The checks are kept in sync with src/ai/manifest.ts (same layout, same hash format).
 
@@ -38,7 +42,10 @@ export const pinned = (m, f) => /^[0-9a-f]{40}$/.test(m.source?.revision ?? '') 
 /** "<variant>.onnx" for a one-file model, else the file's own name (a graph, or its weights beside it: schema 2). */
 export const servedName = (f) => (f.part ? f.path.slice(f.path.lastIndexOf('/') + 1) : `${f.variant}.onnx`)
 export const servedPath = (m, f) => `models/${m.id}/${m.source.revision.slice(0, 7)}/${servedName(f)}`
-export const sourceUrl = (m, f) => `https://huggingface.co/${m.source.repo}/resolve/${m.source.revision}/${f.path}`
+/** A GitHub Release asset's URL (LightBench's own conversions). Kept in sync with src/ai/manifest.ts. */
+export const releaseUrl = (repo, tag, asset) => `https://github.com/${repo}/releases/download/${tag}/${asset}`
+export const sourceUrl = (m, f) =>
+  m.source.host === 'github-release' ? releaseUrl(m.source.repo, m.source.tag, f.path) : `https://huggingface.co/${m.source.repo}/resolve/${m.source.revision}/${f.path}`
 export const pointerUrl = (m, f, rev) => `https://huggingface.co/${m.source.repo}/raw/${rev}/${f.path}`
 /** Served by LightBench's site (the deploy fetches it), or downloaded by the app from Hugging Face (never deployed). */
 export const deployed = (m) => (m.delivery ?? 'site') === 'site'
@@ -179,7 +186,7 @@ export function formatManifest(x, ind = '', inList = false) {
 export function describePins(manifest, markdown = false) {
   const out = []
   for (const m of manifest.models) {
-    const how = deployed(m) ? '' : ' (downloaded by the app from Hugging Face; not deployed)'
+    const how = !deployed(m) ? ' (downloaded by the app from Hugging Face; not deployed)' : m.source.host === 'github-release' ? ` (GitHub Release ${m.source.tag})` : ''
     const name = (f) => (f.part ? `${f.variant} ${f.part}${f.data ? ' weights' : ''}` : f.variant)
     if (markdown) {
       out.push(`\`${m.source.repo}\` @ \`${m.source.revision ?? 'not pinned'}\`${how}`, '', '| file | path | bytes | SHA-256 |', '|---|---|---|---|')
@@ -197,6 +204,10 @@ async function pin(manifest, revision, save, path = MANIFEST) {
   for (const m of manifest.models) {
     if (!deployed(m)) {
       console.log(`${m.id}: left as it is (delivered from Hugging Face and pinned by the owner's decision)`)
+      continue
+    }
+    if (m.source.host === 'github-release') {
+      console.log(`${m.id}: left as it is (LightBench's own conversion, pinned from its GitHub Release ${m.source.tag})`)
       continue
     }
     if (m.source.pinnedBy === 'owner') {
