@@ -158,11 +158,14 @@ export interface DepthShape {
   /** The depth map in the sensor frame (depth-map.ts). */
   raster?: RasterData
 }
-/** What an AI selection selects. Object select is this build's; people, faces, sky and subject come later (Part 27). */
-export const AI_WHATS = ['object'] as const
+/**
+ * What an AI selection selects: an object (Object select, Part 27) or the sky (Part 29); people, faces and subject come
+ * later. A Sky part has no prompt: it is the whole photo's sky, so it is made again on any photo (paste, presets).
+ */
+export const AI_WHATS = ['object', 'sky'] as const
 export type AiWhat = (typeof AI_WHATS)[number]
 /** Names for masks and parts, by what they select ("Object 1"). */
-export const AI_WHAT_LABELS: Record<string, string> = { object: 'Object' }
+export const AI_WHAT_LABELS: Record<string, string> = { object: 'Object', sky: 'Sky' }
 
 /** The prompt an AI selection was made from, in sensor coordinates (x / width, y / height), so it can be made again. */
 export interface AiPrompt {
