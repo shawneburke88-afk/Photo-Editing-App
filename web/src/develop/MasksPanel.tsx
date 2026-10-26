@@ -5,13 +5,15 @@
 import { useState } from 'react'
 import { withKey } from '../settings/shortcuts'
 import {
-  describeKinds, hasUnknown, KIND_LABELS, LOCAL_KEYS, LOCAL_LABELS, LOCAL_RANGE, maskFamily, MAX_DABS, MAX_MASKS, needsAi, needsDepth, partLabel, RANGE_KINDS, SHAPE_KINDS,
-  type AiShape, type BrushShape, type ColourShape, type DepthShape, type LocalKey, type LocalMask, type LuminanceShape, type MaskComponent, type MaskOp, type RadialShape, type ShapeKind,
+  AI_WHAT_LABELS, describeKinds, hasUnknown, isPeoplePart, KIND_LABELS, PEOPLE_PARTS, LOCAL_KEYS, LOCAL_LABELS, LOCAL_RANGE, maskFamily, MAX_DABS, MAX_MASKS, needsAi, needsDepth, partLabel, RANGE_KINDS, SHAPE_KINDS,
+  type AiShape, type PeoplePart, type BrushShape, type ColourShape, type DepthShape, type LocalKey, type LocalMask, type LuminanceShape, type MaskComponent, type MaskOp, type RadialShape, type ShapeKind,
 } from '../engine/develop/masks'
 import type { Depth } from './useDepth'
 import type { ObjectSelect } from './useObjectSelect'
+import type { People } from './usePeople'
+import type { PeoplePick } from './useMasking'
 import { OVERLAY_MODES } from '../engine/develop/indicators'
-import { HELP, MASK_HELP, RANGE_NOTE, type ControlHelp } from './help'
+import { HELP, MASK_HELP, PEOPLE_PART_HELP, RANGE_NOTE, type ControlHelp } from './help'
 import { DEFAULT_MASK_BRUSH, MASK_BRUSH_SIZE, OVERLAY_COLOURS } from './maskUi'
 import { Slider } from './Slider'
 import { eyeIcon } from './tools'
@@ -30,6 +32,8 @@ interface Props {
   depth: Depth
   /** Object select's model, the photo's encoding and its messages (Part 27). */
   object: ObjectSelect
+  /** People: the people and faces found on the photo, and the list to tick (Part 28). */
+  people: People
 }
 
 const NEW_KINDS: { kind: ShapeKind; action: string; short: string }[] = [
@@ -71,7 +75,7 @@ function localHelp(k: LocalKey): ControlHelp {
   return { ...h, hint: `${h.hint}, in the mask`, what: `${h.what} Here it acts only where the mask is, on top of Basic’s ${where} (the two add up).` }
 }
 
-export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, depth, object }: Props) {
+export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, depth, object, people }: Props) {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [addKind, setAddKind] = useState<ShapeKind | null>(null)
   const mask = masks.find((x) => x.id === m.sel.mask) ?? null
@@ -123,8 +127,26 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, d
               {k.short}
             </button>
           ))}
+          <button
+            className={`button small touch ${people.found ? 'on' : ''}`}
+            disabled={disabled || masks.length >= MAX_MASKS || m.objectBusy}
+            aria-pressed={!!people.found}
+            onClick={() => (people.found ? people.close() : void m.findPeople())}
+            title={withKey(`New people mask (AI): ${MASK_HELP.peopleNew.what}`, 'develop.maskPeople')}
+          >
+            People
+          </button>
         </div>
         <p className="muted small mask-range-note">{RANGE_NOTE}</p>
+        {people.status && <p className="small crop-note" role="status" aria-busy="true">{people.status}</p>}
+        {people.error && (
+          <p className="small masks-warn" role="alert">
+            {people.error}{' '}
+            <button className="linklike" onClick={() => window.dispatchEvent(new CustomEvent('lightbench:settings', { detail: 'ai' }))} title="Open Settings → AI models">AI models…</button>{' '}
+            <button className="linklike" onClick={() => people.setError(null)} title="Hide this message">Dismiss</button>
+          </p>
+        )}
+        {people.found && <PeopleList people={people} m={m} disabled={disabled} />}
         {m.objectMode && (
           <div className="small crop-note mask-object-note" role="status">
             {object.status ? (
@@ -161,7 +183,7 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, d
         )}
         {masks.some(needsAi) && (
           <p className="small masks-note" role="note">
-            Some object selections came from another photo or a preset, so they aren’t shown here yet.{' '}
+            Some AI selections came from another photo or a preset, so they aren’t shown here yet.{' '}
             <button className="linklike" disabled={disabled || m.objectBusy} onClick={() => void m.computeMissingAi()} title={MASK_HELP.objectCompute.what}>Compute for this photo</button>
           </p>
         )}
@@ -419,6 +441,20 @@ function ShapeControls({ m, mask, comp, disabled, showHint }: { m: Masking; mask
     const n = (s as BrushShape).strokes.length
     return <p className="muted small">{n} {n === 1 ? 'stroke' : 'strokes'}. Paint to add, Alt-drag or Erase to take away.</p>
   }
+  if (s.kind === 'ai' && isPeoplePart((s as AiShape).what)) {
+    const a = s as AiShape
+    return (
+      <section aria-label={`${partLabel(a)} selection`}>
+        {!a.raster && <p className="small masks-warn">This selection isn’t made for this photo yet: it isn’t shown.</p>}
+        <p className="muted small">
+          {partLabel(a)}{a.prompt?.all ? `: everyone found (${a.prompt.boxes?.length ?? 0} ${a.prompt.boxes?.length === 1 ? 'person' : 'people'} when it was made)` : ''}. Made on this computer by {a.model}{a.modelVersion ? ` ${a.modelVersion}` : ''}{a.models && a.models.length > 1 ? `, with ${a.models.filter((x) => !x.startsWith(`${a.model} `)).map((x) => x.split(' ')[0]).join(', ')}` : ''}.
+        </p>
+        <div className="crop-tools">
+          <button className="button small touch" disabled={disabled || m.objectBusy || !a.prompt} onClick={() => void m.recomputeAi(comp.id)} title={MASK_HELP.peopleRecompute.what}>Compute again</button>
+        </div>
+      </section>
+    )
+  }
   if (s.kind === 'ai') {
     const a = s as AiShape
     const pts = a.prompt?.points ?? []
@@ -440,4 +476,68 @@ function ShapeControls({ m, mask, comp, disabled, showHint }: { m: Masking; mask
     )
   }
   return null
+}
+
+/** The people found on the photo: a row per person and one for everyone, a tick per part (Part 28). */
+function PeopleList({ people, m, disabled }: { people: People; m: Masking; disabled: boolean }) {
+  const f = people.found!
+  const [ticks, setTicks] = useState<ReadonlySet<string>>(() => new Set())
+  const key = (who: number | 'all', what: PeoplePart) => `${who}/${what}`
+  const toggle = (k: string) => setTicks((t) => {
+    const n = new Set(t)
+    if (n.has(k)) n.delete(k)
+    else n.add(k)
+    return n
+  })
+  const rows: { who: number | 'all'; label: string; title: string }[] = [
+    { who: 'all', label: 'All people', title: MASK_HELP.peopleAll.what },
+    ...f.people.map((p) => ({ who: p.index, label: `Person ${p.index}`, title: `${MASK_HELP.peopleOne.what}${p.face ? '' : ' No face was found for this person.'}` })),
+  ]
+  const picks: PeoplePick[] = rows.flatMap((r) => PEOPLE_PARTS.filter((w) => ticks.has(key(r.who, w))).map((what) => ({ who: r.who, what })))
+  const found = f.people.length
+  return (
+    <div className="people-list" role="group" aria-label="People found">
+      <p className="small" role="status">
+        {found ? `${found} ${found === 1 ? 'person' : 'people'} found${f.faces ? `, ${f.faces} ${f.faces === 1 ? 'face' : 'faces'}` : ''}. Tick what to select.` : 'No people found in this photo.'}
+      </p>
+      {found > 0 && (
+        <table className="people-table small">
+          <thead>
+            <tr>
+              <th scope="col" aria-label="Who" />
+              {PEOPLE_PARTS.map((w) => <th key={w} scope="col" title={PEOPLE_PART_HELP[w]}>{w === 'person' ? 'Whole' : AI_WHAT_LABELS[w]}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={String(r.who)} className={`people-row ${people.hot === r.who ? 'hot' : ''}`} onMouseEnter={() => people.setHot(r.who)} onMouseLeave={() => people.setHot(null)}>
+                <th scope="row" title={r.title}>{r.label}</th>
+                {PEOPLE_PARTS.map((w) => (
+                  <td key={w}>
+                    <input
+                      type="checkbox"
+                      checked={ticks.has(key(r.who, w))}
+                      disabled={disabled || m.objectBusy}
+                      onChange={() => toggle(key(r.who, w))}
+                      onFocus={() => people.setHot(r.who)}
+                      aria-label={`${r.label}: ${w === 'person' ? 'whole person' : AI_WHAT_LABELS[w].toLowerCase()}`}
+                      title={`${r.label}: ${PEOPLE_PART_HELP[w]}`}
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <div className="crop-tools">
+        {found > 0 && (
+          <button className="button small primary touch" disabled={disabled || m.objectBusy || !picks.length} onClick={() => void m.makePeople(picks)} title={MASK_HELP.peopleMake.what}>
+            {m.objectBusy ? 'Making the mask…' : picks.length ? `Make mask (${picks.length} ${picks.length === 1 ? 'part' : 'parts'})` : 'Make mask'}
+          </button>
+        )}
+        <button className="button small touch" onClick={() => people.close()} title="Close this list without making a mask (Esc)">{found ? 'Cancel' : 'Close'}</button>
+      </div>
+    </div>
+  )
 }

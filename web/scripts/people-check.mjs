@@ -220,6 +220,8 @@ async function main(args) {
     if (notes.length) md.push(...notes.map((n) => `- note: ${n}`), '')
     if (summaryFile) appendFileSync(summaryFile, `${md.join('\n')}\n`)
     writeFileSync(join(outDir, 'summary.md'), `${md.join('\n')}\n`)
+    // The tables in the log too (the run's summary page isn't readable everywhere).
+    log(`\n${md.join('\n')}\n`)
     log(failures.length ? `RESULT: ${failures.length} problem(s)` : 'RESULT: all checks passed')
     process.exitCode = failures.length ? 1 : 0
   }

@@ -82,6 +82,9 @@ import { snapshotsChanged } from './snapshotStore'
 import { useMasking } from './useMasking'
 import { renderSize, useDepth } from './useDepth'
 import { useObjectSelect } from './useObjectSelect'
+import { usePeople } from './usePeople'
+import { PeopleDialog } from '../ai/PeopleDialog'
+import { boxToSensor } from '../ai/people'
 import { useAiRemove } from './useAiRemove'
 import { ModelDialog } from '../ai/ModelDialog'
 import { MaskOverlay } from './MaskOverlay'
@@ -965,6 +968,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
    * encoder's 1.5 × (not larger than the photo).
    */
   const objectSel = useObjectSelect({ renderAsShot: (long) => renderAsShot((w, h) => Math.min(Math.max(w, h), long)), photo: () => (status.kind === 'ready' ? String(id) : null) })
+  /** People (PHASE3.md Part 28): the photo rendered as shot, as for Object select, up to 2048 px on its long side. */
+  const people = usePeople({ renderAsShot: (long) => renderAsShot((w, h) => Math.min(Math.max(w, h), long)), photo: () => (status.kind === 'ready' ? String(id) : null), object: objectSel })
   /** AI Remove (PHASE3.md Part 26): Moebius for the Remove brush's AI mode; the spot being generated. */
   const aiRemove = useAiRemove()
   const [aiPending, setAiPending] = useState<Spot | null>(null)
@@ -1001,6 +1006,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     },
     depth: depth.obtain,
     object: objectSel,
+    people,
     toSensorUv: (uv) => {
       const engine = engineRef.current
       if (!engine) return null
@@ -2104,6 +2110,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   // While masking on the photo, Develop listens to 'mask' (PHASE3.md Part 23).
   const maskNew = (cmd: string) => {
     const kind = ({ 'develop.maskBrush': 'brush', 'develop.maskLinear': 'linear', 'develop.maskRadial': 'radial', 'develop.maskColour': 'colour', 'develop.maskLuminance': 'luminance', 'develop.maskDepth': 'depth', 'develop.maskObject': 'ai' } as const)[cmd as 'develop.maskBrush']
+    if (cmd === 'develop.maskPeople' && status.kind === 'ready') {
+      void masking.findPeople()
+      return true
+    }
     if (!kind || status.kind !== 'ready') return false
     masking.newOf(kind)
     return true
@@ -2114,7 +2124,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'develop.masks':
       case 'mask.done': masking.end(); break
       case 'mask.cancel':
-        if (masking.creating) masking.setCreating(null)
+        if (people.found) people.close()
+        else if (masking.creating) masking.setCreating(null)
         else if (masking.picking) masking.setPicking(null)
         else if (masking.sel.mask) masking.select(null)
         else masking.end()
@@ -2125,7 +2136,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'develop.maskColour':
       case 'develop.maskLuminance':
       case 'develop.maskDepth':
-      case 'develop.maskObject': maskNew(cmd); break
+      case 'develop.maskObject':
+      case 'develop.maskPeople': maskNew(cmd); break
       case 'mask.overlay': masking.setOverlay({ ...masking.overlay, on: !masking.overlay.on }); break
       case 'mask.overlayColour': masking.nextOverlayColour(); break
       case 'mask.overlayMode': masking.nextOverlayMode(); break
@@ -2159,7 +2171,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'develop.maskColour':
       case 'develop.maskLuminance':
       case 'develop.maskDepth':
-      case 'develop.maskObject': maskNew(cmd); break
+      case 'develop.maskObject':
+      case 'develop.maskPeople': maskNew(cmd); break
       case 'develop.grid': onLibrary(); break
       case 'develop.curveTarget': toggleCurveTarget(); break
       case 'develop.curveReset': changeCurve('Reset tone curve', undefined, true); break
@@ -2688,6 +2701,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                 onStroke={masking.onStroke}
                 onPick={(uv, add) => void masking.onPick(uv, add)}
                 onPan={(dx, dy) => panBy(dx, dy)}
+                people={people.found ? people.found.people.map((x) => ({ label: `Person ${x.index}`, box: boxToSensor(people.found!.uvToSensor, x.box), hot: people.hot === x.index || people.hot === 'all' })) : null}
                 object={masking.objectMode ? {
                   mode: masking.objectMode,
                   ready: objectSel.ready && !masking.objectBusy,
@@ -2935,6 +2949,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   m={masking}
                   depth={depth}
                   object={objectSel}
+                  people={people}
                   disabled={status.kind !== 'ready'}
                   showHint={hintsPref === 1}
                   acr={acr}
@@ -3112,6 +3127,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       {aiRemove.ask && (
         <ModelDialog model={aiRemove.ask.model} files={aiRemove.ask.files} purpose={aiRemove.ask.slow ? 'AI Remove (on this computer it runs on the processor: several minutes per spot)' : 'AI Remove'} onInstalled={(rec) => aiRemove.ask?.done(rec)} onClose={() => aiRemove.ask?.done(null)} />
       )}
+      {people.ask && <PeopleDialog items={people.ask.items} slow={people.ask.slow} onDone={(ok) => people.ask?.done(ok)} />}
       {objectSel.ask && (
         <ModelDialog model={objectSel.ask.model} files={objectSel.ask.files} purpose={objectSel.ask.slow ? 'Object select (on this computer it runs on the processor, without a suitable graphics card: preparing each photo takes longer)' : 'Object select'} onInstalled={(rec) => objectSel.ask?.done(rec)} onClose={() => objectSel.ask?.done(null)} />
       )}

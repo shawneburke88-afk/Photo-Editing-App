@@ -10,7 +10,7 @@ import { chooseFiles, modelPinned, segmentInput, type ModelEntry, type ModelFile
 import { AI, objectPlan, segmentModel } from '../ai/models'
 import { decodePrompt, encodePhoto, KeptMissingError, ObjectInvalidError, type Encoded } from '../ai/objectSelect'
 import { holdModel, probeGpu, runtimeMessage } from '../ai/runtime'
-import { coverage, matteToSensor, promptToShot, quantiles, renderLong, type Logits } from '../ai/segment'
+import { coverage, matteToSensor, promptToShot, quantiles, renderLong, type Logits, type ShotPrompt } from '../ai/segment'
 import { installed, type InstalledModel } from '../ai/store'
 import { diagnostics } from '../diagnostics/recorder'
 import { encodeDepth } from '../engine/develop/depth-map'
@@ -72,26 +72,31 @@ export function useObjectSelect(o: Options) {
 
   const askFor = (model: ModelEntry, files: ModelFile[], slow: boolean) => new Promise<InstalledModel | null>((resolve) => setAsk({ model, files, slow, done: (rec) => { setAsk(null); resolve(rec) } }))
 
-  /** The model on this device and the photo encoded (asking to download first). Null: declined, unavailable or failed. */
-  const prepare = useCallback(async (): Promise<Encoded | null> => {
+  /**
+   * The model on this device and the photo encoded (asking to download first). Null: declined, unavailable or failed.
+   * `quiet` (People's outlines, Part 28): only when the model is already on this device, without asking, holding it or
+   * showing a message.
+   */
+  const prepare = useCallback(async (quiet = false): Promise<Encoded | null> => {
     const photo = opts.current.photo()
     if (!photo) return null
     if (enc.current?.photo === photo) return enc.current
     if (preparing.current) return preparing.current
     const run = (async (): Promise<Encoded | null> => {
-      setError(null)
+      if (!quiet) setError(null)
       const model = segmentModel()
       if (!model || !AI || !modelPinned(model)) {
-        setError('Object select isn’t available in this build of LightBench: its model files haven’t been published with it yet.')
+        if (!quiet) setError('Object select isn’t available in this build of LightBench: its model files haven’t been published with it yet.')
         return null
       }
       try {
         const plan = objectPlan(model, await probeGpu())
         if (!plan.provider || !plan.variant) {
-          setError(plan.why)
+          if (!quiet) setError(plan.why)
           return null
         }
         let rec = await installed(model)
+        if (quiet && (!rec || rec.variant !== plan.variant)) return null
         if (!rec || rec.variant !== plan.variant) {
           const files = chooseFiles(model, plan.gpu, plan.variant)
           if (!files.length) {
@@ -102,8 +107,8 @@ export function useObjectSelect(o: Options) {
           rec = await askFor(model, files, !!plan.slow)
           if (!rec) return null
         }
-        hold.current ??= holdModel(model.id)
-        setStatus(plan.slow ? 'Preparing the photo for selection on the processor (once for this photo; without a suitable graphics card this takes longer)…' : 'Preparing the photo for selection (once for this photo)…')
+        if (!quiet) hold.current ??= holdModel(model.id)
+        if (!quiet) setStatus(plan.slow ? 'Preparing the photo for selection on the processor (once for this photo; without a suitable graphics card this takes longer)…' : 'Preparing the photo for selection (once for this photo)…')
         const t0 = performance.now()
         const shot = await opts.current.renderAsShot(renderLong(segmentInput(model), Number.POSITIVE_INFINITY))
         if (!shot) return null
@@ -120,7 +125,7 @@ export function useObjectSelect(o: Options) {
         return e
       } catch (err) {
         diagnostics.log('ai-mask', { what: 'object', step: 'encode', error: errText(err) })
-        setError(runtimeMessage(err))
+        if (!quiet) setError(runtimeMessage(err))
         return null
       } finally {
         setStatus(null)
@@ -135,24 +140,49 @@ export function useObjectSelect(o: Options) {
   }, [])
 
   /** The decoder on the encoded photo, one run at a time. */
-  const decode = (prompt: AiPrompt) => serial(() => decodeNow(prompt))
+  const decode = (prompt: AiPrompt) => serial(() => decodeNow((e) => promptToShot(prompt, e.shot.uvToSensor)))
 
   /** The decoder on the encoded photo; the embeddings gone (freed for another model): encoded again, once. */
-  async function decodeNow(prompt: AiPrompt): Promise<{ logits: Logits; ms: number; e: Encoded } | null> {
+  async function decodeNow(prompt: (e: Encoded) => ShotPrompt, quiet = false): Promise<{ logits: Logits; ms: number; e: Encoded } | null> {
     const model = segmentModel()
-    let e = await prepare()
+    let e = await prepare(quiet)
     if (!model || !e) return null
     try {
-      const r = await gpuGate.foreground(() => decodePrompt(model, e!, promptToShot(prompt, e!.shot.uvToSensor)))
+      const r = await gpuGate.foreground(() => decodePrompt(model, e!, prompt(e!)))
       return { ...r, e }
     } catch (err) {
       if (!(err instanceof KeptMissingError)) throw err
       enc.current = null
       setReady(false)
-      e = await prepare()
+      e = await prepare(quiet)
       if (!e) return null
-      const r = await gpuGate.foreground(() => decodePrompt(model, e!, promptToShot(prompt, e!.shot.uvToSensor)))
+      const r = await gpuGate.foreground(() => decodePrompt(model, e!, prompt(e!)))
       return { ...r, e }
+    }
+  }
+
+  /**
+   * People's outlines (Part 28): SAM 2.1's mask for each box (as-shot uv) on this photo, when Object select's model is
+   * already on this device (never asked for here). Null: not on this device, or it failed (People then uses its own).
+   */
+  async function outlines(boxes: [number, number, number, number][]): Promise<{ logits: Logits[]; variant: string; provider: string; encodeMs: number; decodeMs: number } | null> {
+    try {
+      const fresh = !enc.current || enc.current.photo !== opts.current.photo()
+      const out: Logits[] = []
+      let decodeMs = 0
+      let e: Encoded | null = null
+      for (const box of boxes) {
+        const r = await serial(() => decodeNow(() => ({ points: [], box }), true))
+        if (!r) return null
+        out.push(r.logits)
+        decodeMs += r.ms
+        e = r.e
+      }
+      if (!e) return null
+      return { logits: out, variant: e.variant, provider: e.provider, encodeMs: fresh ? e.encodeMs : 0, decodeMs }
+    } catch (err) {
+      diagnostics.log('ai-mask', { what: 'person', step: 'outline', error: errText(err) })
+      return null
     }
   }
 
@@ -245,7 +275,7 @@ export function useObjectSelect(o: Options) {
     setError(null)
   }, [end])
 
-  return { ask, status, error, setError, ready, preview, prepare, hover, compute, end, resetForPhoto, encoded: () => enc.current }
+  return { ask, status, error, setError, ready, preview, prepare, hover, compute, outlines, end, resetForPhoto, encoded: () => enc.current }
 }
 
 export type ObjectSelect = ReturnType<typeof useObjectSelect>

@@ -144,6 +144,10 @@
         "mean": [0.485, 0.456, 0.406],
         "std": [0.229, 0.224, 0.225]
       },
+      "gpu": {
+        "maxStorageBufferBindingSize": 16777216,
+        "maxBufferSize": 16777216
+      },
       "files": [
         { "variant": "fp32", "part": "model", "path": "rf-detr-seg-nano.onnx", "bytes": 122610239, "sha256": "8d4ee9744d56cbdfe0de410bd248bbc95362c8709926c079e4ff44645f78df6e" }
       ]

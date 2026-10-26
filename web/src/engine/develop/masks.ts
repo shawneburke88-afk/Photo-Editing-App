@@ -158,11 +158,22 @@ export interface DepthShape {
   /** The depth map in the sensor frame (depth-map.ts). */
   raster?: RasterData
 }
-/** What an AI selection selects. Object select is this build's; people, faces, sky and subject come later (Part 27). */
-export const AI_WHATS = ['object'] as const
+/**
+ * What an AI selection selects: Object select's object (Part 27), and People's whole person, face (its skin), hair,
+ * body skin and clothes (Part 28). Sky and subject come later.
+ */
+export const AI_WHATS = ['object', 'person', 'face', 'hair', 'bodySkin', 'clothes'] as const
 export type AiWhat = (typeof AI_WHATS)[number]
-/** Names for masks and parts, by what they select ("Object 1"). */
-export const AI_WHAT_LABELS: Record<string, string> = { object: 'Object' }
+/** What People selects (the parts of a person). */
+export const PEOPLE_PARTS = ['person', 'face', 'hair', 'bodySkin', 'clothes'] as const
+export type PeoplePart = (typeof PEOPLE_PARTS)[number]
+export const isPeoplePart = (w: unknown): w is PeoplePart => (PEOPLE_PARTS as readonly unknown[]).includes(w)
+/** Names for masks and parts, by what they select ("Object 1"; a person's parts: "Person 2: hair"). */
+export const AI_WHAT_LABELS: Record<string, string> = { object: 'Object', person: 'Whole person', face: 'Face', hair: 'Hair', bodySkin: 'Body skin', clothes: 'Clothes' }
+/** People's masks are named "People 1", "People 2". */
+export const PEOPLE_MASK = 'People'
+/** People boxes kept with an "All people" part (one per person). */
+export const MAX_AI_BOXES = 32
 
 /** The prompt an AI selection was made from, in sensor coordinates (x / width, y / height), so it can be made again. */
 export interface AiPrompt {
@@ -170,6 +181,14 @@ export interface AiPrompt {
   points?: [number, number, 0 | 1][]
   /** A box: x0, y0, x1, y1. */
   box?: [number, number, number, number]
+  /**
+   * People (Part 28): which person, numbered from left to right on the photo it was made on (1 = the leftmost); its
+   * box is `box`, which finds the same person again (the one at that place) when the part is computed again or pasted.
+   */
+  person?: number
+  /** People: every person found ("All people"); their boxes when it was made. */
+  all?: true
+  boxes?: [number, number, number, number][]
 }
 
 /**
@@ -187,6 +206,8 @@ export interface AiShape {
   model: string
   modelVersion: string
   runtime?: string
+  /** Every model that took part, "<id> <revision 7>/<fp16|fp32>" (People: the detector, the face finder, the parts, the outline). */
+  models?: string[]
   prompt?: AiPrompt
   raster?: RasterData
 }
@@ -241,9 +262,19 @@ export const KIND_LABELS: Record<ShapeKind, string> = {
 /** Short names, for default mask names (Lightroom users asked for names by type). */
 export const KIND_SHORT: Record<ShapeKind, string> = { brush: 'Brush', linear: 'Linear', radial: 'Radial', luminance: 'Luminance range', colour: 'Colour range', depth: 'Depth range', ai: 'Object' }
 
-/** A part's name in the panel: its kind, or for an AI selection what it selects ("Object"). */
-export function partLabel(s: { kind: string; what?: unknown }): string {
-  if (s.kind === 'ai') return AI_WHAT_LABELS[String(s.what)] ?? 'AI selection'
+/** Who a People part selects: "Person 2", "All people" (null for other AI selections). */
+export function peopleWho(p: AiPrompt | undefined): string | null {
+  if (p?.all) return 'All people'
+  return p?.person ? `Person ${p.person}` : null
+}
+
+/** A part's name in the panel: its kind, or for an AI selection what it selects ("Object", "Person 2: hair", "All people"). */
+export function partLabel(s: { kind: string; what?: unknown; prompt?: unknown }): string {
+  if (s.kind === 'ai') {
+    const who = isPeoplePart(s.what) ? peopleWho(s.prompt as AiPrompt | undefined) : null
+    if (who) return s.what === 'person' ? who : `${who}: ${AI_WHAT_LABELS[s.what as string].toLowerCase()}`
+    return AI_WHAT_LABELS[String(s.what)] ?? 'AI selection'
+  }
   return isKnownKind(s.kind) ? KIND_LABELS[s.kind] : `${s.kind} (newer LightBench)`
 }
 
@@ -360,9 +391,12 @@ const rnd = () => Math.floor(Math.random() * 1e6).toString(36)
 export const newMaskId = () => `m${Date.now().toString(36)}${rnd()}`
 export const newComponentId = () => `c${Date.now().toString(36)}${rnd()}`
 
-/** The default name for a new mask of this kind: "Linear 2" when one Linear mask exists ("Object 1" for Object select). */
+/**
+ * The default name for a new mask of this kind: "Linear 2" when one Linear mask exists ("Object 1" for Object select,
+ * "People 1" for People).
+ */
 export function defaultName(masks: LocalMask[], kind: ShapeKind, what?: string): string {
-  const base = kind === 'ai' ? (AI_WHAT_LABELS[what ?? ''] ?? 'AI selection') : KIND_SHORT[kind]
+  const base = kind === 'ai' ? (isPeoplePart(what) ? PEOPLE_MASK : (AI_WHAT_LABELS[what ?? ''] ?? 'AI selection')) : KIND_SHORT[kind]
   const taken = new Set(masks.map((m) => m.name))
   for (let n = 1; ; n++) if (!taken.has(`${base} ${n}`)) return `${base} ${n}`
 }
@@ -463,7 +497,20 @@ export function normalizeShape(v: unknown, dabBudget = MAX_DABS): MaskShape | nu
           if (pts.length) prompt.points = pts
         }
         if (Array.isArray(p.box) && p.box.length === 4 && p.box.every(finite)) prompt.box = (p.box as number[]).map((x) => q6(clamp(x, -2, 3))) as AiPrompt['box']
-        if (prompt.points || prompt.box) out.prompt = prompt
+        if (Number.isInteger(p.person) && (p.person as number) >= 1 && (p.person as number) <= 999) prompt.person = p.person as number
+        if (p.all === true) prompt.all = true
+        if (Array.isArray(p.boxes)) {
+          const boxes = p.boxes
+            .filter((b): b is number[] => Array.isArray(b) && b.length === 4 && b.every(finite))
+            .slice(0, MAX_AI_BOXES)
+            .map((b) => b.map((x) => q6(clamp(x, -2, 3))) as [number, number, number, number])
+          if (boxes.length) prompt.boxes = boxes
+        }
+        if (prompt.points || prompt.box || prompt.person || prompt.all) out.prompt = prompt
+      }
+      if (Array.isArray(o.models)) {
+        const models = o.models.filter((x): x is string => typeof x === 'string' && x.length > 0).slice(0, 8).map((x) => x.slice(0, 80))
+        if (models.length) out.models = models
       }
       // A damaged matte is dropped (the part stays, waiting to be computed again); its contents are checked when drawn.
       const raster = normalizeRaster(o.raster, AI_RASTER_CAPS)
@@ -627,13 +674,19 @@ export function appendMasks(own: LocalMask[] | undefined, pasted: LocalMask[] | 
   return out.length ? out : undefined
 }
 
+/** An AI part that belongs to one photo: an Object selection (its points), or one person's part ("Person 2: hair"). */
+export function photoBoundAi(s: AiShape): boolean {
+  return s.what === 'object' || (isPeoplePart(s.what) && !s.prompt?.all)
+}
+
 /**
  * Presets may hold gradients and range masks, not brush strokes (owner's decision 7): masks with a brush are left out,
  * and so are masks with an Object selection (owner, 2026-10-22: its points belong to one photo, like brush strokes;
- * paste still carries it, waiting).
+ * paste still carries it, waiting) or with one person's part (Part 28: "Person 2" means someone only on that photo).
+ * "All people" parts are kept, waiting for "Compute for this photo".
  */
 export function presetMasks(masks: LocalMask[] | undefined): LocalMask[] | undefined {
-  const photoBound = (c: MaskComponent) => c.shape.kind === 'brush' || (c.shape.kind === 'ai' && (c.shape as AiShape).what === 'object')
+  const photoBound = (c: MaskComponent) => c.shape.kind === 'brush' || (c.shape.kind === 'ai' && photoBoundAi(c.shape as AiShape))
   // Depth ranges (and later AI parts) are kept without the photo's map (each photo gets its own when applied).
   const out = withoutDepthMaps((masks ?? []).filter((m) => !m.components.some(photoBound)))
   return out.length ? out : undefined

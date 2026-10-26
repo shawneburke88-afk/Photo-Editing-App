@@ -8,10 +8,11 @@ import type { Vec3 } from '../engine/color/matrix'
 import type { DevelopSettings } from '../engine/develop/settings'
 import { lstar, oklab, REC2020_Y } from '../engine/develop/mask-math'
 import {
-  canAdd, capMessage, dabCount, existingDepth, KIND_LABELS, KIND_SHORT, LOCAL_LABELS, MAX_AI_POINTS, MAX_DABS, MAX_SAMPLES, needsAi, needsDepth, newComponentId, newMask, newMaskId, partLabel, refuseReason, withDepthMap, withMasksList,
-  type AiPrompt, type AiShape, type BrushShape, type ColourShape, type DepthShape, type KnownShape, type LinearShape, type LocalKey, type LocalMask, type LuminanceShape, type MaskComponent, type MaskOp, type RadialShape, type ShapeKind,
+  canAdd, capMessage, dabCount, defaultName, existingDepth, isPeoplePart, KIND_LABELS, KIND_SHORT, LOCAL_LABELS, MAX_AI_POINTS, MAX_COMPONENTS, MAX_DABS, MAX_SAMPLES, needsAi, needsDepth, newComponentId, newMask, newMaskId, partLabel, refuseReason, withDepthMap, withMasksList,
+  type AiPrompt, type AiShape, type PeoplePart, type BrushShape, type ColourShape, type DepthShape, type KnownShape, type LinearShape, type LocalKey, type LocalMask, type LuminanceShape, type MaskComponent, type MaskOp, type RadialShape, type ShapeKind,
 } from '../engine/develop/masks'
 import type { ObjectSelect } from './useObjectSelect'
+import type { People } from './usePeople'
 import { decodeDepth, depthPosition, sampleDepth } from '../engine/develop/depth-map'
 import type { DepthMap } from './useDepth'
 import { useStoredJson } from '../lib/useStoredJson'
@@ -40,6 +41,14 @@ interface Options {
   toSensorUv: (uv: [number, number]) => [number, number] | null
   /** Object select (Part 27): the model, the photo's encoding, the hover preview and the matte of a selection. */
   object: ObjectSelect
+  /** People (Part 28): the people and faces found on the photo, and the mattes of their parts. */
+  people: People
+}
+
+/** One tick of the People list: a person (1-based) or all of them, and a part. */
+export interface PeoplePick {
+  who: number | 'all'
+  what: PeoplePart
 }
 
 /** How a click with Object select acts: a new selection, or a point added to or removed from the selected one. */
@@ -118,6 +127,7 @@ export function useMasking(o: Options) {
   /** Clears the tool's state for another photo. */
   const resetForPhoto = useCallback(() => {
     opts.current.object.resetForPhoto()
+    opts.current.people.resetForPhoto()
     setTouchPoint(null)
     setSel({ mask: null, comp: null })
     setCreating(null)
@@ -325,11 +335,11 @@ export function useMasking(o: Options) {
         for (const c of m.components) {
           const s = c.shape as AiShape
           if (s.kind !== 'ai' || s.raster) continue
-          if (s.what !== 'object' || !s.prompt) {
+          if ((s.what !== 'object' && !isPeoplePart(s.what)) || !s.prompt) {
             unknown++
             continue
           }
-          const r = await opts.current.object.compute(s.prompt, 'compute')
+          const r = await computeShape(s, 'compute')
           if (!r) return
           if ('none' in r) {
             none++
@@ -354,14 +364,65 @@ export function useMasking(o: Options) {
     if (!m || !c || s?.kind !== 'ai' || !s.prompt || objectBusy) return
     setObjectBusy(true)
     try {
-      const r = await opts.current.object.compute(s.prompt, 'recompute')
+      const r = await computeShape(s, 'recompute')
       if (!r) return
-      if ('none' in r) return setMessage('The model finds nothing there now.')
+      if ('none' in r) return setMessage(isPeoplePart(s.what) ? 'The models find no one there now.' : 'The model finds nothing there now.')
       commit(`${m.name}: compute the selection again`, masks().map((x) => (x.id === m.id ? { ...x, components: x.components.map((y) => (y.id === compId ? { ...y, shape: { ...s, ...r } } : y)) } : x)))
     } finally {
       setObjectBusy(false)
     }
   }
+
+  // ---- People (Part 28)
+
+  /** People: the people and faces on the photo found (once per photo), and their list shown in the panel. */
+  async function findPeople() {
+    const cap = capMessage(masks(), { addMask: true })
+    if (cap) return setMessage(cap)
+    if (!active) start()
+    setMessage(null)
+    setCreating(null)
+    setPicking(null)
+    setObjectBusy(true)
+    try {
+      const f = await opts.current.people.find()
+      if (f && !f.people.length) setMessage('No people found in this photo.')
+    } finally {
+      setObjectBusy(false)
+    }
+  }
+
+  /** The ticked parts as one new mask, "People 1", one AI part each (one history step). */
+  async function makePeople(picks: PeoplePick[]) {
+    if (!picks.length || objectBusy) return
+    if (picks.length > MAX_COMPONENTS) return setMessage(`A mask can have at most ${MAX_COMPONENTS} parts. Tick fewer.`)
+    setObjectBusy(true)
+    try {
+      const made = await opts.current.people.parts(picks)
+      if (!made) return
+      const comps: MaskComponent[] = []
+      let chars = 0
+      for (const x of made) {
+        if ('none' in x.r) continue
+        const shape: AiShape = { kind: 'ai', what: x.what, ...x.r }
+        chars += x.r.raster.data.length
+        comps.push({ id: newComponentId(), op: 'add', invert: false, shape })
+      }
+      if (!comps.length) return setMessage('Nothing to select: no one is there.')
+      const list = masks()
+      const cap = capMessage(list, { addMask: true, addAiChars: chars })
+      if (cap) return setMessage(cap)
+      const m: LocalMask = { ...newMask(list, comps[0].shape as AiShape), name: defaultName(list, 'ai', 'person'), components: comps }
+      commit(`New mask: ${m.name}`, [...list, m])
+      setSel({ mask: m.id, comp: comps[0].id })
+      opts.current.people.close()
+    } finally {
+      setObjectBusy(false)
+    }
+  }
+
+  /** A waiting or stored AI part made (again) for this photo from what it keeps: Object select or People. */
+  const computeShape = (s: AiShape, step: string) => (isPeoplePart(s.what) ? opts.current.people.compute(s, step) : opts.current.object.compute(s.prompt!, step))
 
   /** A component made on the photo (a gradient drawn, a colour picked, a first brush stroke). */
   function place(shape: KnownShape) {
@@ -529,6 +590,7 @@ export function useMasking(o: Options) {
     hidden,
     depthView, setDepthView, depthBusy, computeMissingDepth,
     objectMode, objectBusy, onObjectHover, onObjectClick, computeMissingAi, recomputeAi, setTouchPoint,
+    findPeople, makePeople,
     /** The tapped point waiting for the panel's buttons (touch), while the picker is on. */
     touchPoint: objectMode ? touchPoint : null,
     toggleHidden: (id: string) => setHidden((h) => {
@@ -606,7 +668,7 @@ export function useMasking(o: Options) {
       const rest = m.components.filter((x) => x.id !== c.id)
       // The first part is the base the others combine with: it is always added.
       rest[0] = { ...rest[0], op: 'add' }
-      updateMask(m.id, `${m.name}: delete ${KIND_LABELS[c.shape.kind as ShapeKind] ?? 'part'}`, (x) => ({ ...x, components: rest }))
+      updateMask(m.id, `${m.name}: delete ${c.shape.kind === 'ai' ? partLabel(c.shape as AiShape) : (KIND_LABELS[c.shape.kind as ShapeKind] ?? 'part')}`, (x) => ({ ...x, components: rest }))
       setSel({ mask: m.id, comp: rest[0].id })
     },
     setComponent: (compId: string, patch: Partial<Pick<MaskComponent, 'op' | 'invert'>>) => {
