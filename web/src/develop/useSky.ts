@@ -6,7 +6,7 @@
 // One result per photo is kept while the photo is open, so a second Sky mask, or "Compute for this photo" with several
 // Sky parts, reuses it; "Compute again" makes a new one.
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AsShot } from '../ai/depth'
 import { chooseFiles, modelPinned, skyInput, type ModelEntry, type ModelFile } from '../ai/manifest'
 import { AI, skyModel, skyPlan } from '../ai/models'
@@ -46,8 +46,11 @@ export function useSky(o: Options) {
   const [ask, setAsk] = useState<SkyAsk | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const opts = useRef(o)
-  opts.current = o
+  /** The latest options (the photo shown changes while the model runs). */
+  const latest = useRef(o)
+  useEffect(() => {
+    latest.current = o
+  })
   const busy = useRef(false)
   const last = useRef<{ photo: string; result: SkyResult } | null>(null)
 
@@ -57,8 +60,8 @@ export function useSky(o: Options) {
    * The sky's matte for the photo shown (the one already made for it, unless `fresh`), or null: declined, unavailable
    * or failed (`error` says why).
    */
-  const compute = useCallback(async (step: string, fresh = false): Promise<SkyResult | null> => {
-    const photo = opts.current.photo()
+  async function compute(step: string, fresh = false): Promise<SkyResult | null> {
+    const photo = latest.current.photo()
     if (!photo || busy.current) return null
     if (!fresh && last.current?.photo === photo) return last.current.result
     busy.current = true
@@ -90,7 +93,7 @@ export function useSky(o: Options) {
       const input = skyInput(model)
       setStatus('Finding the sky…')
       const r0 = performance.now()
-      const shot = await opts.current.renderAsShot((w, h) => skyRenderLong(Math.max(w, h), skyModelSize(w, h, input)))
+      const shot = await latest.current.renderAsShot((w, h) => skyRenderLong(Math.max(w, h), skyModelSize(w, h, input)))
       if (!shot) return null
       const renderMs = performance.now() - r0
       const [mw, mh] = skyModelSize(shot.width, shot.height, input)
@@ -105,7 +108,7 @@ export function useSky(o: Options) {
       const provider = plan.provider
       const run = await gpuGate.foreground(() => computeSky(model, provider, shot, AI_RASTER_LONG))
       // The photo changed meanwhile: this matte is for another one.
-      if (opts.current.photo() !== photo) return null
+      if (latest.current.photo() !== photo) return null
       const raster = await encodeDepth(run.matte.px, run.matte.w, run.matte.h)
       const totalMs = performance.now() - t0
       const cov = coverage(run.matte.px)
@@ -123,7 +126,7 @@ export function useSky(o: Options) {
       busy.current = false
       setStatus(null)
     }
-  }, [])
+  }
 
   /** Another photo: its sky is found when it is next asked for. */
   const resetForPhoto = useCallback(() => {
