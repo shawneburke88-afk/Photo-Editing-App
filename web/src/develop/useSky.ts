@@ -113,7 +113,8 @@ export function useSky(o: Options) {
       const totalMs = performance.now() - t0
       const cov = coverage(run.matte.px)
       skyTimings.push({ step, provider, size: run.size, inferMs: run.inferMs, postMs: run.postMs, totalMs, chars: raster.data.length, coverage: cov })
-      diagnostics.log('ai-mask', { what: 'sky', step, model: model.id, variant: rec.variant, provider, gpu: run.gpu, input: run.size, ...(plan.large ? { gate: 'binding' } : {}), matte: [run.matte.w, run.matte.h], chars: raster.data.length, renderMs: Math.round(renderMs), loadMs: Math.round(run.loadMs), inferMs: Math.round(run.inferMs), postMs: Math.round(run.postMs), totalMs: Math.round(totalMs) })
+      // The times first: an entry over the recorder's size limit is kept cut, from its start.
+      diagnostics.log('ai-mask', { what: 'sky', step, provider, variant: rec.variant, input: run.size, ...(plan.large ? { gate: 'binding' } : {}), inferMs: Math.round(run.inferMs), postMs: Math.round(run.postMs), totalMs: Math.round(totalMs), renderMs: Math.round(renderMs), loadMs: Math.round(run.loadMs), matte: [run.matte.w, run.matte.h], chars: raster.data.length, model: model.id, gpu: run.gpu })
       console.info(`Sky: ${Math.round(100 * cov)} % of the photo, model ${run.size[0]} × ${run.size[1]} in ${Math.round(run.inferMs)} ms (${provider}), matte ${Math.round(run.postMs)} ms, ${raster.data.length} characters in the edit`)
       const result: SkyResult = { model: model.id, modelVersion: `${model.source.revision?.slice(0, 7) ?? 'unpinned'}/${rec.variant}`, runtime: `onnxruntime-web ${AI.runtime.version} ${provider}`, raster }
       last.current = { photo, result }

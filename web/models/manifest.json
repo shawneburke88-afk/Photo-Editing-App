@@ -137,7 +137,7 @@
         "host": "github-release",
         "repo": "shawneburke88-afk/Photo-Editing-App",
         "tag": "models-efficientvit-seg-b1-ade20k-1",
-        "revision": null
+        "revision": "36abc1dd9370ebeac3697a483e91d5c13f65e70b"
       },
       "convertedFrom": {
         "weights": {
@@ -164,7 +164,7 @@
         "std": [0.229, 0.224, 0.225]
       },
       "files": [
-        { "variant": "fp32", "part": "model", "path": "efficientvit_seg_b1_ade20k.onnx", "bytes": 19250809, "sha256": null }
+        { "variant": "fp32", "part": "model", "path": "efficientvit_seg_b1_ade20k.onnx", "bytes": 19277968, "sha256": "00dfc79ab211ae8cb9a354ffce864a669b57d53eff07669d8f626e1659a6d1df" }
       ]
     }
   ]

@@ -557,8 +557,13 @@ jobs:
             --title "AI model: EfficientViT-Seg B1 (ADE20K), ONNX (LightBench's conversion)" --notes-file SOURCE.md \
             "${FILE}" LICENSE.txt SOURCE.md export.json
           url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${FILE}"
-          # The file as anyone (the deploy) downloads it: the same bytes.
-          curl -fsSL --retry 4 -o "${RUNNER_TEMP}/check.onnx" "${url}"
+          # The file as anyone (the deploy) downloads it: the same bytes. A new release's assets can answer 404 for a few
+          # seconds after it is created (run 40403890988), so this waits up to two minutes.
+          for i in $(seq 1 24); do
+            if curl -fsSL -o "${RUNNER_TEMP}/check.onnx" "${url}"; then break; fi
+            echo "not served yet (try ${i}); waiting 5 s"
+            sleep 5
+          done
           echo "${SHA256}  ${RUNNER_TEMP}/check.onnx" | sha256sum -c -
           commit=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq .sha)
           echo "published ${url} (${BYTES} bytes, sha256 ${SHA256}); tag ${TAG} at ${commit}"
