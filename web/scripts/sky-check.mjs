@@ -66,6 +66,28 @@ function overlayPng(rgb, w, h, matte) {
   }
   return encodePng(w, h, out)
 }
+/** A small text picture of a grey image (one character per cell, darkest to lightest), for reading in a log. */
+export function asciiArt(px, w, h, cols = 64) {
+  const ramp = ' .:-=+*#%@'
+  const cw = w / cols
+  const ch = cw * 2
+  const rows = Math.max(1, Math.round(h / ch))
+  const out = []
+  for (let r = 0; r < rows; r++) {
+    let line = ''
+    for (let c = 0; c < cols; c++) {
+      let s = 0
+      let n = 0
+      for (let y = Math.floor(r * ch); y < Math.min(h, Math.floor((r + 1) * ch)); y++) for (let x = Math.floor(c * cw); x < Math.min(w, Math.floor((c + 1) * cw)); x++) {
+        s += px[y * w + x]
+        n++
+      }
+      line += ramp[Math.min(9, Math.floor(((n ? s / n : 0) / 256) * 10))]
+    }
+    out.push(line)
+  }
+  return out.join('\n')
+}
 const grey = (px, w, h) => encodePng(w, h, Uint8Array.from({ length: w * h * 3 }, (_, i) => px[Math.floor(i / 3)]))
 
 /** The app's own code, bundled for Node by Vite (SSR build, no app config), as sam-check.mjs does. */
@@ -238,13 +260,18 @@ async function main(args) {
       const back = app.decodeRaster(raster)
       if (!back || back.some((x, i) => x !== s.px[i])) fail(`${name} at ${S}: the stored matte doesn't decode to itself`)
       const cov = app.coverage(s.px)
-      const run = { photo: name, S, input: [mw, mh], first, second, postMs, share, coverage: cov, plainCoverage: app.coverage(plain.px), chars: raster.data.length, px: s.px, matte: [s.w, s.h] }
+      const run = { iouUnrefined: null, photo: name, S, input: [mw, mh], first, second, postMs, share, coverage: cov, plainCoverage: app.coverage(plain.px), chars: raster.data.length, px: s.px, matte: [s.w, s.h] }
       perSize.push(run)
       log(`${name} S=${S} (${mw} x ${mh}): model ${ms(first)} / ${ms(second)}, matte ${ms(postMs)}, sky cells ${share.toFixed(4)}, coverage ${cov.toFixed(4)} (no refinement ${run.plainCoverage.toFixed(4)}), ${raster.data.length} chars`)
       if (S === m.input.shortSide) {
         writeFileSync(join(outDir, `${name}-sky-overlay.png`), overlayPng(img.rgb, W, H, s.px))
         writeFileSync(join(outDir, `${name}-sky-matte.png`), grey(s.px, s.w, s.h))
         writeFileSync(join(outDir, `${name}-sky-matte-unrefined.png`), grey(plain.px, plain.w, plain.h))
+        // Text pictures for reading the result in the log (the artifact's PNGs can't always be opened): the photo's
+        // luminance, the matte without refinement and the matte (@ is sky).
+        const lum = Uint8Array.from({ length: W * H }, (_, i) => Math.round(0.299 * img.rgb[3 * i] + 0.587 * img.rgb[3 * i + 1] + 0.114 * img.rgb[3 * i + 2]))
+        log(`${name}: the photo (luminance)\n${asciiArt(lum, W, H)}\n${name}: the matte without refinement\n${asciiArt(plain.px, plain.w, plain.h)}\n${name}: the matte\n${asciiArt(s.px, s.w, s.h)}`)
+        run.iouUnrefined = iouOf(s.px, plain.px)
         const [lo0, hi0] = EXPECT[name] ?? [0, 1]
         if (EXPECT[name] && !(cov >= lo0 && cov <= hi0)) fail(`${name}: sky coverage ${cov.toFixed(4)} at ${S}, expected ${lo0}…${hi0}`)
         const refCase = ref?.cases?.find((c) => c.case.startsWith(`${name} at the app's size`))
