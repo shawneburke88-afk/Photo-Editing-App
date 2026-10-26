@@ -77,9 +77,9 @@ export function compositeTrio(photo, W = 1500, H = 600) {
   const rgb = new Uint8Array(W * H * 3).fill(128)
   const places = []
   const copies = [
-    { scale: H / photo.height, x: 20, mirror: false },
-    { scale: (0.8 * H) / photo.height, x: 560, mirror: true },
-    { scale: (0.55 * H) / photo.height, x: 1080, mirror: false },
+    { scale: H / photo.height, x: Math.round(W * 0.0134), mirror: false },
+    { scale: (0.8 * H) / photo.height, x: Math.round(W * 0.3734), mirror: true },
+    { scale: (0.55 * H) / photo.height, x: Math.round(W * 0.72), mirror: false },
   ]
   for (const c of copies) {
     const w = Math.round(photo.width * c.scale)

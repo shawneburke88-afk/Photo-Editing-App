@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { check, describePins, fetchModels, formatManifest, MANIFEST, folderBytes, parsePointer, plan, sha256, verifyModels } from './models.mjs'
+import { check, describePins, fetchModels, formatManifest, MANIFEST, folderBytes, parsePointer, plan, pointerUrl, sha256, sourceUrl, verifyModels } from './models.mjs'
 
 const REV = 'feedface'.repeat(5)
 const fp32 = Buffer.from('a stand-in, not a model '.repeat(40))
@@ -127,5 +127,38 @@ describe('scripts/models.mjs', () => {
     expect(files.reduce((n, x) => n + x.file.bytes, 0)).toBe(233614668)
     // Everything the deploy puts on the site, with the 26.8 MB runtime: well under GitHub Pages' 1 GB.
     expect(plan(m).files.reduce((n, x) => n + x.file.bytes, 0) + 26781914).toBeLessThan(0.5e9)
+  })
+
+  it('People (Part 28): YuNet from GitHub\'s Git LFS and MediaPipe from Hugging Face go to the site; RF-DETR stays on Hugging Face', () => {
+    const m = JSON.parse(readFileSync(MANIFEST, 'utf8'))
+    const yunet = m.models.find((x) => x.id === 'yunet')
+    expect(sourceUrl(yunet, yunet.files[0])).toBe('https://media.githubusercontent.com/media/opencv/opencv_zoo/48b10fa505aeb51fbd127fc60a5c660040e823b7/models/face_detection_yunet/face_detection_yunet_2026may.onnx')
+    expect(pointerUrl(yunet, yunet.files[0], 'abc')).toBe('https://raw.githubusercontent.com/opencv/opencv_zoo/abc/models/face_detection_yunet/face_detection_yunet_2026may.onnx')
+    const { files, fromHub } = plan(m)
+    expect(fromHub).toEqual(['moebius', 'rf-detr-seg-nano'])
+    const people = files.filter((x) => ['yunet', 'mediapipe-selfie-multiclass'].includes(x.model.id))
+    expect(people.map((x) => x.path)).toEqual(['models/yunet/48b10fa/face_detection_yunet_2026may.onnx', 'models/mediapipe-selfie-multiclass/f3a7202/selfie_multiclass_256x256.onnx'])
+    expect(people[1].url).toBe('https://huggingface.co/FreeHugsForRobots/ps-skin-seg/resolve/f3a72025451688fb893083991fdfd4562814a4dd/selfie_multiclass_256x256.onnx')
+    expect(people.reduce((n, x) => n + x.file.bytes, 0)).toBe(229738 + 16454497)
+    // The site's models with the runtime: about 426 MB of Pages' 1 GB.
+    const site = files.reduce((n, x) => n + x.file.bytes, 0) + 26781914
+    expect(site).toBeLessThan(0.45e9)
+  })
+
+  it('a model from GitHub is fetched from its Git LFS media URL and checked like the others', async () => {
+    const out = mkdtempSync(join(tmpdir(), 'lb-gh-'))
+    const body = Buffer.from('a stand-in face model')
+    const m = { schema: 2, models: [{ id: 'yunet', task: 'face', source: { host: 'github', repo: 'opencv/opencv_zoo', revision: REV }, files: [{ variant: 'fp32', part: 'model', path: 'models/face_detection_yunet/f.onnx', bytes: body.length, sha256: sha256(body) }] }] }
+    const seen = []
+    const f = vi.spyOn(globalThis, 'fetch').mockImplementation(async (u) => {
+      seen.push(String(u))
+      return new Response(body)
+    })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    await fetchModels(m, out)
+    f.mockRestore()
+    log.mockRestore()
+    expect(seen).toEqual([`https://media.githubusercontent.com/media/opencv/opencv_zoo/${REV}/models/face_detection_yunet/f.onnx`])
+    expect(readFileSync(join(out, 'models/yunet/feedfac/f.onnx'))).toEqual(body)
   })
 })
