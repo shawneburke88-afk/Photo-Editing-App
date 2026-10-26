@@ -5,10 +5,11 @@
 import { useState } from 'react'
 import { withKey } from '../settings/shortcuts'
 import {
-  describeKinds, hasUnknown, isKnownKind, KIND_LABELS, LOCAL_KEYS, LOCAL_LABELS, LOCAL_RANGE, maskFamily, MAX_DABS, MAX_MASKS, needsDepth, RANGE_KINDS, SHAPE_KINDS,
-  type BrushShape, type ColourShape, type DepthShape, type LocalKey, type LocalMask, type LuminanceShape, type MaskComponent, type MaskOp, type RadialShape, type ShapeKind,
+  describeKinds, hasUnknown, KIND_LABELS, LOCAL_KEYS, LOCAL_LABELS, LOCAL_RANGE, maskFamily, MAX_DABS, MAX_MASKS, needsAi, needsDepth, partLabel, RANGE_KINDS, SHAPE_KINDS,
+  type AiShape, type BrushShape, type ColourShape, type DepthShape, type LocalKey, type LocalMask, type LuminanceShape, type MaskComponent, type MaskOp, type RadialShape, type ShapeKind,
 } from '../engine/develop/masks'
 import type { Depth } from './useDepth'
+import type { ObjectSelect } from './useObjectSelect'
 import { OVERLAY_MODES } from '../engine/develop/indicators'
 import { HELP, MASK_HELP, RANGE_NOTE, type ControlHelp } from './help'
 import { DEFAULT_MASK_BRUSH, MASK_BRUSH_SIZE, OVERLAY_COLOURS } from './maskUi'
@@ -27,6 +28,8 @@ interface Props {
   lightroomNote: string | null
   /** The AI Depth range's model and depth map (Part 24). */
   depth: Depth
+  /** Object select's model, the photo's encoding and its messages (Part 27). */
+  object: ObjectSelect
 }
 
 const NEW_KINDS: { kind: ShapeKind; action: string; short: string }[] = [
@@ -35,7 +38,11 @@ const NEW_KINDS: { kind: ShapeKind; action: string; short: string }[] = [
   { kind: 'radial', action: 'develop.maskRadial', short: 'Radial' },
   { kind: 'colour', action: 'develop.maskColour', short: 'Colour' },
   { kind: 'luminance', action: 'develop.maskLuminance', short: 'Luminance' },
-  { kind: 'depth', action: 'develop.maskDepth', short: 'Depth (AI)' },
+]
+/** The AI row (Part 27): masks an AI model makes on this computer. People, faces, sky and subject join it later. */
+const AI_KINDS: { kind: ShapeKind; action: string; short: string }[] = [
+  { kind: 'ai', action: 'develop.maskObject', short: 'Object' },
+  { kind: 'depth', action: 'develop.maskDepth', short: 'Depth' },
 ]
 const OP_SIGN: Record<MaskOp, string> = { add: '+', subtract: '−', intersect: '∩' }
 const OP_NAME: Record<MaskOp, string> = { add: 'Add', subtract: 'Subtract', intersect: 'Intersect' }
@@ -64,7 +71,7 @@ function localHelp(k: LocalKey): ControlHelp {
   return { ...h, hint: `${h.hint}, in the mask`, what: `${h.what} Here it acts only where the mask is, on top of Basic’s ${where} (the two add up).` }
 }
 
-export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, depth }: Props) {
+export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, depth, object }: Props) {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [addKind, setAddKind] = useState<ShapeKind | null>(null)
   const mask = masks.find((x) => x.id === m.sel.mask) ?? null
@@ -102,8 +109,63 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, d
             </button>
           ))}
         </div>
+        <div className="mask-new mask-ai" role="group" aria-label="New AI mask">
+          <span className="small muted mask-ai-label" title="Masks an AI model makes on this computer: your photos are never uploaded">AI</span>
+          {AI_KINDS.map((k) => (
+            <button
+              key={k.kind}
+              className={`button small touch ${(k.kind === 'ai' ? m.objectMode === 'new' : m.creating?.kind === k.kind && !m.creating.op) ? 'on' : ''}`}
+              disabled={disabled || masks.length >= MAX_MASKS || (k.kind === 'ai' && m.objectBusy)}
+              aria-pressed={k.kind === 'ai' ? m.objectMode === 'new' : undefined}
+              onClick={() => (k.kind === 'ai' && m.objectMode === 'new' ? m.setCreating(null) : m.newOf(k.kind))}
+              title={withKey(k.kind === 'depth' ? `New depth range mask (AI): ${MASK_HELP.depthNew.what}` : `New object selection (AI): ${MASK_HELP.objectNew.what}`, k.action)}
+            >
+              {k.short}
+            </button>
+          ))}
+        </div>
         <p className="muted small mask-range-note">{RANGE_NOTE}</p>
-        {m.creating && (
+        {m.objectMode && (
+          <div className="small crop-note mask-object-note" role="status">
+            {object.status ? (
+              <span aria-busy="true">{object.status}</span>
+            ) : !object.ready ? (
+              <span aria-busy="true">Getting Object select ready…</span>
+            ) : m.objectBusy ? (
+              <span aria-busy="true">Selecting…</span>
+            ) : m.objectMode === 'refine' ? (
+              <span>Click something to select it; Shift-click adds to the selected object, Alt-click removes from it, a drag selects inside a box. On a touch screen, tap, then choose below.</span>
+            ) : (
+              <span>Point at something to see what would be selected, then click{m.objectMode === 'part' && m.creating?.op ? ` to ${m.creating.op} it` : ''}; a drag selects inside a box. On a touch screen, tap, then choose below.</span>
+            )}{' '}
+            <button className="linklike" onClick={() => (m.objectMode === 'refine' ? m.setPicking(null) : m.setCreating(null))} title="End Object select (Esc)">Done</button>
+            {m.touchPoint && (
+              <span className="crop-tools mask-object-touch" role="group" aria-label="Use the tapped spot">
+                <button className="button small touch" disabled={disabled || m.objectBusy || !object.ready} onClick={() => void m.onObjectClick(m.touchPoint)} title={MASK_HELP.objectSelectHere.what}>Select</button>
+                {m.objectMode === 'refine' && (
+                  <>
+                    <button className="button small touch" disabled={disabled || m.objectBusy || !object.ready} onClick={() => void m.onObjectClick(m.touchPoint, true, false)} title={MASK_HELP.objectAdd.what}>Add</button>
+                    <button className="button small touch" disabled={disabled || m.objectBusy || !object.ready} onClick={() => void m.onObjectClick(m.touchPoint, false, true)} title={MASK_HELP.objectRemove.what}>Remove</button>
+                  </>
+                )}
+              </span>
+            )}
+          </div>
+        )}
+        {object.error && (
+          <p className="small masks-warn" role="alert">
+            {object.error}{' '}
+            <button className="linklike" onClick={() => window.dispatchEvent(new CustomEvent('lightbench:settings', { detail: 'ai' }))} title="Open Settings → AI models">AI models…</button>{' '}
+            <button className="linklike" onClick={() => object.setError(null)} title="Hide this message">Dismiss</button>
+          </p>
+        )}
+        {masks.some(needsAi) && (
+          <p className="small masks-note" role="note">
+            Some object selections came from another photo or a preset, so they aren’t shown here yet.{' '}
+            <button className="linklike" disabled={disabled || m.objectBusy} onClick={() => void m.computeMissingAi()} title={MASK_HELP.objectCompute.what}>Compute for this photo</button>
+          </p>
+        )}
+        {m.creating && m.creating.kind !== 'ai' && (
           <p className="small crop-note" role="status">
             {m.creating.kind === 'linear' ? 'Drag on the photo from where the effect is full to where it ends.' : m.creating.kind === 'radial' ? 'Drag on the photo from the centre outwards (a click makes a circle).' : m.creating.kind === 'brush' ? 'Paint on the photo. Alt-drag erases.' : 'Click a colour on the photo.'}{' '}
             <button className="linklike" onClick={() => m.setCreating(null)}>Cancel</button>
@@ -176,10 +238,10 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, d
         {mask && (
           <div className="mask-add" role="group" aria-label={`Add to ${mask.name}`}>
             <select aria-label="Part to combine" value={chosenAdd} onChange={(e) => setAddKind(e.target.value as ShapeKind)} disabled={disabled}>
-              {kindsFor.map((k) => <option key={k} value={k}>{KIND_LABELS[k]}{k === 'depth' ? ' (AI)' : ''}</option>)}
+              {kindsFor.map((k) => <option key={k} value={k}>{KIND_LABELS[k]}{k === 'depth' || k === 'ai' ? ' (AI)' : ''}</option>)}
             </select>
             {(['add', 'subtract', 'intersect'] as MaskOp[]).map((op) => (
-              <button key={op} className="button small touch" disabled={disabled} onClick={() => m.addPart(chosenAdd, op)} title={`${OP_NAME[op]} a ${KIND_LABELS[chosenAdd].toLowerCase()} ${op === 'add' ? 'to' : op === 'subtract' ? 'from' : 'with'} ${mask.name}`}>
+              <button key={op} className="button small touch" disabled={disabled} onClick={() => m.addPart(chosenAdd, op)} title={`${OP_NAME[op]} ${chosenAdd === 'ai' ? 'an object selection' : `a ${KIND_LABELS[chosenAdd].toLowerCase()}`} ${op === 'add' ? 'to' : op === 'subtract' ? 'from' : 'with'} ${mask.name}`}>
                 {OP_SIGN[op]} {OP_NAME[op]}
               </button>
             ))}
@@ -249,7 +311,7 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, d
 }
 
 function ComponentRow({ c, first, selected, m, disabled }: { c: MaskComponent; first: boolean; selected: boolean; m: Masking; disabled: boolean }) {
-  const label = isKnownKind(c.shape.kind) ? KIND_LABELS[c.shape.kind] : `${c.shape.kind} (newer LightBench)`
+  const label = c.shape.kind === 'ai' ? `${partLabel(c.shape as AiShape)} (AI)${(c.shape as AiShape).raster ? '' : ', waiting'}` : partLabel(c.shape)
   return (
     <li className={`mask-part ${selected ? 'selected' : ''}`}>
       {first ? (
@@ -356,6 +418,26 @@ function ShapeControls({ m, mask, comp, disabled, showHint }: { m: Masking; mask
   if (s.kind === 'brush') {
     const n = (s as BrushShape).strokes.length
     return <p className="muted small">{n} {n === 1 ? 'stroke' : 'strokes'}. Paint to add, Alt-drag or Erase to take away.</p>
+  }
+  if (s.kind === 'ai') {
+    const a = s as AiShape
+    const pts = a.prompt?.points ?? []
+    const add = pts.filter((x) => x[2] === 1).length
+    const remove = pts.length - add
+    return (
+      <section aria-label={`${partLabel(a)} selection`}>
+        {!a.raster && <p className="small masks-warn">This selection isn’t made for this photo yet: it isn’t shown.</p>}
+        <p className="muted small">
+          {a.prompt?.box ? 'Selected inside a box' : `Selected at ${add} ${add === 1 ? 'point' : 'points'}`}{remove ? `, ${remove} removed` : ''}. Made on this computer by {a.model}{a.modelVersion ? ` ${a.modelVersion}` : ''}.
+        </p>
+        {a.what === 'object' && (
+          <div className="crop-tools">
+            <button className={`button small touch ${m.objectMode === 'refine' ? 'on' : ''}`} disabled={disabled || m.objectBusy} aria-pressed={m.objectMode === 'refine'} onClick={() => { if (!m.active) m.start(); m.setPicking(m.objectMode === 'refine' ? null : 'object') }} title={MASK_HELP.objectPick.what}>Refine on photo…</button>
+            <button className="button small touch" disabled={disabled || m.objectBusy || !a.prompt} onClick={() => void m.recomputeAi(comp.id)} title={MASK_HELP.objectRecompute.what}>Compute again</button>
+          </div>
+        )}
+      </section>
+    )
   }
   return null
 }

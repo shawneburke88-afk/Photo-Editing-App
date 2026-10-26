@@ -74,4 +74,58 @@ describe('scripts/models.mjs', () => {
     log.mockRestore()
     err.mockRestore()
   })
+
+  it('a model of several graphs (schema 2: Object select) is fetched file by file under the files\' own names', async () => {
+    const enc = Buffer.from('encoder graph '.repeat(10))
+    const encData = Buffer.from('encoder weights '.repeat(30))
+    const dec = Buffer.from('decoder graph '.repeat(8))
+    const m = {
+      schema: 2,
+      models: [{
+        id: 'sam2-1-hiera-tiny', delivery: 'site', source: { host: 'huggingface', repo: 'onnx-community/sam2.1-hiera-tiny-ONNX', revision: REV, pinnedBy: 'owner' },
+        licence: { file: 'notices/sam2.LICENSE.txt' },
+        files: [
+          { variant: 'fp16', part: 'encoder', path: 'onnx/vision_encoder_fp16.onnx', bytes: enc.length, sha256: sha256(enc) },
+          { variant: 'fp16', part: 'encoder', data: true, path: 'onnx/vision_encoder_fp16.onnx_data', bytes: encData.length, sha256: sha256(encData) },
+          { variant: 'fp16', part: 'decoder', path: 'onnx/prompt_encoder_mask_decoder_fp16.onnx', bytes: dec.length, sha256: sha256(dec) },
+        ],
+      }],
+    }
+    expect(plan(m).files.map((f) => f.path)).toEqual([
+      'models/sam2-1-hiera-tiny/feedfac/vision_encoder_fp16.onnx',
+      'models/sam2-1-hiera-tiny/feedfac/vision_encoder_fp16.onnx_data',
+      'models/sam2-1-hiera-tiny/feedfac/prompt_encoder_mask_decoder_fp16.onnx',
+    ])
+    expect(plan(m).files[1].url).toBe(`https://huggingface.co/onnx-community/sam2.1-hiera-tiny-ONNX/resolve/${REV}/onnx/vision_encoder_fp16.onnx_data`)
+    expect(describePins(m).split('\n')[2]).toMatch(/^ {2}fp16 encoder weights onnx\/vision_encoder_fp16\.onnx_data /)
+    const from = mkdtempSync(join(tmpdir(), 'lb-models-from-'))
+    const out = mkdtempSync(join(tmpdir(), 'lb-models-out-'))
+    mkdirSync(join(from, 'sam2-1-hiera-tiny/feedfac'), { recursive: true })
+    writeFileSync(join(from, 'sam2-1-hiera-tiny/feedfac/vision_encoder_fp16.onnx'), enc)
+    writeFileSync(join(from, 'sam2-1-hiera-tiny/feedfac/vision_encoder_fp16.onnx_data'), encData)
+    writeFileSync(join(from, 'sam2-1-hiera-tiny/feedfac/prompt_encoder_mask_decoder_fp16.onnx'), dec)
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(await fetchModels(m, out, from)).toBe(3)
+    expect(readFileSync(join(out, 'models/sam2-1-hiera-tiny/feedfac/vision_encoder_fp16.onnx_data'))).toEqual(encData)
+    // The model's licence is served beside it (Apache-2.0 §4(a)).
+    expect(readFileSync(join(out, 'models/sam2-1-hiera-tiny/LICENSE.txt'), 'utf8')).toMatch(/Apache License/)
+    expect(verifyModels(m, join(out, 'models'))).toBe(0)
+    // A weights file swapped for another fails the build.
+    writeFileSync(join(from, 'sam2-1-hiera-tiny/feedfac/vision_encoder_fp16.onnx_data'), Buffer.from(encData).fill(7, 0, 1))
+    await expect(fetchModels(m, mkdtempSync(join(tmpdir(), 'lb-models-out-')), from)).rejects.toThrow(/did not match/)
+    log.mockRestore()
+    err.mockRestore()
+  })
+
+  it('the shipped manifest deploys SAM 2.1 Hiera Tiny from the site, pinned by the owner, and stays under the Pages limit', () => {
+    const m = JSON.parse(readFileSync(MANIFEST, 'utf8'))
+    const sam = m.models.find((x) => x.id === 'sam2-1-hiera-tiny')
+    expect(sam.source).toEqual({ host: 'huggingface', repo: 'onnx-community/sam2.1-hiera-tiny-ONNX', revision: '814a066640debee5a91e70aa401fb8e17e030503', pinnedBy: 'owner' })
+    const files = plan(m).files.filter((x) => x.model.id === sam.id)
+    expect(files).toHaveLength(8)
+    expect(files.reduce((n, x) => n + x.file.bytes, 0)).toBe(233614668)
+    // Everything the deploy puts on the site, with the 26.8 MB runtime: well under GitHub Pages' 1 GB.
+    expect(plan(m).files.reduce((n, x) => n + x.file.bytes, 0) + 26781914).toBeLessThan(0.5e9)
+  })
 })

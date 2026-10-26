@@ -2,7 +2,7 @@
 // whether the pins show (docs/PHASE3.md Part 23).
 
 import { OVERLAY_MODES } from '../engine/develop/indicators'
-import type { BrushShape, LinearShape, LocalMask, Pt, RadialShape } from '../engine/develop/masks'
+import type { AiShape, BrushShape, LinearShape, LocalMask, Pt, RadialShape } from '../engine/develop/masks'
 
 export interface OverlayPrefs {
   on: boolean
@@ -76,6 +76,13 @@ export function maskAnchor(m: LocalMask): Pt | null {
     if (s.kind === 'brush') {
       const d = (s as BrushShape).strokes[0]?.dabs
       if (d?.length) return [d[0], d[1]]
+    }
+    if (s.kind === 'ai') {
+      // An AI selection: its first point, or the middle of its box (Part 27).
+      const p = (s as AiShape).prompt
+      const pt = p?.points?.find((x) => x[2] === 1)
+      if (pt) return [pt[0], pt[1]]
+      if (p?.box) return [(p.box[0] + p.box[2]) / 2, (p.box[1] + p.box[3]) / 2]
     }
   }
   return null

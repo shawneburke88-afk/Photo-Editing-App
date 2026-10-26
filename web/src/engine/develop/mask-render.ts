@@ -11,8 +11,8 @@
 
 import { displayToSensorAt, sensorToDisplayAt, type ShownMap } from './shown-map'
 import { colourTolerance } from './mask-math'
-import { decodeDepth } from './depth-map'
-import { hasEffect, hasUnknown, LOCAL_KEYS, type BrushShape, type DepthShape, type LocalMask, type MaskComponent } from './masks'
+import { decodeDepth, decodeRaster } from './depth-map'
+import { hasEffect, hasUnknown, LOCAL_KEYS, type AiShape, type BrushShape, type DepthShape, type LocalMask, type MaskComponent } from './masks'
 import type { MaskParams } from './process'
 
 /** The drawn photo's rectangle in the drawing's target pixels (the shader's V.offset and V.size). */
@@ -24,7 +24,7 @@ export interface TargetRect {
 }
 
 /** Component kinds as the shader numbers them. */
-export const KIND_CODE = { linear: 1, radial: 2, brush: 3, luminance: 4, colour: 5, depth: 6 } as const
+export const KIND_CODE = { linear: 1, radial: 2, brush: 3, luminance: 4, colour: 5, depth: 6, ai: 7 } as const
 export const OP_CODE = { add: 0, subtract: 1, intersect: 2 } as const
 
 export interface PreparedComponent {
@@ -42,6 +42,8 @@ export interface PreparedComponent {
   bounds?: [number, number, number, number]
   /** A Depth range's map (decoded; 255 = nearest), in the sensor frame. */
   depth?: { px: Uint8Array; w: number; h: number }
+  /** An AI selection's matte (decoded; 255 = selected), in the sensor frame (Part 27). */
+  raster?: { px: Uint8Array; w: number; h: number }
 }
 
 export interface PreparedMask {
@@ -70,7 +72,7 @@ export interface PreparedMasks {
   toneLocal: boolean
   /** A mask sets Texture, Clarity, Dehaze or Glow: the planes have a fourth vec4 a pixel (Part 25). */
   spatial: boolean
-  /** With a Depth range: the drawn image's uv → sensor uv on a (n + 1) × (n + 1) grid (`sensorGrid`). */
+  /** With a Depth range or an AI selection: the drawn image's uv → sensor uv on a (n + 1) × (n + 1) grid (`sensorGrid`). */
   grid?: { n: number; uv: Float32Array }
 }
 
@@ -196,6 +198,14 @@ function prepareComponent(c: MaskComponent, m: ShownMap, r: TargetRect, key: str
       if (!px || !sh.raster) return null
       return { ...base, kind: KIND_CODE.depth, p0: [...sh.range], p1: [0, GRID_CELLS, 0, 0], depth: { px, w: sh.raster.width, h: sh.raster.height } }
     }
+    case 'ai': {
+      // An AI selection (Part 27): its matte, sampled through the same sensor grid as a depth map; p1.y: the grid's
+      // cells. Drawing never runs the model: without a matte (waiting to be computed) the mask is left out.
+      const sh = s as AiShape
+      const px = sh.raster ? decodeRaster(sh.raster) : null
+      if (!px || !sh.raster) return null
+      return { ...base, kind: KIND_CODE.ai, p0: [0, 0, 0, 0], p1: [0, GRID_CELLS, 0, 0], raster: { px, w: sh.raster.width, h: sh.raster.height } }
+    }
     default:
       return null
   }
@@ -231,7 +241,8 @@ export function prepareMasks(masks: LocalMask[] | undefined, m: ShownMap, r: Tar
     const overlay = mask.id === overlayId
     if ((!hasEffect(mask) && !overlay) || hasUnknown(mask) || !mask.components.length) continue
     const parts = mask.components.map((c) => prepareComponent(c, m, r, key, p))
-    // A part that can't be drawn (a Depth range without its map) leaves the whole mask out, rather than drawing it wrong.
+    // A part that can't be drawn (a Depth range without its map, an AI selection without its matte) leaves the whole mask
+    // out, rather than drawing it wrong.
     if (parts.some((c) => !c)) continue
     const components = parts as PreparedComponent[]
     if (overlay && depthView) {
@@ -258,6 +269,6 @@ export function prepareMasks(masks: LocalMask[] | undefined, m: ShownMap, r: Tar
       guide: rho >= 0.5,
     })
   }
-  const depth = out.some((x) => x.components.some((c) => c.depth))
+  const depth = out.some((x) => x.components.some((c) => c.depth || c.raster))
   return depth ? { masks: out, toneLocal, spatial, grid: { n: GRID_CELLS, uv: sensorGrid(m) } } : { masks: out, toneLocal, spatial }
 }

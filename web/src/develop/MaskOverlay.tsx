@@ -5,9 +5,11 @@
 // stays on its content. Handles and pins take hits within 22 CSS px (44 px targets, Apple's default size). Space-drag,
 // the middle button or two fingers move a zoomed-in photo.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { type LinearShape, type LocalMask, type MaskComponent, type Pt, type RadialShape, type ShapeKind } from '../engine/develop/masks'
-import { maskAnchor, type MaskBrush } from './maskUi'
+import { outlinePath, previewGrid, sensorToShot } from '../ai/segment'
+import { maskAnchor, OVERLAY_COLOURS, type MaskBrush } from './maskUi'
+import type { ObjectPreview } from './useObjectSelect'
 
 type V = [number, number]
 
@@ -30,7 +32,7 @@ interface Props {
   /** Waiting for a shape to be drawn (or a colour or tone to be picked). */
   creating: ShapeKind | null
   /** Clicking picks a colour sample (Shift-click adds one) or a tone for the selected range component. */
-  picking: 'colour' | 'luminance' | 'depth' | null
+  picking: 'colour' | 'luminance' | 'depth' | 'object' | null
   brush: MaskBrush
   showPins: boolean
   onSelect: (mask: string | null, comp?: string | null) => void
@@ -40,7 +42,22 @@ interface Props {
   onStroke: (s: StrokeInput, final: boolean) => void
   onPick: (uv: V, add: boolean) => void
   onPan: (dx: number, dy: number) => void
+  /** Object select's picker (Part 27), when it is on. Points are sensor-normalised. */
+  object?: {
+    mode: 'new' | 'part' | 'refine'
+    /** The photo is encoded and nothing is being computed: pointer moves preview, clicks select. */
+    ready: boolean
+    preview: ObjectPreview | null
+    /** On touch: the tapped point waiting for the panel's buttons. */
+    touchPoint: V | null
+    onHover: (pt: V | null, shift: boolean, alt: boolean) => void
+    onClick: (pt: V | null, shift: boolean, alt: boolean, box?: [number, number, number, number]) => void
+    onTap: (pt: V) => void
+  } | null
 }
+
+/** Cells across the hover preview's grid (its outline and tint over the photo as drawn). */
+const PREVIEW_CELLS = 128
 
 const NEAR = 22
 const dist = (a: V, b: V) => Math.hypot(a[0] - b[0], a[1] - b[1])
@@ -50,6 +67,7 @@ type Drag =
   | { kind: 'paint'; pts: V[]; pressure: number[]; erase: boolean }
   | { kind: 'handle'; comp: string; handle: string; from: V; to: V; start: LinearShape | RadialShape }
   | { kind: 'pan'; last: V }
+  | { kind: 'object'; from: V; to: V; shift: boolean; alt: boolean; touch: boolean }
 
 /** Dabs along a stroke given in sensor pixels, one every `spacing`, with the pen's pressure where each lands. */
 function dabsAlong(pts: V[], pressure: number[], spacing: number): { dabs: number[]; pressure: number[] } {
@@ -102,7 +120,35 @@ export function MaskOverlay(p: Props) {
 
   const mask = masks.find((m) => m.id === selected) ?? null
   const comp: MaskComponent | null = mask?.components.find((c) => c.id === selectedComp) ?? null
-  const brushing = creating === 'brush' || (!creating && comp?.shape.kind === 'brush')
+  const obj = p.object ?? null
+  const brushing = !obj && (creating === 'brush' || (!creating && comp?.shape.kind === 'brush'))
+  // The hover preview on the photo as drawn: each cell of a grid over the drawn photo mapped to the sensor (this
+  // drawing's geometry), then to the photo as shot, where the decoder's mask is read.
+  const previewDraw = useMemo(() => {
+    const pv = obj?.preview
+    if (!pv) return null
+    const gw = PREVIEW_CELLS
+    const gh = Math.max(1, Math.round((PREVIEW_CELLS * box.h) / Math.max(1, box.w)))
+    const a = previewGrid(pv.logits, gw, gh, (u, v) => {
+      const s = fromView(box.x + u * box.w, box.y + v * box.h)
+      return sensorToShot(pv.shot.uvToSensor, s[0], s[1])
+    })
+    const canvas = document.createElement('canvas')
+    canvas.width = gw
+    canvas.height = gh
+    const ctx = canvas.getContext('2d')
+    let url = ''
+    if (ctx) {
+      const img = ctx.createImageData(gw, gh)
+      const [r, g, b] = OVERLAY_COLOURS[0].rgb
+      for (let i = 0; i < a.length; i++) img.data.set([r * 255, g * 255, b * 255, Math.round(a[i] * 110)], i * 4)
+      ctx.putImageData(img, 0, 0)
+      url = canvas.toDataURL()
+    }
+    return { gw, gh, url, path: outlinePath(a, gw, gh) }
+    // The geometry (fromView) changes with the box; the preview with the decoder's answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [obj?.preview, box.x, box.y, box.w, box.h])
   // The shape shown for the selected component: while a handle is dragged, the dragged one.
   const shownShape = live?.kind === 'handle' && comp && live.comp === comp.id ? handleShape(live) : (comp?.shape as LinearShape | RadialShape | undefined)
 
@@ -204,6 +250,13 @@ export function MaskOverlay(p: Props) {
     }
     if (e.button !== 0) return
     e.currentTarget.setPointerCapture(e.pointerId)
+    if (obj) {
+      // Object select: a click selects, a drag a box; on touch a tap previews (the panel's buttons then select).
+      if (!inPhoto(q)) return
+      drag.current = { kind: 'object', from: q, to: q, shift: e.shiftKey, alt: e.altKey, touch: e.pointerType === 'touch' }
+      setLive({ ...drag.current })
+      return
+    }
     const h = !creating && comp ? handleAt(q) : null
     if (h && comp && (comp.shape.kind === 'linear' || comp.shape.kind === 'radial')) {
       drag.current = { kind: 'handle', comp: comp.id, handle: h, from: q, to: q, start: comp.shape as LinearShape | RadialShape }
@@ -235,6 +288,8 @@ export function MaskOverlay(p: Props) {
     const q = local(e)
     setHover(q)
     const d = drag.current
+    // Object select's preview follows a mouse or pen (no hover on touch: a tap previews instead).
+    if (obj && e.pointerType !== 'touch' && (!d || (d.kind === 'object' && dist(d.from, q) < 6))) obj.onHover(inPhoto(q) ? fromView(q[0], q[1]) : null, e.shiftKey, e.altKey)
     if (e.pointerType === 'touch') {
       const prev = touches.current.get(e.pointerId)
       touches.current.set(e.pointerId, q)
@@ -248,6 +303,11 @@ export function MaskOverlay(p: Props) {
     if (d.kind === 'pan') {
       p.onPan(q[0] - d.last[0], q[1] - d.last[1])
       d.last = q
+      return
+    }
+    if (d.kind === 'object') {
+      d.to = q
+      setLive({ ...d })
       return
     }
     if (d.kind === 'paint') {
@@ -270,6 +330,17 @@ export function MaskOverlay(p: Props) {
     drag.current = null
     setLive(null)
     if (!d || d.kind === 'pan') return
+    if (d.kind === 'object') {
+      if (!obj) return
+      if (dist(d.from, d.to) >= 6) {
+        const a = fromView(d.from[0], d.from[1])
+        const b = fromView(d.to[0], d.to[1])
+        return obj.onClick(null, d.shift, d.alt, [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])])
+      }
+      const pt = fromView(d.from[0], d.from[1])
+      if (d.touch) return obj.onTap(pt)
+      return obj.onClick(pt, d.shift, d.alt)
+    }
     if (d.kind === 'paint') return p.onStroke(strokeOf(d), true)
     if (d.kind === 'handle') return p.onShape(d.comp, handleShape(d), true)
     // A new gradient: a click makes one of a default size.
@@ -297,7 +368,8 @@ export function MaskOverlay(p: Props) {
     })
   }
 
-  const cursor = live?.kind === 'pan' ? 'grabbing' : brushing && hover && inPhoto(hover) ? 'none' : picking || creating === 'colour' || creating === 'luminance' ? 'crosshair' : creating ? 'crosshair' : 'default'
+  const cursor = live?.kind === 'pan' ? 'grabbing' : obj ? (obj.ready ? 'crosshair' : 'progress') : brushing && hover && inPhoto(hover) ? 'none' : picking || creating === 'colour' || creating === 'luminance' ? 'crosshair' : creating ? 'crosshair' : 'default'
+  const objectBox = live?.kind === 'object' && dist(live.from, live.to) >= 6 ? live : null
   const painting = live?.kind === 'paint' ? live : null
   const creatingShape = live?.kind === 'create' ? live : null
   const longLine = 4 * Math.max(box.w, box.h)
@@ -314,7 +386,10 @@ export function MaskOverlay(p: Props) {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      onPointerLeave={() => setHover(null)}
+      onPointerLeave={() => {
+        setHover(null)
+        obj?.onHover(null, false, false)
+      }}
       role="application"
       aria-label="Masking: draw a gradient or paint with the brush; click a pin to select a mask; drag a gradient's handles to change it"
     >
@@ -356,6 +431,19 @@ export function MaskOverlay(p: Props) {
         {creatingShape?.shape === 'radial' && (
           <ellipse className="mask-line full" cx={creatingShape.from[0]} cy={creatingShape.from[1]} rx={Math.abs(creatingShape.to[0] - creatingShape.from[0])} ry={Math.abs(creatingShape.to[1] - creatingShape.from[1])} />
         )}
+        {obj && previewDraw && !objectBox && (
+          <g className="mask-object-preview" data-testid="object-preview">
+            {previewDraw.url && <image href={previewDraw.url} x={box.x} y={box.y} width={box.w} height={box.h} preserveAspectRatio="none" />}
+            <path className="mask-object-outline" d={previewDraw.path} transform={`translate(${box.x} ${box.y}) scale(${box.w / previewDraw.gw} ${box.h / previewDraw.gh})`} vectorEffect="non-scaling-stroke" />
+          </g>
+        )}
+        {objectBox && (
+          <rect className="mask-line full" x={Math.min(objectBox.from[0], objectBox.to[0])} y={Math.min(objectBox.from[1], objectBox.to[1])} width={Math.abs(objectBox.to[0] - objectBox.from[0])} height={Math.abs(objectBox.to[1] - objectBox.from[1])} />
+        )}
+        {obj?.touchPoint && (() => {
+          const v = toView(obj.touchPoint[0], obj.touchPoint[1])
+          return <circle className="mask-object-tap" cx={v[0]} cy={v[1]} r={9} />
+        })()}
       </g>
       {Object.entries(handles).map(([k, v]) => (
         <g key={k} className={`mask-handle ${k}`}>

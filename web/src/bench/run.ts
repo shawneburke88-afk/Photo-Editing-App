@@ -34,6 +34,7 @@ import { clearProofCache, proofLut } from '../engine/proof/client'
 import { builtinIcc } from '../engine/proof/profiles'
 import { proofKey } from '../engine/proof/settings'
 import { computeDepth, renderSize } from '../ai/depth'
+import { depthInput } from '../ai/manifest'
 import { AI, depthModel, providerFor } from '../ai/models'
 import { installed } from '../ai/store'
 import { DEFAULT_GEOMETRY } from '../engine/develop/geometry'
@@ -488,7 +489,7 @@ export const STAGES: Record<StageId, StageDef> = {
       const p = await providerFor()
       if (!p.provider) throw new Error(`skipped: ${p.why}`)
       const g = c.engine.geometry(DEFAULT_GEOMETRY)
-      const img = await c.engine.renderImage(displayUniforms(s), wbOf(c, s), renderSize(g.size[0], g.size[1], m.input!))
+      const img = await c.engine.renderImage(displayUniforms(s), wbOf(c, s), renderSize(g.size[0], g.size[1], depthInput(m)))
       const r = await computeDepth(m, { rgba: img.data, width: img.width, height: img.height, uvToSensor: g.uvToSensor, sensor: [c.engine.sensorLayout.width, c.engine.sensorLayout.height] }, p.provider, AI.runtime.version)
       lastDepth = { inferMs: r.inferMs, size: r.size, provider: r.provider, variant: r.depth.modelVersion }
     },

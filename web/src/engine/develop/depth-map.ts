@@ -104,20 +104,33 @@ export async function encodeDepth(px: Uint8Array, width: number, height: number)
   return { width, height, encoding: DEPTH_ENCODING, data: toBase64(z) }
 }
 
+/** Caps a stored raster must keep (the depth map's below; AI mattes have their own, masks.ts `AI_RASTER_CAPS`). */
+export interface RasterCaps {
+  side: number
+  pixels: number
+  chars: number
+}
+export const DEPTH_CAPS: RasterCaps = { side: MAX_DEPTH_SIDE, pixels: MAX_DEPTH_PIXELS, chars: MAX_DEPTH_CHARS }
+
 /** Checks a stored raster's fields (not its contents); null when unusable. */
-export function normalizeRaster(v: unknown): RasterData | null {
+export function normalizeRaster(v: unknown, caps: RasterCaps = DEPTH_CAPS): RasterData | null {
   if (!v || typeof v !== 'object') return null
   const r = v as Partial<RasterData>
-  const okSide = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= MAX_DEPTH_SIDE
-  if (!okSide(r.width) || !okSide(r.height) || r.width * r.height > MAX_DEPTH_PIXELS) return null
-  if (r.encoding !== DEPTH_ENCODING || typeof r.data !== 'string' || !r.data.length || r.data.length > MAX_DEPTH_CHARS) return null
+  const okSide = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= caps.side
+  if (!okSide(r.width) || !okSide(r.height) || r.width * r.height > caps.pixels) return null
+  if (r.encoding !== DEPTH_ENCODING || typeof r.data !== 'string' || !r.data.length || r.data.length > caps.chars) return null
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(r.data)) return null
   return { width: r.width, height: r.height, encoding: r.encoding, data: r.data }
 }
 
-/** Decoded maps, most recent last (decoding a 518 × 784 map takes a few milliseconds; drawings reuse it). */
+/**
+ * Decoded maps, most recent last (decoding a 518 × 784 map takes a few milliseconds; drawings reuse it). Kept up to
+ * KEEP maps and KEEP_BYTES together (an edit with several AI mattes of up to 2048 × 2048 each: Part 27).
+ */
 const decoded = new Map<string, Uint8Array | null>()
-const KEEP = 6
+const KEEP = 24
+const KEEP_BYTES = 64 << 20
+let decodedBytes = 0
 
 /** The map's bytes (width × height, 255 = nearest), or null when the data is damaged. Cached by its data. */
 export function decodeDepth(r: RasterData): Uint8Array | null {
@@ -137,9 +150,16 @@ export function decodeDepth(r: RasterData): Uint8Array | null {
     px = null
   }
   decoded.set(r.data, px)
-  while (decoded.size > KEEP) decoded.delete(decoded.keys().next().value!)
+  decodedBytes += px?.length ?? 0
+  while (decoded.size > KEEP || (decodedBytes > KEEP_BYTES && decoded.size > 1)) {
+    const k = decoded.keys().next().value!
+    decodedBytes -= decoded.get(k)?.length ?? 0
+    decoded.delete(k)
+  }
   return px
 }
+/** The same decoder, for any 8-bit raster in this encoding (AI mattes too). */
+export const decodeRaster = decodeDepth
 
 /** The map at sensor uv (bilinear, clamped at the edges): 0…1, 1 = nearest. */
 export function sampleDepth(px: Uint8Array, w: number, h: number, u: number, v: number): number {

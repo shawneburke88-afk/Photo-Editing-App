@@ -432,6 +432,13 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .mask-overlay .mask-paint.erase { stroke: rgba(0, 0, 0, 0.3); }
 .masks-panel .touch { min-height: 44px; min-width: 44px; }
 .masks-panel .mask-new { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 4px; margin: 6px 0; }
+/* Object select (PHASE3.md Part 27): the AI row, the picker's preview, the tapped spot. */
+.masks-panel .mask-ai { grid-template-columns: auto repeat(auto-fill, minmax(76px, 1fr)); align-items: center; }
+.masks-panel .mask-ai-label { padding: 0 4px; font-weight: 600; letter-spacing: 0.04em; }
+.masks-panel .mask-object-touch { display: inline-flex; margin-top: 4px; }
+.mask-overlay .mask-object-preview image { pointer-events: none; }
+.mask-overlay .mask-object-outline { fill: none; stroke: #fff; stroke-width: 2; filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.9)); pointer-events: none; }
+.mask-overlay .mask-object-tap { fill: none; stroke: #fff; stroke-width: 2; filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.9)); }
 .masks-panel .mask-list, .masks-panel .mask-parts { list-style: none; margin: 4px 0; padding: 0; }
 .masks-panel .mask-row { border: 1px solid var(--line, rgba(127, 127, 127, 0.3)); border-radius: 6px; margin-bottom: 4px; }
 .masks-panel .mask-row.selected { border-color: var(--accent); }
