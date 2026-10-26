@@ -37,6 +37,7 @@ See [PLAN.md](PLAN.md#phase-3--editing-depth) for the whole phase and [USABILITY
   - [Hardening and cleanup (owner, 2026-10-21)](#hardening-and-cleanup-owner-2026-10-21)
 - [Part 26: AI Remove](#part-26-ai-remove)
 - [Part 27: AI masks, part 1: groundwork and Object select](#part-27-ai-masks-part-1-groundwork-and-object-select)
+- [Part 28: AI masks, part 2: People and faces](#part-28-ai-masks-part-2-people-and-faces)
 
 ## Part 1: Process versions, the tool stack, and Crop
 
@@ -3667,3 +3668,134 @@ Headless Chromium, SwiftShader WebGPU (no `shader-f16`), `?gpu=readback`, the st
 ### Files
 
 New: `web/src/ai/segment.ts`, `objectSelect.ts`, `src/develop/useObjectSelect.ts`, `web/scripts/sam-check.mjs`, `sam-parity.py`, `web/scripts/fixtures/ai-masks/` (astronaut.png and SOURCE.md), `web/models/notices/sam2.LICENSE.txt`; tests `src/ai/manifest2.test.ts`, `segment.test.ts`, `src/engine/develop/ai-mask.test.ts`, `web/scripts/sam-check.test.mjs`. Changed: `web/models/manifest.json` (schema 2, SAM 2.1), `src/ai/manifest.ts`, `store.ts`, `runtime.ts`, `runtime.worker.ts`, `models.ts`, `ModelDialog.tsx`, `AiModelsSettings.tsx`, `depth.ts` (input accessor), `src/lib/rpc.ts` (buffers handed over inside an argument), `src/engine/develop/masks.ts`, `mask-render.ts`, `depth-map.ts` (caps per kind, decoder cache), `src/engine/gpu/mask-stage.ts`, `mask.wgsl` (case 7), `src/develop/MasksPanel.tsx`, `MaskOverlay.tsx`, `useMasking.ts`, `maskUi.ts`, `help.ts`, `DevelopView.tsx`, `useDepth.ts`, `src/settings/actions.ts`, `src/bench/run.ts`, `src/index.css`, `web/scripts/models.mjs` (+ test), `.github/workflows/ai-models.yml` (`sam-check`), THIRD_PARTY_NOTICES.md, docs/USABILITY.md. Not changed: release notes and the version.
+
+## Part 28: AI masks, part 2: People and faces
+
+**What it does.** The second of the four AI masks builds (owner's order, 2026-10-21). The Masks group's AI row gains **People**: it finds the people and faces in the photo and lists them — **Person 1…n**, numbered from left to right and framed on the photo, and **All people** — each with ticks for **Whole person**, **Face** (the skin of the face), **Hair**, **Body skin** and **Clothes**. **Make mask** turns everything ticked into one mask, "People 1", with one AI part per tick (`kind: 'ai'`, `what` `person`, `face`, `hair`, `bodySkin` or `clothes`), as one history step. The models run on the user's computer; each part's matte is stored in the edit and the .xmp as Object select's are (Part 27: 8 bits, sensor frame, at most 1024 px on the long side), so it draws everywhere without the models and old edits render byte-identically (below).
+
+Sources: the brief `AI_MASKS_BRIEF.md` §1.2–1.4 and §2 (People), the owner's decisions `DECISIONS_2026-10-21.md`, the model facts of `MASKS_PREP.md` (run 39653265084) and `MASKS_PREP_2.md` (the binding-limit bug), and Parts 24, 26 and 27 for delivery, runtime and storage.
+
+### Owner's decisions and how they are built
+
+| Decision | Built as |
+|---|---|
+| AI parts combine like shapes (AI masks decision 1) | People parts are `kind: 'ai'`, so a brush, gradient or Object selection adds to, subtracts from or intersects them; ranges stay separate masks (unchanged rules, Part 27). |
+| Mattes at most 1024 px | `AI_RASTER_LONG` (Part 27) for every People part. |
+| Pasted parts wait for "Compute for this photo" | Paste drops the mattes and keeps `what`, the person, the boxes and the models; **Compute for this photo** (one step) finds the people on the new photo: **All people** from everyone there, **one person** from whoever stands where that person's box was (the person whose box overlaps the stored box most, IoU ≥ 0.3; nobody there: the part waits and the panel says so). |
+| Presets leave photo-bound parts out (owner, 2026-10-22, for Object selections) | `presetMasks` also leaves out masks with **one person's** part ("Person 2: hair" means someone on one photo only). **All people** parts are kept without their mattes and wait for Compute on the photo the preset is applied to. This follows the brief (§3: "specific persons" out, "All-people parts" kept). |
+| Lightroom's AI masks left out on import | Unchanged (Part 23). |
+| Face details (eyes, lips) later | Not built: Face is MediaPipe's face-skin class only. |
+| Models: RF-DETR-Seg Nano (people), YuNet (faces), MediaPipe Selfie Multiclass (parts; an owner-approved exception) | As below. |
+| Delivery: YuNet and MediaPipe from LightBench's site; RF-DETR-Seg in-app from Hugging Face | `delivery: "site"` for YuNet and MediaPipe (the deploy's `models.mjs fetch` fetches them by pinned URL and SHA-256; YuNet from GitHub's Git LFS, a new source host), `delivery: "huggingface"` for RF-DETR (Part 26's resumable download: consent, Range resume, SHA-256, 429 handling). |
+| One combined consent dialog | `PeopleDialog`: the models this device still needs, each with its size, where it comes from, its licence and its training data in plain words; nothing is fetched before Download. |
+
+Model rule: RF-DETR-Seg Nano passes option B (COCO and Objects365 named; its pre-training outlines came from SAM 2 and its DINOv2 backbone's LVD-142M isn't published: unpublished foundation data, stated plainly). YuNet passes (WIDER FACE is named; its terms are "cc by-nc-nd", said in plain words). MediaPipe Selfie Multiclass is the owner's exception of 2026-10-21: Google names no training data, and the model info says so.
+
+### Using it
+
+| Behaviour | Detail |
+|---|---|
+| The AI row | **Object**, **Depth**, **People**, each with a tooltip. Command search: "New mask: People (AI)" (`develop.maskPeople`), no default key, as Object and Depth. |
+| First use | The combined download dialog (below). Declined: no list, no mask, no step. |
+| Finding | Once per photo: "Finding people and faces (once for this photo)…" (or "…on the processor…"), then "Outlining each person…" when Object select's model is on the device. The result is kept while the photo is shown: People again opens the list at once. |
+| The list | "2 people found, 1 face. Tick what to select." A row for **All people** and one per person; five ticks per row; each tick, row and column has a tooltip. Pointing at a row (or focusing a tick) highlights that person's frame on the photo; **All people** highlights everyone. A person whose face wasn't found says so in the row's tooltip. **Make mask (n parts)** makes one mask, one step; **Cancel** (or Esc) closes the list. No people: "No people found in this photo." |
+| The parts | Named by who and what: "Person 2", "Person 2: hair", "All people: clothes". The selected part says what made it ("Made on this computer by mediapipe-selfie-multiclass f3a7202/fp32, with rf-detr-seg-nano, yunet") and offers **Compute again** (runs the models again on this photo, one step). Refine, Feather, Amount, Invert, the local sliders, Part to combine (shapes and Object) work as on every mask. |
+| Messages | Not in this build; the runtime messages of Part 24 (time limit, lost GPU, out of memory), each with a link to Settings → AI models; invalid numbers: "The model gave invalid numbers on this computer. People can't be used on this computer for now." |
+| Settings → AI models | "RF-DETR-Seg Nano (People)", "YuNet (People: faces)", "MediaPipe Selfie Multiclass (People: hair, skin and clothes)": status, Download…, Remove, About this model; RF-DETR also "Check for updates" (Part 26, reports only). |
+
+### Download dialog
+
+"Download the People models?": People needs these models; downloaded once, only if the user agrees, each file checked against its SHA-256, kept on the device (works offline), removable; the total, e.g. "166.1 MB (the models: 139.3 MB; the runtime they need, ONNX Runtime Web 1.30.0: 26.8 MB, from LightBench's own site)" when neither the models nor the runtime are there yet. For each model: what it does, its size, where it comes from ("Hugging Face (huggingface.co), where it is published, at the exact version LightBench was tested with", or "LightBench's own site"), **Licence**, **Training data, in plain words**, About this model. The training-data texts:
+
+- **RF-DETR-Seg Nano**: COCO (Flickr photos, outlines CC BY 4.0) after pre-training on Objects365 (academic use only); its pre-training outlines were made by Meta's SAM 2 (partly trained on Meta's unpublished videos) and its DINOv2 backbone was trained on LVD-142M, which isn't published; accepted by the owner under the rule that unpublished foundation data may be used if stated plainly; Apache-2.0.
+- **YuNet**: WIDER FACE, published under "cc by-nc-nd" (non-commercial use, no derivatives); MIT.
+- **MediaPipe Selfie Multiclass**: Google doesn't name the data ("trained on thousands of samples with diverse identities"); the owner approved it as an exception; Apache-2.0 (Google's model card). The file is a community ONNX conversion, checked against Google's own (MASKS_PREP.md).
+
+On a computer where RF-DETR runs on the processor the purpose line says so. RF-DETR's download resumes where it stopped (Part 26).
+
+### Pipeline (`ai/people.ts`, `ai/peopleSelect.ts`, `develop/usePeople.ts`)
+
+| Step | Detail |
+|---|---|
+| Photo | Develop's rendering as shot (Parts 24 and 27), up to 2048 px on its long side (`PEOPLE_RENDER_LONG`: so a person's 256² crop stays sharp in a large photo). |
+| 1. People: RF-DETR-Seg Nano | The photo stretched to 312 × 312, ImageNet mean and std (rfdetr's own `predict`). **The export's output names are swapped** (`pred_masks` holds the boxes [1, 100, 4], `pred_boxes` the class logits [1, 100, 91], `pred_logits` the masks [1, 100, 78, 78]); `detectorOutputs` tells them apart by shape, never by name. A query is a person when the sigmoid of its class-1 logit (COCO's person) is ≥ 0.5; boxes (cx, cy, w, h) overlapping more than IoU 0.7 are one; at most 20, the most certain; then numbered by the box's centre from left to right. |
+| 2. Faces: YuNet | The photo at 640 on its long side, each side a multiple of 32, BGR 0…255. Decoded as OpenCV's FaceDetectorYN (`face_detect.cpp`): strides 8/16/32, score √(cls·obj) ≥ 0.6, box centre (col + dx, row + dy)·stride, size exp(dw, dh)·stride, five landmarks, NMS 0.3. Each face goes to the person whose box holds its centre and most of it (one face each, the more certain faces first). |
+| 3. Parts: MediaPipe Selfie Multiclass | For each person a square crop of the box's larger side × 1.2 (outside the photo: black), and for each matched face a square crop of 2.6 × the face box (sharper face and hair in a crop of a whole body); resized to 256² by area, (RGB / 255 − 0.5) / 0.5 = −1…1, NHWC. Output logits [1, 256, 256, 6] → softmax per pixel. Face skin and hair take the larger of the two crops' values; body skin and clothes the person crop's. |
+| 4. The whole person's outline | When Object select's SAM 2.1 is on this device (never asked for here) and its variant suits this computer: one decoder run per person with the person's box as the prompt, on the photo's SAM encoding (shared with Object select: encoded once per photo). SAM's mask is used when it overlaps RF-DETR's own by IoU ≥ 0.5 (`chooseOutline`; else it took something else, and RF-DETR's is used); otherwise RF-DETR's mask (78 × 78 logits over the photo). |
+| 5. Mattes | Each sensor-frame texel mapped to the photo as shot (Part 27): the whole person from the outline's logits (Part 27's ramp, ½ at logit 0); a part from its probability (nothing below 0.3, all above 0.7), held inside that person's outline widened by 3 % of the box (so hair at the edge isn't cut). **All people** is the union (largest value) of everyone's. Stored with `u8-med-deflate-b64`, at most 1024 px. |
+| Stored | `what`, `model` and `modelVersion` (RF-DETR's or SAM 2.1's for the whole person, MediaPipe's for the parts), `runtime` ("onnxruntime-web 1.30.0 webgpu+wasm"), **`models`** (every model that took part, "<id> <revision 7>/fp32"), **`prompt.person`** (1-based) with `prompt.box` (that person's box, sensor frame), or **`prompt.all`** with `prompt.boxes` (everyone's, up to 32). Checked on every load (`normalizeShape`); an Object selection's stored form is unchanged (no new keys). |
+| Memory | The three graphs are loaded for the photo and freed when it is done (they run once per photo); Object select's, when loaded, stay. |
+
+### Where each model runs (the GPU limit gate)
+
+The "AI models" workflow's `people-check` ran every node output of each model at the app's input size and measured the largest tensors (`web/scripts/people-tensors.py`, runs 40400483226 and 40406271282, identical):
+
+| Model | Largest activation | Largest weight | Runs on |
+|---|---|---|---|
+| RF-DETR-Seg Nano (312²) | 10,999,896 B: the backbone's attention Softmax [1, 6, 677, 677] | 2,359,296 B | WebGPU where the GPU binds ≥ 16 MiB per buffer (the manifest's `gpu` need; WebGPU guarantees 128 MiB, so every adapter qualifies); else the processor (`PEOPLE_WASM_FALLBACK`, on) |
+| YuNet (640 × 640; 640 × 384) | 6,553,600 B; 3,932,160 B (Conv [1, 64, 160, 160]) | 16,384 B | Always the processor (WebAssembly): milliseconds there, and off the GPU's limits |
+| MediaPipe Selfie Multiclass (256²) | 25,165,824 B (Conv/Relu [1, 384, 128, 128]) | 2,654,208 B | Always the processor (WebAssembly) |
+
+None is near the 128 MiB where ONNX Runtime 1.30.0's binding-limit bug starts (Part 27). The outline (SAM 2.1) keeps Part 27's `objectPlan` gate.
+
+### The real models on GitHub's servers ("AI models" → `people-check`)
+
+huggingface.co is blocked here, so the real files were checked by the workflow's new read-only task **`people-check`** (`web/scripts/people-check.mjs`, `people-tensors.py`): it downloads RF-DETR-Seg Nano and MediaPipe from Hugging Face, YuNet from `media.githubusercontent.com` (OpenCV Zoo's Git LFS) and SAM 2.1's fp32 graphs, checks sizes and SHA-256 and each graph's inputs and outputs, and runs **the app's own `people.ts` and `segment.ts`** (bundled by Vite) with the app's WebAssembly runtime, 4 threads, on the committed `astronaut.png` (NASA, public domain) and on **"trio"**, a group made from it inside the check (three copies at full, 0.8 and 0.55 size, the middle one mirrored, on grey: no natural public-domain group photo with a clear source could be fetched from this machine, so none is committed). Two runs, both "all checks passed" (logs: `scratchpad/amp/action-logs/`):
+
+| Run | Result |
+|---|---|
+| [40400483226](https://github.com/shawneburke88-afk/Photo-Editing-App/actions/runs/40400483226) | Files 7 of 7 (sizes and SHA-256 as pinned); I/O as expected (RF-DETR's swapped names confirmed); every output finite; astronaut: 1 person (0.970, box 0.034…0.709 × 0.031…0.992), 1 face (0.943, the box masks-prep found), matched; trio: **3 people** (0.950, 0.948, 0.917), **3 faces**, all matched. The largest tensors above. |
+| [40406271282](https://github.com/shawneburke88-afk/Photo-Editing-App/actions/runs/40406271282) | The same detections, with the coverage table and timings printed: |
+
+| Photo, person | Outline | Whole person | Face skin | Hair | Body skin | Clothes |
+|---|---|---|---|---|---|---|
+| astronaut, 1 | SAM (agrees with RF-DETR: IoU 0.98) | 0.3978 | 0.0288 | 0.0357 | 0.0044 | 0.3216 |
+| trio, 1 | SAM (0.96) | 0.1595 | 0.0116 | 0.0144 | 0.0018 | 0.1176 |
+| trio, 2 | SAM (0.95) | 0.1040 | 0.0074 | 0.0092 | 0.0009 | 0.0852 |
+| trio, 3 | SAM (0.84) | 0.0432 | 0.0035 | 0.0043 | 0.0005 | 0.0331 |
+
+(Coverage is the share of the photo. masks-prep found RF-DETR's mask at 0.407 and MediaPipe's whole-photo classes at hair 0.036, face skin 0.029, body skin 0.006, clothes 0.337 on the astronaut: the same picture.) Sizes in the edit (All people): astronaut 512 × 512: whole person 26,404 characters, clothes 18,436, hair 3,496, face 2,428, body skin 2,308; trio 1024 × 410: whole person 39,768, clothes 25,012. Every stored matte decoded back to itself.
+
+### Speed
+
+| Where | RF-DETR | YuNet | MediaPipe | SAM outline | Source |
+|---|---|---|---|---|---|
+| GitHub runner, the app's WebAssembly, 4 threads | 1.1–1.3 s per photo | 55–145 ms | about 225–250 ms per crop (2 per person with a face) | encoder 6.7–7.1 s (once per photo, shared with Object select) + 120–160 ms per person | run 40406271282 |
+| A real GPU (WebGPU) | **unmeasured** | (processor) | (processor) | **unmeasured** | No GPU here. |
+| SwiftShader in the e2e (stand-ins) | the whole find 30–110 s | | | | says nothing about real speed |
+
+On the processor People takes about 1.5 s plus 0.5 s per person without SAM on the runner; with Object select's model on the device, add its encoding (about 7 s on the processor) unless the photo was already encoded for Object select.
+
+### Test stand-ins (never shipped)
+
+`scratchpad/amp/make_people_standins.py`: RF-DETR-Seg Nano with the real export's input and (swapped) output names and shapes: two people (A, the real model's astronaut box; B, a narrow figure on the right), a near repeat of A (NMS drops it), a dog (not a person), ellipse masks filling the boxes; MediaPipe with the real names and shapes, classes by place in the crop (hair on top, face skin below it, clothes in the lower middle, body skin at the sides). **YuNet is the real file** (fetched from GitHub's LFS here; its SHA-256 matches the pin). SAM 2.1: Part 27's stand-ins (a box prompt selects the box). A test-only manifest (`mk_test_manifest.mjs`, commit `feedface…`); RF-DETR served as if from Hugging Face by a Playwright route.
+
+### Verified
+
+Headless Chromium, SwiftShader WebGPU (no `shader-f16`, 1 GiB binding limit), `?gpu=readback`, the stand-ins; the astronaut as a 512 × 512 JPEG (P.JPG, Q.JPG); scripts in `scratchpad/amp/` (`e2e-people.mjs` parts main, sam, presets, fresh, cpu, integrity; `identity.mjs`).
+
+{{E2E}}
+
+- **Old edits unchanged** {{ID}}
+- **Unit tests** {{VITEST}}
+- `npx tsc -b`, `npx oxlint` (only the two accepted warnings), `npm run build` pass; `actionlint` passes on the workflow.
+
+### Limitations and unverified
+
+- **A real GPU:** RF-DETR on WebGPU in a browser has run only on SwiftShader with a stand-in; the real graph's WebGPU result matched the CPU on lavapipe in masks-prep (max |Δ| 0.0059), not in a browser. Speed and memory on real GPUs are **unverified**.
+- **Quality by eye:** the coverages and agreement above are numbers on one public-domain photo and a group made from it; the overlays are in the runs' `people-check` artifacts, which couldn't be viewed from this machine. Real group photos (overlapping people, small faces, people seen from behind, children, varied skin tones and hair) are **unverified**; MediaPipe's model card notes its evaluation set only.
+- **Crowds:** at most 20 people (the most certain); a face is matched only inside a person's box; faces of people RF-DETR missed are not offered.
+- **Face** is the skin of the face (MediaPipe's class), eyes and mouth as the model decides; face details are later work.
+- **Body skin** is small on clothed figures (0.004 of the astronaut photo): expected, not judged by eye.
+- **The 2048 px rendering** for crops: very small people in very large photos get small crops; unmeasured.
+- **Pages:** YuNet (0.23 MB) and MediaPipe (16.5 MB) bring the site's models to about 426 MB of 1 GB; the deploy's fetch from `media.githubusercontent.com` worked in both people-check runs (the same URL `models.mjs` uses) but no deploy has run it yet.
+- **One person's part after paste** finds whoever stands where the stored box was (IoU ≥ 0.3); on a different composition it waits. Whether owners expect "Person 2" to mean "the second from the left" instead is a design question (below).
+
+### Owner questions
+
+1. **Single-person parts on another photo** (paste, Compute): built as "whoever stands at the same place" (the stored box). Alternative: "the n-th person from the left". Keep?
+2. **Presets**: built as decided for Object selections (one-person parts left out, All people kept and computed). Confirm for People.
+
+### Files
+
+New: `web/src/ai/people.ts`, `peopleSelect.ts`, `PeopleDialog.tsx`, `src/develop/usePeople.ts`, `web/scripts/people-check.mjs`, `people-tensors.py`, `web/models/notices/rf-detr.LICENSE.txt`, `yunet.LICENSE.txt`, `mediapipe.LICENSE.txt`; tests `src/ai/people.test.ts`, `people-models.test.ts`, `src/engine/develop/people-mask.test.ts`, `web/scripts/people-check.test.mjs`. Changed: `web/models/manifest.json` (three models; RF-DETR's `gpu` need), `src/ai/manifest.ts` (tasks `detect`, `face`, `parse`; source host `github`), `models.ts` (`peoplePlan`), `ModelDialog.tsx`, `AiModelsSettings.tsx`, `src/develop/useObjectSelect.ts` (quiet preparation, `outlines`), `useMasking.ts`, `MasksPanel.tsx`, `MaskOverlay.tsx`, `DevelopView.tsx`, `help.ts`, `src/engine/develop/masks.ts` (People `what`s, `prompt.person/all/boxes`, `models`, names, presets), `src/settings/actions.ts`, `src/index.css`, `web/scripts/models.mjs` (+ test), `.github/workflows/ai-models.yml` (`people-check`), THIRD_PARTY_NOTICES.md, docs/USABILITY.md. Not changed: release notes and the version.
