@@ -27,12 +27,24 @@ name: AI models
 #                  point, a removed point, an added point and a box, then compares each selection with Meta's own
 #                  PyTorch SAM 2.1 (web/scripts/sam-parity.py). Mattes and overlays go into the run's "sam-check"
 #                  artifact. Read-only; commits nothing.
+#   efficientvit-export
+#                  The Sky mask's model (docs/PHASE3.md Part 29): LightBench's own ONNX export of EfficientViT-Seg B1
+#                  (ADE20K). Downloads the checkpoint web/models/manifest.json pins ("convertedFrom": the Hugging Face
+#                  commit and SHA-256), builds the model with the authors' code at its pinned commit, exports it
+#                  (web/scripts/sky/export_efficientvit.py), checks it against the authors' PyTorch model, measures its
+#                  largest tensor, then runs the app's own Sky code on it on the CPU (web/scripts/sky-check.mjs). With
+#                  "publish" ticked, and only if every check passed, a separate job (the only one that may write) publishes
+#                  the file, its licence and a SOURCE note as a GitHub Release of this repository under the manifest's tag;
+#                  an existing release or tag is never overwritten (a new export needs a new tag). Commits nothing.
+#   sky-check      The Sky model the manifest pins, fetched from its GitHub Release by the deploy's own step
+#                  (web/scripts/models.mjs fetch: size and SHA-256), through the app's own Sky code on the CPU
+#                  (web/scripts/sky-check.mjs). Read-only.
 
 on:
   workflow_dispatch:
     inputs:
       task:
-        description: "pin-and-check: pin web/models/manifest.json, check the real model and commit the manifest to this branch. check: only check the files the manifest pins. hf-check: read-only check of Hugging Face's responses for the AI Remove files and update check. moebius-check: AI Remove's real model through the app's own code on the CPU (read-only, up to an hour). sam-check: Object select's real model through the app's own code on the CPU, and against Meta's PyTorch model (read-only)."
+        description: "pin-and-check: pin web/models/manifest.json, check the real model and commit the manifest to this branch. check: only check the files the manifest pins. hf-check: read-only check of Hugging Face's responses for the AI Remove files and update check. moebius-check: AI Remove's real model through the app's own code on the CPU (read-only, up to an hour). sam-check: Object select's real model through the app's own code on the CPU, and against Meta's PyTorch model (read-only). efficientvit-export: export the Sky model to ONNX, check it, and publish it as a GitHub Release if 'publish' is ticked. sky-check: the Sky model the manifest pins, from its release, through the app's code."
         type: choice
         options:
           - pin-and-check
@@ -40,16 +52,24 @@ on:
           - hf-check
           - moebius-check
           - sam-check
+          - efficientvit-export
+          - sky-check
         default: pin-and-check
         required: true
+      publish:
+        description: "efficientvit-export only: publish the checked export as a GitHub Release under the manifest's tag (never overwrites an existing release)"
+        type: boolean
+        default: false
+        required: false
       revision:
         description: "Optional, pin-and-check only: the 40-digit Hugging Face commit to pin (empty: the model repository's current main)"
         type: string
         default: ""
         required: false
 
+# Read-only unless a job says otherwise: `models` commits the pinned manifest and `sky-publish` creates the release.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ai-models-${{ github.ref }}
@@ -57,7 +77,10 @@ concurrency:
 
 jobs:
   models:
+    if: inputs.task != 'efficientvit-export' && inputs.task != 'sky-check'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     # moebius-check runs a 907 MB diffusion model 20 steps at a time on the runner's CPU, several times.
     timeout-minutes: 90
     env:
@@ -293,3 +316,265 @@ jobs:
           fi
           echo "pushed $(git rev-parse --short HEAD) to ${GITHUB_REF_NAME}"
           echo "Committed \`$(git rev-parse --short HEAD)\` (web/models/manifest.json only) to \`${GITHUB_REF_NAME}\`." >> "$GITHUB_STEP_SUMMARY"
+
+  # ---- the Sky mask's model (docs/PHASE3.md Part 29): read-only; the next job alone may publish.
+  sky:
+    if: inputs.task == 'efficientvit-export' || inputs.task == 'sky-check'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      passed: ${{ steps.result.outputs.passed }}
+      sha256: ${{ steps.result.outputs.sha256 }}
+      bytes: ${{ steps.result.outputs.bytes }}
+      tag: ${{ steps.result.outputs.tag }}
+    env:
+      TASK: ${{ inputs.task }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Look for the Sky code and read its pins
+        id: pins
+        run: |
+          echo "branch ${GITHUB_REF_NAME} at $(git rev-parse --short HEAD), task ${TASK}, publish ${{ inputs.publish }}"
+          if [ ! -f web/scripts/sky-check.mjs ] || [ ! -f web/scripts/sky/export_efficientvit.py ]; then
+            echo "::error::this branch has no web/scripts/sky-check.mjs or web/scripts/sky/export_efficientvit.py (run it on the AI masks Sky branch)"
+            exit 1
+          fi
+          node -e '
+            const m = require("./web/models/manifest.json").models.find((x) => x.task === "sky")
+            if (!m) { console.error("no sky model in web/models/manifest.json"); process.exit(1) }
+            const w = m.convertedFrom.weights, c = m.convertedFrom.code
+            const out = { id: m.id, tag: m.source.tag, repo: m.source.repo, file: m.files[0].path, hf_repo: w.repo, hf_commit: w.revision, pt: w.path, pt_sha256: w.sha256, code_repo: c.repo, code_commit: c.revision, revision: m.source.revision ?? "" }
+            for (const [k, v] of Object.entries(out)) console.log(`${k}=${v}`)
+          ' | tee -a "$GITHUB_OUTPUT"
+          {
+            echo "## AI models: ${TASK}"
+            echo
+            echo "Branch \`${GITHUB_REF_NAME}\` at \`$(git rev-parse --short HEAD)\`."
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        working-directory: web
+        run: npm ci
+
+      - name: Python (and, for the export, PyTorch and the authors' code at its pinned commit)
+        env:
+          CODE_REPO: ${{ steps.pins.outputs.code_repo }}
+          CODE_COMMIT: ${{ steps.pins.outputs.code_commit }}
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/venv"
+          V="${RUNNER_TEMP}/venv/bin"
+          if [ "${TASK}" != "efficientvit-export" ]; then
+            "$V/pip" install --quiet pillow
+            exit 0
+          fi
+          "$V/pip" install --quiet torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+          # torch 2.5.1 kept (its torch.onnx.export uses the TorchScript exporter); the versions the candidate check ran.
+          printf 'torch==2.5.1\ntorchvision==0.20.1\n' > "${RUNNER_TEMP}/torch-pin.txt"
+          "$V/pip" install --quiet -c "${RUNNER_TEMP}/torch-pin.txt" triton==3.1.0 onnx==1.23.2 onnxsim onnxruntime==1.31.0 timm==1.0.30 \
+            omegaconf pyyaml pillow tqdm numpy einops scipy "git+https://github.com/facebookresearch/segment-anything.git"
+          "$V/python" -c "import torch, onnx, onnxruntime, timm; print('torch', torch.__version__, 'onnx', onnx.__version__, 'onnxruntime', onnxruntime.__version__, 'timm', timm.__version__)"
+          git init --quiet "${RUNNER_TEMP}/efficientvit"
+          git -C "${RUNNER_TEMP}/efficientvit" fetch --quiet --depth 1 "https://github.com/${CODE_REPO}.git" "${CODE_COMMIT}"
+          git -C "${RUNNER_TEMP}/efficientvit" checkout --quiet FETCH_HEAD
+          test "$(git -C "${RUNNER_TEMP}/efficientvit" rev-parse HEAD)" = "${CODE_COMMIT}"
+          # The licence released with the file is the one LightBench keeps (web/models/notices).
+          cmp "${RUNNER_TEMP}/efficientvit/LICENSE" web/models/notices/efficientvit.LICENSE.txt
+
+      - name: The test photos
+        run: |
+          mkdir -p "${RUNNER_TEMP}/sky/photos"
+          "${RUNNER_TEMP}/venv/bin/python" -I -c '
+          import sys
+          from PIL import Image
+          Image.open(sys.argv[1]).convert("RGB").save(sys.argv[2])
+          ' web/scripts/fixtures/ai-masks/rocket.jpg "${RUNNER_TEMP}/sky/photos/rocket.png"
+          cp web/scripts/fixtures/ai-masks/astronaut.png "${RUNNER_TEMP}/sky/photos/astronaut.png"
+
+      - name: A public-domain photo of trees against the sky (Wikimedia Commons, best effort)
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          "${RUNNER_TEMP}/venv/bin/python" -I web/scripts/sky/commons_photo.py --out "${RUNNER_TEMP}/sky/photos"
+
+      - name: Download the checkpoint, export and check against PyTorch (efficientvit-export)
+        if: inputs.task == 'efficientvit-export'
+        env:
+          HF_REPO: ${{ steps.pins.outputs.hf_repo }}
+          HF_COMMIT: ${{ steps.pins.outputs.hf_commit }}
+          PT: ${{ steps.pins.outputs.pt }}
+          PT_SHA256: ${{ steps.pins.outputs.pt_sha256 }}
+        run: |
+          url="https://huggingface.co/${HF_REPO}/resolve/${HF_COMMIT}/${PT}"
+          curl -fsSL --retry 4 -o "${RUNNER_TEMP}/${PT}" "${url}"
+          echo "${PT_SHA256}  ${RUNNER_TEMP}/${PT}" | sha256sum -c -
+          photos=("${RUNNER_TEMP}/sky/photos/rocket.png" "${RUNNER_TEMP}/sky/photos/astronaut.png")
+          if [ -f "${RUNNER_TEMP}/sky/photos/trees.png" ]; then photos+=("${RUNNER_TEMP}/sky/photos/trees.png"); fi
+          "${RUNNER_TEMP}/venv/bin/python" -I web/scripts/sky/export_efficientvit.py --repo "${RUNNER_TEMP}/efficientvit" \
+            --weights "${RUNNER_TEMP}/${PT}" --weights-sha256 "${PT_SHA256}" --weights-url "${url}" --weights-commit "${HF_COMMIT}" \
+            --out "${RUNNER_TEMP}/sky/release" --photos "${photos[@]}"
+          cp web/models/notices/efficientvit.LICENSE.txt "${RUNNER_TEMP}/sky/release/LICENSE.txt"
+          ls -la "${RUNNER_TEMP}/sky/release"
+
+      - name: The pinned file from its GitHub Release, as the deploy fetches it (sky-check)
+        if: inputs.task == 'sky-check'
+        working-directory: web
+        env:
+          REPO: ${{ steps.pins.outputs.repo }}
+          TAG: ${{ steps.pins.outputs.tag }}
+        run: |
+          if [ -z "${{ steps.pins.outputs.revision }}" ]; then
+            echo "::error::web/models/manifest.json doesn't pin the Sky model yet (publish it with efficientvit-export first)"
+            exit 1
+          fi
+          # The deploy's own fetch and checks, on a copy of the manifest holding the Sky model only.
+          node -e '
+            const fs = require("fs")
+            const m = JSON.parse(fs.readFileSync("models/manifest.json", "utf8"))
+            m.models = m.models.filter((x) => x.task === "sky")
+            fs.writeFileSync(process.argv[1], JSON.stringify(m))
+          ' "${RUNNER_TEMP}/sky-manifest.json"
+          node scripts/models.mjs fetch --out "${RUNNER_TEMP}/site" --manifest "${RUNNER_TEMP}/sky-manifest.json"
+          mkdir -p "${RUNNER_TEMP}/sky/release"
+          curl -fsSL --retry 4 -o "${RUNNER_TEMP}/sky/release/export.json" "https://github.com/${REPO}/releases/download/${TAG}/export.json" || echo "::warning::no export.json in the release"
+
+      - name: The app's Sky code on the real model (the app's WebAssembly runtime, 4 threads)
+        working-directory: web
+        env:
+          ID: ${{ steps.pins.outputs.id }}
+          FILE: ${{ steps.pins.outputs.file }}
+          REVISION: ${{ steps.pins.outputs.revision }}
+        run: |
+          if [ "${TASK}" = "efficientvit-export" ]; then
+            model="${RUNNER_TEMP}/sky/release/${FILE}"
+          else
+            model="${RUNNER_TEMP}/site/models/${ID}/${REVISION:0:7}/${FILE}"
+          fi
+          photos="${RUNNER_TEMP}/sky/photos/rocket.png,${RUNNER_TEMP}/sky/photos/astronaut.png"
+          if [ -f "${RUNNER_TEMP}/sky/photos/trees.png" ]; then photos="${photos},${RUNNER_TEMP}/sky/photos/trees.png"; fi
+          ref=()
+          if [ -f "${RUNNER_TEMP}/sky/release/export.json" ]; then ref=(--reference "${RUNNER_TEMP}/sky/release/export.json"); fi
+          node scripts/sky-check.mjs --model "${model}" --photos "${photos}" --out "${RUNNER_TEMP}/sky/check" --threads 4 "${ref[@]}"
+          cp "${RUNNER_TEMP}/sky/photos/"*.json "${RUNNER_TEMP}/sky/check/" 2>/dev/null || true
+
+      - name: Result
+        id: result
+        if: always()
+        env:
+          TAG: ${{ steps.pins.outputs.tag }}
+          FILE: ${{ steps.pins.outputs.file }}
+        run: |
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          f="${RUNNER_TEMP}/sky/release/${FILE}"
+          if [ "${TASK}" = "efficientvit-export" ] && [ -f "${f}" ] && [ -f "${RUNNER_TEMP}/sky/check/results.json" ] \
+            && node -e 'const r = require(process.argv[1]); process.exit(r.ok ? 0 : 1)' "${RUNNER_TEMP}/sky/release/export.json" \
+            && node -e 'const r = require(process.argv[1]); process.exit(r.failures.length ? 1 : 0)' "${RUNNER_TEMP}/sky/check/results.json"; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+            echo "sha256=$(sha256sum "${f}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+            echo "bytes=$(stat -c %s "${f}")" >> "$GITHUB_OUTPUT"
+            echo "every check passed: ${FILE} $(stat -c %s "${f}") bytes sha256 $(sha256sum "${f}" | cut -d' ' -f1)"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Keep the export (efficientvit-export)
+        if: inputs.task == 'efficientvit-export' && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sky-export
+          path: ${{ runner.temp }}/sky/release
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Keep the mattes
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sky-check
+          path: |
+            ${{ runner.temp }}/sky/check
+            ${{ runner.temp }}/sky/photos
+          retention-days: 14
+          if-no-files-found: warn
+
+  # Publishes the checked export as a GitHub Release (the only job that may write; never overwrites).
+  sky-publish:
+    needs: sky
+    if: inputs.task == 'efficientvit-export' && inputs.publish && needs.sky.outputs.passed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.sky.outputs.tag }}
+      SHA256: ${{ needs.sky.outputs.sha256 }}
+      BYTES: ${{ needs.sky.outputs.bytes }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sky-export
+          path: ${{ runner.temp }}/release
+
+      - name: Check the files are the ones the checks passed
+        run: |
+          cd "${RUNNER_TEMP}/release"
+          rm -f raw.onnx
+          ls -la
+          f=$(ls *.onnx)
+          test "$(echo "${f}" | wc -l)" = 1
+          echo "${SHA256}  ${f}" | sha256sum -c -
+          test "$(stat -c %s "${f}")" = "${BYTES}"
+          test -s LICENSE.txt && test -s SOURCE.md && test -s export.json
+          echo "FILE=${f}" >> "$GITHUB_ENV"
+
+      - name: Never overwrite a release or a tag
+        run: |
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
+            echo "::error::the release ${TAG} exists already: it is never overwritten (give a new export a new tag in web/models/manifest.json)"
+            exit 1
+          fi
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" > /dev/null 2>&1; then
+            echo "::error::the tag ${TAG} exists already: it is never moved (give a new export a new tag)"
+            exit 1
+          fi
+
+      - name: Publish the release
+        run: |
+          cd "${RUNNER_TEMP}/release"
+          gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --latest=false \
+            --title "AI model: EfficientViT-Seg B1 (ADE20K), ONNX (LightBench's conversion)" --notes-file SOURCE.md \
+            "${FILE}" LICENSE.txt SOURCE.md export.json
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${FILE}"
+          # The file as anyone (the deploy) downloads it: the same bytes. A new release's assets can answer 404 for a few
+          # seconds after it is created (run 40403890988), so this waits up to two minutes.
+          for i in $(seq 1 24); do
+            if curl -fsSL -o "${RUNNER_TEMP}/check.onnx" "${url}"; then break; fi
+            echo "not served yet (try ${i}); waiting 5 s"
+            sleep 5
+          done
+          echo "${SHA256}  ${RUNNER_TEMP}/check.onnx" | sha256sum -c -
+          commit=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq .sha)
+          echo "published ${url} (${BYTES} bytes, sha256 ${SHA256}); tag ${TAG} at ${commit}"
+          {
+            echo "## Published"
+            echo
+            echo "Release [\`${TAG}\`](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}) at commit \`${commit}\`."
+            echo
+            echo "| asset | bytes | SHA-256 |"
+            echo "|---|---|---|"
+            for a in "${FILE}" LICENSE.txt SOURCE.md export.json; do echo "| ${a} | $(stat -c %s "${a}") | \`$(sha256sum "${a}" | cut -d' ' -f1)\` |"; done
+            echo
+            echo "Pin it in web/models/manifest.json: \"revision\": \"${commit}\", the file's \"bytes\": ${BYTES} and \"sha256\": \"${SHA256}\"."
+          } >> "$GITHUB_STEP_SUMMARY"

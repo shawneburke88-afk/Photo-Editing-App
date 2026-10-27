@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.6.17",
+    "date": "2026-10-27",
+    "newFeatures": [
+      "Masks: a new Sky button selects the sky in one click, with clean edges around trees, towers and other fine detail. \"Everything except the sky\" selects the rest of the photo in one step, and \"Find the sky again\" recomputes it.",
+      "Sky selections combine with brushes and gradients like other shapes, are saved with the edit and in the .xmp, and stay in presets: on a new photo they wait for you to click Compute for this photo.",
+      "The Sky model (about 19 MB) is downloaded from LightBench's own site only if you agree. The download window explains its licence and training data."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.6.16",
     "date": "2026-10-22",
     "newFeatures": [

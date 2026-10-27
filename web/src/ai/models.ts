@@ -13,6 +13,7 @@ export const AI: AiInfo | null = typeof __LB_AI__ === 'undefined' ? null : __LB_
 export const depthModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'depth') ?? null
 export const inpaintModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'inpaint') ?? null
 export const segmentModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'segment') ?? null
+export const skyModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'sky') ?? null
 
 /**
  * The CPU fallback (ONNX Runtime's WebAssembly provider, up to 4 threads) where there is no WebGPU. On: a random-weight
@@ -100,6 +101,41 @@ export function objectPlan(m: ModelEntry, gpu: GpuProbe): ObjectPlan {
       ? 'Object select needs a graphics card with half-precision (fp16) support, and this one doesn’t offer it to the browser. The other masks work as before.'
       : 'Object select needs a graphics card with half-precision (fp16) support through WebGPU, which this browser or computer doesn’t offer (Chrome or Edge on Windows, macOS or Android have WebGPU). The other masks work as before.',
   }
+}
+
+// ---- Sky (EfficientViT-Seg B1 ADE20K; PHASE3.md Part 29)
+
+/**
+ * The Sky mask on the processor (ONNX Runtime's WebAssembly provider, up to 4 threads) when there is no WebGPU, or when
+ * the photo's largest tensor wouldn't fit the GPU's largest storage-buffer binding: on. One run of the real model with
+ * the app's own WebAssembly runtime on GitHub's runner is in PHASE3.md Part 29 ("Speed"), well within the owner's 15 s
+ * rule for a heavy model's CPU fallback (AI masks decision 7).
+ */
+export const SKY_WASM_FALLBACK = true
+
+export interface SkyPlan {
+  provider: Provider | null
+  /** Why it runs on the processor although there is WebGPU ("large"), or can't run (provider null). */
+  why: string | null
+  slow?: boolean
+  large?: boolean
+}
+
+/**
+ * Where the Sky model runs for a photo whose model input is mw × mh: on WebGPU where the graph's largest tensor
+ * (`largest` bytes, sky.ts `skyLargestTensor`) fits the GPU's `maxStorageBufferBindingSize` (ONNX Runtime 1.30.0 splits
+ * a larger one into segments that some of its kernels then compute wrong: SAM_FP32_MIN_BINDING's note, the gate part 1
+ * applies to the Depth map); else on the processor if SKY_WASM_FALLBACK; else not here, said plainly.
+ */
+export function skyPlan(gpu: GpuProbe, largest: number): SkyPlan {
+  if (gpu.webgpu) {
+    const binding = gpu.maxStorageBufferBindingSize ?? 0
+    if (binding <= 0 || largest <= binding) return { provider: 'webgpu', why: null }
+    if (SKY_WASM_FALLBACK) return { provider: 'wasm', why: null, slow: true, large: true }
+    return { provider: null, why: 'This photo is too large for this graphics card’s AI runtime. The other masks work as before.' }
+  }
+  if (SKY_WASM_FALLBACK) return { provider: 'wasm', why: null, slow: true }
+  return { provider: null, why: 'The Sky mask needs WebGPU, which this browser or computer doesn’t offer (Chrome or Edge on Windows, macOS or Android have it). The other masks work as before.' }
 }
 
 /** Where a model can run here: 'webgpu', 'wasm' (the fallback, if on), or null with the reason. */

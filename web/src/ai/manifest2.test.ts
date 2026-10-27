@@ -114,7 +114,7 @@ describe('manifest schema 2', () => {
     // Two files served under one name.
     expect(edit((s) => (s.files[2].path = 'other/vision_encoder_fp16.onnx'))).toThrow(/same name|two fp16 decoder/)
     expect(edit((s) => (s.input = { size: 0, mean: [0, 0, 0], std: [1, 1, 1] }))).toThrow(/input/)
-    expect(edit((s) => (s.task = 'sky'))).toThrow(/unknown task/)
+    expect(edit((s) => (s.task = 'subject'))).toThrow(/unknown task/)
     expect(edit((s) => (s.source.pinnedBy = 'someone'))).toThrow(/pinnedBy/)
     // A one-file model can't have parts.
     const j = JSON.parse(JSON.stringify(shipped))

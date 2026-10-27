@@ -28,6 +28,12 @@ describe('scripts/models.mjs', () => {
     expect(check(Buffer.from(fp32).fill(1, 0, 1), f)).toMatch(/SHA-256/)
   })
 
+  it("fetches LightBench's own conversions from their GitHub Release (PHASE3.md Part 29)", () => {
+    const m = { schema: 2, models: [{ id: 'efficientvit-seg-b1-ade20k', source: { host: 'github-release', repo: 'o/r', tag: 'models-x-1', revision: REV }, files: [{ variant: 'fp32', part: 'model', path: 'x.onnx', bytes: fp32.length, sha256: sha256(fp32) }] }] }
+    expect(plan(m).files.map((f) => [f.url, f.path])).toEqual([['https://github.com/o/r/releases/download/models-x-1/x.onnx', 'models/efficientvit-seg-b1-ade20k/feedfac/x.onnx']])
+    expect(describePins(m)).toContain('(GitHub Release models-x-1)')
+  })
+
   it('describes the pins for the workflow log and summary', () => {
     const lines = describePins(manifest()).split('\n')
     expect(lines[0]).toBe(`depth-anything-v2-small: onnx-community/depth-anything-v2-small @ ${REV}`)
