@@ -6,6 +6,7 @@
     "bytes: as read from the Git LFS pointers of the repository's main branch on 2026-10-13 (docs/research/cowork-2026-10-13b/F_MODEL_DELIVERY.md, F3); `pin` replaces them with the pinned revision's values.",
     "Moebius (AI Remove) is delivered from Hugging Face (\"delivery\": \"huggingface\", owner's decision 2026-10-21): at about 1.24 GB it is too big for GitHub Pages' 1 GB site limit, so the deploy skips it and the app downloads the three files itself, after the user agrees, from the commit-pinned /resolve/ URLs, checking each file's size and SHA-256. Pinned by the owner's decision, not by `models.mjs pin` (which leaves it alone). docs/PHASE3.md Part 26.",
     "Schema 2 (docs/PHASE3.md Part 27): a model may be several graphs (\"part\"), each graph's weights in its own file beside it (\"data\": true, ONNX external data), served from the site under their own file names (models/<id>/<revision 7>/<file name>). SAM 2.1 Hiera Tiny (Object select) is pinned by the owner's decision from the checked run in MASKS_PREP.md (GitHub Actions run 39653265084: every file's size and SHA-256 matched its Git LFS pointer); `models.mjs pin` leaves it alone (\"pinnedBy\": \"owner\").",
+    "LightBench's own conversions (docs/PHASE3.md Part 29): the Sky model's authors publish PyTorch weights only, so the \"AI models\" workflow's efficientvit-export task exports them to ONNX on GitHub's runner from the pinned checkpoint (\"convertedFrom\"), checks the export against the authors' PyTorch model and publishes it, with its licence and a SOURCE note, as an asset of a GitHub Release of this repository (\"host\": \"github-release\", the release's \"tag\", and the commit the tag points at as \"revision\"). A release is never overwritten: a new export gets a new tag. The deploy fetches the asset from the release and checks its size and SHA-256 like the others; `models.mjs pin` leaves it alone.",
     "People and faces (docs/PHASE3.md Part 28): RF-DETR-Seg Nano is delivered from Hugging Face by the app (\"delivery\": \"huggingface\", owner's decision 2026-10-21); YuNet (from GitHub, opencv/opencv_zoo, a Git LFS file: the deploy fetches it from media.githubusercontent.com at the pinned commit) and MediaPipe Selfie Multiclass (the community ONNX conversion) are served from LightBench's own site. All three are pinned by the owner's decision from the checked run in MASKS_PREP.md (GitHub Actions run 39653265084: each file's size and SHA-256 matched its Git LFS pointer)."
   ],
   "models": [
@@ -116,6 +117,55 @@
         { "variant": "fp32", "part": "encoder", "data": true, "path": "onnx/vision_encoder.onnx_data", "bytes": 134084864, "sha256": "e83df9866a5afe68ea7f0f721f18f65137fc3acbf0da1c74e946d363e09c69cc" },
         { "variant": "fp32", "part": "decoder", "path": "onnx/prompt_encoder_mask_decoder.onnx", "bytes": 213114, "sha256": "874414704c5d686db7d206a35f6e15d26563d50c8c4468fccc6739bd7e491dcf" },
         { "variant": "fp32", "part": "decoder", "data": true, "path": "onnx/prompt_encoder_mask_decoder.onnx_data", "bytes": 20958208, "sha256": "e9874d900dd4134ed60eab1e97910327c2419e0b2954485d8fd6e7f1a1470f47" }
+      ]
+    },
+    {
+      "id": "efficientvit-seg-b1-ade20k",
+      "name": "EfficientViT-Seg B1 (ADE20K)",
+      "task": "sky",
+      "delivery": "site",
+      "summary": "Finds the sky in a photo, for the Sky mask: it sorts each part of the photo into one of 150 kinds of thing (sky, tree, building, person and so on), and LightBench keeps the parts it calls sky.",
+      "licence": {
+        "id": "Apache-2.0",
+        "url": "https://github.com/mit-han-lab/efficientvit/blob/de7d7733cc0329f391b33f1f459271562ec27bd5/LICENSE",
+        "file": "notices/efficientvit.LICENSE.txt",
+        "statement": "The weights’ Hugging Face page (han-cai/efficientvit-seg, commit cf3ccaf) is tagged “apache-2.0”, and the authors’ code repository (mit-han-lab/efficientvit, commit de7d773) is under the Apache License 2.0 (“Copyright [2023] [Han Cai]”).",
+        "notes": "The file LightBench downloads is LightBench’s own ONNX conversion of the authors’ efficientvit_seg_b1_ade20k.pt weights: made and checked against the authors’ PyTorch model by LightBench’s “AI models” workflow, and published with this licence and a note of where it came from as a release of LightBench’s own repository on GitHub."
+      },
+      "credit": "Han Cai, Junyan Li, Muyan Hu, Chuang Gan and Song Han (MIT Han Lab): “EfficientViT: Lightweight Multi-Scale Attention for High-Resolution Dense Prediction” (ICCV 2023, arXiv:2205.14756). Code: github.com/mit-han-lab/efficientvit. Weights: huggingface.co/han-cai/efficientvit-seg. ONNX conversion: LightBench.",
+      "trainingData": "The model learnt to sort the parts of a photo on ADE20K: about 20,000 photos of everyday scenes, each outlined by hand into 150 kinds of thing, sky among them, published by MIT. ADE20K’s terms allow its use for non-commercial research and education only. The part of the model that first reads the photo was trained before that on ImageNet-1K (about 1.28 million photos sorted into 1,000 categories), whose terms likewise allow non-commercial research and education only. Both sets are named publicly. The model’s own licence is Apache-2.0.",
+      "source": {
+        "host": "github-release",
+        "repo": "shawneburke88-afk/Photo-Editing-App",
+        "tag": "models-efficientvit-seg-b1-ade20k-1",
+        "revision": "36abc1dd9370ebeac3697a483e91d5c13f65e70b"
+      },
+      "convertedFrom": {
+        "weights": {
+          "repo": "han-cai/efficientvit-seg",
+          "revision": "cf3ccaf9cbaf670a2cb283612773546824ca0aa1",
+          "path": "efficientvit_seg_b1_ade20k.pt",
+          "bytes": 19339726,
+          "sha256": "59cca6a7ff4d1a6494b7f12072c6a68fee40ef401e971f26af01a2e0f3c8f5e7"
+        },
+        "code": {
+          "repo": "mit-han-lab/efficientvit",
+          "revision": "de7d7733cc0329f391b33f1f459271562ec27bd5"
+        }
+      },
+      "input": {
+        "shortSide": 512,
+        "multiple": 32,
+        "maxLong": 2048,
+        "stride": 8,
+        "classes": 150,
+        "skyClass": 2,
+        "bytesPerPixel": 64,
+        "mean": [0.485, 0.456, 0.406],
+        "std": [0.229, 0.224, 0.225]
+      },
+      "files": [
+        { "variant": "fp32", "part": "model", "path": "efficientvit_seg_b1_ade20k.onnx", "bytes": 19277968, "sha256": "00dfc79ab211ae8cb9a354ffce864a669b57d53eff07669d8f626e1659a6d1df" }
       ]
     },
     {

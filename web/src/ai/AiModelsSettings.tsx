@@ -22,8 +22,8 @@ export function AiModelsSettings() {
   )
 }
 
-const PURPOSE: Record<string, string> = { depth: 'The Depth range mask', inpaint: 'AI Remove', segment: 'Object select', detect: 'People', face: 'People', parse: 'People' }
-const TITLE_NOTE: Record<string, string> = { inpaint: ' (AI Remove)', segment: ' (Object select)', detect: ' (People)', face: ' (People: faces)', parse: ' (People: hair, skin and clothes)' }
+const PURPOSE: Record<string, string> = { depth: 'The Depth range mask', inpaint: 'AI Remove', segment: 'Object select', sky: 'The Sky mask', detect: 'People', face: 'People', parse: 'People' }
+const TITLE_NOTE: Record<string, string> = { inpaint: ' (AI Remove)', segment: ' (Object select)', sky: ' (Sky mask)', detect: ' (People)', face: ' (People: faces)', parse: ' (People: hair, skin and clothes)' }
 
 function ModelRow({ id }: { id: string }) {
   const model = AI!.models.find((m) => m.id === id)!

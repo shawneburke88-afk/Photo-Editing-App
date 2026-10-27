@@ -159,17 +159,18 @@ export interface DepthShape {
   raster?: RasterData
 }
 /**
- * What an AI selection selects: Object select's object (Part 27), and People's whole person, face (its skin), hair,
- * body skin and clothes (Part 28). Sky and subject come later.
+ * What an AI selection selects: an object (Object select, Part 27), People's whole person, face (its skin), hair, body
+ * skin and clothes (Part 28), or the sky (Part 29); subject comes later. A Sky part has no prompt: it is the whole
+ * photo's sky, so it is made again on any photo (paste, presets).
  */
-export const AI_WHATS = ['object', 'person', 'face', 'hair', 'bodySkin', 'clothes'] as const
+export const AI_WHATS = ['object', 'sky', 'person', 'face', 'hair', 'bodySkin', 'clothes'] as const
 export type AiWhat = (typeof AI_WHATS)[number]
 /** What People selects (the parts of a person). */
 export const PEOPLE_PARTS = ['person', 'face', 'hair', 'bodySkin', 'clothes'] as const
 export type PeoplePart = (typeof PEOPLE_PARTS)[number]
 export const isPeoplePart = (w: unknown): w is PeoplePart => (PEOPLE_PARTS as readonly unknown[]).includes(w)
-/** Names for masks and parts, by what they select ("Object 1"; a person's parts: "Person 2: hair"). */
-export const AI_WHAT_LABELS: Record<string, string> = { object: 'Object', person: 'Whole person', face: 'Face', hair: 'Hair', bodySkin: 'Body skin', clothes: 'Clothes' }
+/** Names for masks and parts, by what they select ("Object 1", "Sky 1"; a person's parts: "Person 2: hair"). */
+export const AI_WHAT_LABELS: Record<string, string> = { object: 'Object', sky: 'Sky', person: 'Whole person', face: 'Face', hair: 'Hair', bodySkin: 'Body skin', clothes: 'Clothes' }
 /** People's masks are named "People 1", "People 2". */
 export const PEOPLE_MASK = 'People'
 /** People boxes kept with an "All people" part (one per person). */

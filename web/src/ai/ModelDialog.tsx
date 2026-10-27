@@ -58,9 +58,15 @@ export function ModelInfo({ model, file, files }: { model: ModelEntry; file?: Mo
             {chosen.has(f.path) && (!f.part || variants > 1) ? ' — for this computer' : ''}
           </span>
         ))}
-        <span className="muted">
-          From {model.source.host === 'github' ? 'GitHub ' : ''}{model.source.repo}{model.source.revision ? ` at ${model.source.revision.slice(0, 7)}` : ''}, {hub ? 'downloaded from Hugging Face (huggingface.co) at that exact version' : 'served by LightBench’s own site'}.
-        </span>
+        {model.source.host === 'github-release' ? (
+          <span className="muted">
+            LightBench’s own conversion{model.convertedFrom ? <> of {model.convertedFrom.weights.path} ({model.convertedFrom.weights.repo} at {model.convertedFrom.weights.revision.slice(0, 7)}, SHA-256 <code title={model.convertedFrom.weights.sha256}>{model.convertedFrom.weights.sha256.slice(0, 16)}…</code>) with the authors’ code ({model.convertedFrom.code.repo} at {model.convertedFrom.code.revision.slice(0, 7)})</> : ''}, published as the release {model.source.tag} of {model.source.repo} on GitHub, with its licence and a note of how it was made; served by LightBench’s own site.
+          </span>
+        ) : (
+          <span className="muted">
+            From {model.source.host === 'github' ? 'GitHub ' : ''}{model.source.repo}{model.source.revision ? ` at ${model.source.revision.slice(0, 7)}` : ''}, {hub ? 'downloaded from Hugging Face (huggingface.co) at that exact version' : 'served by LightBench’s own site'}.
+          </span>
+        )}
       </dd>
     </dl>
   )

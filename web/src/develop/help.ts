@@ -775,7 +775,7 @@ export const MASK_HELP: Record<string, ControlHelp> = {
   },
   objectCompute: {
     hint: 'Make the waiting selections for this photo',
-    what: 'Object selections that came from another photo or a preset keep where they were made, not their result. This runs the AI model on this photo at the same places, as one step you can undo.',
+    what: 'AI selections that came from another photo or a preset keep how they were made, not their result. This runs the AI models on this photo (an object at the same places; the sky found again), as one step you can undo.',
     left: '',
     right: '',
   },
@@ -788,6 +788,32 @@ export const MASK_HELP: Record<string, ControlHelp> = {
   objectPick: {
     hint: 'Refine the selection on the photo',
     what: 'Turns the picker on again for the selected object: Shift-click adds, Alt-click removes, a click selects something new.',
+    left: '',
+    right: '',
+  },
+  // Sky (PHASE3.md Part 29).
+  skyNew: {
+    hint: 'Select the sky',
+    what: 'Finds the sky in the photo and makes it a mask, in one step you can undo. Its edges follow the photo, so branches and wires against the sky stay out of it. An AI model (EfficientViT-Seg) runs on this computer; the first time, LightBench asks before downloading it. The mask is kept in the edit and .xmp, so it looks the same everywhere without the model.',
+    left: '',
+    right: '',
+    pitfalls: 'To change everything except the sky, click Invert on the mask (or on its Sky part). Brush, Linear and Radial parts can add to it or take away from it.',
+  },
+  skyPart: {
+    hint: 'Add or take away the sky',
+    what: 'Finds the sky in the photo and combines it with the selected mask: + Add includes it, − Subtract takes it out (for example a gradient without the sky), ∩ Intersect keeps only the part of the mask that is sky.',
+    left: '',
+    right: '',
+  },
+  skyRecompute: {
+    hint: 'Find the sky again',
+    what: 'Runs the AI model on this photo again and replaces the sky, as one step you can undo (useful after a model update, or after edits that change how the photo looks).',
+    left: '',
+    right: '',
+  },
+  skyInvert: {
+    hint: 'Everything except the sky',
+    what: 'Inverts this mask, so its sliders change everything except the sky. Click again to go back.',
     left: '',
     right: '',
   },
