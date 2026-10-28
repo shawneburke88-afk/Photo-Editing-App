@@ -18,8 +18,9 @@
 //      probability, the matte's coverage and its size in the edit (at most 1024 px), the process's memory.
 //   4. Checks: the inputs and outputs; finite outputs; the stored matte decodes to itself; the astronaut's subject
 //      (the astronaut) covers 0.30…0.50 of the photo; with --reference (birefnet_patch.py verify's JSON for the same
-//      file), the app's mean probability within 0.02 of ONNX Runtime's in Python on the same photo (the app resizes by
-//      area, BiRefNet's code bilinearly); with two files, their mattes' agreement (IoU at ½).
+//      file), the app's mean probability within 0.02 of ONNX Runtime's in Python on the same photo (matched by SHA-256,
+//      or by name for the committed photos; the app resizes by area, BiRefNet's code bilinearly); with two files, their
+//      mattes' agreement (IoU at ½).
 //   Mattes and overlays go to --out as PNGs (the run's artifact); results.json and summary.md beside them.
 
 import { createHash } from 'node:crypto'
@@ -35,6 +36,8 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const WEB = join(HERE, '..')
 /** Expected subject coverage on the committed photos (the astronaut fills about 0.41 of the photo: MASKS_PREP.md). */
 export const EXPECT = { 'astronaut.png': [0.3, 0.5] }
+/** The photos committed to the repository (web/scripts/fixtures/ai-masks), the same in every run. */
+const COMMITTED = new Set(['astronaut.png', 'rocket.png', 'rocket.jpg'])
 
 const arg = (args, name) => {
   const i = args.indexOf(name)
@@ -238,7 +241,10 @@ async function main(args) {
       const share = app.subject.subjectShare(prob)
       const cov = app.coverage(s.px)
       const rss = process.memoryUsage().rss
-      const refCase = ref?.cases?.find((c) => c.case === pname || c.case === pname.replace(/\.png$/, '.jpg'))
+      // The Python reference for the same photo only: by its SHA-256 when the reference records it; else only the
+      // committed photos (a photo fetched from Wikimedia Commons can differ between runs: run 40633154518).
+      const photoSha = createHash('sha256').update(readFileSync(p)).digest('hex')
+      const refCase = ref?.cases?.find((c) => (c.case === pname || c.case === pname.replace(/\.png$/, '.jpg')) && (c.sha256 ? c.sha256 === photoSha : COMMITTED.has(pname)))
       const pyMean = refCase?.patchedVsOriginal?.coverage?.[0]
       const run = { photo: pname, size: [W, H], first, second, postMs, share, mean, pythonMean: pyMean ?? null, matte: [s.w, s.h], coverage: cov, chars: raster.data.length, rss }
       runs.push(run)

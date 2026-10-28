@@ -601,6 +601,10 @@ def cmd_verify(a):
     import gc
 
     cases = [(os.path.basename(p), photo_input(p)) for p in a.photos] + [("random", test_input(1))]
+    # Which photo each case was (a photo fetched from Wikimedia Commons can differ between runs): its size and SHA-256.
+    from PIL import Image
+
+    photo_ids = {os.path.basename(p): {"size": list(Image.open(p).size), "sha256": sha256(p)} for p in a.photos}
 
     def all_outputs(path):
         # One model at a time: the original holds about 4.4 GiB of activations at its peak (6.6 GB of memory in all).
@@ -621,7 +625,7 @@ def cmd_verify(a):
     for k, (name, x) in enumerate(cases):
         yo, to = yos[k]
         yp, tp = yps[k]
-        c = {"case": name, "originalS": round(to, 2), "patchedS": round(tp, 2), "dims": list(yp.shape), "finite": bool(np.isfinite(yp).all()), "patchedVsOriginal": compare(yp, yo)}
+        c = {"case": name, **photo_ids.get(name, {}), "originalS": round(to, 2), "patchedS": round(tp, 2), "dims": list(yp.shape), "finite": bool(np.isfinite(yp).all()), "patchedVsOriginal": compare(yp, yo)}
         if not c["finite"]:
             res["problems"].append(f"{name}: non-finite output")
         if list(yp.shape) != [1, 1, SIZE, SIZE]:
