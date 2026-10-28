@@ -775,7 +775,7 @@ export const MASK_HELP: Record<string, ControlHelp> = {
   },
   objectCompute: {
     hint: 'Make the waiting selections for this photo',
-    what: 'AI selections that came from another photo or a preset keep how they were made, not their result. This runs the AI models on this photo (an object at the same places; the sky found again), as one step you can undo.',
+    what: 'AI selections that came from another photo or a preset keep how they were made, not their result. This runs the AI models on this photo (an object at the same places; the sky or the subject found again), as one step you can undo.',
     left: '',
     right: '',
   },
@@ -814,6 +814,32 @@ export const MASK_HELP: Record<string, ControlHelp> = {
   skyInvert: {
     hint: 'Everything except the sky',
     what: 'Inverts this mask, so its sliders change everything except the sky. Click again to go back.',
+    left: '',
+    right: '',
+  },
+  // Subject (PHASE3.md Part 30).
+  subjectNew: {
+    hint: 'Select the main subject',
+    what: 'Finds the photo’s main subject (the person, animal or thing it is about) and makes it a mask, in one step you can undo. Its edges stay soft where the subject is (hair, fur, fine detail). An AI model (BiRefNet_lite) runs on this computer; the first time, LightBench asks before downloading it. The mask is kept in the edit and .xmp, so it looks the same everywhere without the model.',
+    left: '',
+    right: '',
+    pitfalls: 'To change everything except the subject (the background), click Invert on the mask (or on its Subject part). Brush, Linear and Radial parts can add to it or take away from it.',
+  },
+  subjectPart: {
+    hint: 'Add or take away the subject',
+    what: 'Finds the photo’s main subject and combines it with the selected mask: + Add includes it, − Subtract takes it out (for example a gradient that leaves the subject alone), ∩ Intersect keeps only the part of the mask on the subject.',
+    left: '',
+    right: '',
+  },
+  subjectRecompute: {
+    hint: 'Find the subject again',
+    what: 'Runs the AI model on this photo again and replaces the subject, as one step you can undo (useful after a model update, or after edits that change how the photo looks).',
+    left: '',
+    right: '',
+  },
+  subjectInvert: {
+    hint: 'Everything except the subject',
+    what: 'Inverts this mask, so its sliders change everything except the subject (the background). Click again to go back.',
     left: '',
     right: '',
   },

@@ -47,12 +47,24 @@ name: AI models
 #   sky-check      The Sky model the manifest pins, fetched from its GitHub Release by the deploy's own step
 #                  (web/scripts/models.mjs fetch: size and SHA-256), through the app's own Sky code on the CPU
 #                  (web/scripts/sky-check.mjs). Read-only.
+#   birefnet-patch The Subject mask's model (docs/PHASE3.md Part 30): LightBench's patched BiRefNet_lite. Downloads the
+#                  onnx-community files web/models/manifest.json pins ("convertedFrom": the published fp16 file, and the
+#                  fp32 file as the reference) and checks their size and SHA-256, patches them
+#                  (web/scripts/subject/birefnet_patch.py: the same weights, the graph rearranged for ONNX Runtime Web),
+#                  checks each patched file against its original on the CPU and the fp16 one against the fp32 original,
+#                  measures the largest tensors (the GPU limit gate), then runs the app's own Subject code on them with
+#                  the app's WebAssembly runtime (web/scripts/subject-check.mjs). With "publish" ticked, and only if every
+#                  check passed, a separate job (the only other one that may write) publishes the manifest's files (fp16),
+#                  their licence and a SOURCE note as a GitHub Release under the manifest's tag; an existing release or
+#                  tag is never overwritten (a new patch needs a new tag). The fp32 patch is checked, not published.
+#   subject-check  The Subject model the manifest pins, fetched from its GitHub Release by the deploy's own step, through
+#                  the app's own Subject code on the CPU (web/scripts/subject-check.mjs). Read-only.
 
 on:
   workflow_dispatch:
     inputs:
       task:
-        description: "pin-and-check: pin web/models/manifest.json, check the real model and commit the manifest to this branch. check: only check the files the manifest pins. hf-check: read-only check of Hugging Face's responses for the AI Remove files and update check. moebius-check: AI Remove's real model through the app's own code on the CPU (read-only, up to an hour). sam-check: Object select's real model through the app's own code on the CPU, and against Meta's PyTorch model (read-only). efficientvit-export: export the Sky model to ONNX, check it, and publish it as a GitHub Release if 'publish' is ticked. sky-check: the Sky model the manifest pins, from its release, through the app's code. people-check: the People models through the app's own code on the CPU, and their largest tensors (read-only)."
+        description: "pin-and-check: pin web/models/manifest.json, check the real model and commit the manifest to this branch. check: only check the files the manifest pins. hf-check: read-only check of Hugging Face's responses for the AI Remove files and update check. moebius-check: AI Remove's real model through the app's own code on the CPU (read-only, up to an hour). sam-check: Object select's real model through the app's own code on the CPU, and against Meta's PyTorch model (read-only). efficientvit-export: export the Sky model to ONNX, check it, and publish it as a GitHub Release if 'publish' is ticked. sky-check: the Sky model the manifest pins, from its release, through the app's code. people-check: the People models through the app's own code on the CPU, and their largest tensors (read-only). birefnet-patch: patch the Subject model for ONNX Runtime Web, check it, and publish it as a GitHub Release if 'publish' is ticked. subject-check: the Subject model the manifest pins, from its release, through the app's code."
         type: choice
         options:
           - pin-and-check
@@ -63,10 +75,12 @@ on:
           - people-check
           - efficientvit-export
           - sky-check
+          - birefnet-patch
+          - subject-check
         default: pin-and-check
         required: true
       publish:
-        description: "efficientvit-export only: publish the checked export as a GitHub Release under the manifest's tag (never overwrites an existing release)"
+        description: "efficientvit-export and birefnet-patch only: publish the checked file as a GitHub Release under the manifest's tag (never overwrites an existing release)"
         type: boolean
         default: false
         required: false
@@ -76,8 +90,8 @@ on:
         default: ""
         required: false
 
-# Read-only unless a job says otherwise: `models` commits the pinned manifest and `sky-publish` creates the release
-# (`people` reads only).
+# Read-only unless a job says otherwise: `models` commits the pinned manifest, and `sky-publish` and `subject-publish`
+# create releases (`people`, `sky` and `subject` read only).
 permissions:
   contents: read
 
@@ -87,7 +101,7 @@ concurrency:
 
 jobs:
   models:
-    if: inputs.task != 'efficientvit-export' && inputs.task != 'sky-check' && inputs.task != 'people-check'
+    if: inputs.task != 'efficientvit-export' && inputs.task != 'sky-check' && inputs.task != 'people-check' && inputs.task != 'birefnet-patch' && inputs.task != 'subject-check'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -654,6 +668,312 @@ jobs:
             echo "| asset | bytes | SHA-256 |"
             echo "|---|---|---|"
             for a in "${FILE}" LICENSE.txt SOURCE.md export.json; do echo "| ${a} | $(stat -c %s "${a}") | \`$(sha256sum "${a}" | cut -d' ' -f1)\` |"; done
+            echo
+            echo "Pin it in web/models/manifest.json: \"revision\": \"${commit}\", the file's \"bytes\": ${BYTES} and \"sha256\": \"${SHA256}\"."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---- the Subject mask's model (docs/PHASE3.md Part 30): read-only; the next job alone may publish.
+  subject:
+    if: inputs.task == 'birefnet-patch' || inputs.task == 'subject-check'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    outputs:
+      passed: ${{ steps.result.outputs.passed }}
+      sha256: ${{ steps.result.outputs.sha256 }}
+      bytes: ${{ steps.result.outputs.bytes }}
+      tag: ${{ steps.result.outputs.tag }}
+    env:
+      TASK: ${{ inputs.task }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Look for the Subject code and read its pins
+        id: pins
+        run: |
+          echo "branch ${GITHUB_REF_NAME} at $(git rev-parse --short HEAD), task ${TASK}, publish ${{ inputs.publish }}"
+          if [ ! -f web/scripts/subject-check.mjs ] || [ ! -f web/scripts/subject/birefnet_patch.py ]; then
+            echo "::error::this branch has no web/scripts/subject-check.mjs or web/scripts/subject/birefnet_patch.py (run it on the AI masks Subject branch)"
+            exit 1
+          fi
+          node -e '
+            const m = require("./web/models/manifest.json").models.find((x) => x.task === "subject")
+            if (!m) { console.error("no subject model in web/models/manifest.json"); process.exit(1) }
+            if (m.files.length !== 1) { console.error("one published file expected"); process.exit(1) }
+            const w = m.convertedFrom.weights, r = m.convertedFrom.reference
+            const lic = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/blob\/([0-9a-f]{40})\/(.+)$/.exec(m.licence.url)
+            if (!lic) { console.error("the licence URL must name a commit"); process.exit(1) }
+            const out = { id: m.id, tag: m.source.tag, repo: m.source.repo, file: m.files[0].path, variant: m.files[0].variant, revision: m.source.revision ?? "",
+              w_repo: w.repo, w_rev: w.revision, w_path: w.path, w_bytes: w.bytes, w_sha256: w.sha256,
+              r_repo: r.repo, r_rev: r.revision, r_path: r.path, r_bytes: r.bytes, r_sha256: r.sha256,
+              licence_raw: `https://raw.githubusercontent.com/${lic[1]}/${lic[2]}/${lic[3]}`, licence_file: m.licence.file }
+            for (const [k, v] of Object.entries(out)) console.log(`${k}=${v}`)
+          ' | tee -a "$GITHUB_OUTPUT"
+          {
+            echo "## AI models: ${TASK}"
+            echo
+            echo "Branch \`${GITHUB_REF_NAME}\` at \`$(git rev-parse --short HEAD)\`."
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        working-directory: web
+        run: npm ci
+
+      - name: Python (ONNX and ONNX Runtime, pinned)
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/venv"
+          V="${RUNNER_TEMP}/venv/bin"
+          "$V/pip" install --quiet onnx==1.23.2 onnxruntime==1.31.0 numpy pillow
+          "$V/python" -c "import onnx, onnxruntime, numpy; print('onnx', onnx.__version__, 'onnxruntime', onnxruntime.__version__, 'numpy', numpy.__version__)"
+
+      - name: The test photos
+        run: |
+          mkdir -p "${RUNNER_TEMP}/subject/photos"
+          "${RUNNER_TEMP}/venv/bin/python" -I -c '
+          import sys
+          from PIL import Image
+          Image.open(sys.argv[1]).convert("RGB").save(sys.argv[2])
+          ' web/scripts/fixtures/ai-masks/rocket.jpg "${RUNNER_TEMP}/subject/photos/rocket.png"
+          cp web/scripts/fixtures/ai-masks/astronaut.png "${RUNNER_TEMP}/subject/photos/astronaut.png"
+
+      - name: A public-domain photo of trees against the sky (Wikimedia Commons, Part 29's, best effort)
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          "${RUNNER_TEMP}/venv/bin/python" -I web/scripts/sky/commons_photo.py --out "${RUNNER_TEMP}/subject/photos"
+
+      - name: Download the pinned files and the licence, patch, and check against the originals (birefnet-patch)
+        if: inputs.task == 'birefnet-patch'
+        timeout-minutes: 75
+        env:
+          P: ${{ toJSON(steps.pins.outputs) }}
+        run: |
+          get() { node -e 'console.log(JSON.parse(process.env.P)[process.argv[1]])' "$1"; }
+          D="${RUNNER_TEMP}/subject"
+          mkdir -p "$D/src" "$D/release" "$D/extra" "$D/check"
+          for k in w r; do
+            url="https://huggingface.co/$(get ${k}_repo)/resolve/$(get ${k}_rev)/$(get ${k}_path)"
+            f="$D/src/$(basename "$(get ${k}_path)")"
+            curl -fsSL --retry 4 -o "$f" "$url"
+            echo "$(get ${k}_sha256)  $f" | sha256sum -c -
+            test "$(stat -c %s "$f")" = "$(get ${k}_bytes)"
+            echo "$url: $(stat -c %s "$f") bytes, SHA-256 checked"
+          done
+          # The licence released with the file is the one LightBench keeps (web/models/notices), checked against the
+          # authors' repository at the commit the manifest names.
+          curl -fsSL --retry 4 -o "$D/LICENSE.upstream" "$(get licence_raw)"
+          cmp "$D/LICENSE.upstream" "web/models/$(get licence_file)"
+          cp "web/models/$(get licence_file)" "$D/release/LICENSE.txt"
+          W="$D/src/$(basename "$(get w_path)")"
+          R="$D/src/$(basename "$(get r_path)")"
+          PY="${RUNNER_TEMP}/venv/bin/python"
+          S=web/scripts/subject/birefnet_patch.py
+          photos=("$D/photos/astronaut.png" "$D/photos/rocket.png")
+          if [ -f "$D/photos/trees.png" ]; then photos+=("$D/photos/trees.png"); fi
+          # The published variant, then fp32 (checked for the record, not published).
+          "$PY" -I "$S" patch --model "$W" --out "$D/release/$(get file)"
+          "$PY" -I "$S" patch --model "$R" --out "$D/extra/birefnet_lite_fp32.onnx"
+          "$PY" -I "$S" verify --original "$W" --patched "$D/release/$(get file)" --reference "$R" --photos "${photos[@]}" --out "$D/release/verify.json"
+          "$PY" -I "$S" verify --original "$R" --patched "$D/extra/birefnet_lite_fp32.onnx" --photos "${photos[@]}" --out "$D/extra/verify-fp32.json"
+          "$PY" -I "$S" tensors --model "$D/release/$(get file)" --out "$D/release/tensors.json"
+          "$PY" -I "$S" tensors --model "$D/extra/birefnet_lite_fp32.onnx" --out "$D/extra/tensors-fp32.json"
+          "$PY" -I "$S" tensors --model "$W" --out "$D/extra/tensors-original-fp16.json" || echo "::warning::the original's tensors were not measured"
+          ls -la "$D/release" "$D/extra"
+          {
+            echo "### Patched and checked against the originals on the CPU"
+            echo
+            echo '```'
+            node -e '
+              const fs = require("fs")
+              for (const f of process.argv.slice(1)) {
+                if (!fs.existsSync(f)) continue
+                const r = JSON.parse(fs.readFileSync(f, "utf8"))
+                if (r.cases) for (const c of r.cases) console.log(f.split("/").pop(), c.case, JSON.stringify(c.patchedVsOriginal), c.patchedVsReference ? "vs fp32 original " + JSON.stringify(c.patchedVsReference) : "", "s:", c.patchedS, c.originalS, c.referenceS ?? "")
+                else console.log(f.split("/").pop(), JSON.stringify({ largestActivation: r.largestActivation, peakInUse: r.peakInUse, over128MiB: r.over128MiB, largestWeight: r.largestWeight, runS: r.runS }))
+              }
+            ' "$D/release/verify.json" "$D/extra/verify-fp32.json" "$D/release/tensors.json" "$D/extra/tensors-fp32.json" "$D/extra/tensors-original-fp16.json"
+            echo '```'
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: The pinned file from its GitHub Release, as the deploy fetches it (subject-check)
+        if: inputs.task == 'subject-check'
+        working-directory: web
+        env:
+          REPO: ${{ steps.pins.outputs.repo }}
+          TAG: ${{ steps.pins.outputs.tag }}
+        run: |
+          if [ -z "${{ steps.pins.outputs.revision }}" ]; then
+            echo "::error::web/models/manifest.json doesn't pin the Subject model yet (publish it with birefnet-patch first)"
+            exit 1
+          fi
+          # The deploy's own fetch and checks, on a copy of the manifest holding the Subject model only.
+          node -e '
+            const fs = require("fs")
+            const m = JSON.parse(fs.readFileSync("models/manifest.json", "utf8"))
+            m.models = m.models.filter((x) => x.task === "subject")
+            fs.writeFileSync(process.argv[1], JSON.stringify(m))
+          ' "${RUNNER_TEMP}/subject-manifest.json"
+          node scripts/models.mjs fetch --out "${RUNNER_TEMP}/site" --manifest "${RUNNER_TEMP}/subject-manifest.json"
+          mkdir -p "${RUNNER_TEMP}/subject/release"
+          curl -fsSL --retry 4 -o "${RUNNER_TEMP}/subject/release/patch.json" "https://github.com/${REPO}/releases/download/${TAG}/patch.json" || echo "::warning::no patch.json in the release"
+
+      - name: The app's Subject code on the real model (the app's WebAssembly runtime, 4 threads)
+        timeout-minutes: 40
+        working-directory: web
+        env:
+          ID: ${{ steps.pins.outputs.id }}
+          FILE: ${{ steps.pins.outputs.file }}
+          REVISION: ${{ steps.pins.outputs.revision }}
+        run: |
+          D="${RUNNER_TEMP}/subject"
+          photos="$D/photos/astronaut.png,$D/photos/rocket.png"
+          if [ -f "$D/photos/trees.png" ]; then photos="${photos},$D/photos/trees.png"; fi
+          if [ "${TASK}" = "birefnet-patch" ]; then
+            models="$D/release/${FILE},$D/extra/birefnet_lite_fp32.onnx"
+            refs=(--reference "$D/release/verify.json,$D/extra/verify-fp32.json")
+          else
+            models="${RUNNER_TEMP}/site/models/${ID}/${REVISION:0:7}/${FILE}"
+            refs=()
+            if [ -f "$D/release/patch.json" ]; then
+              node -e 'const fs = require("fs"); fs.writeFileSync(process.argv[2], JSON.stringify(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).verify ?? {}))' "$D/release/patch.json" "$D/release/verify.json"
+              refs=(--reference "$D/release/verify.json")
+            fi
+          fi
+          node scripts/subject-check.mjs --model "${models}" --photos "${photos}" --out "$D/check" --threads 4 "${refs[@]}"
+          cp "$D/photos/"*.json "$D/check/" 2>/dev/null || true
+
+      - name: Result
+        id: result
+        if: always()
+        env:
+          TAG: ${{ steps.pins.outputs.tag }}
+          FILE: ${{ steps.pins.outputs.file }}
+        run: |
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          D="${RUNNER_TEMP}/subject"
+          f="$D/release/${FILE}"
+          if [ "${TASK}" = "birefnet-patch" ] && [ -f "${f}" ] && [ -f "$D/check/results.json" ] && [ -f "$D/release/LICENSE.txt" ] \
+            && node -e 'const r = require(process.argv[1]); process.exit(r.ok ? 0 : 1)' "$D/release/verify.json" \
+            && node -e 'const r = require(process.argv[1]); process.exit(r.ok ? 0 : 1)' "$D/extra/verify-fp32.json" \
+            && node -e 'const r = require(process.argv[1]); process.exit(r.failures.length ? 1 : 0)' "$D/check/results.json"; then
+            # What the release says about how the file was made and checked (the patch's report, both checks, the tensors).
+            node -e '
+              const fs = require("fs")
+              const [d, file] = process.argv.slice(1)
+              const rd = (p) => (fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, "utf8")) : null)
+              const out = { file, patch: rd(`${d}/release/${file}.json`), verify: rd(`${d}/release/verify.json`), tensors: rd(`${d}/release/tensors.json`),
+                fp32: { patch: rd(`${d}/extra/birefnet_lite_fp32.onnx.json`), verify: rd(`${d}/extra/verify-fp32.json`), tensors: rd(`${d}/extra/tensors-fp32.json`) },
+                originalFp16Tensors: rd(`${d}/extra/tensors-original-fp16.json`), appCheck: rd(`${d}/check/results.json`), run: process.env.GITHUB_RUN_ID, commit: process.env.GITHUB_SHA }
+              fs.writeFileSync(`${d}/release/patch.json`, JSON.stringify(out, null, 1))
+            ' "$D" "${FILE}"
+            "${RUNNER_TEMP}/venv/bin/python" -I web/scripts/subject/birefnet_patch.py source --manifest web/models/manifest.json --dir "$D/release"
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+            echo "sha256=$(sha256sum "${f}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+            echo "bytes=$(stat -c %s "${f}")" >> "$GITHUB_OUTPUT"
+            echo "every check passed: ${FILE} $(stat -c %s "${f}") bytes sha256 $(sha256sum "${f}" | cut -d' ' -f1)"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Keep the patched file (birefnet-patch)
+        if: inputs.task == 'birefnet-patch' && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: subject-release
+          path: ${{ runner.temp }}/subject/release
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Keep the mattes and the reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: subject-check
+          path: |
+            ${{ runner.temp }}/subject/check
+            ${{ runner.temp }}/subject/photos
+            ${{ runner.temp }}/subject/extra/*.json
+          retention-days: 14
+          if-no-files-found: warn
+
+  # Publishes the checked patch as a GitHub Release (the only job besides sky-publish and models that may write; never
+  # overwrites).
+  subject-publish:
+    needs: subject
+    if: inputs.task == 'birefnet-patch' && inputs.publish && needs.subject.outputs.passed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.subject.outputs.tag }}
+      SHA256: ${{ needs.subject.outputs.sha256 }}
+      BYTES: ${{ needs.subject.outputs.bytes }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: subject-release
+          path: ${{ runner.temp }}/release
+
+      - name: Check the files are the ones the checks passed
+        run: |
+          cd "${RUNNER_TEMP}/release"
+          ls -la
+          f=$(ls *.onnx)
+          test "$(echo "${f}" | wc -l)" = 1
+          echo "${SHA256}  ${f}" | sha256sum -c -
+          test "$(stat -c %s "${f}")" = "${BYTES}"
+          test -s LICENSE.txt && test -s SOURCE.md && test -s patch.json
+          echo "FILE=${f}" >> "$GITHUB_ENV"
+
+      - name: Never overwrite a release or a tag
+        run: |
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
+            echo "::error::the release ${TAG} exists already: it is never overwritten (give a new patch a new tag in web/models/manifest.json)"
+            exit 1
+          fi
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" > /dev/null 2>&1; then
+            echo "::error::the tag ${TAG} exists already: it is never moved (give a new patch a new tag)"
+            exit 1
+          fi
+
+      - name: Publish the release
+        run: |
+          cd "${RUNNER_TEMP}/release"
+          gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --latest=false \
+            --title "AI model: BiRefNet_lite, ONNX (LightBench's patch for ONNX Runtime Web)" --notes-file SOURCE.md \
+            "${FILE}" LICENSE.txt SOURCE.md patch.json
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${FILE}"
+          # The file as anyone (the deploy) downloads it: the same bytes. A new release's assets can answer 404 for a few
+          # seconds after it is created (Part 29), so this waits up to two minutes.
+          for i in $(seq 1 24); do
+            if curl -fsSL -o "${RUNNER_TEMP}/check.onnx" "${url}"; then break; fi
+            echo "not served yet (try ${i}); waiting 5 s"
+            sleep 5
+          done
+          echo "${SHA256}  ${RUNNER_TEMP}/check.onnx" | sha256sum -c -
+          commit=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq .sha)
+          echo "published ${url} (${BYTES} bytes, sha256 ${SHA256}); tag ${TAG} at ${commit}"
+          {
+            echo "## Published"
+            echo
+            echo "Release [\`${TAG}\`](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}) at commit \`${commit}\`."
+            echo
+            echo "| asset | bytes | SHA-256 |"
+            echo "|---|---|---|"
+            for a in "${FILE}" LICENSE.txt SOURCE.md patch.json; do echo "| ${a} | $(stat -c %s "${a}") | \`$(sha256sum "${a}" | cut -d' ' -f1)\` |"; done
             echo
             echo "Pin it in web/models/manifest.json: \"revision\": \"${commit}\", the file's \"bytes\": ${BYTES} and \"sha256\": \"${SHA256}\"."
           } >> "$GITHUB_STEP_SUMMARY"
