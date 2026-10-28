@@ -464,9 +464,11 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .masks-panel .masks-warn { color: var(--warn, #e0a030); }
 .masks-panel .mask-range-note { margin: 2px 0 6px; }
 .masks-panel .mask-settings { margin-top: 8px; }
-.masks-panel .mask-values-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 6px; }
+.masks-panel .mask-values-tools { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 6px; }
 .masks-panel .mask-values-tools .linklike { min-height: 32px; }
-.mask-presets .menu { right: auto; left: 0; min-width: 240px; max-width: min(320px, 90vw); }
+/* The menu spans the panel's width under the row (the panel is narrow). */
+.masks-panel .mask-presets { position: static; }
+.mask-presets .menu { left: 0; right: 0; min-width: 0; }
 .mask-presets .menu-note { margin: 2px 12px 4px; }
 .mask-presets .menu-row { display: flex; align-items: center; }
 .mask-presets .menu-row button[role=menuitem] { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
