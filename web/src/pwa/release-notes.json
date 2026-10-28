@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.6.19",
+    "date": "2026-10-28",
+    "newFeatures": [
+      "Masks: a new Subject button selects the main subject of the photo in one click, with soft edges for hair and fur. \"Everything except the subject\" selects the rest in one step, and \"Find the subject again\" recomputes it.",
+      "Subject selections combine with brushes and gradients like other shapes and are saved with the edit and in the .xmp.",
+      "The Subject model (about 115 MB) is downloaded from LightBench's own site only if you agree. The download window explains its licence and training data."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.6.18",
     "date": "2026-10-27",
     "newFeatures": [
