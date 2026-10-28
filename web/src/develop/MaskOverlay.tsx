@@ -54,6 +54,8 @@ interface Props {
     onClick: (pt: V | null, shift: boolean, alt: boolean, box?: [number, number, number, number]) => void
     onTap: (pt: V) => void
   } | null
+  /** People's list is open (Part 28): each person found, framed and numbered (boxes sensor-normalised x0, y0, x1, y1). */
+  people?: { label: string; box: [number, number, number, number]; hot: boolean }[] | null
 }
 
 /** Cells across the hover preview's grid (its outline and tint over the photo as drawn). */
@@ -440,6 +442,17 @@ export function MaskOverlay(p: Props) {
         {objectBox && (
           <rect className="mask-line full" x={Math.min(objectBox.from[0], objectBox.to[0])} y={Math.min(objectBox.from[1], objectBox.to[1])} width={Math.abs(objectBox.to[0] - objectBox.from[0])} height={Math.abs(objectBox.to[1] - objectBox.from[1])} />
         )}
+        {p.people?.map((f) => {
+          const [x0, y0, x1, y1] = f.box
+          const pts = [toView(x0, y0), toView(x1, y0), toView(x1, y1), toView(x0, y1)]
+          const top = pts.reduce((a, b) => (b[1] < a[1] || (b[1] === a[1] && b[0] < a[0]) ? b : a))
+          return (
+            <g key={f.label} className={`mask-person ${f.hot ? 'hot' : ''}`} data-testid="people-frame">
+              <polygon points={pts.map((q) => `${q[0]},${q[1]}`).join(' ')} />
+              <text x={top[0] + 4} y={top[1] + 16}>{f.label}</text>
+            </g>
+          )
+        })}
         {obj?.touchPoint && (() => {
           const v = toView(obj.touchPoint[0], obj.touchPoint[1])
           return <circle className="mask-object-tap" cx={v[0]} cy={v[1]} r={9} />

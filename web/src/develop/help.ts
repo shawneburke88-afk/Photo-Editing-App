@@ -817,6 +817,47 @@ export const MASK_HELP: Record<string, ControlHelp> = {
     left: '',
     right: '',
   },
+  // People (PHASE3.md Part 28).
+  peopleNew: {
+    hint: 'Select people, their faces, hair, skin or clothes',
+    what: 'Finds the people in the photo and lists them, numbered from left to right. Tick what to select for each person, or for everyone at once, then make the mask. AI models run on this computer; the first time, LightBench asks before downloading them. The selection is kept in the edit and .xmp, so it looks the same everywhere without the models.',
+    left: '',
+    right: '',
+    pitfalls: 'Brush, Linear and Radial parts can add to or take away from a selection (+ Add, − Subtract, ∩ Intersect); Feather and Refine soften or follow its edge.',
+  },
+  peopleMake: {
+    hint: 'Make a mask of what is ticked',
+    what: 'Makes one mask holding everything ticked, one part each, as one step you can undo.',
+    left: '',
+    right: '',
+  },
+  peopleAll: {
+    hint: 'Everyone in the photo',
+    what: 'Selects the ticked parts of every person found. Kept in presets: on another photo it selects everyone there.',
+    left: '',
+    right: '',
+  },
+  peopleOne: {
+    hint: 'One person',
+    what: 'Selects the ticked parts of this person only (numbered from left to right; the frame on the photo shows who).',
+    left: '',
+    right: '',
+  },
+  peopleRecompute: {
+    hint: 'Make this part again',
+    what: 'Runs the AI models again on this photo and replaces this part, as one step you can undo.',
+    left: '',
+    right: '',
+  },
+}
+
+/** The People list's columns: what each tick selects (PHASE3.md Part 28). */
+export const PEOPLE_PART_HELP: Record<'person' | 'face' | 'hair' | 'bodySkin' | 'clothes', string> = {
+  person: 'The whole person, from head to toe, with their clothes and hair',
+  face: 'The skin of the face (not the hair)',
+  hair: 'The hair on the head',
+  bodySkin: 'The skin of the body: neck, arms, hands and legs',
+  clothes: 'The clothes',
 }
 
 /** What the panel says about range masks (owner's decision 12: no patent talk in the interface). */

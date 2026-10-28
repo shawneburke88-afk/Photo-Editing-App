@@ -14,6 +14,10 @@ export const depthModel = (): ModelEntry | null => AI?.models.find((m) => m.task
 export const inpaintModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'inpaint') ?? null
 export const segmentModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'segment') ?? null
 export const skyModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'sky') ?? null
+/** People (Part 28): the person finder, the face finder and the parts model. */
+export const detectModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'detect') ?? null
+export const faceModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'face') ?? null
+export const parseModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'parse') ?? null
 
 /**
  * The CPU fallback (ONNX Runtime's WebAssembly provider, up to 4 threads) where there is no WebGPU. On: a random-weight
@@ -103,6 +107,34 @@ export function objectPlan(m: ModelEntry, gpu: GpuProbe): ObjectPlan {
   }
 }
 
+// ---- People and faces (RF-DETR-Seg Nano, YuNet, MediaPipe Selfie Multiclass; PHASE3.md Part 28)
+
+/**
+ * Where each People model runs. RF-DETR-Seg Nano (122.6 MB, the heavy one) on WebGPU where the GPU binds its largest
+ * tensor in one storage buffer (the manifest's `gpu` need, measured by the "AI models" workflow's people-check; ONNX
+ * Runtime 1.30.0 computes a tensor over the adapter's binding limit wrong: SAM_FP32_MIN_BINDING's note), else on the
+ * processor. YuNet (0.23 MB) and MediaPipe Selfie Multiclass (16.5 MB, run once per person) always on the processor:
+ * they take milliseconds there (MASKS_PREP.md: 2 ms and 28 ms on the runner's CPU), and the processor keeps them off
+ * the GPU's limits. The processor is the fallback for all three (People's whole run is about a second there).
+ */
+export const PEOPLE_WASM_FALLBACK = true
+
+export interface PeoplePlan {
+  detect: Provider | null
+  face: Provider
+  parse: Provider
+  gpu: GpuProbe
+  why: string | null
+  slow?: boolean
+}
+
+export function peoplePlan(detect: ModelEntry, gpu: GpuProbe): PeoplePlan {
+  const onGpu = gpu.webgpu && !gpuShortfall(detect, gpu)
+  if (onGpu) return { detect: 'webgpu', face: 'wasm', parse: 'wasm', gpu, why: null }
+  if (PEOPLE_WASM_FALLBACK) return { detect: 'wasm', face: 'wasm', parse: 'wasm', gpu, why: null, slow: true }
+  return { detect: null, face: 'wasm', parse: 'wasm', gpu, why: 'People needs WebGPU, which this browser or computer doesn’t offer. The other masks work as before.' }
+}
+
 // ---- Sky (EfficientViT-Seg B1 ADE20K; PHASE3.md Part 29)
 
 /**
@@ -145,6 +177,11 @@ export async function providerFor(m?: ModelEntry | null): Promise<{ provider: Pr
     const p = objectPlan(m, gpu)
     return { provider: p.provider, gpu, why: p.why, ...(p.slow ? { slow: true } : {}), ...(p.variant ? { variant: p.variant } : {}) }
   }
+  if (m?.task === 'detect') {
+    const p = peoplePlan(m, gpu)
+    return { provider: p.detect, gpu, why: p.why, ...(p.slow ? { slow: true } : {}) }
+  }
+  if (m?.task === 'face' || m?.task === 'parse') return { provider: 'wasm', gpu, why: null }
   if (m?.task === 'inpaint') {
     if (gpu.webgpu) {
       const short = gpuShortfall(m, gpu)

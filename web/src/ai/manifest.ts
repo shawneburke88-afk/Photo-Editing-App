@@ -30,18 +30,21 @@ export const REVISION_RE = /^[0-9a-f]{40}$/
 
 export type Variant = 'fp16' | 'fp32'
 /**
- * What the app uses a model for: the Depth range mask, AI Remove, and Object select (AI masks part 1: a promptable
- * segmenter with an image encoder and a prompt decoder). The later AI mask models (people, faces, sky, subject) add
- * their task here and a check below.
+ * What the app uses a model for: the Depth range mask, AI Remove, Object select (AI masks part 1: a promptable
+ * segmenter with an image encoder and a prompt decoder), and People (part 2, docs/PHASE3.md Part 28): finding people
+ * ("detect": RF-DETR-Seg Nano), their faces ("face": YuNet) and their parts ("parse": MediaPipe Selfie Multiclass).
+ * The later AI mask models (sky, subject) add their task here and a check below.
  */
-export const TASKS = ['depth', 'inpaint', 'segment', 'sky'] as const
+export const TASKS = ['depth', 'inpaint', 'segment', 'sky', 'detect', 'face', 'parse'] as const
 export type Task = (typeof TASKS)[number]
 export type Delivery = 'site' | 'huggingface'
 /**
- * Where the deploy fetches a model's files: Hugging Face (`/resolve/<revision>/<path>`), or a GitHub Release of a
- * repository ("github-release": `/releases/download/<tag>/<path>`; LightBench's own conversions, Part 29).
+ * Where the deploy fetches a model's files: Hugging Face (`/resolve/<revision>/<path>`), a GitHub Release of a
+ * repository ("github-release": `/releases/download/<tag>/<path>`; LightBench's own conversions, Part 29), or a GitHub
+ * repository at a commit ("github": YuNet, OpenCV Zoo's Git LFS file, fetched from `media.githubusercontent.com` at the
+ * pinned commit, Part 28). The app gets GitHub-hosted files from LightBench's site.
  */
-export type SourceHost = 'huggingface' | 'github-release'
+export type SourceHost = 'huggingface' | 'github-release' | 'github'
 
 export interface ModelFile {
   variant: Variant
@@ -122,7 +125,10 @@ export interface ModelEntry {
   source: { host: SourceHost; repo: string; revision: string | null; pinnedBy?: 'owner'; tag?: string }
   /** A conversion LightBench made itself (Sky, Part 29): what it was made from. */
   convertedFrom?: ConvertedFrom
-  /** The depth model's (DepthInput), the segmenter's (SegmentInput) or the Sky model's (SkyInput) preprocessing. */
+  /**
+   * The depth model's (DepthInput), the segmenter's (SegmentInput) or the Sky model's (SkyInput) preprocessing; the
+   * People models ("detect", "parse") give theirs as a SegmentInput: a square input of `size`, (RGB / 255 − mean) / std.
+   */
   input?: DepthInput | SegmentInput | SkyInput
   /** Which checkpoint of the original weights the files are, and where that is stated. */
   checkpoint?: { name: string; source: string }
@@ -153,6 +159,10 @@ export const TASK_PARTS: Partial<Record<Task, readonly string[]>> = {
   segment: ['encoder', 'decoder'],
   // The Sky model is one graph, recorded as a part named "model" (loaded and run as the graphs above are).
   sky: ['model'],
+  // The People models are one graph each, recorded as a part named "model" too.
+  detect: ['model'],
+  face: ['model'],
+  parse: ['model'],
 }
 
 /** The shared runtime (one for every model, as PHASE4_MODELS.md plans): ONNX Runtime Web's WebAssembly file. */
@@ -196,9 +206,10 @@ export function parseManifest(json: unknown): Manifest {
     const lic = m.licence as Record<string, unknown> | undefined
     if (!lic || !isStr(lic.id) || !isStr(lic.url) || !isStr(lic.statement)) fail(`${id}: licence incomplete`)
     const src = m.source as Record<string, unknown> | undefined
-    if (!src || (src.host !== 'huggingface' && src.host !== 'github-release') || !isStr(src.repo) || !/^[\w.-]+\/[\w.-]+$/.test(src.repo)) fail(`${id}: source incomplete`)
+    if (!src || (src.host !== 'huggingface' && src.host !== 'github-release' && src.host !== 'github') || !isStr(src.repo) || !/^[\w.-]+\/[\w.-]+$/.test(src.repo)) fail(`${id}: source incomplete`)
     if (src!.host === 'github-release' && !(isStr(src!.tag) && /^[\w.-]+$/.test(src!.tag))) fail(`${id}: a GitHub Release source needs its tag`)
     if (src!.host === 'github-release' && (m.delivery ?? 'site') !== 'site') fail(`${id}: a model from a GitHub Release is served by LightBench's site`)
+    if (src!.host === 'github' && (m.delivery ?? 'site') !== 'site') fail(`${id}: a model from GitHub is served by LightBench's site`)
     const rev = src!.revision
     if (rev !== null && !(isStr(rev) && REVISION_RE.test(rev))) fail(`${id}: revision must be a 40-digit commit or null`)
     if (src!.pinnedBy !== undefined && src!.pinnedBy !== 'owner') fail(`${id}: pinnedBy must be "owner"`)
@@ -207,7 +218,7 @@ export function parseManifest(json: unknown): Manifest {
     if (m.task === 'sky' && (!inp || ![inp.shortSide, inp.multiple, inp.maxLong, inp.stride, inp.classes, inp.skyClass, inp.bytesPerPixel].every((x) => isNum(x) && x >= 0) || (inp.shortSide as number) < 32 || (inp.maxLong as number) < (inp.shortSide as number) || (inp.skyClass as number) >= (inp.classes as number) || !isTriple(inp.mean) || !isTriple(inp.std))) fail(`${id}: input incomplete`)
     const cf = m.convertedFrom as { weights?: Record<string, unknown>; code?: Record<string, unknown> } | undefined
     if (cf !== undefined && (!cf.weights || !isStr(cf.weights.repo) || !REVISION_RE.test(String(cf.weights.revision)) || !isStr(cf.weights.path) || !isNum(cf.weights.bytes) || !SHA256_RE.test(String(cf.weights.sha256)) || !cf.code || !isStr(cf.code.repo) || !REVISION_RE.test(String(cf.code.revision)))) fail(`${id}: convertedFrom incomplete`)
-    if (m.task === 'segment' && (!inp || !isNum(inp.size) || inp.size < 64 || inp.size > 4096 || !isTriple(inp.mean) || !isTriple(inp.std))) fail(`${id}: input incomplete`)
+    if ((m.task === 'segment' || m.task === 'detect' || m.task === 'parse') && (!inp || !isNum(inp.size) || inp.size < 64 || inp.size > 4096 || !isTriple(inp.mean) || !isTriple(inp.std))) fail(`${id}: input incomplete`)
     const up = (m.updates as { upstream?: Record<string, unknown> } | undefined)?.upstream
     if (m.updates !== undefined && (!up || !isStr(up.repo) || !REVISION_RE.test(String(up.revision)) || !isStr(up.path) || !isNum(up.bytes) || !SHA256_RE.test(String(up.sha256)))) fail(`${id}: updates incomplete`)
     const gpu = m.gpu as Record<string, unknown> | undefined
@@ -281,10 +292,15 @@ export function servedPath(m: ModelEntry, f: ModelFile): string {
   return `models/${m.id}/${m.source.revision.slice(0, 7)}/${servedName(f)}`
 }
 
-/** The file's pinned source URL (what the deploy workflow fetches; the app never does). */
+/**
+ * The file's pinned source URL (what the deploy workflow fetches; the app fetches it itself only for a model delivered
+ * from Hugging Face). A GitHub file kept in Git LFS is served at media.githubusercontent.com (raw.githubusercontent.com
+ * gives its LFS pointer). Kept in sync with scripts/models.mjs.
+ */
 export function sourceUrl(m: ModelEntry, f: ModelFile): string {
   if (!m.source.revision) throw new Error(`${m.id} is not pinned`)
   if (m.source.host === 'github-release') return releaseUrl(m.source.repo, m.source.tag!, f.path)
+  if (m.source.host === 'github') return `https://media.githubusercontent.com/media/${m.source.repo}/${m.source.revision}/${f.path}`
   return `https://huggingface.co/${m.source.repo}/resolve/${m.source.revision}/${f.path}`
 }
 

@@ -64,7 +64,7 @@ export function ModelInfo({ model, file, files }: { model: ModelEntry; file?: Mo
           </span>
         ) : (
           <span className="muted">
-            From {model.source.repo}{model.source.revision ? ` at ${model.source.revision.slice(0, 7)}` : ''}, {hub ? 'downloaded from Hugging Face (huggingface.co) at that exact version' : 'served by LightBench’s own site'}.
+            From {model.source.host === 'github' ? 'GitHub ' : ''}{model.source.repo}{model.source.revision ? ` at ${model.source.revision.slice(0, 7)}` : ''}, {hub ? 'downloaded from Hugging Face (huggingface.co) at that exact version' : 'served by LightBench’s own site'}.
           </span>
         )}
       </dd>

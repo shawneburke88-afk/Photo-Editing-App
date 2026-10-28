@@ -27,6 +27,14 @@ name: AI models
 #                  point, a removed point, an added point and a box, then compares each selection with Meta's own
 #                  PyTorch SAM 2.1 (web/scripts/sam-parity.py). Mattes and overlays go into the run's "sam-check"
 #                  artifact. Read-only; commits nothing.
+#   people-check   People and faces' real models (docs/PHASE3.md Part 28): downloads RF-DETR-Seg Nano and MediaPipe Selfie
+#                  Multiclass (Hugging Face) and YuNet (OpenCV Zoo's Git LFS on GitHub) at their pinned commits, with SAM
+#                  2.1 Tiny's fp32 graphs for the outline, checks each file's size and SHA-256, runs the app's own pre-
+#                  and post-processing (web/scripts/people-check.mjs) with the app's WebAssembly runtime on the
+#                  committed public-domain photo and a group made from it, and reports the people and faces found,
+#                  each part's coverage, the stored sizes and the timings; then measures each model's largest tensors
+#                  (web/scripts/people-tensors.py) for the GPU limit gate. Overlays go into the run's "people-check"
+#                  artifact. Read-only; commits nothing.
 #   efficientvit-export
 #                  The Sky mask's model (docs/PHASE3.md Part 29): LightBench's own ONNX export of EfficientViT-Seg B1
 #                  (ADE20K). Downloads the checkpoint web/models/manifest.json pins ("convertedFrom": the Hugging Face
@@ -44,7 +52,7 @@ on:
   workflow_dispatch:
     inputs:
       task:
-        description: "pin-and-check: pin web/models/manifest.json, check the real model and commit the manifest to this branch. check: only check the files the manifest pins. hf-check: read-only check of Hugging Face's responses for the AI Remove files and update check. moebius-check: AI Remove's real model through the app's own code on the CPU (read-only, up to an hour). sam-check: Object select's real model through the app's own code on the CPU, and against Meta's PyTorch model (read-only). efficientvit-export: export the Sky model to ONNX, check it, and publish it as a GitHub Release if 'publish' is ticked. sky-check: the Sky model the manifest pins, from its release, through the app's code."
+        description: "pin-and-check: pin web/models/manifest.json, check the real model and commit the manifest to this branch. check: only check the files the manifest pins. hf-check: read-only check of Hugging Face's responses for the AI Remove files and update check. moebius-check: AI Remove's real model through the app's own code on the CPU (read-only, up to an hour). sam-check: Object select's real model through the app's own code on the CPU, and against Meta's PyTorch model (read-only). efficientvit-export: export the Sky model to ONNX, check it, and publish it as a GitHub Release if 'publish' is ticked. sky-check: the Sky model the manifest pins, from its release, through the app's code. people-check: the People models through the app's own code on the CPU, and their largest tensors (read-only)."
         type: choice
         options:
           - pin-and-check
@@ -52,6 +60,7 @@ on:
           - hf-check
           - moebius-check
           - sam-check
+          - people-check
           - efficientvit-export
           - sky-check
         default: pin-and-check
@@ -67,7 +76,8 @@ on:
         default: ""
         required: false
 
-# Read-only unless a job says otherwise: `models` commits the pinned manifest and `sky-publish` creates the release.
+# Read-only unless a job says otherwise: `models` commits the pinned manifest and `sky-publish` creates the release
+# (`people` reads only).
 permissions:
   contents: read
 
@@ -77,7 +87,7 @@ concurrency:
 
 jobs:
   models:
-    if: inputs.task != 'efficientvit-export' && inputs.task != 'sky-check'
+    if: inputs.task != 'efficientvit-export' && inputs.task != 'sky-check' && inputs.task != 'people-check'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -316,6 +326,75 @@ jobs:
           fi
           echo "pushed $(git rev-parse --short HEAD) to ${GITHUB_REF_NAME}"
           echo "Committed \`$(git rev-parse --short HEAD)\` (web/models/manifest.json only) to \`${GITHUB_REF_NAME}\`." >> "$GITHUB_STEP_SUMMARY"
+
+  # ---- People and faces' models (docs/PHASE3.md Part 28): read-only.
+  people:
+    if: inputs.task == 'people-check'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        working-directory: web
+        run: |
+          echo "branch ${GITHUB_REF_NAME} at $(git rev-parse --short HEAD), task people-check"
+          {
+            echo "## AI models: people-check"
+            echo
+            echo "Branch \`${GITHUB_REF_NAME}\` at \`$(git rev-parse --short HEAD)\`."
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          npm ci
+
+      - name: People and faces' models through the app's code (people-check)
+        if: inputs.task == 'people-check'
+        working-directory: web
+        run: |
+          if [ ! -f scripts/people-check.mjs ]; then
+            echo "::error::this branch has no web/scripts/people-check.mjs (run people-check on the AI masks people branch)"
+            exit 1
+          fi
+          # The app's own WebAssembly runtime (its CPU provider), 4 threads.
+          node scripts/people-check.mjs --files "${RUNNER_TEMP}/people-files" --out "${RUNNER_TEMP}/people-check" --threads 4
+
+      - name: People models' largest tensors (people-check)
+        if: inputs.task == 'people-check' && !cancelled()
+        continue-on-error: true
+        timeout-minutes: 20
+        working-directory: web
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/venv"
+          "${RUNNER_TEMP}/venv/bin/pip" install --quiet onnx onnxruntime numpy
+          mkdir -p "${RUNNER_TEMP}/people-check"
+          "${RUNNER_TEMP}/venv/bin/python" scripts/people-tensors.py "${RUNNER_TEMP}/people-files" "${RUNNER_TEMP}/people-check/tensors.json" | tee "${RUNNER_TEMP}/people-check/tensors.txt"
+          {
+            echo "### Largest tensors (for the GPU limit gate)"
+            echo
+            echo '```'
+            cat "${RUNNER_TEMP}/people-check/tensors.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the People overlays (people-check)
+        if: inputs.task == 'people-check' && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: people-check
+          path: ${{ runner.temp }}/people-check
+          retention-days: 14
+          if-no-files-found: warn
+
 
   # ---- the Sky mask's model (docs/PHASE3.md Part 29): read-only; the next job alone may publish.
   sky:

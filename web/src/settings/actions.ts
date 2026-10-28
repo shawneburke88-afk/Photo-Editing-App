@@ -281,6 +281,7 @@ export const ACTIONS: ActionDef[] = [
   { id: 'develop.maskDepth', label: 'New mask: Depth range (AI)', contexts: ['develop', 'mask'], keys: [] },
   // No key, as Depth (PHASE3.md Part 27).
   { id: 'develop.maskObject', label: 'New mask: Object (AI)', contexts: ['develop', 'mask'], keys: [] },
+  { id: 'develop.maskPeople', label: 'New mask: People (AI)', contexts: ['develop', 'mask'], keys: [] },
   { id: 'mask.done', label: 'Finish masking', contexts: ['mask'], keys: ['Enter'] },
   { id: 'mask.cancel', label: 'Masking: stop drawing, deselect, or finish', contexts: ['mask'], keys: ['Escape'] },
   { id: 'mask.overlay', label: 'Show or hide the mask overlay', contexts: ['mask'], keys: ['O'] },
