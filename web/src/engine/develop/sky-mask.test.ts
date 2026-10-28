@@ -42,12 +42,11 @@ describe('Sky parts', () => {
     expect(decodeRaster((back.masks![0].components[0].shape as AiShape).raster!)).toEqual(px)
   })
 
-  it('are left out of paste and presets (owner, 2026-10-28; Part 31); a radial minus the sky keeps its radial', () => {
-    expect(appendMasks(undefined, [mask('Sky 1', [sky()])])).toBeUndefined()
-    const p = presetMasks([mask('Sky 1', [sky()], true), mask('Radial minus sky', [radial, sky()])])!
-    expect(p.map((m) => m.name)).toEqual(['Radial minus sky'])
+  it('are left out of paste and presets with the masks holding them (owner, 2026-10-28; Part 31)', () => {
+    expect(appendMasks(undefined, [mask('Sky 1', [sky()]), mask('Radial minus sky', [radial, sky()])])).toBeUndefined()
+    expect(presetMasks([mask('Sky 1', [sky()], true), mask('Radial minus sky', [radial, sky()])])).toBeUndefined()
+    const p = presetMasks([mask('Sky 1', [sky()], true), mask('Radial', [radial])])!
+    expect(p.map((m) => m.name)).toEqual(['Radial'])
     expect(p.some(needsAi)).toBe(false)
-    expect(p[0].components.map((c) => c.shape.kind)).toEqual(['radial'])
-    expect(p[0].adjust).toEqual({ exposure: -0.5 })
   })
 })

@@ -2,7 +2,7 @@
 // Copy/Paste settings and develop presets (owner, 2026-10-28), including presets saved before then.
 import { describe, expect, it, vi } from 'vitest'
 import { DEFAULT_SETTINGS, normalizeSettings, type DevelopSettings } from '../engine/develop/settings'
-import { hasAiParts, LOCAL_KEYS, needsAi, needsDepth, presetMasks, withoutAiParts, type AiShape, type DepthShape, type LocalMask, type MaskComponent } from '../engine/develop/masks'
+import { hasAiParts, LOCAL_KEYS, needsAi, needsDepth, presetMasks, withoutAiMasks, type AiShape, type DepthShape, type LocalMask, type MaskComponent } from '../engine/develop/masks'
 import { applyPaste, describePaste, type Clipboard } from './paste'
 import { presetClip, presetFromRow, type PresetData } from './presets'
 import { describeMaskValues, maskClipboard, maskPresetData, maskPresetFromRow, maskValues, normalizeMaskValues, sameValues, withMaskValues } from './maskSettings'
@@ -88,57 +88,52 @@ describe('mask values (Copy / Paste mask settings, mask presets)', () => {
   })
 })
 
-describe('AI parts are left out of Copy/Paste and presets (owner, 2026-10-28)', () => {
+describe('masks with AI parts are left out of Copy/Paste and presets (owner, 2026-10-28)', () => {
   it('every AI kind and Depth ranges; masks without AI parts pass unchanged', () => {
     const plain = mask('Radial 1', [radial, [brush, 'subtract']])
     const list = [mask('Object 1', [object()]), mask('Sky 1', [sky()]), mask('People 1', [people()]), mask('Subject 1', [subject()]), mask('Depth range 1', [depth()]), plain]
     expect(hasAiParts(list)).toBe(true)
-    const out = withoutAiParts(list)!
+    const out = withoutAiMasks(list)!
     expect(out).toEqual([plain])
     expect(out[0]).toBe(plain)
     expect(hasAiParts(out)).toBe(false)
-    expect(withoutAiParts([mask('Sky 1', [sky()])])).toBeUndefined()
-    expect(withoutAiParts(undefined)).toBeUndefined()
+    expect(withoutAiMasks([mask('Sky 1', [sky()])])).toBeUndefined()
+    expect(withoutAiMasks(undefined)).toBeUndefined()
   })
 
-  it('a mixed mask keeps its other parts, the first of them as the base', () => {
-    const cases: [LocalMask, string[] | null][] = [
-      [mask('a', [object(), brush]), ['add:brush']],
-      [mask('b', [radial, [sky(), 'subtract']]), ['add:radial']],
-      [mask('c', [radial, [sky(), 'intersect'], [linear, 'add']]), ['add:radial', 'add:linear']],
-      [mask('d', [sky(), [radial, 'intersect'], [brush, 'subtract']]), ['add:radial', 'subtract:brush']],
-      [mask('e', [depth(), [lum, 'intersect']]), ['add:luminance']],
-      [mask('f', [lum, [depth(), 'subtract'], [colour, 'add']]), ['add:luminance', 'add:colour']],
-      // A brush that only took away from an object selection: on its own it would select the opposite, so nothing is left.
-      [mask('g', [object(), [brush, 'subtract']]), null],
-      [mask('h', [people(), [radial, 'subtract'], [linear, 'add']]), ['add:linear']],
+  it('a mask mixing AI and other parts is left out whole', () => {
+    const mixed = [
+      mask('a', [object(), brush]),
+      mask('b', [radial, [sky(), 'subtract']]),
+      mask('c', [sky(), [radial, 'intersect'], [brush, 'subtract']]),
+      mask('d', [depth(), [lum, 'intersect']]),
+      mask('e', [lum, [depth(), 'subtract'], [colour, 'add']]),
+      mask('f', [people(), [radial, 'subtract'], [linear, 'add']]),
     ]
-    for (const [m, want] of cases) {
-      const out = withoutAiParts([m])
-      expect(out ? kinds(out[0]) : null, m.name).toEqual(want)
-      if (out) expect({ ...out[0], components: [] }, m.name).toEqual({ ...m, components: [] })
-    }
+    const keep = mask('g', [lum, [colour, 'intersect']])
+    expect(withoutAiMasks([...mixed, keep])).toEqual([keep])
+    expect(withoutAiMasks(mixed)).toBeUndefined()
   })
 
-  it('Copy settings with Masks ticked carries the brush mask and leaves the AI masks out', () => {
-    const source = normalizeSettings({ ...DEFAULT_SETTINGS, masks: [mask('Sky 1', [sky()]), mask('Brush 1', [brush], { adjust: { exposure: 0.9 } }), mask('Object 1', [object(), radial])] })
-    expect(source.masks).toHaveLength(3)
+  it('Copy settings with Masks ticked carries the brush mask and leaves every mask with an AI part out', () => {
+    const source = normalizeSettings({ ...DEFAULT_SETTINGS, masks: [mask('Sky 1', [sky()]), mask('Brush 1', [brush], { adjust: { exposure: 0.9 } }), mask('Object 1', [object(), radial]), mask('Top', [linear])] })
+    expect(source.masks).toHaveLength(4)
     const clip: Clipboard = { settings: source, keys: ['masks'], rerunAuto: false, sourceKind: 'raw', sourceName: 'A.NEF' }
     const out = applyPaste(normalizeSettings({ ...DEFAULT_SETTINGS }), clip, 'raw')
-    expect(out.masks!.map((x) => [x.name, kinds(x)])).toEqual([['Brush 1', ['add:brush']], ['Object 1', ['add:radial']]])
+    expect(out.masks!.map((x) => [x.name, kinds(x)])).toEqual([['Brush 1', ['add:brush']], ['Top', ['add:linear']]])
     expect(out.masks!.some((x) => needsAi(x) || needsDepth(x))).toBe(false)
-    expect(describePaste(clip, 'raw').join('\n')).toMatch(/2 masks: Brush 1 \(Brush\); Object 1 \(Radial gradient\).*AI masks and AI parts aren’t copied/)
+    expect(describePaste(clip, 'raw').join('\n')).toMatch(/2 masks: Brush 1 \(Brush\); Top \(Linear gradient\).*Masks with AI parts aren’t copied/)
     // Only AI masks: nothing is added, and the photo's own masks stay.
     const own = normalizeSettings({ ...DEFAULT_SETTINGS, masks: [mask('Own', [linear])] })
     const onlyAi: DevelopSettings = normalizeSettings({ ...DEFAULT_SETTINGS, masks: [mask('Sky 1', [sky()])] })
     expect(applyPaste(own, { ...clip, settings: onlyAi }, 'raw').masks).toEqual(own.masks)
   })
 
-  it('a new preset holds no AI parts', () => {
-    expect(presetMasks([mask('Sky 1', [sky()]), mask('Radial minus sky', [radial, [sky(), 'subtract']]), mask('Brush 1', [brush])])!.map((x) => [x.name, kinds(x)])).toEqual([['Radial minus sky', ['add:radial']]])
+  it('a new preset holds no mask with an AI part', () => {
+    expect(presetMasks([mask('Sky 1', [sky()]), mask('Radial minus sky', [radial, [sky(), 'subtract']]), mask('Brush 1', [brush]), mask('Radial 1', [radial])])!.map((x) => [x.name, kinds(x)])).toEqual([['Radial 1', ['add:radial']]])
   })
 
-  it('a preset saved earlier with AI parts applies without them', () => {
+  it('a preset saved earlier with AI parts applies without the masks holding them', () => {
     // As 0.6.18 saved it: AI parts kept without their mattes, waiting for "Compute for this photo".
     const strip = (s: object) => (({ raster: _r, ...rest }) => (void _r, rest))(s as AiShape)
     const old: PresetData = {
@@ -150,7 +145,7 @@ describe('AI parts are left out of Copy/Paste and presets (owner, 2026-10-28)', 
     const p = presetFromRow({ id: 7, name: 'Old look', preset: JSON.stringify(old) })!
     const out = applyPaste(normalizeSettings({ ...DEFAULT_SETTINGS }), presetClip(p), 'raw')
     expect(out.exposure).toBe(0.4)
-    expect(out.masks!.map((x) => [x.name, kinds(x)])).toEqual([['Radial minus sky', ['add:radial']], ['Top', ['add:linear']]])
+    expect(out.masks!.map((x) => [x.name, kinds(x)])).toEqual([['Top', ['add:linear']]])
     expect(out.masks!.some((x) => needsAi(x) || needsDepth(x))).toBe(false)
   })
 })

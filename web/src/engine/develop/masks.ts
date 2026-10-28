@@ -648,41 +648,30 @@ export function capMessage(masks: LocalMask[], change: { addMask?: boolean; mask
  */
 export const isAiPart = (c: Pick<MaskComponent, 'shape'>) => c.shape.kind === 'ai' || c.shape.kind === 'depth'
 
+/** Whether a mask holds an AI part. */
+export const hasAiPart = (m: Pick<LocalMask, 'components'>) => m.components.some(isAiPart)
+
 /**
- * The masks without their AI parts (owner, 2026-10-28: Copy/Paste and presets leave AI masks out; "people will just do a
- * new one"). A mask with other parts keeps them, and the first one left becomes the base (added, as Delete part makes
- * it), except a part that only subtracted from AI parts: on its own it would select what it was meant to take away, so
- * it is left out too. A mask with nothing left is dropped. Masks without AI parts are passed on as they are.
+ * The masks without those holding an AI part (owner, 2026-10-28: Copy/Paste and presets leave AI masks out, "people will
+ * just do a new one"; a mask mixing AI and other parts is left out whole). Masks without AI parts are passed on as they
+ * are.
  */
-export function withoutAiParts(masks: LocalMask[] | undefined): LocalMask[] | undefined {
-  const out: LocalMask[] = []
-  for (const m of masks ?? []) {
-    if (!m.components.some(isAiPart)) {
-      out.push(m)
-      continue
-    }
-    const kept: MaskComponent[] = []
-    m.components.forEach((c, i) => {
-      if (isAiPart(c)) return
-      if (kept.length) kept.push(c)
-      else if (i === 0 || c.op !== 'subtract') kept.push({ ...c, op: 'add' })
-    })
-    if (kept.length) out.push({ ...m, components: kept })
-  }
+export function withoutAiMasks(masks: LocalMask[] | undefined): LocalMask[] | undefined {
+  const out = (masks ?? []).filter((m) => !hasAiPart(m))
   return out.length ? out : undefined
 }
 
-/** Whether these masks hold an AI part (Copy/Paste and presets leave them out). */
-export const hasAiParts = (masks: LocalMask[] | undefined) => !!masks?.some((m) => m.components.some(isAiPart))
+/** Whether any of these masks holds an AI part (Copy/Paste and presets leave such masks out). */
+export const hasAiParts = (masks: LocalMask[] | undefined) => !!masks?.some(hasAiPart)
 
 /**
  * Masks pasted onto a photo are ADDED to its own (owner's decision 7), with new ids, after them; past the 64-mask cap the
- * rest are left out. AI parts are left out (`withoutAiParts`): they belong to the photo they were made on, and making a
- * new one is a click.
+ * rest are left out. Masks holding an AI part are left out whole (`withoutAiMasks`): their AI parts belong to the photo
+ * they were made on, and making a new mask is a click.
  */
 export function appendMasks(own: LocalMask[] | undefined, pasted: LocalMask[] | undefined): LocalMask[] | undefined {
   const base = own ?? []
-  const list = withoutAiParts(pasted)
+  const list = withoutAiMasks(pasted)
   if (!list?.length) return own
   const room = Math.max(0, MAX_MASKS - base.length)
   const added = list.slice(0, room).map((m) => ({
@@ -697,11 +686,11 @@ export function appendMasks(own: LocalMask[] | undefined, pasted: LocalMask[] | 
 
 /**
  * Presets may hold gradients and range masks, not brush strokes (owner's decision 7): masks with a brush are left out.
- * AI parts are left out as on paste (owner, 2026-10-28), so a preset saved before then that holds them applies without
- * them (`appendMasks`).
+ * Masks holding an AI part are left out as on paste (owner, 2026-10-28), so a preset saved before then that holds them
+ * applies without those masks (`appendMasks`).
  */
 export function presetMasks(masks: LocalMask[] | undefined): LocalMask[] | undefined {
-  const out = (withoutAiParts(masks) ?? []).filter((m) => !m.components.some((c) => c.shape.kind === 'brush'))
+  const out = (withoutAiMasks(masks) ?? []).filter((m) => !m.components.some((c) => c.shape.kind === 'brush'))
   return out.length ? out : undefined
 }
 

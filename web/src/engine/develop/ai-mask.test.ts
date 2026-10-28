@@ -138,19 +138,12 @@ describe('drawing an AI selection (never runs a model)', () => {
 })
 
 describe('paste, presets and the history', () => {
-  it('paste leaves AI selections out (owner, 2026-10-28; Part 31): a mixed mask keeps its other parts', () => {
-    // Object 1 minus a brush: the brush took away from the selection only, so nothing is left to paste.
+  it('paste and presets leave out every mask with an AI selection, mixed masks too (owner, 2026-10-28; Part 31)', () => {
     expect(appendMasks(undefined, [mask('Object 1', [aiShape(), brush], undefined, ['add', 'subtract'])])).toBeUndefined()
-    // Object 1 plus a brush: the brush is kept, as the mask's first part.
-    const onto = appendMasks(undefined, [mask('Object 1', [aiShape(), brush], { exposure: 0.7 })])!
-    expect(onto).toHaveLength(1)
-    expect(onto[0].components.map((c) => [c.shape.kind, c.op])).toEqual([['brush', 'add']])
-    expect(onto[0].adjust).toEqual({ exposure: 0.7 })
-    expect(needsAi(onto[0])).toBe(false)
-  })
-
-  it('presets leave every AI selection out, and brush masks as before', () => {
-    expect(presetMasks([mask('Object 1', [aiShape()]), mask('Brush', [brush]), mask('Object 2', [radial, aiShape()], undefined, ['add', 'subtract'])])!.map((m) => m.name)).toEqual(['Object 2'])
+    expect(appendMasks(undefined, [mask('Object 1', [aiShape(), brush])])).toBeUndefined()
+    const onto = appendMasks(undefined, [mask('Object 1', [aiShape()]), mask('Radial', [radial])])!
+    expect(onto.map((m) => m.name)).toEqual(['Radial'])
+    expect(presetMasks([mask('Object 1', [aiShape()]), mask('Brush', [brush]), mask('Object 2', [radial, aiShape()], undefined, ['add', 'subtract'])])).toBeUndefined()
     const p = presetMasks([mask('Object 1', [aiShape()]), mask('Radial', [radial]), mask('Sky 1', [aiShape(true, 'sky')])])!
     expect(p.map((m) => m.name)).toEqual(['Radial'])
     expect(p.some(needsAi)).toBe(false)

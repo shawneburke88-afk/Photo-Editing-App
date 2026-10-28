@@ -121,17 +121,15 @@ describe('the depth map in the edit and the sidecar', () => {
 })
 
 describe('paste, presets and the history', () => {
-  it('paste leaves Depth ranges out (owner, 2026-10-28; Part 31): a range mask keeps its other ranges', () => {
-    const src = [mask('Near', [depthShape([10, 20, 30, 40])]), mask('Near and bright', [depthShape(), lum]), mask('Bright, not near', [lum, depthShape()])]
-    src[2].components[1].op = 'subtract'
+  it('paste leaves out every mask with a Depth range, mixed range masks too (owner, 2026-10-28; Part 31)', () => {
+    const src = [mask('Near', [depthShape([10, 20, 30, 40])]), mask('Near and bright', [depthShape(), lum]), mask('Bright', [lum])]
     const ownMap = { ...raster, data: raster.data }
     const target = [mask('Own', [{ ...depthShape(), raster: ownMap }])]
     const both = appendMasks(target, src)!
-    // The target keeps its own Depth range and map; of the pasted masks only their luminance ranges arrive.
-    expect(both.map((m) => m.name)).toEqual(['Own', 'Near and bright', 'Bright, not near'])
+    // The target keeps its own Depth range and map; of the pasted masks only the one without a Depth range arrives.
+    expect(both.map((m) => m.name)).toEqual(['Own', 'Bright'])
     expect(both[0]).toEqual(target[0])
-    expect(both.slice(1).map((m) => m.components.map((c) => [c.shape.kind, c.op]))).toEqual([[['luminance', 'add']], [['luminance', 'add']]])
-    expect(both.some((m, i) => i > 0 && needsDepth(m))).toBe(false)
+    expect(needsDepth(both[1])).toBe(false)
   })
 
   it('presets leave Depth ranges out; withDepthMap still fills in a waiting part (older edits)', () => {
