@@ -3955,6 +3955,13 @@ Shapes now come from **one profiled CPU run** (ONNX Runtime's profiler records e
 - Downloaded `onnx/model_fp16.onnx` and `onnx/model.onnx` from Hugging Face at `de15b22`, sizes and SHA-256 checked; the BiRefNet `LICENSE` at `f707963` checked byte for byte against `web/models/notices/birefnet.LICENSE.txt`.
 - **Release [`models-birefnet-lite-1`](https://github.com/shawneburke88-afk/Photo-Editing-App/releases/tag/models-birefnet-lite-1)**, tag at `07fe93213f515544350abad7e41f80b652e1ac76`: `birefnet_lite_fp16.onnx` **115,109,386 bytes, SHA-256 `6c0b2871c1007a2e09fcec52401ad13eddadaec2bf731c0b153c992ddb7675cb`**; `LICENSE.txt` 1,066 (`92a7089e…`); `SOURCE.md` 4,859 (`92221746…`); `patch.json` 27,306 (`18fee4e6…`). The publish job checked the artifact's SHA-256, that neither release nor tag existed, and the bytes as downloaded by the public URL afterwards. The assets were downloaded again here and match.
 
+Two more runs (`subject-check`: the deploy's own `models.mjs fetch` of the pinned asset from the release, then the app's code on it):
+
+| Run | Result |
+|---|---|
+| [40633154518](https://github.com/shawneburke88-afk/Photo-Editing-App/actions/runs/40633154518) (`23ef29a`) | The fetch from the release passed (size and SHA-256); astronaut and rocket gave exactly run 1's results; **failed** on the third photo: Wikimedia Commons' search now returned a different CC0 photo ("Sunset sky silhouette", 1280 × 960, no subject: coverage 0.0000), and `subject-check.mjs` compared it with run 1's Python reference for the trees photo. A bug in the check, not the model: the reference is now matched by the photo's SHA-256 (recorded by `verify` from now on), or by name for the committed photos only. |
+| [40634294612](https://github.com/shawneburke88-afk/Photo-Editing-App/actions/runs/40634294612) (`1537042`) | **Passed**: the release asset fetched and checked; astronaut 0.4155 (Python 0.4148), rocket 0.1245 (0.1244), the sunset photo 0.0000; runs 19.1–24.3 s; every output finite; the stored mattes decode to themselves. |
+
 Patched against original on the CPU (ONNX Runtime 1.31.0 in Python; BiRefNet's preprocessing: bilinear 1024², ImageNet mean and std):
 
 | Photo | fp16 patched vs fp16 original: mask IoU, largest prob. difference | fp16 patched vs **fp32 original**: IoU, mean prob. difference | fp32 patched vs fp32 original: IoU, largest prob. difference |
@@ -3992,7 +3999,7 @@ fp16 is good enough on the processor: against the fp32 original, IoU ≥ 0.9993 
 
 | Where | Model run | Notes |
 |---|---|---|
-| GitHub runner, the app's WebAssembly runtime (Node), 4 threads, fp16 | **19.2–25.5 s** per run (session 4.6 s) | fp32: 17.8–18.0 s (session 3.3 s). Process memory 3.2–3.5 GB (fp16), 4.5 GB (fp32), within WebAssembly's 4 GB heap. |
+| GitHub runner, the app's WebAssembly runtime (Node), 4 threads, fp16 | **19.1–25.5 s** per run (session 4.6–5.7 s; three runs) | fp32: 17.8–18.0 s (session 3.3 s). Process memory 3.2–3.5 GB (fp16), 4.5 GB (fp32), within WebAssembly's 4 GB heap. |
 | GitHub runner, ONNX Runtime CPU in Python, 4 threads | fp16 9.5–10 s, fp32 8.3–9.3 s (patched); the originals about the same | |
 | **A browser tab**, headless Chromium on this (shared, loaded) machine, the app's runtime worker on the processor, the real published file | **34–51 s** per run; 90 s from Download to the history step (download, check, load, render, run, matte); "Find the subject again" 107 s (the graph is released after each processor run and loaded again) | e2e *real*, below |
 | A real GPU (WebGPU, fp16) | **unmeasured** | No GPU here; SwiftShader has no `shader-f16`. |
