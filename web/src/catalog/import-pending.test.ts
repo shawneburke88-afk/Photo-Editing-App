@@ -26,7 +26,7 @@ const photo = (fileName: string, importDetails?: string) => ({
 
 describe('schema 17: import_pending', () => {
   it('upgrades a version-16 catalog by adding the empty table only', () => {
-    expect(SCHEMA_VERSION).toBe(17)
+    expect(SCHEMA_VERSION).toBe(18)
     const d: Database = new sqlite3.oo1.DB(':memory:', 'c')
     migrate(d)
     d.exec(`DROP TABLE import_pending;
@@ -36,7 +36,7 @@ describe('schema 17: import_pending', () => {
       PRAGMA user_version = 16;`)
     const before = d.selectObjects('SELECT * FROM photos')
     migrate(d)
-    expect(d.selectValue('PRAGMA user_version')).toBe(17)
+    expect(d.selectValue('PRAGMA user_version')).toBe(SCHEMA_VERSION)
     expect(d.selectValue('SELECT count(*) FROM import_pending')).toBe(0)
     expect(d.selectObjects('SELECT * FROM photos')).toEqual(before)
     expect(d.selectValue('PRAGMA integrity_check')).toBe('ok')

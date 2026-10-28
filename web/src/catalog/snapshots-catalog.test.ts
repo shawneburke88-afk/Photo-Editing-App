@@ -55,7 +55,7 @@ function v14(): Database {
 
 describe('schema 15', () => {
   it('upgrades a version-14 catalog by adding an empty snapshots table, nothing else', () => {
-    expect(SCHEMA_VERSION).toBe(17)
+    expect(SCHEMA_VERSION).toBe(18)
     const d = v14()
     const before = dump(d)
     migrate(d)

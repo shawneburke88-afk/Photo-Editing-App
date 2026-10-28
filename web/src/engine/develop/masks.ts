@@ -144,8 +144,9 @@ export interface ColourShape {
 /**
  * The AI Depth range (PHASE3.md Part 24): a range on the photo's depth map, which the component carries (the
  * `RasterShape` slot: owner's decision 10, inside the edit and so inside the .xmp, compressed; depth-map.ts). A range
- * kind: it joins range masks only, never a shape (owner's decision 12). Without a map (pasted from another photo, from a
- * preset, or damaged) it is kept and not rendered until the map is computed for this photo.
+ * kind: it joins range masks only, never a shape (owner's decision 12). Without a map (damaged, or pasted before
+ * Copy/Paste and presets left AI parts out: PHASE3.md Part 31) it is kept and not rendered until the map is computed
+ * for this photo.
  */
 export interface DepthShape {
   kind: 'depth'
@@ -161,7 +162,7 @@ export interface DepthShape {
 /**
  * What an AI selection selects: an object (Object select, Part 27), People's whole person, face (its skin), hair, body
  * skin and clothes (Part 28), or the sky (Part 29); subject comes later. A Sky part has no prompt: it is the whole
- * photo's sky, so it is made again on any photo (paste, presets).
+ * photo's sky. Copy/Paste and presets leave every AI part out (PHASE3.md Part 31).
  */
 export const AI_WHATS = ['object', 'sky', 'person', 'face', 'hair', 'bodySkin', 'clothes'] as const
 export type AiWhat = (typeof AI_WHATS)[number]
@@ -196,8 +197,8 @@ export interface AiPrompt {
  * An AI selection (PHASE3.md Part 27): the matte an AI model made for this photo, kept in the edit (so in the .xmp)
  * and drawn from there: drawing never runs the model, and another computer draws the same mask without it. The matte
  * is 8 bits in the SENSOR frame (255 = selected; depth-map.ts's encoding), at most 1024 texels on its long side (owner,
- * 2026-10-22). Without a matte (pasted from another photo, from a preset, or damaged) the part is kept and its
- * mask waits for "Compute for this photo". A SHAPE kind (owner's AI-masks decision 1).
+ * 2026-10-22). Without a matte (damaged, or pasted before Copy/Paste and presets left AI parts out: PHASE3.md Part
+ * 31) the part is kept and its mask waits for "Compute for this photo". A SHAPE kind (owner's AI-masks decision 1).
  */
 export interface AiShape {
   kind: 'ai'
@@ -336,10 +337,10 @@ export function dabCount(m: Pick<LocalMask, 'components'>): number {
 /** A mask holds a component this build can't render (it is then kept as it is and not rendered). */
 export const hasUnknown = (m: LocalMask) => m.components.some((c) => !isKnownKind(c.shape.kind))
 
-/** A Depth range part without its depth map (pasted, from a preset, or damaged): the mask waits for one. */
+/** A Depth range part without its depth map (damaged, or pasted by an earlier LightBench): the mask waits for one. */
 export const needsDepth = (m: Pick<LocalMask, 'components'>) => m.components.some((c) => c.shape.kind === 'depth' && !(c.shape as DepthShape).raster)
 
-/** An AI selection without its matte (pasted, from a preset, or damaged): the mask waits for "Compute for this photo". */
+/** An AI selection without its matte (damaged, or pasted by an earlier LightBench): the mask waits for "Compute for this photo". */
 export const needsAi = (m: Pick<LocalMask, 'components'>) => m.components.some((c) => c.shape.kind === 'ai' && !(c.shape as AiShape).raster)
 
 /** The text all AI mattes of these masks take in the edit. */
@@ -359,20 +360,6 @@ export function existingDepth(masks: LocalMask[] | undefined): Omit<DepthShape, 
   }
   return null
 }
-
-/**
- * The same masks without depth maps and AI mattes (they belong to one photo: paste and presets carry the ranges and
- * the AI selections' prompts and models, which then wait to be computed for the photo they land on).
- */
-export function withoutDepthMaps(masks: LocalMask[]): LocalMask[] {
-  const raster = (k: string) => k === 'depth' || k === 'ai'
-  return masks.map((m) =>
-    m.components.some((c) => raster(c.shape.kind))
-      ? { ...m, components: m.components.map((c) => (raster(c.shape.kind) ? { ...c, shape: (({ raster: _r, ...rest }) => (void _r, rest))(c.shape as DepthShape | AiShape) } : c)) }
-      : m,
-  )
-}
-export const withoutRasters = withoutDepthMaps
 
 /** Every Depth range part of these masks gets this map (computed for the photo they are on). */
 export function withDepthMap(masks: LocalMask[], depth: Omit<DepthShape, 'range'>): LocalMask[] {
@@ -535,7 +522,8 @@ export function normalizeShape(v: unknown, dabBudget = MAX_DABS): MaskShape | nu
   }
 }
 
-function normalizeAdjust(v: unknown): LocalAdjust {
+/** Checks stored local slider values: only the known sliders, within their ranges, at their precision, zeros left out. */
+export function normalizeAdjust(v: unknown): LocalAdjust {
   const out: LocalAdjust = {}
   if (!v || typeof v !== 'object') return out
   const o = v as Record<string, unknown>
@@ -655,17 +643,49 @@ export function capMessage(masks: LocalMask[], change: { addMask?: boolean; mask
 }
 
 /**
+ * The parts an AI model made for one photo: AI selections (`kind: 'ai'`: Object, People's parts, Sky, and the later
+ * ones) and Depth ranges.
+ */
+export const isAiPart = (c: Pick<MaskComponent, 'shape'>) => c.shape.kind === 'ai' || c.shape.kind === 'depth'
+
+/**
+ * The masks without their AI parts (owner, 2026-10-28: Copy/Paste and presets leave AI masks out; "people will just do a
+ * new one"). A mask with other parts keeps them: the first one left becomes the base (added, as Delete part makes it),
+ * and a part that subtracted from or intersected with nothing but AI parts is left out too, since it has nothing left
+ * to act on. A mask with nothing left is dropped. Masks without AI parts are passed on as they are.
+ */
+export function withoutAiParts(masks: LocalMask[] | undefined): LocalMask[] | undefined {
+  const out: LocalMask[] = []
+  for (const m of masks ?? []) {
+    if (!m.components.some(isAiPart)) {
+      out.push(m)
+      continue
+    }
+    const kept: MaskComponent[] = []
+    m.components.forEach((c, i) => {
+      if (isAiPart(c)) return
+      if (kept.length) kept.push(c)
+      else if (i === 0 || c.op === 'add') kept.push({ ...c, op: 'add' })
+    })
+    if (kept.length) out.push({ ...m, components: kept })
+  }
+  return out.length ? out : undefined
+}
+
+/** Whether these masks hold an AI part (Copy/Paste and presets leave them out). */
+export const hasAiParts = (masks: LocalMask[] | undefined) => !!masks?.some((m) => m.components.some(isAiPart))
+
+/**
  * Masks pasted onto a photo are ADDED to its own (owner's decision 7), with new ids, after them; past the 64-mask cap the
- * rest are left out. A depth map belongs to the photo it was computed on: pasted Depth ranges take the target's own map
- * when it has one, else they wait for one to be computed there (MASKING.md: AI masks are recomputed on paste).
+ * rest are left out. AI parts are left out (`withoutAiParts`): they belong to the photo they were made on, and making a
+ * new one is a click.
  */
 export function appendMasks(own: LocalMask[] | undefined, pasted: LocalMask[] | undefined): LocalMask[] | undefined {
   const base = own ?? []
-  if (!pasted?.length) return own
+  const list = withoutAiParts(pasted)
+  if (!list?.length) return own
   const room = Math.max(0, MAX_MASKS - base.length)
-  const depth = existingDepth(base)
-  const bare = withoutDepthMaps(pasted.slice(0, room))
-  const added = (depth ? withDepthMap(bare, depth) : bare).map((m) => ({
+  const added = list.slice(0, room).map((m) => ({
     ...JSON.parse(JSON.stringify(m)) as LocalMask,
     // Masks read from Lightroom keep their "lr" mark (the panel says they are experimental).
     id: `${m.id.startsWith('lr') ? 'lr' : ''}${newMaskId()}`,
@@ -675,21 +695,13 @@ export function appendMasks(own: LocalMask[] | undefined, pasted: LocalMask[] | 
   return out.length ? out : undefined
 }
 
-/** An AI part that belongs to one photo: an Object selection (its points), or one person's part ("Person 2: hair"). */
-export function photoBoundAi(s: AiShape): boolean {
-  return s.what === 'object' || (isPeoplePart(s.what) && !s.prompt?.all)
-}
-
 /**
- * Presets may hold gradients and range masks, not brush strokes (owner's decision 7): masks with a brush are left out,
- * and so are masks with an Object selection (owner, 2026-10-22: its points belong to one photo, like brush strokes;
- * paste still carries it, waiting) or with one person's part (Part 28: "Person 2" means someone only on that photo).
- * "All people" parts are kept, waiting for "Compute for this photo".
+ * Presets may hold gradients and range masks, not brush strokes (owner's decision 7): masks with a brush are left out.
+ * AI parts are left out as on paste (owner, 2026-10-28), so a preset saved before then that holds them applies without
+ * them (`appendMasks`).
  */
 export function presetMasks(masks: LocalMask[] | undefined): LocalMask[] | undefined {
-  const photoBound = (c: MaskComponent) => c.shape.kind === 'brush' || (c.shape.kind === 'ai' && photoBoundAi(c.shape as AiShape))
-  // Depth ranges (and later AI parts) are kept without the photo's map (each photo gets its own when applied).
-  const out = withoutDepthMaps((masks ?? []).filter((m) => !m.components.some(photoBound)))
+  const out = (withoutAiParts(masks) ?? []).filter((m) => !m.components.some((c) => c.shape.kind === 'brush'))
   return out.length ? out : undefined
 }
 

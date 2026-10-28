@@ -11,7 +11,7 @@ import { CURVE_NORMS, DEFAULT_TONE_CURVE, isLinear, REGION_KEYS, REGION_NAMES, w
 import { describeSpots, spotsForOtherPhoto } from '../engine/develop/spots'
 import { bandsOf, describeMixer, describePoints, withColourMixer, withPoints } from '../engine/develop/colour-mixer'
 import { describeGrading, withColourGrading } from '../engine/develop/colour-grading'
-import { appendMasks, describeMasks, withMasksList } from '../engine/develop/masks'
+import { appendMasks, describeMasks, hasAiParts, withMasksList, withoutAiParts } from '../engine/develop/masks'
 import { describeGlow, describeGrain, describePresenceFx, describeVignette, newGrainSeed, withEffects, type EffectsSettings } from '../engine/develop/effects'
 
 export type PasteKey =
@@ -331,13 +331,14 @@ export const PASTE_ITEMS: PasteItem[] = [
   },
   // Masks (Part 23; owner's decision 7): unticked by default; ticked, the copied masks are ADDED to the photo's own (after
   // them, with new ids, up to the 64-mask cap), at the same places on the sensor. Range masks measure each photo's own
-  // pixels. Auto Sync never sends them.
+  // pixels. Auto Sync never sends them. AI parts (AI selections and Depth ranges) are left out (owner, 2026-10-28; Part
+  // 31): a mask keeps its other parts, and one made only of AI parts isn't copied.
   {
     key: 'masks',
     label: 'Masks',
     group: 'Masks',
     copy: (to, from) => withMasksList(to, appendMasks(to.masks, from.masks)),
-    show: (s) => describeMasks(s.masks),
+    show: (s) => `${describeMasks(withoutAiParts(s.masks))}${hasAiParts(s.masks) ? '. AI masks and AI parts aren’t copied: make them again on each photo' : ''}`,
     changed: (a, b) => JSON.stringify(a.masks ?? []) !== JSON.stringify(b.masks ?? []),
   },
   {
