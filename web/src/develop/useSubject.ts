@@ -24,6 +24,8 @@ export interface SubjectAsk {
   model: ModelEntry
   files: ModelFile[]
   slow: boolean
+  /** On the processor because this GPU binds less than the model's largest tensor (not for want of a GPU). */
+  large: boolean
   done: (rec: InstalledModel | null) => void
 }
 
@@ -54,7 +56,7 @@ export function useSubject(o: Options) {
   const busy = useRef(false)
   const last = useRef<{ photo: string; result: SubjectResult } | null>(null)
 
-  const askFor = (model: ModelEntry, files: ModelFile[], slow: boolean) => new Promise<InstalledModel | null>((resolve) => setAsk({ model, files, slow, done: (rec) => { setAsk(null); resolve(rec) } }))
+  const askFor = (model: ModelEntry, files: ModelFile[], slow: boolean, large: boolean) => new Promise<InstalledModel | null>((resolve) => setAsk({ model, files, slow, large, done: (rec) => { setAsk(null); resolve(rec) } }))
 
   /**
    * The subject's matte for the photo shown (the one already made for it, unless `fresh`), or null: declined,
@@ -85,7 +87,7 @@ export function useSubject(o: Options) {
           setError('No file of the Subject model suits this computer in this build.')
           return null
         }
-        rec = await askFor(model, files, !!plan.slow)
+        rec = await askFor(model, files, !!plan.slow, !!plan.large)
         if (!rec) return null
       }
       const input = segmentInput(model)

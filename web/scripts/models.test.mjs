@@ -131,8 +131,9 @@ describe('scripts/models.mjs', () => {
     const files = plan(m).files.filter((x) => x.model.id === sam.id)
     expect(files).toHaveLength(8)
     expect(files.reduce((n, x) => n + x.file.bytes, 0)).toBe(233614668)
-    // Everything the deploy puts on the site, with the 26.8 MB runtime: well under GitHub Pages' 1 GB.
-    expect(plan(m).files.reduce((n, x) => n + x.file.bytes, 0) + 26781914).toBeLessThan(0.5e9)
+    // Everything the deploy puts on the site, with the 26.8 MB runtime: well under GitHub Pages' 1 GB (560 MB with the
+    // Subject model, Part 30).
+    expect(plan(m).files.reduce((n, x) => n + x.file.bytes, 0) + 26781914).toBeLessThan(0.6e9)
   })
 
   it('People (Part 28): YuNet from GitHub\'s Git LFS and MediaPipe from Hugging Face go to the site; RF-DETR stays on Hugging Face', () => {
@@ -146,9 +147,24 @@ describe('scripts/models.mjs', () => {
     expect(people.map((x) => x.path)).toEqual(['models/yunet/48b10fa/face_detection_yunet_2026may.onnx', 'models/mediapipe-selfie-multiclass/f3a7202/selfie_multiclass_256x256.onnx'])
     expect(people[1].url).toBe('https://huggingface.co/FreeHugsForRobots/ps-skin-seg/resolve/f3a72025451688fb893083991fdfd4562814a4dd/selfie_multiclass_256x256.onnx')
     expect(people.reduce((n, x) => n + x.file.bytes, 0)).toBe(229738 + 16454497)
-    // The site's models with the runtime: about 426 MB of Pages' 1 GB.
-    const site = files.reduce((n, x) => n + x.file.bytes, 0) + 26781914
+    // The site's models with the runtime: about 445 MB of Pages' 1 GB before the Subject model (Part 30).
+    const site = files.filter((x) => x.model.id !== 'birefnet-lite').reduce((n, x) => n + x.file.bytes, 0) + 26781914
     expect(site).toBeLessThan(0.45e9)
+  })
+
+  it('Subject (Part 30): LightBench’s patched BiRefNet_lite, fp16 only, from its GitHub Release to the site; the site stays at about 560 MB', () => {
+    const m = JSON.parse(readFileSync(MANIFEST, 'utf8'))
+    const s = m.models.find((x) => x.id === 'birefnet-lite')
+    expect(s.source).toEqual({ host: 'github-release', repo: 'shawneburke88-afk/Photo-Editing-App', tag: 'models-birefnet-lite-1', revision: '07fe93213f515544350abad7e41f80b652e1ac76' })
+    expect(sourceUrl(s, s.files[0])).toBe('https://github.com/shawneburke88-afk/Photo-Editing-App/releases/download/models-birefnet-lite-1/birefnet_lite_fp16.onnx')
+    const { files, fromHub } = plan(m)
+    expect(fromHub).not.toContain('birefnet-lite')
+    const mine = files.filter((x) => x.model.id === 'birefnet-lite')
+    expect(mine.map((x) => [x.path, x.file.bytes])).toEqual([['models/birefnet-lite/07fe932/birefnet_lite_fp16.onnx', 115109386]])
+    // With the fp32 patch too (224,589,113 bytes) the site would be about 785 MB, before AI Denoise's planned 58 MB.
+    const site = files.reduce((n, x) => n + x.file.bytes, 0) + 26781914
+    expect(site).toBe(560171452)
+    expect(site).toBeLessThan(0.6e9)
   })
 
   it('a model from GitHub is fetched from its Git LFS media URL and checked like the others', async () => {

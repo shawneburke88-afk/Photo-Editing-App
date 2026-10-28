@@ -3145,7 +3145,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         <ModelDialog model={skySel.ask.model} files={skySel.ask.files} purpose={skySel.ask.slow ? 'The Sky mask (on this computer it runs on the processor, without a suitable graphics card: it takes a little longer)' : 'The Sky mask'} onInstalled={(rec) => skySel.ask?.done(rec)} onClose={() => skySel.ask?.done(null)} />
       )}
       {subjectSel.ask && (
-        <ModelDialog model={subjectSel.ask.model} files={subjectSel.ask.files} purpose={subjectSel.ask.slow ? 'The Subject mask (on this computer it runs on the processor, without a suitable graphics card: finding the subject takes longer)' : 'The Subject mask'} onInstalled={(rec) => subjectSel.ask?.done(rec)} onClose={() => subjectSel.ask?.done(null)} />
+        <ModelDialog model={subjectSel.ask.model} files={subjectSel.ask.files} purpose={subjectSel.ask.slow ? (subjectSel.ask.large ? 'The Subject mask (on this computer it runs on the processor, because this graphics card’s AI runtime can’t hold the model: finding the subject takes longer)' : 'The Subject mask (on this computer it runs on the processor, without a suitable graphics card: finding the subject takes longer)') : 'The Subject mask'} onInstalled={(rec) => subjectSel.ask?.done(rec)} onClose={() => subjectSel.ask?.done(null)} />
       )}
       {depth.ask && (
         <ModelDialog model={depth.ask.model} file={depth.ask.file} purpose="The Depth range mask" onInstalled={(rec) => depth.ask?.done(rec)} onClose={() => depth.ask?.done(null)} />

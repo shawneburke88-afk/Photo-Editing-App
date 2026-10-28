@@ -276,7 +276,7 @@
         "host": "github-release",
         "repo": "shawneburke88-afk/Photo-Editing-App",
         "tag": "models-birefnet-lite-1",
-        "revision": null
+        "revision": "07fe93213f515544350abad7e41f80b652e1ac76"
       },
       "convertedFrom": {
         "weights": {
@@ -300,11 +300,11 @@
         "std": [0.229, 0.224, 0.225]
       },
       "gpu": {
-        "maxStorageBufferBindingSize": 268435456,
-        "maxBufferSize": 268435456
+        "maxStorageBufferBindingSize": 251658240,
+        "maxBufferSize": 251658240
       },
       "files": [
-        { "variant": "fp16", "part": "model", "path": "birefnet_lite_fp16.onnx", "bytes": 115100000, "sha256": null }
+        { "variant": "fp16", "part": "model", "path": "birefnet_lite_fp16.onnx", "bytes": 115109386, "sha256": "6c0b2871c1007a2e09fcec52401ad13eddadaec2bf731c0b153c992ddb7675cb" }
       ]
     }
   ]
