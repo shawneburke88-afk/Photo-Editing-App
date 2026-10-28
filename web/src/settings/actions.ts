@@ -282,6 +282,9 @@ export const ACTIONS: ActionDef[] = [
   // No key, as Depth (PHASE3.md Part 27).
   { id: 'develop.maskObject', label: 'New mask: Object (AI)', contexts: ['develop', 'mask'], keys: [] },
   { id: 'develop.maskPeople', label: 'New mask: People (AI)', contexts: ['develop', 'mask'], keys: [] },
+  // Reusing a mask's sliders (PHASE3.md Part 31): no keys by default.
+  { id: 'develop.maskCopySettings', label: 'Copy mask settings (the selected mask’s sliders)', contexts: ['develop', 'mask'], keys: [] },
+  { id: 'develop.maskPasteSettings', label: 'Paste mask settings onto the selected mask', contexts: ['develop', 'mask'], keys: [] },
   { id: 'mask.done', label: 'Finish masking', contexts: ['mask'], keys: ['Enter'] },
   { id: 'mask.cancel', label: 'Masking: stop drawing, deselect, or finish', contexts: ['mask'], keys: ['Escape'] },
   { id: 'mask.overlay', label: 'Show or hide the mask overlay', contexts: ['mask'], keys: ['O'] },

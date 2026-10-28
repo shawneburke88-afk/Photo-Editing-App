@@ -650,9 +650,9 @@ export const isAiPart = (c: Pick<MaskComponent, 'shape'>) => c.shape.kind === 'a
 
 /**
  * The masks without their AI parts (owner, 2026-10-28: Copy/Paste and presets leave AI masks out; "people will just do a
- * new one"). A mask with other parts keeps them: the first one left becomes the base (added, as Delete part makes it),
- * and a part that subtracted from or intersected with nothing but AI parts is left out too, since it has nothing left
- * to act on. A mask with nothing left is dropped. Masks without AI parts are passed on as they are.
+ * new one"). A mask with other parts keeps them, and the first one left becomes the base (added, as Delete part makes
+ * it), except a part that only subtracted from AI parts: on its own it would select what it was meant to take away, so
+ * it is left out too. A mask with nothing left is dropped. Masks without AI parts are passed on as they are.
  */
 export function withoutAiParts(masks: LocalMask[] | undefined): LocalMask[] | undefined {
   const out: LocalMask[] = []
@@ -665,7 +665,7 @@ export function withoutAiParts(masks: LocalMask[] | undefined): LocalMask[] | un
     m.components.forEach((c, i) => {
       if (isAiPart(c)) return
       if (kept.length) kept.push(c)
-      else if (i === 0 || c.op === 'add') kept.push({ ...c, op: 'add' })
+      else if (i === 0 || c.op !== 'subtract') kept.push({ ...c, op: 'add' })
     })
     if (kept.length) out.push({ ...m, components: kept })
   }

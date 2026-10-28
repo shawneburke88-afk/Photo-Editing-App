@@ -19,6 +19,7 @@ import type { DepthMap } from './useDepth'
 import { useStoredJson } from '../lib/useStoredJson'
 import { DEFAULT_MASK_BRUSH, DEFAULT_OVERLAY, MASK_BRUSH_SIZE, OVERLAY_COLOURS, type MaskBrush, type OverlayPrefs } from './maskUi'
 import type { StrokeInput } from './MaskOverlay'
+import { maskClipboard, maskValues, sameValues, withMaskValues, type MaskValues } from './maskSettings'
 
 /** A new component being drawn: a new mask (op undefined), or a part of the selected mask. */
 export interface Creating {
@@ -250,7 +251,7 @@ export function useMasking(o: Options) {
     setPicking('depth')
   }
 
-  /** Depth ranges pasted or from a preset get this photo's depth map (one history step). */
+  /** Depth ranges without a map (damaged, or pasted by an earlier LightBench) get this photo's depth map (one history step). */
   async function computeMissingDepth() {
     const list = masks()
     if (!list.some(needsDepth)) return
@@ -329,7 +330,7 @@ export function useMasking(o: Options) {
     }
   }
 
-  /** AI selections pasted, from a preset, or damaged get their mattes for this photo, from their prompts (one step). */
+  /** AI selections without a matte (damaged, or pasted by an earlier LightBench) get their mattes for this photo, from their prompts (one step). */
   async function computeMissingAi() {
     if (!masks().some(needsAi) || objectBusy || skyBusy) return
     setObjectBusy(true)
@@ -692,6 +693,23 @@ export function useMasking(o: Options) {
         else adjust[key] = value
         return { ...x, adjust }
       }, false)
+    },
+    /** Copy mask settings (Part 31): the selected mask's sliders and Amount, to the app's mask clipboard. */
+    copySettings: (): boolean => {
+      const m = selected()
+      if (!m) return false
+      maskClipboard.set({ values: maskValues(m), from: m.name })
+      return true
+    },
+    /**
+     * Sets the selected mask's sliders and Amount to these values (Paste mask settings, a mask preset): one history step.
+     * Its parts, Invert, Feather and Refine stay as they are.
+     */
+    applyValues: (label: string, v: MaskValues | null | undefined): boolean => {
+      const m = selected()
+      if (!m || !v || sameValues(m, v)) return false
+      updateMask(m.id, label, (x) => withMaskValues(x, v))
+      return true
     },
     resetAdjust: () => {
       const m = selected()

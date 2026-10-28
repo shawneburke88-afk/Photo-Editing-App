@@ -4,7 +4,7 @@ import { readXmp, writeXmp, type SidecarData } from '../../sidecar/xmp'
 import { DEFAULT_SETTINGS, normalizeSettings } from './settings'
 import { decodeRaster, encodeDepth } from './depth-map'
 import {
-  AI_RASTER_CAPS, aiChars, appendMasks, canAdd, capMessage, describeKinds, hasUnknown, maskFamily, MAX_AI_CHARS, MAX_AI_POINTS, needsAi, newMask, normalizeMask, normalizeMasks, presetMasks, refuseReason, withoutRasters,
+  AI_RASTER_CAPS, aiChars, appendMasks, canAdd, capMessage, describeKinds, hasUnknown, maskFamily, MAX_AI_CHARS, MAX_AI_POINTS, needsAi, newMask, normalizeMask, normalizeMasks, presetMasks, refuseReason,
   type AiShape, type LocalMask,
 } from './masks'
 import { KIND_CODE, prepareMasks } from './mask-render'
@@ -138,22 +138,22 @@ describe('drawing an AI selection (never runs a model)', () => {
 })
 
 describe('paste, presets and the history', () => {
-  it('pasted AI selections keep their prompt and model and wait for “Compute for this photo”', () => {
-    const onto = appendMasks(undefined, [mask('Object 1', [aiShape(), brush], undefined, ['add', 'subtract'])])!
-    expect(needsAi(onto[0])).toBe(true)
-    const s = onto[0].components[0].shape as AiShape
-    expect(s).not.toHaveProperty('raster')
-    expect(s.prompt).toEqual(aiShape().prompt)
-    expect(s.model).toBe('sam2-1-hiera-tiny')
-    expect(onto[0].components[1].shape.kind).toBe('brush')
+  it('paste leaves AI selections out (owner, 2026-10-28; Part 31): a mixed mask keeps its other parts', () => {
+    // Object 1 minus a brush: the brush took away from the selection only, so nothing is left to paste.
+    expect(appendMasks(undefined, [mask('Object 1', [aiShape(), brush], undefined, ['add', 'subtract'])])).toBeUndefined()
+    // Object 1 plus a brush: the brush is kept, as the mask's first part.
+    const onto = appendMasks(undefined, [mask('Object 1', [aiShape(), brush], { exposure: 0.7 })])!
+    expect(onto).toHaveLength(1)
+    expect(onto[0].components.map((c) => [c.shape.kind, c.op])).toEqual([['brush', 'add']])
+    expect(onto[0].adjust).toEqual({ exposure: 0.7 })
+    expect(needsAi(onto[0])).toBe(false)
   })
 
-  it('presets leave Object selections out, as brush masks (owner, 2026-10-22); a later AI part is kept, waiting', () => {
-    expect(presetMasks([mask('Object 1', [aiShape()]), mask('Brush', [brush]), mask('Object 2', [radial, aiShape()], undefined, ['add', 'subtract'])])).toBeUndefined()
+  it('presets leave every AI selection out, and brush masks as before', () => {
+    expect(presetMasks([mask('Object 1', [aiShape()]), mask('Brush', [brush]), mask('Object 2', [radial, aiShape()], undefined, ['add', 'subtract'])])!.map((m) => m.name)).toEqual(['Object 2'])
     const p = presetMasks([mask('Object 1', [aiShape()]), mask('Radial', [radial]), mask('Sky 1', [aiShape(true, 'sky')])])!
-    expect(p.map((m) => m.name)).toEqual(['Radial', 'Sky 1'])
-    expect(needsAi(p[1])).toBe(true)
-    expect(withoutRasters([mask('o', [aiShape()])])[0].components[0].shape).not.toHaveProperty('raster')
+    expect(p.map((m) => m.name)).toEqual(['Radial'])
+    expect(p.some(needsAi)).toBe(false)
   })
 
   it('the saved history keeps each matte once and reads it back', () => {

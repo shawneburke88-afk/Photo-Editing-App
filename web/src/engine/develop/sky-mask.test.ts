@@ -42,18 +42,12 @@ describe('Sky parts', () => {
     expect(decodeRaster((back.masks![0].components[0].shape as AiShape).raster!)).toEqual(px)
   })
 
-  it('pasted, wait for “Compute for this photo” without their matte', () => {
-    const onto = appendMasks(undefined, [mask('Sky 1', [sky()])])!
-    expect(needsAi(onto[0])).toBe(true)
-    expect(onto[0].components[0].shape).toMatchObject({ kind: 'ai', what: 'sky', model: 'efficientvit-seg-b1-ade20k' })
-  })
-
-  it('stay in presets (unlike Object selections), waiting, with the mask’s sliders and invert', () => {
+  it('are left out of paste and presets (owner, 2026-10-28; Part 31); a radial minus the sky keeps its radial', () => {
+    expect(appendMasks(undefined, [mask('Sky 1', [sky()])])).toBeUndefined()
     const p = presetMasks([mask('Sky 1', [sky()], true), mask('Radial minus sky', [radial, sky()])])!
-    expect(p.map((m) => m.name)).toEqual(['Sky 1', 'Radial minus sky'])
-    expect(p.every(needsAi)).toBe(true)
-    expect(p[0].invert).toBe(true)
+    expect(p.map((m) => m.name)).toEqual(['Radial minus sky'])
+    expect(p.some(needsAi)).toBe(false)
+    expect(p[0].components.map((c) => c.shape.kind)).toEqual(['radial'])
     expect(p[0].adjust).toEqual({ exposure: -0.5 })
-    expect(p[1].components[1].op).toBe('subtract')
   })
 })

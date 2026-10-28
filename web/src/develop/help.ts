@@ -775,7 +775,7 @@ export const MASK_HELP: Record<string, ControlHelp> = {
   },
   objectCompute: {
     hint: 'Make the waiting selections for this photo',
-    what: 'AI selections that came from another photo or a preset keep how they were made, not their result. This runs the AI models on this photo (an object at the same places; the sky found again), as one step you can undo.',
+    what: 'Some AI selections in this edit keep how they were made but not their result for this photo (for example, copied from another photo by an earlier version). This runs the AI models on this photo (an object at the same places; the sky found again), as one step you can undo.',
     left: '',
     right: '',
   },
@@ -833,7 +833,7 @@ export const MASK_HELP: Record<string, ControlHelp> = {
   },
   peopleAll: {
     hint: 'Everyone in the photo',
-    what: 'Selects the ticked parts of every person found. Kept in presets: on another photo it selects everyone there.',
+    what: 'Selects the ticked parts of every person found.',
     left: '',
     right: '',
   },

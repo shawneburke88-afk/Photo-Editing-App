@@ -4,7 +4,7 @@ import { readXmp, writeXmp, type SidecarData } from '../../sidecar/xmp'
 import { DEFAULT_SETTINGS, normalizeSettings } from './settings'
 import { encodeDepth, decodeDepth, MAX_DEPTH_CHARS } from './depth-map'
 import {
-  appendMasks, canAdd, existingDepth, hasUnknown, maskFamily, needsDepth, normalizeMask, normalizeMasks, presetMasks, refuseReason, withDepthMap, withoutDepthMaps,
+  appendMasks, canAdd, existingDepth, hasUnknown, maskFamily, needsDepth, normalizeMask, normalizeMasks, presetMasks, refuseReason, withDepthMap,
   type DepthShape, type LocalMask,
 } from './masks'
 import { prepareMasks, KIND_CODE, sensorGrid } from './mask-render'
@@ -121,26 +121,26 @@ describe('the depth map in the edit and the sidecar', () => {
 })
 
 describe('paste, presets and the history', () => {
-  it('pasted Depth ranges take the target’s own map, else wait for one', () => {
-    const src = [mask('Near', [depthShape([10, 20, 30, 40])])]
-    const onto = appendMasks(undefined, src)!
-    expect(needsDepth(onto[0])).toBe(true)
-    expect((onto[0].components[0].shape as DepthShape).range).toEqual([10, 20, 30, 40])
-    const ownMap = { ...raster, data: raster.data } // the target's map (here the same bytes)
+  it('paste leaves Depth ranges out (owner, 2026-10-28; Part 31): a range mask keeps its other ranges', () => {
+    const src = [mask('Near', [depthShape([10, 20, 30, 40])]), mask('Near and bright', [depthShape(), lum]), mask('Bright, not near', [lum, depthShape()])]
+    src[2].components[1].op = 'subtract'
+    const ownMap = { ...raster, data: raster.data }
     const target = [mask('Own', [{ ...depthShape(), raster: ownMap }])]
     const both = appendMasks(target, src)!
-    expect(both).toHaveLength(2)
-    expect((both[1].components[0].shape as DepthShape).raster).toEqual(ownMap)
-    expect(existingDepth(both)?.raster).toEqual(ownMap)
+    // The target keeps its own Depth range and map; of the pasted masks only their luminance ranges arrive.
+    expect(both.map((m) => m.name)).toEqual(['Own', 'Near and bright', 'Bright, not near'])
+    expect(both[0]).toEqual(target[0])
+    expect(both.slice(1).map((m) => m.components.map((c) => [c.shape.kind, c.op]))).toEqual([[['luminance', 'add']], [['luminance', 'add']]])
+    expect(both.some((m, i) => i > 0 && needsDepth(m))).toBe(false)
   })
 
-  it('presets keep depth ranges without the photo’s map; withDepthMap fills them in', () => {
-    const p = presetMasks([mask('Near', [depthShape()]), mask('Brush', [{ kind: 'brush', strokes: [{ size: 0.01, feather: 50, flow: 100, density: 100, erase: false, dabs: [0.1, 0.1] }] }])])!
-    expect(p.map((m) => m.name)).toEqual(['Near'])
-    expect(needsDepth(p[0])).toBe(true)
-    const filled = withDepthMap(p, existingDepth([mask('x', [depthShape()])])!)
+  it('presets leave Depth ranges out; withDepthMap still fills in a waiting part (older edits)', () => {
+    const brushMask = mask('Brush', [{ kind: 'brush', strokes: [{ size: 0.01, feather: 50, flow: 100, density: 100, erase: false, dabs: [0.1, 0.1] }] }])
+    expect(presetMasks([mask('Near', [depthShape()]), brushMask])).toBeUndefined()
+    const waiting = [mask('Near', [depthShape(undefined, false)])]
+    expect(needsDepth(waiting[0])).toBe(true)
+    const filled = withDepthMap(waiting, existingDepth([mask('x', [depthShape()])])!)
     expect(needsDepth(filled[0])).toBe(false)
-    expect(withoutDepthMaps(filled)[0].components[0].shape).not.toHaveProperty('raster')
   })
 
   it('the saved history keeps each depth map once and reads it back', () => {

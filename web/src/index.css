@@ -464,6 +464,16 @@ code { background: #0f1012; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 .masks-panel .masks-warn { color: var(--warn, #e0a030); }
 .masks-panel .mask-range-note { margin: 2px 0 6px; }
 .masks-panel .mask-settings { margin-top: 8px; }
+.masks-panel .mask-values-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 6px; }
+.masks-panel .mask-values-tools .linklike { min-height: 32px; }
+.mask-presets .menu { right: auto; left: 0; min-width: 240px; max-width: min(320px, 90vw); }
+.mask-presets .menu-note { margin: 2px 12px 4px; }
+.mask-presets .menu-row { display: flex; align-items: center; }
+.mask-presets .menu-row button[role=menuitem] { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mask-presets .menu-row .kw-x { padding: 6px 8px; }
+.mask-presets .menu-new { border-top: 1px solid var(--line) !important; margin-top: 4px; }
+.mask-presets .menu-name { display: flex; gap: 4px; padding: 4px 8px; }
+.mask-presets .menu-name input { flex: 1; min-width: 0; }
 
 @media (max-width: 1100px) {
   .develop { grid-template-columns: 1fr 5px var(--right-w, 280px); }

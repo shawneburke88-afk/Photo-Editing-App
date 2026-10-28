@@ -2,7 +2,7 @@
 // the list of masks with their parts and their eyes, the overlay, then the selected mask's Amount, Feather and Refine,
 // the selected part's own controls, and its local sliders in Basic's groups and order.
 
-import { useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { withKey } from '../settings/shortcuts'
 import {
   AI_WHAT_LABELS, describeKinds, hasUnknown, isPeoplePart, KIND_LABELS, PEOPLE_PARTS, LOCAL_KEYS, LOCAL_LABELS, LOCAL_RANGE, maskFamily, MAX_DABS, MAX_MASKS, needsAi, needsDepth, partLabel, RANGE_KINDS, SHAPE_KINDS,
@@ -19,6 +19,8 @@ import { DEFAULT_MASK_BRUSH, MASK_BRUSH_SIZE, OVERLAY_COLOURS } from './maskUi'
 import { Slider } from './Slider'
 import { eyeIcon } from './tools'
 import type { Masking } from './useMasking'
+import { describeMaskValues, maskClipboard, maskValues } from './maskSettings'
+import { MaskPresetsMenu } from './MaskPresetsMenu'
 
 interface Props {
   masks: LocalMask[]
@@ -91,6 +93,8 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, d
   const skyAdd = addKind === SKY_PART && kindsFor.includes('ai')
   const chosenAdd = addKind && addKind !== SKY_PART && kindsFor.includes(addKind) ? addKind : kindsFor[0]
   const ov = m.overlay
+  /** Copied mask settings (Part 31): kept while LightBench is open, for any mask on any photo. */
+  const clip = useSyncExternalStore(maskClipboard.subscribe, maskClipboard.get)
 
   return (
     <div className="dpanel masks-panel">
@@ -207,7 +211,7 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, d
         )}
         {masks.some(needsAi) && (
           <p className="small masks-note" role="note">
-            Some AI selections came from another photo or a preset, so they aren’t shown here yet.{' '}
+            Some AI selections aren’t made for this photo yet, so they aren’t shown.{' '}
             <button className="linklike" disabled={disabled || m.objectBusy || m.skyBusy} onClick={() => void m.computeMissingAi()} title={MASK_HELP.objectCompute.what}>Compute for this photo</button>
           </p>
         )}
@@ -230,7 +234,7 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, d
         )}
         {masks.some(needsDepth) && (
           <p className="small masks-note" role="note">
-            Some Depth ranges have no depth map for this photo yet (they came from another photo or a preset), so they aren’t shown.{' '}
+            Some Depth ranges have no depth map for this photo yet, so they aren’t shown.{' '}
             <button className="linklike" disabled={disabled || m.depthBusy} onClick={() => void m.computeMissingDepth()}>Compute the depth map</button>
           </p>
         )}
@@ -351,7 +355,21 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, d
               ))}
             </div>
           ))}
-          <button className="linklike" disabled={disabled || !LOCAL_KEYS.some((k) => mask.adjust[k])} onClick={m.resetAdjust}>Reset mask sliders</button>
+          <div className="mask-values-tools" role="group" aria-label={`${mask.name} sliders`}>
+            <button className="linklike" disabled={disabled || !LOCAL_KEYS.some((k) => mask.adjust[k])} onClick={m.resetAdjust} title={`Set all of ${mask.name}’s sliders back to 0`}>Reset mask sliders</button>
+            <button className="linklike" disabled={disabled} onClick={m.copySettings} title={withKey(`Copy ${mask.name}’s sliders and Amount (${describeMaskValues(maskValues(mask))}), to paste onto any mask, on this photo or another`, 'develop.maskCopySettings')}>
+              Copy mask settings
+            </button>
+            <button
+              className="linklike"
+              disabled={disabled || !clip}
+              onClick={() => m.applyValues('Paste mask settings', clip?.values)}
+              title={withKey(clip ? `Set ${mask.name}’s sliders and Amount to those copied from ${clip.from} (${describeMaskValues(clip.values)}). Its shape and parts stay as they are.` : 'Copy a mask’s settings first, then paste them onto this mask', 'develop.maskPasteSettings')}
+            >
+              Paste mask settings
+            </button>
+            <MaskPresetsMenu maskName={mask.name} values={maskValues(mask)} disabled={disabled} onApply={(p) => m.applyValues(`Mask preset: ${p.name}`, p.values)} />
+          </div>
         </section>
       )}
     </div>
