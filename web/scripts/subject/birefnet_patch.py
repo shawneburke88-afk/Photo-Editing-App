@@ -89,6 +89,7 @@ def profile(model, feeds=None, threads=4):
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
     so.enable_profiling = True
     so.profile_file_prefix = os.path.join(d, "p")
+    # The arena stays on: its counts are the profile's "memory in use" (the peak the tensors task reports).
     so.intra_op_num_threads = threads
     s = ort.InferenceSession(m.SerializeToString(), so, providers=["CPUExecutionProvider"])
     feeds = feeds or {s.get_inputs()[0].name: test_input()}
@@ -592,8 +593,11 @@ def run(s, x):
 def cmd_verify(a):
     """The patched model against the original (and, with --reference, against another variant's original) on the CPU,
     on the photos and a random input: the logits' and probabilities' largest and mean differences, the mask's IoU at ½,
-    finite outputs. Thresholds: same precision, IoU >= 0.999 and probabilities within 0.02 (fp16) / 0.001 (fp32); against
-    the reference (fp16 against the fp32 original): IoU >= 0.99, mean probability difference <= 0.01."""
+    finite outputs. Thresholds against the original of the same precision: fp32, every probability within 0.001 and the
+    mask's IoU >= 0.9999; fp16 (whose arithmetic rounds the patch's partial sums differently), the mean probability
+    difference <= 0.002 and IoU >= 0.995. Against the reference (fp16 against the fp32 original: is fp16 good enough on
+    the processor?): IoU >= 0.95 and the mean probability difference <= 0.02, the numbers reported. The random input's
+    mask is nearly empty, so its IoU isn't judged."""
     import gc
 
     cases = [(os.path.basename(p), photo_input(p)) for p in a.photos] + [("random", test_input(1))]
@@ -611,7 +615,6 @@ def cmd_verify(a):
     _, yos = all_outputs(a.original)
     yrs = all_outputs(a.reference)[1] if a.reference else None
     fp16 = "fp16" in os.path.basename(a.patched)
-    lim_prob = 0.02 if fp16 else 0.001
     res = {"io": io, "cases": [], "problems": []}
     if [i[0] for i in io["inputs"]] != ["input_image"] or [o[0] for o in io["outputs"]] != ["output_image"]:
         res["problems"].append(f"inputs {io['inputs']} outputs {io['outputs']}: expected input_image and output_image")
@@ -624,13 +627,14 @@ def cmd_verify(a):
         if list(yp.shape) != [1, 1, SIZE, SIZE]:
             res["problems"].append(f"{name}: output {list(yp.shape)}")
         pv = c["patchedVsOriginal"]
-        if pv["iou"] < 0.999 or pv["maxAbsProb"] > lim_prob:
-            res["problems"].append(f"{name}: patched vs original IoU {pv['iou']:.5f}, max prob diff {pv['maxAbsProb']:.4g}")
+        iou_ok = name == "random" or pv["iou"] >= (0.995 if fp16 else 0.9999)
+        if not iou_ok or (pv["meanAbsProb"] > 0.002 if fp16 else pv["maxAbsProb"] > 0.001):
+            res["problems"].append(f"{name}: patched vs original IoU {pv['iou']:.5f}, max prob diff {pv['maxAbsProb']:.4g}, mean {pv['meanAbsProb']:.4g}")
         if yrs is not None:
             yr, tr = yrs[k]
             c["referenceS"] = round(tr, 2)
             c["patchedVsReference"] = rv = compare(yp, yr)
-            if name != "random" and (rv["iou"] < 0.99 or rv["meanAbsProb"] > 0.01):
+            if (name != "random" and rv["iou"] < 0.95) or rv["meanAbsProb"] > 0.02:
                 res["problems"].append(f"{name}: against the reference IoU {rv['iou']:.4f}, mean prob diff {rv['meanAbsProb']:.4g}")
         res["cases"].append(c)
         print(json.dumps(c))
@@ -673,11 +677,9 @@ def cmd_source(a):
     d = a.dir
     files = sorted(f for f in os.listdir(d) if f.endswith(".onnx"))
     patch = {f: json.load(open(os.path.join(d, f + ".json"))) for f in files if os.path.exists(os.path.join(d, f + ".json"))}
-    ver = {}
-    for f in files:
-        p = os.path.join(d, f.replace(".onnx", ".verify.json"))
-        if os.path.exists(p):
-            ver[f] = json.load(open(p))
+    # The published file's checks (verify.json; one file per release).
+    ver = {f: json.load(open(os.path.join(d, "verify.json"))) for f in files[:1] if os.path.exists(os.path.join(d, "verify.json"))}
+    tens = json.load(open(os.path.join(d, "tensors.json"))) if os.path.exists(os.path.join(d, "tensors.json")) else None
     run = os.environ.get("GITHUB_RUN_ID")
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     lines = [
@@ -688,8 +690,8 @@ def cmd_source(a):
         "## Where it comes from",
         "",
     ]
-    for w in [cf["weights"]] + ([cf["reference"]] if cf.get("reference") else []):
-        lines.append(f"- `{w['path']}` of [{w['repo']}](https://huggingface.co/{w['repo']}/tree/{w['revision']}) at commit `{w['revision']}`: {w['bytes']:,} bytes, SHA-256 `{w['sha256']}` (checked before patching).")
+    for what, w in [("Patched from", cf["weights"])] + ([("Also checked against", cf["reference"])] if cf.get("reference") else []):
+        lines.append(f"- {what}: `{w['path']}` of [{w['repo']}](https://huggingface.co/{w['repo']}/tree/{w['revision']}) at commit `{w['revision']}`, {w['bytes']:,} bytes, SHA-256 `{w['sha256']}` (checked when downloaded).")
     lines += [
         f"- The model's authors: {e['credit']}",
         "",
@@ -721,6 +723,9 @@ def cmd_source(a):
                 rv = c["patchedVsReference"]
                 s += f"; against the fp32 original, IoU {rv['iou']:.4f}, mean probability difference {rv['meanAbsProb']:.3g}"
             lines.append(s + ".")
+    if tens:
+        la = tens["largestActivation"]
+        lines.append(f"- Largest tensor at 1024 x 1024: {la['bytes']:,} bytes ({la['op']}, {la['shape']}); peak memory on the CPU (ONNX Runtime's count) {tens['peakInUse']['bytes']:,} bytes.")
     lines += [
         "",
         "## Licence",

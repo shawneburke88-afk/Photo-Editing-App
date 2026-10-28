@@ -86,6 +86,7 @@ import { usePeople } from './usePeople'
 import { PeopleDialog } from '../ai/PeopleDialog'
 import { boxToSensor } from '../ai/people'
 import { useSky } from './useSky'
+import { useSubject } from './useSubject'
 import { useAiRemove } from './useAiRemove'
 import { ModelDialog } from '../ai/ModelDialog'
 import { MaskOverlay } from './MaskOverlay'
@@ -973,6 +974,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const people = usePeople({ renderAsShot: (long) => renderAsShot((w, h) => Math.min(Math.max(w, h), long)), photo: () => (status.kind === 'ready' ? String(id) : null), object: objectSel })
   /** The Sky mask (PHASE3.md Part 29): the photo rendered as shot, its long side chosen for the Sky model and the matte. */
   const skySel = useSky({ renderAsShot, photo: () => (status.kind === 'ready' ? String(id) : null) })
+  /** The Subject mask (PHASE3.md Part 30): the photo rendered as shot, as for Object select (1.5 × the model's input). */
+  const subjectSel = useSubject({ renderAsShot, photo: () => (status.kind === 'ready' ? String(id) : null) })
   /** AI Remove (PHASE3.md Part 26): Moebius for the Remove brush's AI mode; the spot being generated. */
   const aiRemove = useAiRemove()
   const [aiPending, setAiPending] = useState<Spot | null>(null)
@@ -1011,6 +1014,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     object: objectSel,
     people,
     sky: skySel,
+    subject: subjectSel,
     toSensorUv: (uv) => {
       const engine = engineRef.current
       if (!engine) return null
@@ -2955,6 +2959,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                   object={objectSel}
                   people={people}
                   sky={skySel}
+                  subject={subjectSel}
                   disabled={status.kind !== 'ready'}
                   showHint={hintsPref === 1}
                   acr={acr}
@@ -3138,6 +3143,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       )}
       {skySel.ask && (
         <ModelDialog model={skySel.ask.model} files={skySel.ask.files} purpose={skySel.ask.slow ? 'The Sky mask (on this computer it runs on the processor, without a suitable graphics card: it takes a little longer)' : 'The Sky mask'} onInstalled={(rec) => skySel.ask?.done(rec)} onClose={() => skySel.ask?.done(null)} />
+      )}
+      {subjectSel.ask && (
+        <ModelDialog model={subjectSel.ask.model} files={subjectSel.ask.files} purpose={subjectSel.ask.slow ? 'The Subject mask (on this computer it runs on the processor, without a suitable graphics card: finding the subject takes longer)' : 'The Subject mask'} onInstalled={(rec) => subjectSel.ask?.done(rec)} onClose={() => subjectSel.ask?.done(null)} />
       )}
       {depth.ask && (
         <ModelDialog model={depth.ask.model} file={depth.ask.file} purpose="The Depth range mask" onInstalled={(rec) => depth.ask?.done(rec)} onClose={() => depth.ask?.done(null)} />

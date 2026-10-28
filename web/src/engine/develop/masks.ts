@@ -28,7 +28,7 @@
 //  - AI components plug in as one more component kind whose shape stores a raster (a compressed map inside the edit, so
 //    inside the .xmp; owner's decision 10). The first is the Depth range (`DepthShape`, PHASE3.md Part 24): a RANGE kind,
 //    so it combines with Luminance and Colour ranges and never with a shape (decision 12: no Depth ∩ shape). The AI
-//    selections (`AiShape`, kind "ai", PHASE3.md Part 27: Object select first; people, faces, sky and subject later)
+//    selections (`AiShape`, kind "ai", PHASE3.md Part 27: Object select first; people and faces, sky and subject in Parts 28–30)
 //    store their matte, the model that made it and the prompt it was made from: a SHAPE kind (owner's AI-masks decision
 //    1), so brushes and gradients add to, subtract from or intersect them, and ranges stay separate masks. A mask
 //    holding a kind this build doesn't know (anything from a newer LightBench) is kept as it is and not rendered, and
@@ -160,17 +160,17 @@ export interface DepthShape {
 }
 /**
  * What an AI selection selects: an object (Object select, Part 27), People's whole person, face (its skin), hair, body
- * skin and clothes (Part 28), or the sky (Part 29); subject comes later. A Sky part has no prompt: it is the whole
- * photo's sky, so it is made again on any photo (paste, presets).
+ * skin and clothes (Part 28), the sky (Part 29) or the photo's main subject (Part 30). Sky and Subject parts have no
+ * prompt: each is the whole photo's sky or subject, so it is made again on any photo (paste, presets).
  */
-export const AI_WHATS = ['object', 'sky', 'person', 'face', 'hair', 'bodySkin', 'clothes'] as const
+export const AI_WHATS = ['object', 'sky', 'person', 'face', 'hair', 'bodySkin', 'clothes', 'subject'] as const
 export type AiWhat = (typeof AI_WHATS)[number]
 /** What People selects (the parts of a person). */
 export const PEOPLE_PARTS = ['person', 'face', 'hair', 'bodySkin', 'clothes'] as const
 export type PeoplePart = (typeof PEOPLE_PARTS)[number]
 export const isPeoplePart = (w: unknown): w is PeoplePart => (PEOPLE_PARTS as readonly unknown[]).includes(w)
-/** Names for masks and parts, by what they select ("Object 1", "Sky 1"; a person's parts: "Person 2: hair"). */
-export const AI_WHAT_LABELS: Record<string, string> = { object: 'Object', sky: 'Sky', person: 'Whole person', face: 'Face', hair: 'Hair', bodySkin: 'Body skin', clothes: 'Clothes' }
+/** Names for masks and parts, by what they select ("Object 1", "Sky 1", "Subject 1"; a person's parts: "Person 2: hair"). */
+export const AI_WHAT_LABELS: Record<string, string> = { object: 'Object', sky: 'Sky', person: 'Whole person', face: 'Face', hair: 'Hair', bodySkin: 'Body skin', clothes: 'Clothes', subject: 'Subject' }
 /** People's masks are named "People 1", "People 2". */
 export const PEOPLE_MASK = 'People'
 /** People boxes kept with an "All people" part (one per person). */

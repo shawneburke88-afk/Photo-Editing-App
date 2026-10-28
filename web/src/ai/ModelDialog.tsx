@@ -60,7 +60,7 @@ export function ModelInfo({ model, file, files }: { model: ModelEntry; file?: Mo
         ))}
         {model.source.host === 'github-release' ? (
           <span className="muted">
-            LightBench’s own conversion{model.convertedFrom ? <> of {model.convertedFrom.weights.path} ({model.convertedFrom.weights.repo} at {model.convertedFrom.weights.revision.slice(0, 7)}, SHA-256 <code title={model.convertedFrom.weights.sha256}>{model.convertedFrom.weights.sha256.slice(0, 16)}…</code>) with the authors’ code ({model.convertedFrom.code.repo} at {model.convertedFrom.code.revision.slice(0, 7)})</> : ''}, published as the release {model.source.tag} of {model.source.repo} on GitHub, with its licence and a note of how it was made; served by LightBench’s own site.
+            LightBench’s own {model.convertedFrom?.code ? 'conversion' : 'copy'}{model.convertedFrom ? <> of {model.convertedFrom.weights.path} ({model.convertedFrom.weights.repo} at {model.convertedFrom.weights.revision.slice(0, 7)}, SHA-256 <code title={model.convertedFrom.weights.sha256}>{model.convertedFrom.weights.sha256.slice(0, 16)}…</code>){model.convertedFrom.code ? <> with the authors’ code ({model.convertedFrom.code.repo} at {model.convertedFrom.code.revision.slice(0, 7)})</> : ', the same weights arranged to run in a browser'}</> : ''}, published as the release {model.source.tag} of {model.source.repo} on GitHub, with its licence and a note of how it was made; served by LightBench’s own site.
           </span>
         ) : (
           <span className="muted">

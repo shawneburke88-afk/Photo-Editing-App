@@ -13,6 +13,7 @@ import {
 } from '../engine/develop/masks'
 import type { ObjectSelect } from './useObjectSelect'
 import type { SkySelect } from './useSky'
+import type { SubjectSelect } from './useSubject'
 import type { People } from './usePeople'
 import { decodeDepth, depthPosition, sampleDepth } from '../engine/develop/depth-map'
 import type { DepthMap } from './useDepth'
@@ -44,6 +45,8 @@ interface Options {
   object: ObjectSelect
   /** The Sky mask (Part 29): the model and the sky's matte for the photo. */
   sky: SkySelect
+  /** The Subject mask (Part 30): the model and the subject's matte for the photo. */
+  subject: SubjectSelect
   /** People (Part 28): the people and faces found on the photo, and the mattes of their parts. */
   people: People
 }
@@ -72,6 +75,8 @@ export function useMasking(o: Options) {
   const [objectBusy, setObjectBusy] = useState(false)
   /** The Sky model is finding the sky (one at a time). */
   const [skyBusy, setSkyBusy] = useState(false)
+  /** The Subject model is finding the subject (one at a time). */
+  const [subjectBusy, setSubjectBusy] = useState(false)
   /** On touch (no hover): the last tap, previewed, waiting for the panel's Select / Add / Remove (sensor uv). */
   const [touchPoint, setTouchPoint] = useState<[number, number] | null>(null)
   /** The selected Depth range's map shown instead of the photo (a view, never saved). */
@@ -133,6 +138,7 @@ export function useMasking(o: Options) {
   const resetForPhoto = useCallback(() => {
     opts.current.object.resetForPhoto()
     opts.current.sky.resetForPhoto()
+    opts.current.subject.resetForPhoto()
     opts.current.people.resetForPhoto()
     setTouchPoint(null)
     setSel({ mask: null, comp: null })
@@ -331,9 +337,10 @@ export function useMasking(o: Options) {
 
   /** AI selections pasted, from a preset, or damaged get their mattes for this photo, from their prompts (one step). */
   async function computeMissingAi() {
-    if (!masks().some(needsAi) || objectBusy || skyBusy) return
+    if (!masks().some(needsAi) || objectBusy || skyBusy || subjectBusy) return
     setObjectBusy(true)
     setSkyBusy(true)
+    setSubjectBusy(true)
     try {
       let next = masks()
       let none = 0
@@ -342,9 +349,9 @@ export function useMasking(o: Options) {
         for (const c of m.components) {
           const s = c.shape as AiShape
           if (s.kind !== 'ai' || s.raster) continue
-          if (s.what === 'sky') {
-            // The photo's sky, found once and given to every Sky part waiting (Part 29).
-            const r = await opts.current.sky.compute('compute')
+          if (s.what === 'sky' || s.what === 'subject') {
+            // The photo's sky (Part 29) or subject (Part 30), found once and given to every such part waiting.
+            const r = await (s.what === 'sky' ? opts.current.sky : opts.current.subject).compute('compute')
             if (!r) return
             next = next.map((x) => (x.id === m.id ? { ...x, components: x.components.map((y) => (y.id === c.id ? { ...y, shape: { ...s, ...r } } : y)) } : x))
             continue
@@ -368,6 +375,7 @@ export function useMasking(o: Options) {
     } finally {
       setObjectBusy(false)
       setSkyBusy(false)
+      setSubjectBusy(false)
     }
   }
 
@@ -376,7 +384,7 @@ export function useMasking(o: Options) {
     const m = masks().find((x) => x.components.some((c) => c.id === compId))
     const c = m?.components.find((x) => x.id === compId)
     const s = c?.shape as AiShape | undefined
-    if (s?.kind === 'ai' && s.what === 'sky') return void recomputeSky(compId)
+    if (s?.kind === 'ai' && (s.what === 'sky' || s.what === 'subject')) return void recomputeWhole(s.what, compId)
     if (!m || !c || s?.kind !== 'ai' || !s.prompt || objectBusy) return
     setObjectBusy(true)
     try {
@@ -389,11 +397,21 @@ export function useMasking(o: Options) {
     }
   }
 
-  // ---- Sky (Part 29)
+  // ---- Sky (Part 29) and Subject (Part 30): AI parts of the whole photo, with no prompt
 
-  /** A new Sky mask (or, with `op`, a Sky part of the selected mask): the model finds the sky, then one history step. */
-  async function newSky(op?: MaskOp) {
-    if (skyBusy) return
+  type Whole = 'sky' | 'subject'
+  const whole = (what: Whole) =>
+    what === 'sky'
+      ? { busy: skyBusy, setBusy: setSkyBusy, sel: opts.current.sky, again: 'find the sky again' }
+      : { busy: subjectBusy, setBusy: setSubjectBusy, sel: opts.current.subject, again: 'find the subject again' }
+
+  /**
+   * A new Sky or Subject mask (or, with `op`, such a part of the selected mask): the model finds it in the photo, then one
+   * history step.
+   */
+  async function newWhole(what: Whole, op?: MaskOp) {
+    const w = whole(what)
+    if (w.busy) return
     const m0 = op ? masks().find((x) => x.id === sel.mask) : null
     if (op && !m0) return
     const why = m0 ? (refuseReason(m0, 'ai') ?? capMessage(masks(), { maskId: m0.id, addComponent: true })) : capMessage(masks(), { addMask: true })
@@ -401,11 +419,11 @@ export function useMasking(o: Options) {
     setMessage(null)
     setCreating(null)
     setPicking(null)
-    setSkyBusy(true)
+    w.setBusy(true)
     try {
-      const r = await opts.current.sky.compute(op ? 'part' : 'new')
+      const r = await w.sel.compute(op ? 'part' : 'new')
       if (!r) return
-      const shape: AiShape = { kind: 'ai', what: 'sky', ...r }
+      const shape: AiShape = { kind: 'ai', what, ...r }
       const list = masks()
       if (op && m0) {
         const m = list.find((x) => x.id === m0.id)
@@ -423,25 +441,31 @@ export function useMasking(o: Options) {
       commit(`New mask: ${m.name}`, [...list, m])
       setSel({ mask: m.id, comp: m.components[0].id })
     } finally {
-      setSkyBusy(false)
+      w.setBusy(false)
     }
   }
 
-  /** A Sky part made again for this photo (after a model update, or after edits that change the photo's look): one step. */
-  async function recomputeSky(compId: string) {
+  /** A Sky or Subject part made again for this photo (after a model update, or after edits that change its look): one step. */
+  async function recomputeWhole(what: Whole, compId: string) {
+    const w = whole(what)
     const m = masks().find((x) => x.components.some((c) => c.id === compId))
     const c = m?.components.find((x) => x.id === compId)
     const s = c?.shape as AiShape | undefined
-    if (!m || !c || s?.kind !== 'ai' || s.what !== 'sky' || skyBusy) return
-    setSkyBusy(true)
+    if (!m || !c || s?.kind !== 'ai' || s.what !== what || w.busy) return
+    w.setBusy(true)
     try {
-      const r = await opts.current.sky.compute('recompute', true)
+      const r = await w.sel.compute('recompute', true)
       if (!r) return
-      commit(`${m.name}: find the sky again`, masks().map((x) => (x.id === m.id ? { ...x, components: x.components.map((y) => (y.id === compId ? { ...y, shape: { ...s, ...r } } : y)) } : x)))
+      commit(`${m.name}: ${w.again}`, masks().map((x) => (x.id === m.id ? { ...x, components: x.components.map((y) => (y.id === compId ? { ...y, shape: { ...s, ...r } } : y)) } : x)))
     } finally {
-      setSkyBusy(false)
+      w.setBusy(false)
     }
   }
+
+  /** A new Sky mask, or a Sky part of the selected mask (Part 29). */
+  const newSky = (op?: MaskOp) => newWhole('sky', op)
+  /** A new Subject mask, or a Subject part of the selected mask (Part 30). */
+  const newSubject = (op?: MaskOp) => newWhole('subject', op)
 
   // ---- People (Part 28)
 
@@ -661,6 +685,7 @@ export function useMasking(o: Options) {
     depthView, setDepthView, depthBusy, computeMissingDepth,
     objectMode, objectBusy, onObjectHover, onObjectClick, computeMissingAi, recomputeAi, setTouchPoint,
     skyBusy, newSky,
+    subjectBusy, newSubject,
     findPeople, makePeople,
     /** The tapped point waiting for the panel's buttons (touch), while the picker is on. */
     touchPoint: objectMode ? touchPoint : null,
@@ -680,6 +705,7 @@ export function useMasking(o: Options) {
     newSame: () => {
       const c = selected()?.components.find((x) => x.id === sel.comp)
       if (c?.shape.kind === 'ai' && (c.shape as AiShape).what === 'sky') return void newSky()
+      if (c?.shape.kind === 'ai' && (c.shape as AiShape).what === 'subject') return void newSubject()
       const k = c?.shape.kind
       if (k && k in KIND_SHORT) newOf(k as ShapeKind)
     },
