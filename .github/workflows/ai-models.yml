@@ -91,7 +91,7 @@ on:
         default: false
         required: false
       unblur:
-        description: "unblur-spike only: the stage (probe, run) and options, e.g. 'run n=20 models=misc,nafnet'"
+        description: "unblur-spike only: the stage: probe, probe2, dev, run (every part) or run:PART,PART (qj-misc, qj-naf, qr-misc, qr-naf, rsblur, fullres, synth-misc, synth-naf, speed)"
         type: string
         default: "probe"
         required: false
@@ -990,14 +990,39 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---- Unblur feasibility spike (docs/UNBLUR_SPIKE.md): research only, read-only, publishes nothing.
-  unblur:
+  unblur-plan:
     if: inputs.task == 'unblur-spike'
     runs-on: ubuntu-latest
-    timeout-minutes: 340
     permissions:
       contents: read
+    outputs:
+      parts: ${{ steps.plan.outputs.parts }}
+    steps:
+      - id: plan
+        env:
+          STAGE: ${{ inputs.unblur }}
+        run: |
+          case "${STAGE}" in
+            run) parts='["qj-misc","qj-naf","qr-misc","qr-naf","rsblur","fullres","synth-misc","synth-naf","speed"]' ;;
+            run:*) parts=$(python3 -c 'import sys, json; print(json.dumps([p for p in sys.argv[1].split(",") if p]))' "${STAGE#run:}") ;;
+            *) parts=$(python3 -c 'import sys, json; print(json.dumps([sys.argv[1]]))' "${STAGE}") ;;
+          esac
+          echo "parts=${parts}" | tee -a "$GITHUB_OUTPUT"
+
+  unblur:
+    needs: unblur-plan
+    if: inputs.task == 'unblur-spike'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJSON(needs.unblur-plan.outputs.parts) }}
     env:
-      STAGE: ${{ inputs.unblur }}
+      PART: ${{ matrix.part }}
+      U: web/scripts/unblur
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1005,63 +1030,207 @@ jobs:
 
       - name: Python, PyTorch (CPU) and ONNX Runtime
         run: |
-          echo "branch ${GITHUB_REF_NAME} at $(git rev-parse --short HEAD), stage '${STAGE}'"
-          nproc; free -g; df -h / /mnt || true
+          echo "branch ${GITHUB_REF_NAME} at $(git rev-parse --short HEAD), part '${PART}'"
+          nproc; free -g; df -h / /mnt || true; lscpu | grep -i "model name\|^CPU(s)\|flags" | cut -c1-200
           python3 -m venv "${RUNNER_TEMP}/venv"
           V="${RUNNER_TEMP}/venv/bin"
           "$V/pip" install --quiet torch==2.9.1 --index-url https://download.pytorch.org/whl/cpu
           "$V/pip" install --quiet onnx==1.19.1 onnxscript==0.5.6 onnxruntime==1.30.0 onnxconverter-common==1.16.0 gdown==5.2.0 \
             numpy pillow scipy scikit-image==0.25.2 opencv-python-headless==4.12.0.88
-          "$V/python" -c "import torch, onnx, onnxruntime, cv2, skimage; print('torch', torch.__version__, 'onnx', onnx.__version__, 'onnxruntime', onnxruntime.__version__, 'cv2', cv2.__version__, 'skimage', skimage.__version__)"
+          "$V/python" -c "import torch, onnx, onnxruntime, cv2, skimage, numpy; print('torch', torch.__version__, 'onnx', onnx.__version__, 'onnxruntime', onnxruntime.__version__, 'cv2', cv2.__version__, 'skimage', skimage.__version__, 'numpy', numpy.__version__)"
+          echo "P=${RUNNER_TEMP}/venv/bin/python" >> "$GITHUB_ENV"
+          mkdir -p "${RUNNER_TEMP}/res"
 
       - name: Probe the sources (probe)
-        if: inputs.unblur == 'probe'
+        if: matrix.part == 'probe'
         run: |
-          "${RUNNER_TEMP}/venv/bin/python" -I web/scripts/unblur/fetch.py probe --out "${RUNNER_TEMP}/probe.json"
-          "${RUNNER_TEMP}/venv/bin/python" -I web/scripts/unblur/fetch.py weights --out "${RUNNER_TEMP}/w" --which misc,nafnet,nafnet-reds
-          ls -la "${RUNNER_TEMP}/w"/*
-
-      - name: Probe the archives (probe2)
-        if: inputs.unblur == 'probe2'
-        run: |
-          P="${RUNNER_TEMP}/venv/bin/python"
-          "$P" -I web/scripts/unblur/fetch.py weights --out "${RUNNER_TEMP}/w" --which misc
-          (cd "${RUNNER_TEMP}/w/misc" && unzip -l checkpoints.zip && unzip -q checkpoints.zip && find . -name "*.pth" -exec sha256sum {} \; -exec stat -c "%s %n" {} \;)
-          "$P" -I -c '
-          import sys, glob, torch
-          for f in sorted(glob.glob(sys.argv[1] + "/**/*.pth", recursive=True)):
-              c = torch.load(f, map_location="cpu", weights_only=False)
-              print(f, type(c).__name__, list(c.keys())[:5] if isinstance(c, dict) else "")
-              sd = c.get("state_dict", c) if isinstance(c, dict) else c
-              print("  tensors", len(sd), "params", sum(v.numel() for v in sd.values()), "first", [(k, tuple(v.shape)) for k, v in list(sd.items())[:4]])
-          ' "${RUNNER_TEMP}/w/misc"
-          "$P" -I web/scripts/unblur/fetch.py list-zip --repo rimchang/RSBlur --rev 27e3fe1620efc6e2613d753e88271dff47043bc1 --archive RSBlur.zip --head 30 || true
-          "$P" -I web/scripts/unblur/fetch.py list-tar --rev afdb28d4aeb7739bc326b181ded390d4e2ac21a3 --archive RealBlur_Ori_sample.tar.gz --head 80 --depth 3 || true
-          "$P" -I web/scripts/unblur/fetch.py list-tar --rev afdb28d4aeb7739bc326b181ded390d4e2ac21a3 --archive RealBlur.tar.gz --head 30 --depth 1 || true
+          "$P" -I $U/fetch.py probe --out "${RUNNER_TEMP}/probe.json"
+          "$P" -I $U/fetch.py weights --out "${RUNNER_TEMP}/w" --which misc,nafnet,nafnet-reds
 
       - name: The authors' code at pinned commits and the checkpoints
-        if: ${{ !startsWith(inputs.unblur, 'probe') }}
+        if: ${{ !startsWith(matrix.part, 'probe') }}
         run: |
           set -e
           clone() { git init --quiet "$3"; git -C "$3" fetch --quiet --depth 1 "https://github.com/$1.git" "$2"; git -C "$3" checkout --quiet FETCH_HEAD; test "$(git -C "$3" rev-parse HEAD)" = "$2"; echo "$1 at $2"; }
           clone ChengxuLiu/MISCFilter aca59a8884cdf91f894dd0e7ca9f2527e4c9fd74 "${RUNNER_TEMP}/MISCFilter"
           clone megvii-research/NAFNet 2b4af71ebe098a92a75910c233a3965a3e93ede4 "${RUNNER_TEMP}/NAFNet"
+          clone rimchang/RSBlur e6818642f2b4d52764e47f294872fcae931f1531 "${RUNNER_TEMP}/RSBlur"
           sha256sum "${RUNNER_TEMP}/MISCFilter/LICENSE" "${RUNNER_TEMP}/NAFNet/LICENSE"
-          P="${RUNNER_TEMP}/venv/bin/python"
-          "$P" -I web/scripts/unblur/fetch.py weights --out "${RUNNER_TEMP}/w" --which misc,nafnet
+          "$P" -I $U/fetch.py weights --out "${RUNNER_TEMP}/w" --which misc,nafnet
           (cd "${RUNNER_TEMP}/w/misc" && unzip -q checkpoints.zip && sha256sum checkpoints/*.pth)
-          "$P" -I web/scripts/unblur/fetch.py zoo --out "${RUNNER_TEMP}/w/zoo"
+          "$P" -I $U/fetch.py zoo --out "${RUNNER_TEMP}/w/zoo"
+          # Test subsets: the first pair of each RealBlur test scene (list order), every 140th RSBlur test pair.
+          L="${RUNNER_TEMP}/lists"; mkdir -p "$L"
+          for s in J R; do awk '{split($1,a,"/"); if(!(a[2] in seen)){seen[a[2]]=1; print $1, $2}}' "${RUNNER_TEMP}/MISCFilter/dataset/RealBlur/RealBlur_${s}_test_list.txt" > "$L/realblur_${s}.txt"; done
+          awk 'NR%140==1 {print $1, $2}' "${RUNNER_TEMP}/RSBlur/datalist/RSBlur/RSBlur_real_test.txt" > "$L/rsblur.txt"
+          cat "$L/realblur_J.txt" "$L/realblur_R.txt" > "$L/realblur_both.txt"
+          wc -l "$L"/*.txt; grep scene097 "$L/realblur_J.txt" | head -1 > "$L/kernel_pair.txt"; cat "$L/kernel_pair.txt"
 
-      - name: Export and check (dev)
-        if: startsWith(inputs.unblur, 'dev')
+      - name: RealBlur test pairs (Hugging Face rimchang/RealBlur at afdb28d, streamed; only the subset kept)
+        if: startsWith(matrix.part, 'qj') || startsWith(matrix.part, 'qr') || startsWith(matrix.part, 'synth')
         run: |
-          P="${RUNNER_TEMP}/venv/bin/python"
-          F=web/scripts/fixtures/ai-masks
-          "$P" -c "from PIL import Image; Image.open('$F/rocket.jpg').convert('RGB').save('${RUNNER_TEMP}/rocket.png')"
-          imgs="$F/astronaut.png,${RUNNER_TEMP}/rocket.png"
-          "$P" -I web/scripts/unblur/export.py misc --repo "${RUNNER_TEMP}/MISCFilter" --weights "${RUNNER_TEMP}/w/misc/checkpoints/RealBlur_J.pth" \
-            --name misc_realblur_j --out "${RUNNER_TEMP}/onnx" --sizes 256,512 --profile-sizes 256,512 --images "$imgs" || echo "::error::misc export failed"
-          "$P" -I web/scripts/unblur/export.py nafnet --repo "${RUNNER_TEMP}/NAFNet" --weights "${RUNNER_TEMP}/w/nafnet/NAFNet-GoPro-width64.pth" \
-            --name nafnet_gopro64 --out "${RUNNER_TEMP}/onnx" --sizes 256 --profile-sizes 256 --images "$imgs" || echo "::error::nafnet export failed"
-          ls -la "${RUNNER_TEMP}/onnx"
+          "$P" -I $U/fetch.py realblur --rev afdb28d4aeb7739bc326b181ded390d4e2ac21a3 --archive RealBlur.tar.gz \
+            --list "${RUNNER_TEMP}/lists/realblur_both.txt" --out "${RUNNER_TEMP}/realblur" --stop-early
+          du -sh "${RUNNER_TEMP}/realblur"
 
+      - name: RealBlur full-resolution camera frames of test scene097 (RealBlur_Ori_sample, streamed)
+        if: matrix.part == 'fullres' || startsWith(matrix.part, 'synth')
+        run: |
+          "$P" -I $U/fetch.py realblur --rev afdb28d4aeb7739bc326b181ded390d4e2ac21a3 --archive RealBlur_Ori_sample.tar.gz \
+            --keep-prefix RealBlur_Original_sample/scene097/ --keep-suffix .JPG --out "${RUNNER_TEMP}/ori"
+          # Pairs as the authors' script makes them: sorted left (sharp, CLN) and right (blurred, BLR) lists, by index.
+          "$P" -I -c '
+          import glob, os, sys, hashlib
+          d = sys.argv[1] + "/RealBlur_Original_sample/scene097"
+          L = sorted(glob.glob(d + "/left/*.JPG")); R = sorted(glob.glob(d + "/right/*.JPG"))
+          print(len(L), "left,", len(R), "right")
+          n = min(len(L), len(R)); pick = [n // 3, (2 * n) // 3]
+          with open(sys.argv[1] + "/pairs.txt", "w") as f:
+              for i in pick:
+                  f.write(R[i] + " " + L[i] + "\n")
+                  for p in (R[i], L[i]):
+                      print(os.path.basename(p), os.path.getsize(p), hashlib.sha256(open(p, "rb").read()).hexdigest())
+          ' "${RUNNER_TEMP}/ori"
+          cat "${RUNNER_TEMP}/ori/pairs.txt"
+
+      - name: RSBlur test pairs (Hugging Face rimchang/RSBlur at 27e3fe1, single members read with Range requests)
+        if: matrix.part == 'rsblur'
+        run: |
+          "$P" -I $U/fetch.py rsblur --rev 27e3fe1620efc6e2613d753e88271dff47043bc1 --list "${RUNNER_TEMP}/lists/rsblur.txt" --out "${RUNNER_TEMP}/rsblur"
+          du -sh "${RUNNER_TEMP}/rsblur"
+
+      - name: Export the models this part needs
+        if: ${{ !startsWith(matrix.part, 'probe') }}
+        run: |
+          O="${RUNNER_TEMP}/onnx"; W="${RUNNER_TEMP}/w"
+          misc() { "$P" -I $U/export.py misc --repo "${RUNNER_TEMP}/MISCFilter" --weights "$W/misc/checkpoints/$1.pth" --name "misc_$2" --out "$O" "${@:3}"; }
+          naf() { "$P" -I $U/export.py nafnet --repo "${RUNNER_TEMP}/NAFNet" --weights "$W/nafnet/NAFNet-GoPro-width64.pth" --name nafnet_gopro64 --out "$O" "$@"; }
+          quick=(--no-fp16 --profile-sizes none --images "")
+          case "${PART}" in
+            qj-misc|rsblur) misc RealBlur_J j --sizes 256 "${quick[@]}" ;;&
+            qr-misc) misc RealBlur_R r --sizes 256 "${quick[@]}" ;;
+            qj-naf|qr-naf|rsblur) naf --sizes 256 "${quick[@]}" ;;
+            fullres) misc RealBlur_J j --sizes 512 "${quick[@]}"; naf --sizes 512 "${quick[@]}" ;;
+            synth-misc) misc RealBlur_J j --sizes 256,512 "${quick[@]}" ;;
+            synth-naf) naf --sizes 256,512 "${quick[@]}" ;;
+            speed|dev)
+              F=web/scripts/fixtures/ai-masks
+              "$P" -c "from PIL import Image; Image.open('$F/rocket.jpg').convert('RGB').save('${RUNNER_TEMP}/rocket.png')"
+              imgs="$F/astronaut.png,${RUNNER_TEMP}/rocket.png"
+              misc RealBlur_J j --sizes 256,512,768 --profile-sizes 256,512,768 --images "$imgs" || echo "::error::MISC export or check failed"
+              naf --sizes 256,512,768 --profile-sizes 256,512,768 --images "$imgs" || echo "::error::NAFNet export or check failed"
+              cp "$O"/*.json "${RUNNER_TEMP}/res/" ;;
+          esac
+          ls -la "$O"
+
+      - name: Quality on RealBlur-J / -R and RSBlur (ONNX Runtime CPU, 4 threads)
+        if: startsWith(matrix.part, 'qj') || startsWith(matrix.part, 'qr') || matrix.part == 'rsblur'
+        run: |
+          O="${RUNNER_TEMP}/onnx"; R="${RUNNER_TEMP}/res"; S="${RUNNER_TEMP}/res/pictures"
+          q() { "$P" -I $U/quality.py --threads 4 --save-dir "$S" --save 3 --max-minutes 100 "$@"; }
+          case "${PART}" in
+            qj-misc) for proto in paper tile; do q --pairs "${RUNNER_TEMP}/lists/realblur_J.txt" --root "${RUNNER_TEMP}/realblur" --onnx "$O/misc_j_256_fp32.onnx" --protocol $proto --tile 256 --overlap 32 --name "J_misc_${proto}" --out "$R/J_misc_${proto}.json"; done ;;
+            qr-misc) for proto in paper tile; do q --pairs "${RUNNER_TEMP}/lists/realblur_R.txt" --root "${RUNNER_TEMP}/realblur" --onnx "$O/misc_r_256_fp32.onnx" --protocol $proto --tile 256 --overlap 32 --name "R_misc_${proto}" --out "$R/R_misc_${proto}.json"; done ;;
+            qj-naf|qr-naf)
+              s=${PART:1:1}; s=${s^^}
+              q --pairs "${RUNNER_TEMP}/lists/realblur_${s}.txt" --root "${RUNNER_TEMP}/realblur" --onnx "$O/nafnet_gopro64_256_fp32.onnx" --protocol tile --tile 256 --overlap 32 --name "${s}_nafnet_tile" --out "$R/${s}_nafnet_tile.json"
+              q --pairs "${RUNNER_TEMP}/lists/realblur_${s}.txt" --root "${RUNNER_TEMP}/realblur" --onnx "${RUNNER_TEMP}/w/zoo/deblurring_nafnet_2025may.onnx" --protocol whole --name "${s}_zoo_whole" --out "$R/${s}_zoo_whole.json" ;;
+            rsblur)
+              q --pairs "${RUNNER_TEMP}/lists/rsblur.txt" --root "${RUNNER_TEMP}/rsblur" --clip-after --onnx "$O/misc_j_256_fp32.onnx" --protocol paper --tile 256 --name RS_misc_j_paper --out "$R/RS_misc_j_paper.json"
+              q --pairs "${RUNNER_TEMP}/lists/rsblur.txt" --root "${RUNNER_TEMP}/rsblur" --clip-after --onnx "$O/nafnet_gopro64_256_fp32.onnx" --protocol tile --tile 256 --overlap 32 --name RS_nafnet_tile --out "$R/RS_nafnet_tile.json"
+              q --pairs "${RUNNER_TEMP}/lists/rsblur.txt" --root "${RUNNER_TEMP}/rsblur" --clip-after --onnx "${RUNNER_TEMP}/w/zoo/deblurring_nafnet_2025may.onnx" --protocol whole --name RS_zoo_whole --out "$R/RS_zoo_whole.json" ;;
+          esac
+
+      - name: Full resolution (scene097's camera frames at 0.25, 0.5, 0.75, 1)
+        if: matrix.part == 'fullres'
+        run: |
+          O="${RUNNER_TEMP}/onnx"; R="${RUNNER_TEMP}/res"; S="${RUNNER_TEMP}/res/pictures"
+          n=0
+          while read -r blr cln; do
+            n=$((n+1))
+            "$P" -I $U/large.py fullres --blur "$blr" --sharp "$cln" --onnx "$O/misc_j_512_fp32.onnx" --tile 512 --overlap 64 --name misc --save-dir "$S" --out "$R/fullres_misc_$n.json"
+            "$P" -I $U/large.py fullres --blur "$blr" --sharp "$cln" --onnx "$O/nafnet_gopro64_512_fp32.onnx" --tile 512 --overlap 64 --name nafnet --save-dir "$S" --out "$R/fullres_nafnet_$n.json"
+          done < "${RUNNER_TEMP}/ori/pairs.txt"
+
+      - name: Synthetic real-shake kernel scaled up, tiling seams, in-plane rotation
+        if: startsWith(matrix.part, 'synth')
+        run: |
+          O="${RUNNER_TEMP}/onnx"; R="${RUNNER_TEMP}/res"; S="${RUNNER_TEMP}/res/pictures"
+          if [ "${PART}" = synth-misc ]; then m=misc_j; else m=nafnet_gopro64; fi
+          read -r blr cln < "${RUNNER_TEMP}/ori/pairs.txt"
+          read -r kgt kbl < "${RUNNER_TEMP}/lists/kernel_pair.txt"
+          RB="${RUNNER_TEMP}/realblur"
+          "$P" -I $U/large.py synthetic --sharp "$cln" --kernel-pair "$RB/$kgt,$RB/$kbl" --onnx "$O/${m}_512_fp32.onnx" --tile 512 --overlap 64 --factors 3,6 --crop 2048 --name "$m" --save-dir "$S" --out "$R/synthetic_$m.json"
+          "$P" -I $U/large.py seams --blur "$blr" --sharp "$cln" --onnx "$O/${m}_256_fp32.onnx" --tile 256 --overlaps 0,32,64 --scale 0.75 --crop 1536 --name "$m" --save-dir "$S" --out "$R/seams256_$m.json"
+          "$P" -I $U/large.py seams --blur "$blr" --sharp "$cln" --onnx "$O/${m}_512_fp32.onnx" --tile 512 --overlaps 0,64 --scale 0.75 --crop 1536 --name "$m" --save-dir "$S" --out "$R/seams512_$m.json"
+          imgs=$(head -4 "${RUNNER_TEMP}/lists/realblur_J.txt" | awk -v r="$RB" '{printf "%s%s/%s", (NR>1?",":""), r, $1}')
+          proto=tile; if [ "$m" = misc_j ]; then proto=paper; fi
+          "$P" -I $U/large.py rotation --images "$imgs" --onnx "$O/${m}_256_fp32.onnx" --tile 256 --overlap 32 --protocol $proto --length 24 --name "$m" --save-dir "$S" --out "$R/rotation_$m.json"
+
+      - uses: actions/setup-node@v4
+        if: matrix.part == 'speed'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: ONNX Runtime Web 1.30.0 in Node and in a Chromium tab (WebAssembly 4 threads; WebGPU on SwiftShader for operator support)
+        if: matrix.part == 'speed'
+        run: |
+          (cd web && npm ci --no-audit --no-fund > /dev/null)
+          npm i --no-save --no-audit --no-fund --prefix "${RUNNER_TEMP}/pw" playwright-core@1.56.1 > /dev/null
+          ls "${RUNNER_TEMP}/pw/node_modules"
+          CHROME=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true); echo "chrome: ${CHROME}"; "${CHROME}" --version || true
+          O="${RUNNER_TEMP}/onnx"; R="${RUNNER_TEMP}/res"; Z="${RUNNER_TEMP}/w/zoo/deblurring_nafnet_2025may.onnx"
+          WEB="$(pwd)/web"; ORT="${WEB}/node_modules/onnxruntime-web/dist"; H="$(pwd)/$U/ort-web.mjs"
+          # Node, WebAssembly, 4 threads: each file at its tile size (opencv_zoo's at 384 and 512; it fails at 256)
+          for f in misc_j_256_fp32 misc_j_256_fp16 misc_j_256_fp16convs misc_j_512_fp32 nafnet_gopro64_256_fp32 nafnet_gopro64_256_fp16 nafnet_gopro64_512_fp32 nafnet_gopro64_512_fp16; do
+            [ -f "$O/$f.onnx" ] || continue
+            (cd web && timeout 1800 node "$H" node --model "$O/$f.onnx" --threads 4 --runs 3 --out "$R/node_$f.json") || echo "::warning::node $f failed"
+          done
+          for s in 256 384 512; do (cd web && timeout 1800 node "$H" node --model "$Z" --dims "lq=1x3x${s}x${s}" --threads 4 --runs 3 --out "$R/node_zoo_$s.json") || true; done
+          # Chromium tab, WebAssembly 4 threads
+          cd "${RUNNER_TEMP}/pw"
+          timeout 3600 node "$H" browser --ort "$ORT" --chrome "${CHROME}" --providers wasm --threads 4 --runs 3 \
+            --models "$O/misc_j_256_fp32.onnx,$O/misc_j_512_fp32.onnx,$O/nafnet_gopro64_256_fp32.onnx,$O/nafnet_gopro64_512_fp32.onnx" --out "$R/browser_wasm.json" || echo "::warning::browser wasm failed"
+          timeout 1800 node "$H" browser --ort "$ORT" --chrome "${CHROME}" --providers wasm --threads 4 --runs 3 --dims "lq=1x3x512x512" --models "$Z" --out "$R/browser_wasm_zoo512.json" || true
+          # WebGPU on SwiftShader: node placement (ONNX Runtime's verbose log) and the output against WebAssembly's
+          timeout 3600 node "$H" browser --ort "$ORT" --chrome "${CHROME}" --providers wasm,webgpu --threads 4 --runs 1 --verbose \
+            --models "$O/misc_j_256_fp32.onnx,$O/nafnet_gopro64_256_fp32.onnx" --out "$R/browser_webgpu.json" || echo "::warning::browser webgpu failed"
+          timeout 1800 node "$H" browser --ort "$ORT" --chrome "${CHROME}" --providers wasm,webgpu --threads 4 --runs 1 --verbose --dims "lq=1x3x384x384" --models "$Z" --out "$R/browser_webgpu_zoo.json" || true
+
+      - name: Graph structure without weights (to reproduce the operator checks elsewhere)
+        if: matrix.part == 'speed'
+        run: |
+          "$P" -I -c '
+          import onnx, gzip, base64, sys
+          for f in sys.argv[1:]:
+              m = onnx.load(f)
+              shapes = [(t.name, list(t.dims), t.data_type) for t in m.graph.initializer]
+              del m.graph.initializer[:]
+              b = base64.b64encode(gzip.compress(m.SerializeToString() + b"\nLBSHAPES" + repr(shapes).encode(), 9)).decode()
+              print("BEGIN-GRAPH", f.split("/")[-1], len(b))
+              for i in range(0, len(b), 4000): print("G", b[i:i + 4000])
+              print("END-GRAPH")
+          ' "${RUNNER_TEMP}/onnx/misc_j_256_fp32.onnx"
+
+      - name: Results
+        if: always()
+        run: |
+          R="${RUNNER_TEMP}/res"
+          ls -la "$R" || true
+          {
+            echo "## Unblur spike: ${PART}"
+            echo
+            for f in "$R"/*.json; do [ -f "$f" ] || continue; echo "<details><summary>$(basename "$f")</summary>"; echo; echo '```json'; head -c 60000 "$f"; echo; echo '```'; echo "</details>"; done
+          } >> "$GITHUB_STEP_SUMMARY"
+          for f in "$R"/*.json; do [ -f "$f" ] || continue; echo "=== $(basename "$f")"; "$P" -c 'import json,sys; d=json.load(open(sys.argv[1])); d.pop("rows", None); print(json.dumps(d)[:20000])' "$f"; done
+
+      - name: Keep the results and pictures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unblur-${{ matrix.part }}
+          path: ${{ runner.temp }}/res
+          retention-days: 14
+          if-no-files-found: warn

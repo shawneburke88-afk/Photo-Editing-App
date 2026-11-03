@@ -124,10 +124,11 @@ def cmd_zoo(a):
 def cmd_realblur(a):
     """Stream one RealBlur archive from Hugging Face (pinned dataset commit) and keep only the pairs in --list."""
     want = set()
-    for line in open(a.list):
+    for line in open(a.list) if a.list else []:
         p = line.split()
         if len(p) >= 2:
             want.update(p[:2])
+    keep_prefix, keep_suffix = a.keep_prefix, a.keep_suffix
     os.makedirs(a.out, exist_ok=True)
     url = f"{HF}/datasets/{a.repo}/resolve/{a.rev}/{a.archive}"
     print(f"streaming {url}; keeping {len(want)} files", flush=True)
@@ -154,13 +155,15 @@ def cmd_realblur(a):
                 name = m.name
                 # Archive members may carry a leading folder; match on the list's relative path suffix.
                 hit = next((w for w in want if name.endswith(w)), None)
+                if not hit and keep_prefix and name.startswith(keep_prefix) and name.endswith(keep_suffix or ""):
+                    hit = name
                 if hit and m.isfile():
                     dest = os.path.join(a.out, hit)
                     os.makedirs(os.path.dirname(dest), exist_ok=True)
                     with tf.extractfile(m) as src, open(dest, "wb") as dst:
                         dst.write(src.read())
                     kept += 1
-                    if kept == len(want) and a.stop_early:
+                    if want and kept == len(want) and a.stop_early and not keep_prefix:
                         break
         # Read the rest so the archive's SHA-256 covers the whole file (unless stopped early).
         if not a.stop_early:
@@ -288,7 +291,9 @@ def main():
     q.add_argument("--repo", default="rimchang/RealBlur")
     q.add_argument("--rev", required=True)
     q.add_argument("--archive", required=True)
-    q.add_argument("--list", required=True)
+    q.add_argument("--list")
+    q.add_argument("--keep-prefix")
+    q.add_argument("--keep-suffix")
     q.add_argument("--out", required=True)
     q.add_argument("--stop-early", action="store_true")
     for name in ["list-tar", "list-zip"]:

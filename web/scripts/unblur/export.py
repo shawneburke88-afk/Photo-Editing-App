@@ -112,10 +112,16 @@ def profile(path, size, threads=4):
             "largestWeight": weights[0][0] if weights else 0, "peakInUse": peak["inUse"]}
 
 
-def to_fp16(src, dst, block_substrings):
+def to_fp16(src, dst, block_substrings, convs_only=False):
+    """fp16 copy: every node in fp16 except those named by block_substrings and the sampling/FFT operators; with
+    convs_only, only Conv, ConvTranspose and Relu in fp16 (everything else kept fp32)."""
     from onnxconverter_common import float16
     m = onnx.load(src)
-    block = [n.name for n in m.graph.node if any(s in n.name for s in block_substrings) or n.op_type in ("DFT", "GridSample", "GatherElements", "Range")]
+    if convs_only:
+        keep16 = {"Conv", "ConvTranspose", "Relu"}
+        block = [n.name for n in m.graph.node if n.op_type not in keep16]
+    else:
+        block = [n.name for n in m.graph.node if any(s in n.name for s in block_substrings) or n.op_type in ("DFT", "GridSample", "GatherElements", "Range")]
     m16 = float16.convert_float_to_float16(m, keep_io_types=True, node_block_list=block, disable_shape_infer=False)
     onnx.save(m16, dst)
     return len(block)
@@ -195,14 +201,20 @@ def main():
         r["ops"], r["opset"] = ops_of(f32)
         print(f"{size}: exported {r['fp32']['bytes']:,} bytes in {r['exportS']} s; ops {r['ops']}", flush=True)
         f16 = os.path.join(a.out, f"{name}_{size}_fp16.onnx")
+        f16c = os.path.join(a.out, f"{name}_{size}_fp16convs.onnx")
+        variants16 = {}
         if not a.no_fp16:
-            try:
-                r["fp16Blocked"] = to_fp16(f32, f16, block)
-                r["fp16"] = {"bytes": os.path.getsize(f16), "sha256": sha256(f16)}
-            except Exception as e:  # noqa: BLE001
-                r["fp16Error"] = repr(e)[:2000]
+            for label, path, convs in [("fp16", f16, False), ("fp16convs", f16c, True)]:
+                if convs and a.model != "misc":
+                    continue
+                try:
+                    r[f"{label}Blocked"] = to_fp16(f32, path, block, convs_only=convs)
+                    r[label] = {"bytes": os.path.getsize(path), "sha256": sha256(path)}
+                    variants16[label] = ort_session(path, a.threads)
+                except Exception as e:  # noqa: BLE001
+                    r[f"{label}Error"] = repr(e)[:2000]
+                    print(f"{size} {label}: {r[label + 'Error'][:300]}", flush=True)
         s32 = ort_session(f32, a.threads)
-        s16 = ort_session(f16, a.threads) if os.path.exists(f16) else None
         r["parity"] = []
         for img_path in images:
             img = crop(load_img(img_path), size)
@@ -220,16 +232,21 @@ def main():
                    "exportModuleVsReference": {"maxAbs": float(np.max(np.abs(ye - yt)))},
                    "ortVsTorch": {"maxAbs": float(np.max(np.abs(yo - yt))), "psnr": psnr(c(yo), c(yt))},
                    "inputVsTorch": {"psnr": psnr(img.transpose(2, 0, 1)[None], c(yt))}}
-            if s16:
-                t = time.time()
-                y16 = s16.run(None, {"blurred": x.numpy()})[0]
-                row["fp16S"] = round(time.time() - t, 2)
-                row["fp16VsTorch"] = {"maxAbs": float(np.max(np.abs(y16 - yt))), "psnr": psnr(c(y16), c(yt)), "nonFinite": int(np.sum(~np.isfinite(y16)))}
+            print(f"{size} {row['image']} fp32: {json.dumps(row)}", flush=True)
+            for label, s16 in variants16.items():
+                try:
+                    t = time.time()
+                    y16 = s16.run(None, {"blurred": x.numpy()})[0]
+                    row[f"{label}S"] = round(time.time() - t, 2)
+                    fin = np.isfinite(y16)
+                    row[f"{label}VsTorch"] = {"maxAbs": float(np.max(np.abs(np.where(fin, y16, 0) - yt))), "psnr": psnr(c(np.nan_to_num(y16)), c(yt)), "nonFinite": int(np.sum(~fin))}
+                except Exception as e:  # noqa: BLE001
+                    row[f"{label}VsTorch"] = {"error": repr(e)[:400]}
+                print(f"{size} {row['image']} {label}: {json.dumps(row.get(label + 'VsTorch'))}", flush=True)
             r["parity"].append(row)
-            print(f"{size} {row['image']}: {json.dumps(row)}", flush=True)
-        del s32, s16
+        del s32, variants16
         if str(size) in a.profile_sizes.split(","):
-            for kind, f in [("fp32", f32), ("fp16", f16)]:
+            for kind, f in [("fp32", f32), ("fp16", f16), ("fp16convs", f16c)]:
                 if os.path.exists(f):
                     try:
                         r[f"tensors_{kind}"] = profile(f, size, a.threads)
