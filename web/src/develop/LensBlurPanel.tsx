@@ -63,7 +63,7 @@ export function LensBlurPanel({ lb, masks, disabled, showHint, picking, onPick, 
                 Pick focus…
               </button>
             </div>
-            {picking && <p className="small crop-note" role="status">Click on the photo where it should be sharp. <button className="linklike" onClick={() => onPick(false)}>Done</button></p>}
+            {picking && <p className="small crop-note" role="status">Click on the photo where it should be sharp. <button className="linklike" onClick={() => onPick(false)} title="Stop picking the focus (Esc)">Done</button></p>}
             <Slider label="Focus distance" value={focusDistance(lb.focus.depth)} min={0} max={100} step={0.5} defaultValue={focusDistance(lb.focus.depth)} format={(v) => v.toFixed(1)} disabled={off} {...guide('lensBlurFocus')} onChange={(x) => set('Focus distance', { focus: { ...lb.focus, depth: Math.round(depthFromDistance(x) * 100) / 100 } })} />
             <Slider label="Blur in front" value={lb.front} min={0} max={100} step={1} defaultValue={100} format={pct} disabled={off} {...guide('lensBlurFront')} onChange={(x) => set('Blur in front', { front: x })} />
             <Slider label="Highlight boost" value={lb.boost} min={0} max={100} step={1} defaultValue={0} format={int} disabled={off} {...guide('lensBlurBoost')} onChange={(x) => set('Highlight boost', { boost: x })} />

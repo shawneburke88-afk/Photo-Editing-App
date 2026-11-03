@@ -266,7 +266,10 @@ export class LensBlurStage {
         list.push(t)
         return t
       }
-      for (const s of plan.slices) {
+      // Test hook (never set by the app): leave out the hidden-background extension.
+      const noExt = !!(globalThis as { __lbLensBlurDebug?: { noExt?: boolean } }).__lbLensBlurDebug?.noExt
+      for (const s0 of plan.slices) {
+        const s = noExt ? { ...s0, ext: 0 } : s0
         enc = device.createCommandEncoder()
         const own: { destroy(): void }[] = []
         const base = (job.plan.boostGain > 0 && s.boost ? F_BOOST : 0) | (s.near ? F_NEAR : 0)
