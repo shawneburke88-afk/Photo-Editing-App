@@ -1198,6 +1198,7 @@ jobs:
           timeout 3600 node "$H" browser --ort "$ORT" --chrome "${CHROME}" --providers wasm,webgpu --threads 4 --runs 1 --verbose \
             --models "$O/misc_j_256_fp32.onnx,$O/nafnet_gopro64_256_fp32.onnx" --out "$R/browser_webgpu.json" || echo "::warning::browser webgpu failed"
           timeout 1800 node "$H" browser --ort "$ORT" --chrome "${CHROME}" --providers wasm,webgpu --threads 4 --runs 1 --verbose --dims "lq=1x3x384x384" --models "$Z" --out "$R/browser_webgpu_zoo.json" || true
+          timeout 5400 node "$H" browser --ort "$ORT" --chrome "${CHROME}" --providers wasm,webgpu --threads 4 --runs 1 --verbose --models "$O/nafnet_gopro64_512_fp32.onnx" --out "$R/browser_webgpu_nafnet512.json" || true
 
       - name: Graph structure without the convolution weights (to reproduce the operator checks elsewhere)
         if: matrix.part == 'speed'
