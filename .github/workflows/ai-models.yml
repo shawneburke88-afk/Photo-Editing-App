@@ -1067,7 +1067,7 @@ jobs:
           wc -l "$L"/*.txt; grep scene112 "$L/realblur_J.txt" | head -1 > "$L/kernel_pair.txt"; cat "$L/kernel_pair.txt"
 
       - name: RealBlur test pairs (Hugging Face rimchang/RealBlur at afdb28d, streamed; only the subset kept)
-        if: startsWith(matrix.part, 'qj') || startsWith(matrix.part, 'qr') || startsWith(matrix.part, 'synth')
+        if: startsWith(matrix.part, 'qj') || startsWith(matrix.part, 'qr') || startsWith(matrix.part, 'synth') || matrix.part == 'naf-diag'
         run: |
           "$P" -I $U/fetch.py realblur --rev afdb28d4aeb7739bc326b181ded390d4e2ac21a3 --archive RealBlur.tar.gz \
             --list "${RUNNER_TEMP}/lists/realblur_both.txt" --out "${RUNNER_TEMP}/realblur" --stop-early
@@ -1094,7 +1094,7 @@ jobs:
           cat "${RUNNER_TEMP}/ori/pairs.txt"
 
       - name: RSBlur test pairs (Hugging Face rimchang/RSBlur at 27e3fe1, single members read with Range requests)
-        if: matrix.part == 'rsblur'
+        if: matrix.part == 'rsblur' || matrix.part == 'naf-diag'
         run: |
           "$P" -I $U/fetch.py rsblur --rev 27e3fe1620efc6e2613d753e88271dff47043bc1 --list "${RUNNER_TEMP}/lists/rsblur.txt" --out "${RUNNER_TEMP}/rsblur"
           du -sh "${RUNNER_TEMP}/rsblur"
@@ -1109,7 +1109,7 @@ jobs:
           case "${PART}" in
             qj-misc|rsblur) misc RealBlur_J j --sizes 256 "${quick[@]}" ;;&
             qr-misc) misc RealBlur_R r --sizes 256 "${quick[@]}" ;;
-            qj-naf|qr-naf|rsblur) naf --sizes 256 "${quick[@]}" ;;
+            qj-naf|qr-naf|rsblur|naf-diag) naf --sizes 256 "${quick[@]}" ;;
             fullres) misc RealBlur_J j --sizes 512 "${quick[@]}"; naf --sizes 512 "${quick[@]}" ;;
             synth-misc) misc RealBlur_J j --sizes 256,512 "${quick[@]}" ;;
             synth-naf) naf --sizes 256,512 "${quick[@]}" ;;
@@ -1140,6 +1140,16 @@ jobs:
               q --pairs "${RUNNER_TEMP}/lists/rsblur.txt" --root "${RUNNER_TEMP}/rsblur" --clip-after --onnx "$O/nafnet_gopro64_256_fp32.onnx" --protocol tile --tile 256 --overlap 32 --name RS_nafnet_tile --out "$R/RS_nafnet_tile.json"
               q --pairs "${RUNNER_TEMP}/lists/rsblur.txt" --root "${RUNNER_TEMP}/rsblur" --clip-after --onnx "${RUNNER_TEMP}/w/zoo/deblurring_nafnet_2025may.onnx" --protocol whole --name RS_zoo_whole --out "$R/RS_zoo_whole.json" ;;
           esac
+
+      - name: NAFNet-GoPro on whole images with the authors' PyTorch model against the tiled export (naf-diag)
+        if: matrix.part == 'naf-diag'
+        run: |
+          L="${RUNNER_TEMP}/lists"; R="${RUNNER_TEMP}/res"
+          head -6 "$L/rsblur.txt" > "$L/diag_rs.txt"
+          grep -h -E "scene130|scene024" "$L/realblur_J.txt" "$L/realblur_R.txt" > "$L/diag_rb.txt"; grep -h -E "scene230|scene050" "$L/realblur_J.txt" >> "$L/diag_rb.txt"
+          d() { "$P" -I $U/naf_diag.py --repo "${RUNNER_TEMP}/NAFNet" --weights "${RUNNER_TEMP}/w/nafnet/NAFNet-GoPro-width64.pth" --onnx "${RUNNER_TEMP}/onnx/nafnet_gopro64_256_fp32.onnx" "$@"; }
+          d --pairs "$L/diag_rb.txt" --root "${RUNNER_TEMP}/realblur" --out "$R/nafdiag_realblur.json"
+          d --pairs "$L/diag_rs.txt" --root "${RUNNER_TEMP}/rsblur" --clip-after --out "$R/nafdiag_rsblur.json"
 
       - name: Full resolution (scene097's camera frames at 0.25, 0.5, 0.75, 1)
         if: matrix.part == 'fullres'
