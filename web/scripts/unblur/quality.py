@@ -12,10 +12,13 @@ import json
 import os
 import time
 
+import sys
+
 import numpy as np
 from PIL import Image
 
-import tiling
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tiling  # noqa: E402
 
 
 def load(p):

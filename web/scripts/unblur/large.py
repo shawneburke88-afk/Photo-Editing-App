@@ -20,10 +20,13 @@ import math
 import os
 import time
 
+import sys
+
 import numpy as np
 from PIL import Image
 
-import tiling
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tiling  # noqa: E402
 
 CROP = (0, 3094, 953, 3674)  # rows, cols (0-based, end exclusive) = MATLAB top 1, bottom 3094, left 954, right 3674
 
