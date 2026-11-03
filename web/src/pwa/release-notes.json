@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.6.20",
+    "date": "2026-11-03",
+    "newFeatures": [
+      "Masks: Copy mask settings and Paste mask settings, under the selected mask's sliders, copy a mask's slider values and Amount onto any other mask, in this photo or another one. The mask's shape and parts stay as they are, and the paste is one step you can undo.",
+      "Masks: Mask presets saves the selected mask's slider values under a name, such as \"Brighten face\", so you can apply them to any mask later. Presets can be renamed and deleted.",
+      "Copy/Paste settings and develop presets now leave out any mask that contains an AI selection (Object, People, Sky, Subject or Depth range), so you make those again on the new photo. Masks made only of brushes, gradients and colour or luminance ranges are copied as before."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.6.19",
     "date": "2026-10-28",
     "newFeatures": [

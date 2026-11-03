@@ -52,7 +52,7 @@ function v13(): Database {
 
 describe('schema 14', () => {
   it('upgrades a version-13 catalog by adding photo_analysis only, empty', () => {
-    expect(SCHEMA_VERSION).toBe(17)
+    expect(SCHEMA_VERSION).toBe(18)
     const d = v13()
     const before = dump(d)
     migrate(d)

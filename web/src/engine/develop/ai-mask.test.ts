@@ -4,7 +4,7 @@ import { readXmp, writeXmp, type SidecarData } from '../../sidecar/xmp'
 import { DEFAULT_SETTINGS, normalizeSettings } from './settings'
 import { decodeRaster, encodeDepth } from './depth-map'
 import {
-  AI_RASTER_CAPS, aiChars, appendMasks, canAdd, capMessage, describeKinds, hasUnknown, maskFamily, MAX_AI_CHARS, MAX_AI_POINTS, needsAi, newMask, normalizeMask, normalizeMasks, presetMasks, refuseReason, withoutRasters,
+  AI_RASTER_CAPS, aiChars, appendMasks, canAdd, capMessage, describeKinds, hasUnknown, maskFamily, MAX_AI_CHARS, MAX_AI_POINTS, needsAi, newMask, normalizeMask, normalizeMasks, presetMasks, refuseReason,
   type AiShape, type LocalMask,
 } from './masks'
 import { KIND_CODE, prepareMasks } from './mask-render'
@@ -138,22 +138,15 @@ describe('drawing an AI selection (never runs a model)', () => {
 })
 
 describe('paste, presets and the history', () => {
-  it('pasted AI selections keep their prompt and model and wait for “Compute for this photo”', () => {
-    const onto = appendMasks(undefined, [mask('Object 1', [aiShape(), brush], undefined, ['add', 'subtract'])])!
-    expect(needsAi(onto[0])).toBe(true)
-    const s = onto[0].components[0].shape as AiShape
-    expect(s).not.toHaveProperty('raster')
-    expect(s.prompt).toEqual(aiShape().prompt)
-    expect(s.model).toBe('sam2-1-hiera-tiny')
-    expect(onto[0].components[1].shape.kind).toBe('brush')
-  })
-
-  it('presets leave Object selections out, as brush masks (owner, 2026-10-22); a later AI part is kept, waiting', () => {
+  it('paste and presets leave out every mask with an AI selection, mixed masks too (owner, 2026-10-28; Part 31)', () => {
+    expect(appendMasks(undefined, [mask('Object 1', [aiShape(), brush], undefined, ['add', 'subtract'])])).toBeUndefined()
+    expect(appendMasks(undefined, [mask('Object 1', [aiShape(), brush])])).toBeUndefined()
+    const onto = appendMasks(undefined, [mask('Object 1', [aiShape()]), mask('Radial', [radial])])!
+    expect(onto.map((m) => m.name)).toEqual(['Radial'])
     expect(presetMasks([mask('Object 1', [aiShape()]), mask('Brush', [brush]), mask('Object 2', [radial, aiShape()], undefined, ['add', 'subtract'])])).toBeUndefined()
     const p = presetMasks([mask('Object 1', [aiShape()]), mask('Radial', [radial]), mask('Sky 1', [aiShape(true, 'sky')])])!
-    expect(p.map((m) => m.name)).toEqual(['Radial', 'Sky 1'])
-    expect(needsAi(p[1])).toBe(true)
-    expect(withoutRasters([mask('o', [aiShape()])])[0].components[0].shape).not.toHaveProperty('raster')
+    expect(p.map((m) => m.name)).toEqual(['Radial'])
+    expect(p.some(needsAi)).toBe(false)
   })
 
   it('the saved history keeps each matte once and reads it back', () => {
