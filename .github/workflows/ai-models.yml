@@ -1117,8 +1117,8 @@ jobs:
               F=web/scripts/fixtures/ai-masks
               "$P" -c "from PIL import Image; Image.open('$F/rocket.jpg').convert('RGB').save('${RUNNER_TEMP}/rocket.png')"
               imgs="$F/astronaut.png,${RUNNER_TEMP}/rocket.png"
-              misc RealBlur_J j --sizes 256,512,768 --profile-sizes 256,512,768 --images "$imgs" || echo "::error::MISC export or check failed"
-              naf --sizes 256,512,768 --profile-sizes 256,512,768 --images "$imgs" || echo "::error::NAFNet export or check failed"
+              misc RealBlur_J j --sizes 256,512,768 --profile-sizes 256,512,768 --parity-sizes 256,512 --images "$imgs" || echo "::error::MISC export or check failed"
+              naf --sizes 256,512,768 --profile-sizes 256,512,768 --parity-sizes 256,512 --images "$imgs" || echo "::error::NAFNet export or check failed"
               cp "$O"/*.json "${RUNNER_TEMP}/res/" ;;
           esac
           ls -la "$O"

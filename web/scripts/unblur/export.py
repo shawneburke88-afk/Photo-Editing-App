@@ -164,6 +164,7 @@ def main():
     p.add_argument("--sizes", default="256,512,768")
     p.add_argument("--images", default="")
     p.add_argument("--profile-sizes", default="256,512,768")
+    p.add_argument("--parity-sizes", default="256,512,768")
     p.add_argument("--no-fp16", action="store_true")
     p.add_argument("--threads", type=int, default=4)
     a = p.parse_args()
@@ -221,7 +222,7 @@ def main():
                     print(f"{size} {label}: {r[label + 'Error'][:300]}", flush=True)
         s32 = ort_session(f32, a.threads)
         r["parity"] = []
-        for img_path in images:
+        for img_path in (images if str(size) in a.parity_sizes.split(",") else []):
             img = crop(load_img(img_path), size)
             x = to_t(img)
             t = time.time()
