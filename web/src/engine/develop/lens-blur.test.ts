@@ -47,6 +47,11 @@ describe('stored settings', () => {
     expect(n).toMatchObject({ amount: 100, front: 0, boost: 0, focus: { pt: [1, 0], depth: 255 } })
     expect('keepSharp' in n).toBe(false)
     expect(normalizeLensBlur({ ...lb, v: 2 })).toBeUndefined()
+    // A later LightBench's Lens Blur is kept in the edit as it is, and never drawn here.
+    const later = normalizeSettings({ ...DEFAULT_SETTINGS, lensBlur: { ...lb, v: 2, newField: [1, 2] } as unknown as LensBlurSettings })
+    expect(later.lensBlur).toMatchObject({ v: 2, newField: [1, 2], amount: 50 })
+    expect(lensBlurActive(later.lensBlur)).toBe(false)
+    expect('lensBlur' in displayUniforms(later)).toBe(false)
     expect(normalizeLensBlur('nope')).toBeUndefined()
     const bad = normalizeLensBlur({ ...lb, depth: { ...lb.depth, raster: { ...lb.depth!.raster, data: '!!!' } } })!
     expect('depth' in bad).toBe(false)

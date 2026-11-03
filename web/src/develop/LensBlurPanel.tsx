@@ -47,7 +47,9 @@ export function LensBlurPanel({ lb, masks, disabled, showHint, picking, onPick, 
             </button>
           )}
         </div>
-        {!lb ? (
+        {lb && lb.v !== 1 ? (
+          <p className="small crop-note" role="status">This photo’s Lens Blur was made by a newer version of LightBench: it is kept with the edit and not drawn here.</p>
+        ) : !lb ? (
           <button className="button small touch" disabled={disabled || !!status} onClick={onApply} title={TIP.apply}>
             Apply Lens Blur
           </button>

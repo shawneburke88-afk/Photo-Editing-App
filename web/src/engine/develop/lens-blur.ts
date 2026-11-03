@@ -60,7 +60,8 @@ export interface LensBlurPlate {
 }
 
 export interface LensBlurSettings {
-  v: 1
+  /** The renderer's version: 1 here. A later LightBench's settings (another number) are kept as they are and not drawn. */
+  v: number
   /** The Apply box: off keeps the settings and the depth map, and draws nothing. */
   on: boolean
   /** Blur amount, 0…100. */
@@ -208,8 +209,24 @@ export function withLensBlur<S extends { lensBlur?: LensBlurSettings }>(s: S, lb
   return (n ? { ...rest, lensBlur: n } : rest) as S
 }
 
-/** Lens Blur changes the photo: on, an amount, and a depth map. */
-export const lensBlurActive = (lb: LensBlurSettings | undefined): lb is LensBlurSettings & { depth: LensBlurDepth } => !!lb && lb.on && lb.amount > 0 && !!lb.depth
+/** Lens Blur changes the photo: this renderer's version, on, an amount, and a depth map. */
+export const lensBlurActive = (lb: LensBlurSettings | undefined): lb is LensBlurSettings & { depth: LensBlurDepth } => !!lb && lb.v === LENS_BLUR_VERSION && lb.on && lb.amount > 0 && !!lb.depth
+
+/**
+ * Lens Blur settings of a later LightBench (another renderer version): kept in the edit as they are (so saving the edit
+ * here doesn't lose them) and never drawn by this build's maths. Null when `raw` isn't such settings.
+ */
+export function laterLensBlur(raw: unknown): LensBlurSettings | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const v = (raw as { v?: unknown }).v
+  if (typeof v !== 'number' || !Number.isInteger(v) || v <= LENS_BLUR_VERSION) return null
+  try {
+    const copy = JSON.parse(JSON.stringify(raw)) as LensBlurSettings
+    return JSON.stringify(copy).length <= 32 << 20 ? copy : null
+  } catch {
+    return null
+  }
+}
 
 /** The same settings without what belongs to one photo (paste, presets): the depth map, the AI fill, the Keep sharp mask. */
 export function lensBlurForOtherPhoto(lb: LensBlurSettings, rand: () => number = Math.random): LensBlurSettings {

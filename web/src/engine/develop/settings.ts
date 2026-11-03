@@ -19,7 +19,7 @@ import { colourGradingGpu, normalizeColourGrading, type ColourGradingGpu, type C
 import { normalizeMasks, type LocalMask } from './masks'
 import type { BandWeights, EffectsParams, MaskParams } from './process'
 import { normalizeEffects, type EffectsSettings } from './effects'
-import { lensBlurActive, normalizeLensBlur, type LensBlurSettings } from './lens-blur'
+import { laterLensBlur, lensBlurActive, normalizeLensBlur, type LensBlurSettings } from './lens-blur'
 
 /**
  * The demosaic method (Develop › Advanced). The stored value names the method for the photo's sensor as darktable
@@ -226,8 +226,8 @@ export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined
   const fx = normalizeEffects(s?.effects)
   if (fx) out.effects = fx
   else delete out.effects
-  // Lens Blur: the same (no key unless the edit has it; an unknown renderer version is left out).
-  const lb = normalizeLensBlur(s?.lensBlur)
+  // Lens Blur: the same (no key unless the edit has it); a later LightBench's version is kept as it is, not drawn.
+  const lb = normalizeLensBlur(s?.lensBlur) ?? laterLensBlur(s?.lensBlur)
   if (lb) out.lensBlur = lb
   else delete out.lensBlur
   return out
