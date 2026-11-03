@@ -59,6 +59,11 @@ name: AI models
 #                  tag is never overwritten (a new patch needs a new tag). The fp32 patch is checked, not published.
 #   subject-check  The Subject model the manifest pins, fetched from its GitHub Release by the deploy's own step, through
 #                  the app's own Subject code on the CPU (web/scripts/subject-check.mjs). Read-only.
+#   unblur-spike   Research only (docs/UNBLUR_SPIKE.md): can a camera-shake deblurring model (MISC Filter, NAFNet) run in
+#                  ONNX Runtime Web? Downloads the authors' checkpoints (Google Drive) and public RealBlur test pairs
+#                  (Hugging Face), exports to ONNX, checks against PyTorch, measures tensors, quality, tiling and speed
+#                  (web/scripts/unblur/). "unblur" picks the stage. Results in the log and summary; read-only; commits and
+#                  publishes nothing.
 
 on:
   workflow_dispatch:
@@ -77,12 +82,18 @@ on:
           - sky-check
           - birefnet-patch
           - subject-check
+          - unblur-spike
         default: pin-and-check
         required: true
       publish:
         description: "efficientvit-export and birefnet-patch only: publish the checked file as a GitHub Release under the manifest's tag (never overwrites an existing release)"
         type: boolean
         default: false
+        required: false
+      unblur:
+        description: "unblur-spike only: the stage (probe, run) and options, e.g. 'run n=20 models=misc,nafnet'"
+        type: string
+        default: "probe"
         required: false
       revision:
         description: "Optional, pin-and-check only: the 40-digit Hugging Face commit to pin (empty: the model repository's current main)"
@@ -101,7 +112,7 @@ concurrency:
 
 jobs:
   models:
-    if: inputs.task != 'efficientvit-export' && inputs.task != 'sky-check' && inputs.task != 'people-check' && inputs.task != 'birefnet-patch' && inputs.task != 'subject-check'
+    if: inputs.task != 'efficientvit-export' && inputs.task != 'sky-check' && inputs.task != 'people-check' && inputs.task != 'birefnet-patch' && inputs.task != 'subject-check' && inputs.task != 'unblur-spike'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -977,3 +988,35 @@ jobs:
             echo
             echo "Pin it in web/models/manifest.json: \"revision\": \"${commit}\", the file's \"bytes\": ${BYTES} and \"sha256\": \"${SHA256}\"."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---- Unblur feasibility spike (docs/UNBLUR_SPIKE.md): research only, read-only, publishes nothing.
+  unblur:
+    if: inputs.task == 'unblur-spike'
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    permissions:
+      contents: read
+    env:
+      STAGE: ${{ inputs.unblur }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Python, PyTorch (CPU) and ONNX Runtime
+        run: |
+          echo "branch ${GITHUB_REF_NAME} at $(git rev-parse --short HEAD), stage '${STAGE}'"
+          nproc; free -g; df -h / /mnt || true
+          python3 -m venv "${RUNNER_TEMP}/venv"
+          V="${RUNNER_TEMP}/venv/bin"
+          "$V/pip" install --quiet torch==2.9.1 --index-url https://download.pytorch.org/whl/cpu
+          "$V/pip" install --quiet onnx==1.19.1 onnxscript==0.5.6 onnxruntime==1.30.0 onnxconverter-common==1.16.0 gdown==5.2.0 \
+            numpy pillow scipy scikit-image==0.25.2 opencv-python-headless==4.12.0.88
+          "$V/python" -c "import torch, onnx, onnxruntime, cv2, skimage; print('torch', torch.__version__, 'onnx', onnx.__version__, 'onnxruntime', onnxruntime.__version__, 'cv2', cv2.__version__, 'skimage', skimage.__version__)"
+
+      - name: Probe the sources (probe)
+        if: startsWith(inputs.unblur, 'probe')
+        run: |
+          "${RUNNER_TEMP}/venv/bin/python" -I web/scripts/unblur/fetch.py probe --out "${RUNNER_TEMP}/probe.json"
+          "${RUNNER_TEMP}/venv/bin/python" -I web/scripts/unblur/fetch.py weights --out "${RUNNER_TEMP}/w" --which misc,nafnet,nafnet-reds
+          ls -la "${RUNNER_TEMP}/w"/*
