@@ -39,6 +39,8 @@ See [PLAN.md](PLAN.md#phase-3--editing-depth) for the whole phase and [USABILITY
 - [Part 27: AI masks, part 1: groundwork and Object select](#part-27-ai-masks-part-1-groundwork-and-object-select)
 - [Part 28: AI masks, part 2: People and faces](#part-28-ai-masks-part-2-people-and-faces)
 - [Part 29: AI masks, part 3: Sky](#part-29-ai-masks-part-3-sky)
+- [Part 30: AI masks, part 4: Subject](#part-30-ai-masks-part-4-subject)
+- [Part 32: Lens Blur](#part-32-lens-blur) (Part 31 is the mask settings build, on its own branch)
 
 ## Part 1: Process versions, the tool stack, and Crop
 
@@ -4061,3 +4063,159 @@ The processor path is slower than the owner's 15 s rule for a heavy model's fall
 ### Files
 
 New: `web/src/ai/subject.ts`, `subjectSelect.ts`, `src/develop/useSubject.ts`, `web/scripts/subject/birefnet_patch.py`, `web/scripts/subject-check.mjs`, `web/models/notices/birefnet.LICENSE.txt`; tests `src/ai/subject.test.ts`, `subject-manifest.test.ts`, `src/engine/develop/subject-mask.test.ts`. Changed: `.github/workflows/ai-models.yml` (`birefnet-patch`, `subject-check`, jobs `subject` and `subject-publish`), `web/models/manifest.json`, `src/ai/manifest.ts` (task `subject`, optional `convertedFrom.code`, `reference`), `models.ts` (`subjectPlan`), `ModelDialog.tsx`, `AiModelsSettings.tsx`, `src/develop/MasksPanel.tsx`, `useMasking.ts`, `DevelopView.tsx`, `help.ts`, `src/engine/develop/masks.ts`, `web/scripts/models.test.mjs`, two tests' unknown `what`/task, THIRD_PARTY_NOTICES.md, docs/USABILITY.md. Not changed: release notes and the version.
+
+## Part 32: Lens Blur
+
+**What it does.** A new **Lens Blur** group after Effects blurs the photo by distance from a chosen focus, as a lens at a wide aperture would. The distance comes from the photo's depth map: Part 24's **Depth Anything V2 Small** map, estimated once on the user's computer and kept in the edit and the .xmp (Lens Blur keeps its own copy; a photo that already has a Depth range reuses that map). The user clicks the photo where it should be sharp (or moves **Focus distance**) and sets **Blur amount**, **Blur in front** and **Highlight boost**; **Keep noise** (on) adds the photo's own noise back where the blur smoothed it away; **Keep sharp** (off) lays one of the photo's masks over the result after the blur; **Fill behind edges (AI)** (optional) uses AI Remove's model (Part 26) on the original photo to draw what is hidden behind near edges. Edits without Lens Blur render byte-identically (below). Part 31 is the mask settings build (lightbench/mask-settings, not yet on `main`, and named by Part 30), so this is Part 32.
+
+The brief is the design written for this build (`LENS_BLUR_DESIGN.md`, research, 2026-10-26, with `LENS_BLUR_BRIEF.md`, `LENS_BLUR_VERIFY.md` and `LENS_BLUR_EDGES_CLAIMS.md`) and the owner's decisions recorded in the roadmap (2026-10-21, 2026-10-26 and 2026-11-03). Nothing in this Part is legal advice: where the design marks a point **[needs owner/lawyer judgement]**, this Part repeats the mark and says what the code does.
+
+### Owner's decisions and how they are built
+
+| # | Decision | Built as |
+|---|---|---|
+| 1 | Patent stance: design around clear overlap, accept the risk, no lawyer; build now, read the missing claims later | Each claim element the design lists is either not performed or listed under "Claim-element notes" with what the code does. No legal opinion is given. |
+| 2 | Renderer **R3**: depth slices, each blurred on its own with one fixed kernel, composited back to front with only each slice's own blurred alpha; no per-pixel blur map, no splatting, no masking of other slices, no mask-border blending | `engine/develop/lens-blur.ts` (`lensBlurPlan`) and `engine/gpu/lens-blur.wgsl` / `lens-blur-stage.ts`, below ("The renderer"). |
+| 3 | Depth: the stored DA-V2 map upsampled with a **guided filter** guided by the photo (mask Refine's maths); no segmentation mask into depth or blur | `gfDown` → box means → `gfCoef` (a = cov / (var + ε), b = mean p − a · mean I; ε = 10⁻³, Refine's) → box means of a, b → `gfUp` (q = mean a · I + mean b), with I = the photo's log luminance as mask.wgsl's `guideOf` computes it. Then a small maximum ("nearer wins"). Masks never reach this code: Keep sharp is applied in `finish`, after the composite. |
+| 4 | Focus: a click on the photo + a **Focus distance** slider; one focus depth, **no focus range** | **Pick focus…** (on by itself after Apply): a click sets `focus.pt` (sensor uv) and `focus.depth` = the median of the stored map in a window of 1 % of its long side around the point (BokehMe's rule for a box). **Focus distance**: the same depth on the Depth range's 0 near … 100 far scale. No width, handles, dead zone or window; nothing computes, stores or shows a band of depths. |
+| 5 | **Blur amount** (not f-numbers); **Blur in front** | Blur amount 0–100 (default 50): radius per unit of disparity K = 0.05 × amount / 100 × the working image's long side. Blur in front 0–100 % (default 100): scales K for slices nearer than the focus. |
+| 6 | **Keep sharp**: optional, off by default; an existing mask; composited **after** the blur only | `keepSharp: { maskId }`: the mask is rasterised in the sensor frame at the working size by the mask stage (its own Feather and Refine; as an overlay, none of its adjustments), and `finish` lays the unblurred photo over the result: `out = mix(blurred, photo, m · (1 − a_near))`, `a_near` the accumulated alpha of the slices nearer than the focus. It never enters the depth, the slices or the radii. |
+| 7 | **Noise matching on** by default | `noise: { keep: true, seed }` (a seed per edit, as Grain; a virtual copy gets a new one). See "Noise". |
+| 8 | **Highlight boost in v1**, the design's **H-b** form only | `boost` 0–100 (default 0): `Y' = Y + 4 · boost/100 · (Y − T)` for scene luminance Y above the fixed threshold T = 0.9 (in the photo's exposed scene values: T / exposure gain in the stage's own values), the colour scaled with Y; applied when a slice's pixels are gathered, in blurred slices at least two slices from the focus slice. No gradient filter, no gradient mask, no highlight mask ∩ gradient mask, no light-source guide image, no edge detection. |
+| 9 | **AI fill behind edges in v1**, the design's **5(b)** form: optional, of the **original photo before the blur**, with AI Remove's model through its download/consent flow | **Fill behind edges (AI)**: `ai/lensFill.ts` (below). The model's input is the scene as the camera recorded it (no blur, no slices); its output is kept as `plate` and used only as the colour of the hidden background of the slices behind near edges. Default: see owner question 2. |
+| 10 | Nearer / Farther (/ Smooth) depth brush: a later sub-build (LB2) | Not built here (next). |
+| 11 | No `crs:LensBlur` | Neither read nor written: the Lightroom importer has no field for it, and LightBench writes only `lightbench:Develop` (unit test with a Camera Raw sidecar holding `crs:LensBlur`). |
+| 12 | Old edits never change; no notes in the UI; a tooltip on every control | No `lensBlur` key → no new texture, buffer or pass (identity below). Tooltips: `help.ts` `HELP.lensBlur*` and `LENS_BLUR_TIPS`. No app names, no f-numbers (e2e check). |
+
+### Claim-element notes (facts, not legal advice)
+
+What the code does, element by element, for each claim the design lists. "Not performed" means the code has no step of that kind. Items marked **[needs owner/lawyer judgement]** are the design's own marks or new ones found while building.
+
+| Claim | Element | What the code does |
+|---|---|---|
+| Apple US 10,410,327 | 2 "a first blur map … a plurality of blur values … each corresponding to a pixel" | Not performed: the stage outputs one depth per pixel (`D`); radii exist per slice only (`Slice.r`, a host-side number per slice). |
+| | 5 a characteristic "based on the respective candidate pixel's corresponding blur value" | Within a slice every tap of the disc has the same fixed weight (`discW`, from the slice's one radius). **Shared, as the design says:** each pixel's membership weight depends on its own depth **[needs owner/lawyer judgement]**. |
+| Adobe US 11,501,413 / 11,869,172 | splatting, "reshaped kernel gradients", "distance maps" | Not performed: every pass gathers; there is no scatter, no gradient of a kernel, no distance map. Claim 1's "a plurality of disparity maps": the per-slice memberships derived from the one disparity map **[needs owner/lawyer judgement]** (design §3). |
+| Adobe US 11,941,782 | "accumulation region … corresponding to a first pixel of an output image" | Claim text incomplete in the inputs; the code convolves each slice with one disc and reads it back per pixel **[needs owner/lawyer judgement]**. |
+| Google US 9,734,551 | G1 linearising in the stage | Not performed in the stage. **Shared at load** for JPEG/PNG/TIFF (`rgb-input.wgsl` undoes the tone curve), unchanged by this build. |
+| | G2 depth intervals; G3 blurred separately; G5 blending blurred intervals | **Shared** (slices, each blurred alone, laid over the result so far). |
+| | G4 "applying a mask to pixels … of non-current depth intervals … in front of the current depth interval" while it is blurred | No mask is applied to another slice's pixels: a slice holds only its own pixels × its own membership. **New, flag:** the hidden-background extension (below) adds, to a slice, its own spread colour (or the AI fill) at the pixels the depth map says are in front of it; it reads the depth there, never the colour of the nearer pixels **[needs owner/lawyer judgement]**. |
+| | G6 mask border / non-border portions, blending a mask edge with another's border | Not performed: no mask has border portions; nothing is blended between slices' masks. |
+| | G7, G8 the camera response re-applied, then display | **Shared**: Stage B's sigmoid and output encoding run after the blur, on every photo. |
+| Apple US 11,250,571 | S3–S5 a segmentation mask refining a blur map | Not performed: no segmentation mask is an input of the depth or the slices. Keep sharp is composited after. **S6** "a blurred version … based … on the refined blur map", with Keep sharp: the design's close point **[needs owner/lawyer judgement]**. |
+| Apple US 11,526,995 | semantic mask, regularisation, joint optimisation | Not performed. |
+| Amazon US 10,217,195 | segmentation boundary, bands, blend by pixel distance to the foreground | Not performed: no boundary, bands or distances; Keep sharp is the mask's own alpha. |
+| Snap US 11,087,513 | CPU segmentation then per-pixel GPU blur of "the background region"; output "comprising the subject … and the processed background region" | Blur covers every pixel by depth, not a background region. Item 6 with Keep sharp, and items 1–3 on a phone whose AI mask ran on the processor: the design's close points **[needs owner/lawyer judgement]**. |
+| Huawei US 12,131,443 | hairline, texture-based choice of segmentation or matting | Not performed. |
+| Apple US 12,205,249 | a network fed "a first synthetic SDOF image" | Not performed: the AI fill's network gets the original photo (`makePlate`, the scene mip read by `detailImage`), never a blurred one; its output is not combined with a synthetic SDOF image by a network. |
+| Adobe US 12,561,768 / US 2026/0170618 (pending) | focal matte, layered depth, focal range selection tool, in-focus range of values | Not performed: one depth per pixel, one focus depth, no range tool. The implied sharp band around one focus depth and an amount (design §2.2) **[needs owner/lawyer judgement]**; '618 is pending. |
+| Adobe US 12,586,163 | fused / layered depth, focus range, focus or blur brushes | Not performed (no depth brush in this build). |
+| Adobe US 12,731,228 | H1 gradient mask; H3 gradient-highlight mask; H4 light-source guide image; H5 boost from the guide image and a blur value | Not performed. **H2** "thresholding the luminance map": **shared** (the boost's fixed threshold). Whether limiting the gain to blurred slices away from the focus is "based on … a blur value" **[needs owner/lawyer judgement]**: the gate is a slice's position (two or more slices from the focus slice) and whether its radius is at least half a pixel. |
+| Apple US 10,992,845, US 11,935,285 | highlight recovery / out-of-focus highlight rendering | **Claims unread** (design §1F); the boost was built at the owner's request before reading them. |
+| Apple US 11,120,528 / 11,682,108 | artificial aperture | Claims unread; the control is "Blur amount", no f-numbers. |
+| Google US 9,892,496 | bilateral solver | Not used: the guided filter instead. |
+| Noise matching | — | No search for noise-matching patents was made (design §7 item 13). |
+
+### Using it
+
+| Behaviour | Detail |
+|---|---|
+| The group | **Lens Blur**, after Effects, with its jump-bar entry; closed at first, as every group. Its eye appears once Lens Blur changes the photo and shows the photo without it (nothing is saved). |
+| Apply | **Apply Lens Blur**. The photo's depth: Lens Blur's own copy, else a Depth range's map (no computation), else the depth model of Part 24, asked for once with its own dialog (which now says it is for Lens Blur) and run once for this photo ("Computing the depth map (once for this photo)…"). Then one history step **"Lens Blur"** with Blur amount 50, Blur in front 100 %, Highlight boost 0, Keep noise on, the focus at the depth in the middle of the photo, and the focus picker on. Declined or failed: nothing changes. |
+| Focus | **Pick focus…** (also on by itself after Apply): a badge "Click where the photo should be sharp · Esc when done"; each click is one step "Lens Blur: focus". **Focus distance** (0 nearest … 100 farthest of this photo) moves the same single distance. |
+| Sliders | **Blur amount**, **Focus distance**, **Blur in front**, **Highlight boost**: one history step per drag ("Lens Blur: Blur amount", …), double-click resets, help on hover. |
+| Boxes | **Apply** (off keeps the settings and the depth and draws nothing), **Keep noise**, **Fill behind edges (AI)**, **Show depth** (a view: white near, black far, through the photo kind's default tones; no step). |
+| Keep sharp | A menu of the photo's masks ("None" by default). The chosen mask's part of the photo is laid over the blurred result, unblurred, unless something nearer than the focus is blurred in front of it. A mask with no adjustments of its own (made only for this) changes nothing else. |
+| AI fill | Ticking **Fill behind edges (AI)** asks once for AI Remove's model (the same dialog, saying it is for Lens Blur), then draws the fill ("AI fill: step n of 20 (part i of k)…", a progress bar and Cancel) and records one step "Lens Blur: AI fill". **Draw the fill again** makes a new one with a new seed. Unticking keeps the fill in the edit and stops using it. Declined, cancelled or failed: nothing changes. |
+| Reset | Removes Lens Blur, its depth copy and its AI fill (one step; Undo brings them back). |
+| Paste, sync, presets | A new **Lens Blur** item, unticked by default and never sent by Auto Sync: the settings travel; the depth, the AI fill and Keep sharp stay with their photo. The target keeps its own depth (Lens Blur's, else a Depth range's) and the focus point is measured on it; without one the panel says "This photo has no depth yet: Compute it" (the focus point is measured when it is computed). Presets carry the settings without depth, fill or Keep sharp. A virtual copy gets its own noise seed (as Grain). |
+| Sidecar | In `lightbench:Develop` (the depth map and the AI fill included, in their compact encodings); never `crs:LensBlur`. The saved history keeps each map and fill once ("@r<n>", as Part 24). |
+
+### The renderer (`lens-blur.ts`, `lens-blur-stage.ts`, `lens-blur.wgsl`)
+
+Where it runs: a new scene stage after Remove/Heal/Clone and Detail, before the geometry warp and Stage B, in the **sensor frame** on the scene-linear Rec.2020 working image (the design's §2). Like Detail it makes a new texture at the drawing's level (the canvas: one level finer than the view; Export: full size) with its own mip chain; `detailSource` routes through it only when the edit has an active Lens Blur. It is cached per working image and settings (two levels kept), and freed with the photo.
+
+| Step | Detail |
+|---|---|
+| Depth | The stored 8-bit map (255 nearest), bilinear, guided-filtered on a grid near its own resolution (block = the power of two closest to the working width ÷ the map's width; box radius 2; ε = 10⁻³), guide = log luminance (`guideOf`); then a maximum over a square of radius max(1, 0.1 % of the long side) ("nearer wins"). One value per pixel, `D`. |
+| Slices | Centres `d_f + k·Δ` covering 0…1 (one on the focus), Δ = 1 / clamp(⌈(0.05 · amount / 100) / 0.0016⌉, 4, 32): 4 to 32 intervals, more for more blur, the same at every size; triangular memberships `max(0, 1 − |d − c| / Δ)` that sum to 1. Slices no value of the map can reach (its histogram ± one slice and 4/255) are left out. |
+| One radius per slice | `r = K · |c − d_f|` (× Blur in front for c > d_f), K = 0.05 × amount / 100 × the long side; under half a pixel it is 0 (the focus slice is never blurred). The slice is averaged into the level that keeps `r / 2^level ≤ 10` texels and blurred there with **one** anti-aliased disc (`clamp(ρ + 0.5 − |o|, 0, 1)`, normalised); at level 0 the gather is done in the composite pass itself (`compositeDirect`), the same maths without a copy. |
+| Composite | Far to near: `acc = slice + (1 − slice.α) · acc` (premultiplied, the slice read bilinearly from its level), then `acc.rgb / acc.α` (MPIB's normalisation). Each slice's own alpha only. |
+| Hidden background | For a slice with blurred slices in front of it (radius ≥ 1 px), its own pixels are spread with a normalised box of the widest such radius (`spreadX`/`spreadY` at a level keeping it within 8 texels; capped at 8 % of the long side); where the depth says a pixel is more than one slice in front (weight ramping over the next slice) and the slice's own pixels are near (spread coverage 0.02 → 0.25), the slice gets that colour there — or the AI fill's colour inside its region — before its disc. This replaces the design's "pull-push" with a normalised spread limited to the blur that can reveal it (deviation; the source is still only the slice's own pixels, or the AI fill). |
+| Highlight boost | When a slice's pixels are gathered (`sliceValue`), in slices two or more from the focus slice with a radius ≥ ½ px (decision 8). |
+| Finish | Noise (below); Keep sharp (decision 6); the alpha channel (Sharpening's mask view) passes through. |
+
+### Noise
+
+The photo's own noise is measured on the working image before the blur (up to 16 tiles of 64 × 64 pixels read back once per image: per 8 × 8 block and channel the mean and the variance of the second difference across, the flattest tenth of each of 16 brightness bins taken as noise, then variance = a · signal + b fitted per channel; `fitNoise`). It measures what is there at that size, after Detail's noise reduction. Each slice keeps the share Σw² of white noise its fixed kernel lets through, about 1 / (1 + π r²) (an approximation that ignores the level's averaging); the composite carries `α · (1 − Σw²)` per pixel, and `finish` adds seeded Gaussian noise (a hash of the pixel, the channel and the edit's seed; Box–Muller) of variance `(a · c + b) · share` per channel. The design's source for σ² was Detail's noise profile; measuring instead covers JPEGs and photos without a profile and Detail's own noise reduction (deviation). The pattern differs between sizes (the canvas and Export draw it at their own resolution).
+
+### The AI fill (`ai/lensFill.ts`, `develop/useLensFill.ts`)
+
+| Step | Detail |
+|---|---|
+| Input | The original scene (`engine.detailImage(null, level)`: the scene's mip level at most 1024 px long; linear Rec.2020, sensor frame; no Detail, no spots, no blur), and the stored depth map. |
+| Region | From the depth alone (`fillRegion`): pixels nearer, by more than 0.08 of the scale, than something within 5 % of the map's long side — the near side of depth edges. It doesn't depend on the focus or the amount, so one fill serves every setting. |
+| Squares | The plate cut into 512 × 512 squares (evenly spaced to cover it; smaller photos mirrored into the margins, never filled), kept only where they hold region. One exposure for the plate (AI Remove's rule: 99th percentile to 0.85). Each square through `inpaint.ts generate` exactly as an AI Remove spot (20 DDIM steps, guidance 2.5, strength 1), its hole the region; the seed per square derived from the fill's seed. The graphs run in the shared runtime worker as AI Remove's do (encoder, the denoiser kept, encoder freed after the denoiser loads, decoder freed after use), each run foreground GPU work, with AI Remove's GPU limit check and CPU fallback. |
+| Stored | `plate`: model, version, runtime, seed, steps, strength, guidance, gain, the RGB bytes (`rgb8-med-deflate-b64`, 0 outside the region) and the region (`u8-med-deflate-b64`), both at the plate's size (caps 1024 × 1024, 8 MB). Drawing never runs the model. |
+| Default | Off; on by itself when Lens Blur is first applied **and** AI Remove's model is already on the device **and** it would run on WebGPU (then the fill is drawn after the blur appears, as its own step). See owner question 2. |
+| Diagnostics | One `lens-fill` entry per run: model, version, provider, squares, size, characters, total ms; or the error, or "cancelled". |
+
+### Storage in the edit
+
+```
+lensBlur: {
+  v: 1, on, amount, front, boost,
+  focus: { pt: [u, v], depth },      // sensor uv of the click; the depth there on the stored 0–255 scale
+  noise: { keep, seed },
+  keepSharp?: { maskId },
+  aiFill,
+  depth?: { model, modelVersion, runtime, raster },   // Part 24's encoding
+  plate?: { model, modelVersion, runtime, seed, steps, strength, guidance, gain, width, height, encoding, data, region },
+}
+```
+
+No fields for a focus range, a focal matte, layered or fused depth, a highlight guide or a bokeh shape. `v` versions the renderer: a later renderer gets `v: 2` and this build leaves such settings out (`normalizeLensBlur`), so they never draw with the wrong maths. No catalog schema change: the edit is the same JSON with one more optional key, as Effects (Part 25) added theirs.
+
+### Verified
+
+Headless Chromium with SwiftShader's software WebGPU (no real GPU here), `?gpu=readback`, on a 4-core machine that was also running the identity comparison: times are SwiftShader's on a loaded CPU and say nothing about a GPU. Scripts in `scratchpad/lb/` (outside the repository).
+
+- **The renderer through the engine** (`engine-check.mjs`: the 1600 × 1072 test JPEG, **synthetic** depth maps stored in the edit as the app stores a model's map — a step (left half far at 40, right half near at 220) and a near box (230) in front of a far background (30); Blur amount 60; full-size 8-bit exports compared pixel by pixel; @@ECTOTAL@@):
+  - *Focus*: the half at the focus depth **unchanged** (largest difference 0 of 255); the other half blurred (its fine-detail energy 0.32 against 32.08 unblurred) with its mean within 2.6 levels (blurring linear light raises the encoded mean a little); focus moved to the far half: the far half unchanged (0), the near half blurred (0.18 against 22.75); **Blur in front 0**: the near half unchanged (0) with the focus far; Blur amount 20 blurs less than 60 (0.65 against 0.32); **Apply off and Blur amount 0 draw exactly the photo** (0).
+  - *Occlusion*: with the focus far, the blurred near box **spreads over the sharp background beside it** (just outside its edge, within 24 px for a 38 px radius: detail energy 1.74 against 4.64, mean change 2.52 levels), while the background away from it is unchanged (0); with the focus near, the box is unchanged (0).
+  - *Keep noise*: adds noise only where the blur removed it (detail energy in the blurred half 2.48 with it, 0.32 without; the focus half unchanged, 0); the same seed gives the same pixels (0), another seed another pattern.
+  - *Keep sharp* (a radial mask on the blurred half): inside the mask unchanged (0; 4.74 levels mean change without Keep sharp); the mask alone, with no adjustments, changes nothing (0).
+  - *Highlight boost* (Exposure +1.5): the blurred half's mean 207.13 with Boost 100, 201.08 without; the focus half unchanged (0).
+  - *AI fill* (a flat red plate over the near side of the step, stored as the app stores one; the focus far, so the near half is blurred in front of the far one): used just inside the near edge (redness +16.07 with it, −12.95 without) and nowhere else (0 away from the edge on both sides).
+  - *Preview and export*: the same settings drawn at 1024 px and the export reduced to 1024 px differ by 1.05 levels on average (68 at most, at the depth edge): one algorithm with size-free radii.
+  - *Depth view*: near 241, far 5 (8-bit).
+- **Hidden-background extension looked at** (a debug switch in the test page leaves it out; renders saved and inspected): with it, the inside of a blurred near box's edge shows the background's own colours behind it; without it, the box's own colour is stretched to its edge. Both blur the box and spread it outward.
+- **End to end in the app** (`e2e-lens.mjs`; the dev server with the test manifest: Part 24's stand-in depth model, Part 26's stand-in Moebius graphs served as if from Hugging Face): @@E2E@@
+- **Old edits unchanged** (`identity.mjs`, Part 30's harness — 24 edits on two NEFs, an ARW and the JPEG: crop/angle, Remove spots, tone curves, Detail, the mixer, grading and effects at defaults, masks, the Depth range, Object select, Sky, People and Subject — plus four Lens Blur edits that draw nothing: off; Blur amount 0 beside a Depth range; a later renderer's `v: 2`; no depth map, with spots, a curve and Detail; each case in its own browser; full-size and 1024 px export SHA-256, 512 px thumbnail, histogram statistics, Develop canvas at fit and at 100 %, output size): this branch against **main 0.6.19 (`09e09e4`) itself**, served from an archive of its `web/`: @@IDENTITY@@
+- **Unit tests**: new `engine/develop/lens-blur.test.ts` (21: no key → nothing new; defaults; normalising, clamps, damaged depth or fill dropped, an unknown version left out; when it draws; the sidecar round trip and a Camera Raw sidecar's `crs:LensBlur` not read; the plan — one slice on the focus with radius 0, memberships summing to 1, one radius per slice from its centre with Blur in front, levels within 10 texels, the far-to-near order, size-free, more slices for more blur, the histogram leaving out empty slices, the hidden-background radius, the boost's slices, Σw²; focus by median and the slider's scale; the boost's maths; the noise fit recovering a known `a · s + b` beside textured patches; the AI fill's region; the group eye; paste — unticked, never auto-synced, the target's own depth and the focus re-measured on it; history keeping one map; a virtual copy's seed; settings for another photo) and `ai/lensFill.test.ts` (4: the region, the squares, a whole fill with a stand-in model — the region drawn, the rest stored as 0, the original photo given to the model — and a photo with nothing to fill). @@VITEST@@
+- `npx tsc -b`, `npx oxlint` (exactly the two accepted warnings, `src/syscheck/report.tsx` and `src/library/LibraryView.tsx`), `npm run build`: pass.
+
+### Limitations and unverified
+
+- **No real GPU.** Everything ran on SwiftShader. Speed on a GPU is **unmeasured** (the design's estimates — preview 10–40 ms discrete, 50–300 ms integrated; a 24 MP export 0.2–1 s / 1–5 s — are estimates, not checked). On SwiftShader a 1600 × 1072 export took 103–166 s and a 1024 px drawing 91–96 s, on a loaded machine. Every slider move draws the whole stage again (the depth's guided filter included; it isn't cached between moves).
+- **Real depth maps.** The checks used synthetic maps (a step, a box) and Part 24's stand-in model (a smooth ramp). How the real DA-V2 Small map's edges look after the guided filter on real photos — hair, glass, thin branches, sky holes — is **unverified**; the design expects mistakes there (the Nearer/Farther brush is the planned fix).
+- **Memory.** The stage needs about 16 bytes per working pixel in buffers at once (the depth, the composite and its noise share) plus its result: a 24 MP export about 0.4 GB plus the result texture, and each slice's own textures (one slice at a time). Over the GPU's buffer limit it says so ("The photo is too large for this GPU's buffers for Lens Blur"), as Detail does; it isn't tiled.
+- **The AI fill** ran only with Part 26's stand-in graphs (a known colour), on the e2e's photo. The real Moebius on the plate's squares — quality behind real edges, time per photo (several squares × AI Remove's 76–163 s per spot on GitHub's CPU), GPU memory — is **unverified**. The plate is at most 1024 px long, so behind strong blur it is enough; behind light blur its softness can show. It is made from the scene without Remove/Heal/Clone spots or Detail.
+- **Noise** is measured on the photo, not taken from Detail's profile; its model (variance linear in the signal, the flattest tenth of the blocks) and the share 1 / (1 + π r²) are approximations. The noise pattern is drawn at each size's own resolution, so the canvas and Export differ in pattern (not in strength).
+- **Highlight boost** raises lights above a fixed threshold in the photo's exposed values; on a JPEG (already clipped) it brightens what was near white. Its look on real night photos is unverified.
+- **Seams.** With few slices (a low Blur amount) a ramp of depth can show bands at very large radii; the slice count grows with the amount (4–32 intervals), not measured on real photos.
+- **Keep sharp** follows the mask's own eye and the Masks group's eye (hiding the mask hides it from Keep sharp too).
+- Lightroom's own Lens Blur in an imported .xmp is not carried over and the app doesn't say so (the design's Q6 wording was not built).
+
+### Owner questions
+
+1. **Patent flags** (above, "Claim-element notes"): the hidden-background extension reading the depth in front of a slice (Google '551 G4), the boost's gate (Adobe '228 H5, "based on … a blur value"), and the design's own marks ('327 membership by depth, '551 G2/G3/G5/G7/G8, '618/'768 implied band, '571 S6 and '513 item 6 with Keep sharp, '249 for the AI fill). Apple '845 and '285 (highlights) are still unread; the boost was built before reading them, at the owner's request. A Cowork run to read the missing claim texts ('327, '782, '413, '172, '768, '528/'108, '845, '285, 8,035,641) is the design's Q8.
+2. **AI fill default**: built **off**, turned on by itself only when Lens Blur is first applied on a computer where AI Remove's model is already downloaded and runs on WebGPU (then the fill is drawn right after the blur appears, as its own history step, with Cancel). Alternatives: always off (the user ticks it), or on whenever the model is on the device (including the processor, which takes several minutes per photo). Which?
+3. **Noise source**: measured on the photo (works for JPEGs and after Detail's noise reduction) instead of Detail's noise profile (the design's source). Keep?
+4. **Hidden background**: built as a normalised spread of each slice's own pixels limited to the blur in front of it, instead of a pull-push fill. Keep?
+5. **Imported Lightroom Lens Blur**: say "This photo's Lens Blur from another app isn't carried over" on import (the brief's Q6), or stay silent (as built)?
+6. **Next**: the Nearer / Farther / Smooth depth brush (LB2), then bokeh shapes (LB3)?
+
+### Files
+
+New: `web/src/engine/develop/lens-blur.ts` (+ `lens-blur.test.ts`), `web/src/engine/gpu/lens-blur-stage.ts`, `lens-blur.wgsl`, `web/src/ai/lensFill.ts` (+ `lensFill.test.ts`), `web/src/develop/LensBlurPanel.tsx`, `useLensFill.ts`. Changed: `engine/develop/settings.ts` (the `lensBlur` key, its uniforms), `engine/gpu/develop-engine.ts` (`detailSource` routes through the stage; `lensBlurFor`, `lensBlurred`, `keepSharpTexture`, noise cache; freed with Detail's results; Diagnostics trace), `engine/develop/effects.ts` (a virtual copy's new noise seed), `develop/DevelopView.tsx` (the group, Apply, the focus picker, the depth view, the AI fill, the dialogs, presets), `ToolStack.tsx`, `tools.tsx` (icon), `sectionEyes.ts` (group eye), `paste.ts` (the Lens Blur item), `history.ts` (maps and fills kept once), `help.ts`, docs/USABILITY.md. Not changed: release notes and the version; the manifest (no new model).
