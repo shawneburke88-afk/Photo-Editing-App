@@ -1015,9 +1015,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       if (e?.raster) d = { model: e.model, modelVersion: e.modelVersion, ...(e.runtime ? { runtime: e.runtime } : {}), raster: e.raster }
     }
     if (!d) {
+      // The panel that asked shows the progress and any error (the Masks group takes it back when masking starts).
       setDepthFor('lensBlur')
-      const got = await depth.obtain().finally(() => setDepthFor('mask'))
+      const got = await depth.obtain()
       if (!got?.raster) return
+      setDepthFor('mask')
       d = { model: got.model, modelVersion: got.modelVersion, ...(got.runtime ? { runtime: got.runtime } : {}), raster: got.raster }
     }
     const px = decodeDepth(d.raster)
@@ -1103,6 +1105,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       return [x / sw, y / sh]
     },
   })
+  // The depth model asked for by the Masks group again (Lens Blur keeps it only while it asked last).
+  useEffect(() => {
+    if (masking.active) setDepthFor('mask')
+  }, [masking.active])
   maskingRef.current = masking
   // The depth-map view (Part 24): the selected mask's depth map, white near, with White on Black, while masking.
   const depthViewOn = masking.active && masking.depthView && !!masking.sel.mask && !masking.hidden.has(masking.sel.mask)
@@ -1916,7 +1922,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   async function savePreset(clip: Clipboard, name: string) {
     // Presets may hold gradients and range masks, not brush strokes (Part 23; owner's decision 7).
-    // Presets carry neither depth maps nor AI mattes or fills (they belong to one photo: Parts 24, 27 and 31).
+    // Presets carry neither depth maps nor AI mattes or fills (they belong to one photo: Parts 24, 27 and 32).
     const lbPreset = clip.settings.lensBlur ? lensBlurForOtherPhoto(clip.settings.lensBlur) : undefined
     const data: PresetData = { keys: clip.keys, settings: withLensBlur(withMasksList(clip.settings, presetMasks(clip.settings.masks)), lbPreset), rerunAuto: clip.rerunAuto && !!clip.settings.auto, sourceKind: clip.sourceKind }
     await catalog.savePreset(name, JSON.stringify(data))
