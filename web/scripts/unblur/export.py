@@ -100,13 +100,18 @@ def profile(path, size, threads=4):
             continue
         a = e["args"]
         ots = a.get("output_type_shape") or []
-        nodes.append({"name": e["name"][:-12], "op": a.get("op_name"), "out": int(a.get("output_size", 0)), "inUse": int(a.get("mem_bytes_in_use", 0)),
+        nodes.append({"name": e["name"][:-12], "op": a.get("op_name"), "dur": int(e.get("dur", 0)), "out": int(a.get("output_size", 0)), "inUse": int(a.get("mem_bytes_in_use", 0)),
                       "shapes": [list(t.values())[0] for t in ots], "types": [list(t.keys())[0] for t in ots]})
     weights = sorted(((int(np.prod(t.dims)) * ES.get(t.data_type, 4), t.name) for t in m.graph.initializer), reverse=True)
     top = sorted(nodes, key=lambda e: -e["out"])[:8]
     over = [e for e in nodes if e["out"] > 128 * MIB]
     peak = max(nodes, key=lambda e: e["inUse"])
-    return {"size": size, "runS": round(run_s, 2), "nodes": len(nodes),
+    by_op = collections.Counter()
+    for e in nodes:
+        by_op[e["op"]] += e["dur"]
+    total = sum(by_op.values()) or 1
+    op_ms = {k: {"ms": round(v / 1000, 1), "share": round(v / total, 3)} for k, v in by_op.most_common(8)}
+    return {"size": size, "runS": round(run_s, 2), "nodes": len(nodes), "opTime": op_ms,
             "largest": [{"bytes": e["out"], "op": e["op"], "node": e["name"], "shape": e["shapes"], "type": e["types"]} for e in top],
             "over128MiB": dict(collections.Counter(e["op"] for e in over)), "over64MiB": dict(collections.Counter(e["op"] for e in nodes if e["out"] > 64 * MIB)),
             "largestWeight": weights[0][0] if weights else 0, "peakInUse": peak["inUse"]}
@@ -251,7 +256,7 @@ def main():
                     try:
                         r[f"tensors_{kind}"] = profile(f, size, a.threads)
                         tt = r[f"tensors_{kind}"]
-                        print(f"{size} {kind}: largest {tt['largest'][0]['bytes']:,} B {tt['largest'][0]['op']} {tt['largest'][0]['shape']}; over 128 MiB {tt['over128MiB']}; peak in use {tt['peakInUse']:,} B; run {tt['runS']} s", flush=True)
+                        print(f"{size} {kind}: largest {tt['largest'][0]['bytes']:,} B {tt['largest'][0]['op']} {tt['largest'][0]['shape']}; over 128 MiB {tt['over128MiB']}; peak in use {tt['peakInUse']:,} B; run {tt['runS']} s; time by op {tt['opTime']}", flush=True)
                     except Exception as e:  # noqa: BLE001
                         r[f"tensors_{kind}"] = {"error": repr(e)[:1000]}
         res["sizes"][size] = r
