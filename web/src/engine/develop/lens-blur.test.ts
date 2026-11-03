@@ -12,7 +12,7 @@ import { applyPaste, DEFAULT_PASTE_KEYS, NOT_AUTO_SYNCED, PASTE_ITEMS } from '..
 import { savedForm, startHistory, record, unpackRasters } from '../../develop/history'
 import { readXmp, writeXmp } from '../../sidecar/xmp'
 
-// Lens Blur (PHASE3.md Part 31): the stored settings, the renderer's plan and its pure maths. The GPU passes are checked
+// Lens Blur (PHASE3.md Part 32): the stored settings, the renderer's plan and its pure maths. The GPU passes are checked
 // end to end in a browser (the Part's "Verified").
 
 const raster = async (f: (u: number, v: number) => number, w = 40, h = 30) => {

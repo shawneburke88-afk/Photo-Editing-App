@@ -1,4 +1,4 @@
-// The Lens Blur group (docs/PHASE3.md Part 31): Apply, then Blur amount, the focus (a click on the photo or the Focus
+// The Lens Blur group (docs/PHASE3.md Part 32): Apply, then Blur amount, the focus (a click on the photo or the Focus
 // distance slider: one distance, never a range), Blur in front, Highlight boost, Keep noise, Keep sharp (one of the
 // photo's masks, laid over after the blur), the optional AI fill behind near edges and the depth view. The maths:
 // engine/develop/lens-blur.ts.

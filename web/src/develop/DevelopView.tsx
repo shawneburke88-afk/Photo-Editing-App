@@ -217,7 +217,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [autoBusy, setAutoBusy] = useState(false)
   const [picking, setPicking] = useState(false)
   const [wbPick, setWbPick] = useState(false)
-  /** Lens Blur (Part 31): picking its focus on the photo; its depth view (a view only). */
+  /** Lens Blur (Part 32): picking its focus on the photo; its depth view (a view only). */
   const [lbPick, setLbPick] = useState(false)
   const [lbDepth, setLbDepth] = useState(false)
   const [loupe, setLoupe] = useState<{ x: number; y: number; image: ImageData } | null>(null)
@@ -811,7 +811,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         const v: ViewState = (x.draft || x.guiding) && !x.before ? { zoom: 'fit', center: [0.5, 0.5], frame: true } : x.view
         try {
           const du = displayUniforms(shown)
-          // View-only states: Sharpening's mask, the Colour Mixer's Visualize; Lens Blur's depth (Part 31), drawn as grey
+          // View-only states: Sharpening's mask, the Colour Mixer's Visualize; Lens Blur's depth (Part 32), drawn as grey
           // through the photo kind's default tones, so it reads the same on every edit.
           const depthView = x.lbDepth && !x.before && lensBlurActive(shown.lensBlur)
           const neutral = depthView ? { ...defaultsFor(inf.kind), geometry: shown.geometry, lens: shown.lens, lensBlur: shown.lensBlur } : null
@@ -963,7 +963,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   /**
    * The AI Depth range (PHASE3.md Part 24): the photo rendered as shot for the depth model (the edit's tones and colours;
    * no crop, angle, perspective, flips, lens correction, masks or effects (Part 25: Texture, Clarity, Dehaze, vignette,
-   * grain, Glow) or Lens Blur (Part 31); the camera's orientation), and its uv → sensor map.
+   * grain, Glow) or Lens Blur (Part 32); the camera's orientation), and its uv → sensor map.
    */
   const renderAsShot = async (long: (w: number, h: number) => number) => {
     const engine = engineRef.current
@@ -978,7 +978,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const depth = useDepth((input) => renderAsShot((w, h) => renderSize(w, h, input)))
   /** Who asked for the depth model (its download dialog says what it is for). */
   const [depthFor, setDepthFor] = useState<'mask' | 'lensBlur'>('mask')
-  /** Lens Blur's AI fill (Part 31): AI Remove's model on the original photo. */
+  /** Lens Blur's AI fill (Part 32): AI Remove's model on the original photo. */
   const lensFill = useLensFill()
   /** The AI fill for the photo shown, as one history step (nothing changes when it is declined, cancelled or fails). */
   const makeLensFill = async () => {
@@ -1001,7 +1001,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     change('Lens Blur: AI fill', withLensBlur(now, { ...now.lensBlur, plate, aiFill: true }), false, true)
   }
   /**
-   * Lens Blur on (Part 31): the photo's depth (Lens Blur's own, a Depth range's, or computed once), the focus at the
+   * Lens Blur on (Part 32): the photo's depth (Lens Blur's own, a Depth range's, or computed once), the focus at the
    * photo's centre, then the focus picker on. With AI Remove's model already on this device and a GPU to run it, the AI
    * fill is drawn too (its own history step when it is done).
    */

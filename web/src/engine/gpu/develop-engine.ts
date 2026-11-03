@@ -167,7 +167,7 @@ export function enlarged(view: ViewState): boolean {
   return typeof view.zoom === 'number' && view.zoom > 1 && !view.frame
 }
 
-/** Lens Blur for one drawing (Part 31): the settings, the decoded maps, Keep sharp's mask and a key for the result. */
+/** Lens Blur for one drawing (Part 32): the settings, the decoded maps, Keep sharp's mask and a key for the result. */
 interface LensBlurDraw {
   key: string
   level: number
@@ -587,7 +587,7 @@ export class DevelopEngine {
   private detailWarps: { key: string; gen: number; tex: GPUTexture }[] = []
   /** Detail stages run one at a time. */
   private detailChain: Promise<unknown> = Promise.resolve()
-  /** Lens Blur (Part 31): its stage, its last results (two, of different levels) and the photo's measured noise. */
+  /** Lens Blur (Part 32): its stage, its last results (two, of different levels) and the photo's measured noise. */
   private lensBlurStage: LensBlurStage | null = null
   private lensBlurCache: { key: string; gen: number; level: number; tex: GPUTexture }[] = []
   private lensNoise: { key: string; gen: number; noise: NoiseModel }[] = []
@@ -1130,7 +1130,7 @@ export class DevelopEngine {
         level = run.level
         baseKey = got.key ? `${run.key}|rt:${got.key}` : run.key
       } else {
-        // Lens Blur without Detail (Part 31): the scene at the drawing's level, or its retouched copy at full size.
+        // Lens Blur without Detail (Part 32): the scene at the drawing's level, or its retouched copy at full size.
         got = spots?.length ? await this.retouch.texture(() => this.scene!, spots, wait) : { tex: this.scene!, key: '', release: () => {} }
         level = spots?.length ? 0 : Math.min(lb!.level, this.scene!.mipLevelCount - 1)
         mip = level
@@ -1161,7 +1161,7 @@ export class DevelopEngine {
   }
 
   /**
-   * Lens Blur for a drawing at `level` (Part 31), or null when the edit has none (or its depth map can't be read): what
+   * Lens Blur for a drawing at `level` (Part 32), or null when the edit has none (or its depth map can't be read): what
    * the stage needs, and a key for its result.
    */
   private lensBlurFor(u: DisplayUniforms, wb: Vec3, level: number): LensBlurDraw | null {
@@ -1196,7 +1196,7 @@ export class DevelopEngine {
     return id
   }
 
-  /** The photo's noise at a working image (Part 31), measured once per image. */
+  /** The photo's noise at a working image (Part 32), measured once per image. */
   private async noiseOf(base: GPUTexture, mip: number, key: string): Promise<NoiseModel> {
     const hit = this.lensNoise.find((n) => n.key === key && n.gen === this.sceneGen)
     if (hit) return hit.noise
@@ -1205,7 +1205,7 @@ export class DevelopEngine {
     return noise
   }
 
-  /** Keep sharp's mask at the working size (sensor frame), drawn by the mask stage in tiles (Part 31). */
+  /** Keep sharp's mask at the working size (sensor frame), drawn by the mask stage in tiles (Part 32). */
   private keepSharpTexture(base: GPUTexture, mip: number, w: number, h: number, lb: LensBlurDraw): GPUTexture | undefined {
     const mask = lb.keep
     const s = this.sensor
@@ -1436,7 +1436,7 @@ export class DevelopEngine {
     for (const d of this.detailWarps) this.retireTex(d.tex)
     this.detailCache = []
     this.detailWarps = []
-    // Lens Blur's results (Part 31) are made from the scene or its detailed copy. (Optional: tests build engines
+    // Lens Blur's results (Part 32) are made from the scene or its detailed copy. (Optional: tests build engines
     // without the fields.)
     for (const d of this.lensBlurCache ?? []) this.retireTex(d.tex)
     this.lensBlurCache = []

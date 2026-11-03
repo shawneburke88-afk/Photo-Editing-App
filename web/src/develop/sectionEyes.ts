@@ -280,7 +280,7 @@ export interface GroupEyes {
   masks: boolean
   /** The Effects group's eye (Part 25): the photo without its Vignette, Grain and Glow. */
   effects: boolean
-  /** The Lens Blur group's eye (Part 31): the photo without its lens blur. */
+  /** The Lens Blur group's eye (Part 32): the photo without its lens blur. */
   lensBlur: boolean
 }
 export const NO_GROUP_EYES: GroupEyes = { crop: false, remove: false, basic: false, curve: false, colour: false, grading: false, detail: false, masks: false, effects: false, lensBlur: false }

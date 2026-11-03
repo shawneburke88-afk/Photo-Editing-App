@@ -120,7 +120,7 @@ export interface DevelopSettings {
    */
   effects?: EffectsSettings
   /**
-   * Lens Blur (lens-blur.ts; PHASE3.md Part 31), with its own copy of the photo's depth map. Optional: edits without it
+   * Lens Blur (lens-blur.ts; PHASE3.md Part 32), with its own copy of the photo's depth map. Optional: edits without it
    * have no such field at all, so they stay exactly as they were (and render byte-identically).
    */
   lensBlur?: LensBlurSettings
@@ -288,7 +288,7 @@ export interface DisplayUniforms {
   /** The Effects and the process version's numbers for them; absent when the edit has none (nothing changes then). */
   effects?: { fx: EffectsSettings; params: EffectsParams }
   /**
-   * Lens Blur (Part 31): its settings, the edit's masks (for Keep sharp) and the process version's mask numbers; absent
+   * Lens Blur (Part 32): its settings, the edit's masks (for Keep sharp) and the process version's mask numbers; absent
    * when the edit has none or it is off (nothing changes then).
    */
   lensBlur?: { s: LensBlurSettings; masks?: LocalMask[]; maskParams: MaskParams }

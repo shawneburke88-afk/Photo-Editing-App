@@ -1,4 +1,4 @@
-// Lens Blur (docs/PHASE3.md Part 31): a shallow depth of field drawn from the photo's depth map (the Depth Anything V2
+// Lens Blur (docs/PHASE3.md Part 32): a shallow depth of field drawn from the photo's depth map (the Depth Anything V2
 // Small map of Part 24, kept in the edit). This file holds the settings as the edit stores them and the renderer's plan
 // (pure maths, unit-tested); the GPU work is engine/gpu/lens-blur-stage.ts and lens-blur.wgsl.
 //

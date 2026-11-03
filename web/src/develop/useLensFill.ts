@@ -1,4 +1,4 @@
-// Lens Blur's AI fill (docs/PHASE3.md Part 31): make sure AI Remove's model is on this device (asking first, with the
+// Lens Blur's AI fill (docs/PHASE3.md Part 32): make sure AI Remove's model is on this device (asking first, with the
 // same download dialog and consent as AI Remove), then fill the hidden background behind near edges of the original photo
 // (ai/lensFill.ts). The panel shows the progress, a Cancel, and why it can't run. Each run is logged for Diagnostics (no
 // file names, no pixels).
@@ -16,7 +16,7 @@ import { gpuGate } from '../engine/gpu/gate'
 import type { Provider } from '../ai/runtime.worker'
 import { aiRemoveMessage, type AiAsk, type AiBusy } from './useAiRemove'
 
-/** Whether AI Remove's model is on this device and runs on the GPU here (the AI fill's default: Part 31). */
+/** Whether AI Remove's model is on this device and runs on the GPU here (the AI fill's default: Part 32). */
 export async function aiFillReady(): Promise<boolean> {
   try {
     const model = inpaintModel()

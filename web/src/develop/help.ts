@@ -236,7 +236,7 @@ export const HELP: Record<string, ControlHelp> = {
     right: 'Stronger glow.',
     engine: 'LightBench (scene-linear; darktable’s bloom and soften are display-referred)',
   },
-  // Lens Blur (PHASE3.md Part 31).
+  // Lens Blur (PHASE3.md Part 32).
   lensBlurAmount: {
     hint: 'How shallow the depth of field is',
     what: 'How strongly the parts of the photo nearer or farther than the focus are blurred: the farther from the focus, the more. To keep more of the photo sharp, lower it.',
@@ -915,7 +915,7 @@ export const PEOPLE_PART_HELP: Record<'person' | 'face' | 'hair' | 'bodySkin' | 
 /** What the panel says about range masks (owner's decision 12: no patent talk in the interface). */
 export const RANGE_NOTE = 'Range masks apply to the whole photo: a luminance, colour or depth range can’t be combined with a brush, gradient or object selection. Make it a separate mask; masks stack.'
 
-/** Tooltips of Lens Blur's buttons and boxes (PHASE3.md Part 31). */
+/** Tooltips of Lens Blur's buttons and boxes (PHASE3.md Part 32). */
 export const LENS_BLUR_TIPS = {
   apply: 'Blurs the photo by distance from the focus, like a lens at a wide aperture. The first time on a photo it estimates the photo’s depth on this computer (once; the depth is kept with the edit).',
   on: 'Lens Blur on or off. Off keeps its settings and the depth.',

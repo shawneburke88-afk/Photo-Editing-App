@@ -1,4 +1,4 @@
-// Lens Blur (docs/PHASE3.md Part 31; engine/develop/lens-blur.ts explains the design and lens-blur-stage.ts the order of
+// Lens Blur (docs/PHASE3.md Part 32; engine/develop/lens-blur.ts explains the design and lens-blur-stage.ts the order of
 // the passes). Everything is in the sensor frame, on the scene-linear Rec.2020 working image.
 //
 //  1. Depth: the stored map (binding 2, bilinear) guided-filtered with the photo's log luminance as the guide (the maths

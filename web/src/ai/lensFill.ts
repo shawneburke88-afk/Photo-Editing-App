@@ -1,4 +1,4 @@
-// Lens Blur's optional AI fill (docs/PHASE3.md Part 31; the design's option 5(b)): the ORIGINAL photo, before any blur,
+// Lens Blur's optional AI fill (docs/PHASE3.md Part 32; the design's option 5(b)): the ORIGINAL photo, before any blur,
 // with the background hidden behind near edges drawn by AI Remove's model (Moebius, Part 26). Lens Blur then uses it
 // only as the colour of the hidden background of the slices behind those edges. The model never sees a blurred
 // (synthetic shallow-depth-of-field) picture: its input is the scene as the camera recorded it.

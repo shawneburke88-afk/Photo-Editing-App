@@ -1,4 +1,4 @@
-// The Lens Blur stage on the GPU (docs/PHASE3.md Part 31; the design and its maths: engine/develop/lens-blur.ts; the
+// The Lens Blur stage on the GPU (docs/PHASE3.md Part 32; the design and its maths: engine/develop/lens-blur.ts; the
 // passes: lens-blur.wgsl). Like the Detail stage it makes a new scene-linear texture in the sensor frame, at a level of
 // the photo's size, with its own mip chain, which every later step (the geometry warp, Stage B) reads instead of the
 // scene.
@@ -211,7 +211,7 @@ export class LensBlurStage {
     })
     try {
       const buffer = (bytes: number, label: string) => {
-        const b = device.createBuffer({ label, size: Math.max(16, Math.ceil(bytes / 16) * 16), usage: GPUBufferUsage.STORAGE })
+        const b = device.createBuffer({ label, size: Math.max(16, Math.ceil(bytes / 16) * 16), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
         later.push(b)
         return b
       }

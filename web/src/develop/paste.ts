@@ -343,7 +343,7 @@ export const PASTE_ITEMS: PasteItem[] = [
     show: (s) => describeMasks(s.masks),
     changed: (a, b) => JSON.stringify(a.masks ?? []) !== JSON.stringify(b.masks ?? []),
   },
-  // Lens Blur (Part 31): unticked by default, never auto-synced; the depth, the AI fill and Keep sharp stay with their photo.
+  // Lens Blur (Part 32): unticked by default, never auto-synced; the depth, the AI fill and Keep sharp stay with their photo.
   {
     key: 'lensBlur',
     label: 'Lens Blur',
@@ -400,7 +400,7 @@ export const PASTE_ITEMS: PasteItem[] = [
 ]
 
 /**
- * Lens Blur pasted (Part 31): its settings travel; the depth and the AI fill belong to their photo and Keep sharp names one
+ * Lens Blur pasted (Part 32): its settings travel; the depth and the AI fill belong to their photo and Keep sharp names one
  * of its masks, so they stay behind. The target keeps its own depth (Lens Blur's, else a Depth range's) with the focus
  * point measured on it; without one, Lens Blur waits for "Compute it". Each photo keeps its own noise pattern.
  */
@@ -437,7 +437,7 @@ export const PASTE_GROUPS = [...new Set(PASTE_ITEMS.map((i) => i.group))]
  */
 export const DEFAULT_PASTE_KEYS: PasteKey[] = PASTE_ITEMS.filter((i) => i.group !== 'Advanced' && i.group !== 'Crop' && i.group !== 'Lens' && i.group !== 'Detail' && i.group !== 'Remove' && i.group !== 'Masks' && i.group !== 'Lens Blur').map((i) => i.key)
 
-/** Items Auto Sync never sends (they belong to one photo): Remove spots (Part 11), masks (Part 23) and Lens Blur (Part 31). */
+/** Items Auto Sync never sends (they belong to one photo): Remove spots (Part 11), masks (Part 23) and Lens Blur (Part 32). */
 export const NOT_AUTO_SYNCED: PasteKey[] = ['spots', 'masks', 'lensBlur']
 
 /** What a copy carries. */

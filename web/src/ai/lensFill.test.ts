@@ -6,7 +6,7 @@ import { decodePatchBytes } from '../engine/develop/ai-patch'
 import { decodeDepth } from '../engine/develop/depth-map'
 import { normalizeLensBlur } from '../engine/develop/lens-blur'
 
-// Lens Blur's AI fill (PHASE3.md Part 31): the region from the depth alone, the squares the model sees, and a whole fill
+// Lens Blur's AI fill (PHASE3.md Part 32): the region from the depth alone, the squares the model sees, and a whole fill
 // with a stand-in model that paints its hole a known colour: only the region changes, the rest is stored as 0, and the
 // model is given the original photo.
 

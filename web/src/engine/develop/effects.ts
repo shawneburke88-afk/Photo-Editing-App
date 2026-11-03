@@ -270,7 +270,7 @@ export function reseedGrain(json: string, seed: number): string {
       out.effects = { ...fx, grain: { ...fx.grain, seed } }
       changed = true
     }
-    // Lens Blur's noise (Part 31) has its own pattern too.
+    // Lens Blur's noise (Part 32) has its own pattern too.
     const lb = out.lensBlur as { noise?: { seed?: unknown } } | undefined
     if (lb && typeof lb === 'object' && lb.noise && typeof lb.noise === 'object') {
       out.lensBlur = { ...lb, noise: { ...lb.noise, seed } }
