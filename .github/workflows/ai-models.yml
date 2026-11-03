@@ -1015,8 +1015,26 @@ jobs:
           "$V/python" -c "import torch, onnx, onnxruntime, cv2, skimage; print('torch', torch.__version__, 'onnx', onnx.__version__, 'onnxruntime', onnxruntime.__version__, 'cv2', cv2.__version__, 'skimage', skimage.__version__)"
 
       - name: Probe the sources (probe)
-        if: startsWith(inputs.unblur, 'probe')
+        if: inputs.unblur == 'probe'
         run: |
           "${RUNNER_TEMP}/venv/bin/python" -I web/scripts/unblur/fetch.py probe --out "${RUNNER_TEMP}/probe.json"
           "${RUNNER_TEMP}/venv/bin/python" -I web/scripts/unblur/fetch.py weights --out "${RUNNER_TEMP}/w" --which misc,nafnet,nafnet-reds
           ls -la "${RUNNER_TEMP}/w"/*
+
+      - name: Probe the archives (probe2)
+        if: inputs.unblur == 'probe2'
+        run: |
+          P="${RUNNER_TEMP}/venv/bin/python"
+          "$P" -I web/scripts/unblur/fetch.py weights --out "${RUNNER_TEMP}/w" --which misc
+          (cd "${RUNNER_TEMP}/w/misc" && unzip -l checkpoints.zip && unzip -q checkpoints.zip && find . -name "*.pth" -exec sha256sum {} \; -exec stat -c "%s %n" {} \;)
+          "$P" -I -c '
+          import sys, glob, torch
+          for f in sorted(glob.glob(sys.argv[1] + "/**/*.pth", recursive=True)):
+              c = torch.load(f, map_location="cpu", weights_only=False)
+              print(f, type(c).__name__, list(c.keys())[:5] if isinstance(c, dict) else "")
+              sd = c.get("state_dict", c) if isinstance(c, dict) else c
+              print("  tensors", len(sd), "params", sum(v.numel() for v in sd.values()), "first", [(k, tuple(v.shape)) for k, v in list(sd.items())[:4]])
+          ' "${RUNNER_TEMP}/w/misc"
+          "$P" -I web/scripts/unblur/fetch.py list-zip --repo rimchang/RSBlur --rev 27e3fe1620efc6e2613d753e88271dff47043bc1 --archive RSBlur.zip --head 30 || true
+          "$P" -I web/scripts/unblur/fetch.py list-tar --rev afdb28d4aeb7739bc326b181ded390d4e2ac21a3 --archive RealBlur_Ori_sample.tar.gz --head 80 --depth 3 || true
+          "$P" -I web/scripts/unblur/fetch.py list-tar --rev afdb28d4aeb7739bc326b181ded390d4e2ac21a3 --archive RealBlur.tar.gz --head 30 --depth 1 || true

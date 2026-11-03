@@ -175,6 +175,105 @@ def cmd_realblur(a):
         print(f"::warning::kept {kept} of {len(want)}; first missing {missing}")
 
 
+class RangeFile:
+    """A read-only, seekable file over HTTP Range requests (to read single members of a huge zip on Hugging Face)."""
+
+    def __init__(self, url):
+        self.url = url
+        self.pos = 0
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "lightbench-unblur-spike"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            self.size = int(r.headers["Content-Length"])
+            self.final = r.url
+        self.fetched = 0
+
+    def seekable(self):
+        return True
+
+    def tell(self):
+        return self.pos
+
+    def seek(self, off, whence=0):
+        self.pos = off if whence == 0 else (self.pos + off if whence == 1 else self.size + off)
+        return self.pos
+
+    def read(self, n=-1):
+        if n is None or n < 0:
+            n = self.size - self.pos
+        if n == 0 or self.pos >= self.size:
+            return b""
+        end = min(self.size, self.pos + n) - 1
+        req = urllib.request.Request(self.final, headers={"Range": f"bytes={self.pos}-{end}", "User-Agent": "lightbench-unblur-spike"})
+        for i in range(5):
+            try:
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    b = r.read()
+                break
+            except Exception:  # noqa: BLE001
+                if i == 4:
+                    raise
+        self.pos += len(b)
+        self.fetched += len(b)
+        return b
+
+
+def cmd_list_tar(a):
+    url = f"{HF}/datasets/{a.repo}/resolve/{a.rev}/{a.archive}"
+    req = urllib.request.Request(url, headers={"User-Agent": "lightbench-unblur-spike"})
+    n = 0
+    total = 0
+    dirs = {}
+    with urllib.request.urlopen(req, timeout=120) as r, tarfile.open(fileobj=r, mode="r|*") as tf:
+        for m in tf:
+            n += 1
+            total += m.size
+            if n <= a.head:
+                print(f"{m.size:>12} {m.name}")
+            top = "/".join(m.name.split("/")[:a.depth])
+            dirs[top] = dirs.get(top, 0) + 1
+    print(json.dumps({"members": n, "bytes": total, "dirs": dirs}, indent=1)[:20000])
+
+
+def cmd_list_zip(a):
+    import zipfile
+    url = f"{HF}/datasets/{a.repo}/resolve/{a.rev}/{a.archive}"
+    rf = RangeFile(url)
+    z = zipfile.ZipFile(rf)
+    infos = z.infolist()
+    print(f"{a.archive}: {rf.size:,} bytes, {len(infos)} members; central directory read with {rf.fetched:,} bytes")
+    for i in infos[: a.head]:
+        print(f"{i.file_size:>12} {i.compress_type} {i.filename}")
+
+
+def cmd_rsblur(a):
+    """Read only the listed pairs out of RSBlur.zip (Hugging Face, pinned commit) with HTTP Range requests."""
+    import zipfile
+    want = []
+    for line in open(a.list):
+        p = line.split()
+        if len(p) >= 2:
+            want += p[:2]
+    url = f"{HF}/datasets/{a.repo}/resolve/{a.rev}/{a.archive}"
+    rf = RangeFile(url)
+    z = zipfile.ZipFile(rf)
+    names = {i.filename: i for i in z.infolist()}
+    os.makedirs(a.out, exist_ok=True)
+    kept = 0
+    for w in want:
+        hit = w if w in names else next((n for n in names if n.endswith(w)), None)
+        if not hit:
+            print(f"::warning::{w} not in {a.archive}")
+            continue
+        dest = os.path.join(a.out, w)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with z.open(hit) as src, open(dest, "wb") as dst:
+            dst.write(src.read())
+        kept += 1
+    rec = {"url": url, "archiveBytes": rf.size, "kept": kept, "wanted": len(want), "bytesFetched": rf.fetched}
+    print(json.dumps(rec))
+    json.dump(rec, open(os.path.join(a.out, "rsblur.json"), "w"), indent=1)
+
+
 def main():
     p = argparse.ArgumentParser()
     s = p.add_subparsers(dest="cmd", required=True)
@@ -192,8 +291,22 @@ def main():
     q.add_argument("--list", required=True)
     q.add_argument("--out", required=True)
     q.add_argument("--stop-early", action="store_true")
+    for name in ["list-tar", "list-zip"]:
+        q = s.add_parser(name)
+        q.add_argument("--repo", default="rimchang/RealBlur")
+        q.add_argument("--rev", required=True)
+        q.add_argument("--archive", required=True)
+        q.add_argument("--head", type=int, default=60)
+        q.add_argument("--depth", type=int, default=2)
+    q = s.add_parser("rsblur")
+    q.add_argument("--repo", default="rimchang/RSBlur")
+    q.add_argument("--rev", required=True)
+    q.add_argument("--archive", default="RSBlur.zip")
+    q.add_argument("--list", required=True)
+    q.add_argument("--out", required=True)
     a = p.parse_args()
-    {"probe": cmd_probe, "weights": cmd_weights, "zoo": cmd_zoo, "realblur": cmd_realblur}[a.cmd](a)
+    {"probe": cmd_probe, "weights": cmd_weights, "zoo": cmd_zoo, "realblur": cmd_realblur, "list-tar": cmd_list_tar,
+     "list-zip": cmd_list_zip, "rsblur": cmd_rsblur}[a.cmd](a)
 
 
 if __name__ == "__main__":
