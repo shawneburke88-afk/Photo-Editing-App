@@ -19,6 +19,7 @@ import { colourGradingGpu, normalizeColourGrading, type ColourGradingGpu, type C
 import { normalizeMasks, type LocalMask } from './masks'
 import type { BandWeights, EffectsParams, MaskParams } from './process'
 import { normalizeEffects, type EffectsSettings } from './effects'
+import { lensBlurActive, normalizeLensBlur, type LensBlurSettings } from './lens-blur'
 
 /**
  * The demosaic method (Develop › Advanced). The stored value names the method for the photo's sensor as darktable
@@ -118,6 +119,11 @@ export interface DevelopSettings {
    * byte-identically).
    */
   effects?: EffectsSettings
+  /**
+   * Lens Blur (lens-blur.ts; PHASE3.md Part 31), with its own copy of the photo's depth map. Optional: edits without it
+   * have no such field at all, so they stay exactly as they were (and render byte-identically).
+   */
+  lensBlur?: LensBlurSettings
 }
 
 export const DEFAULT_SETTINGS: DevelopSettings = {
@@ -220,6 +226,10 @@ export function normalizeSettings(s: Partial<DevelopSettings> | null | undefined
   const fx = normalizeEffects(s?.effects)
   if (fx) out.effects = fx
   else delete out.effects
+  // Lens Blur: the same (no key unless the edit has it; an unknown renderer version is left out).
+  const lb = normalizeLensBlur(s?.lensBlur)
+  if (lb) out.lensBlur = lb
+  else delete out.lensBlur
   return out
 }
 
@@ -277,6 +287,13 @@ export interface DisplayUniforms {
   masks?: MasksGpu
   /** The Effects and the process version's numbers for them; absent when the edit has none (nothing changes then). */
   effects?: { fx: EffectsSettings; params: EffectsParams }
+  /**
+   * Lens Blur (Part 31): its settings, the edit's masks (for Keep sharp) and the process version's mask numbers; absent
+   * when the edit has none or it is off (nothing changes then).
+   */
+  lensBlur?: { s: LensBlurSettings; masks?: LocalMask[]; maskParams: MaskParams }
+  /** Show Lens Blur's depth instead of the photo (a view only). */
+  lensBlurDepth?: boolean
 }
 
 /** The masks of an edit with the process version's numbers their local sliders use (PHASE3.md Part 23). */
@@ -315,6 +332,7 @@ export function displayUniforms(s: DevelopSettings): DisplayUniforms {
     ...(s.spots?.length ? { spots: s.spots } : {}),
     ...(s.masks?.length ? { masks: masksGpu(s, bands) } : {}),
     ...(s.effects ? { effects: { fx: s.effects, params: processParams(s.process).effects } } : {}),
+    ...(lensBlurActive(s.lensBlur) ? { lensBlur: { s: s.lensBlur, ...(s.masks?.length ? { masks: s.masks } : {}), maskParams: processParams(s.process).masks } } : {}),
   }
 }
 

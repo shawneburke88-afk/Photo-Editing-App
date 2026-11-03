@@ -80,6 +80,10 @@ import { ambientLight, DEFAULT_GLOW, dehazeWindows, effectsFlags, effectsUniform
 import { EFFECTS_V1, type EffectsParams, type MaskParams } from '../develop/process'
 import type { LocalMask } from '../develop/masks'
 
+import { LensBlurStage } from './lens-blur-stage'
+import { BOOST_THRESHOLD, depthHistogram, lensBlurActive, lensBlurPlan, type LensBlurSettings, type NoiseModel } from '../develop/lens-blur'
+import { decodeDepth } from '../develop/depth-map'
+import { decodePatchBytes } from '../develop/ai-patch'
 import { DeviceMemory, Retirement } from './retire'
 import { AllocCheck, gpuErrorKind } from './alloc-check'
 import { encodeUpscale, upscalePipeline, upscalePlan, type UpscalePlan } from './zoom-blit'
@@ -161,6 +165,20 @@ export const FRAME_PAD = 28
 /** A view above 100 % (not the crop tool's): drawn at 100 % and enlarged without smoothing (zoom-blit.ts). */
 export function enlarged(view: ViewState): boolean {
   return typeof view.zoom === 'number' && view.zoom > 1 && !view.frame
+}
+
+/** Lens Blur for one drawing (Part 31): the settings, the decoded maps, Keep sharp's mask and a key for the result. */
+interface LensBlurDraw {
+  key: string
+  level: number
+  s: LensBlurSettings
+  depth: { px: Uint8Array; w: number; h: number }
+  plate?: { rgb: Uint8Array; region: Uint8Array; w: number; h: number; invGain: number; id: string }
+  keep: LocalMask | null
+  maskParams: MaskParams
+  wb: Vec3
+  exposure: number
+  depthView: boolean
 }
 
 /** What a rendering samples: the scene, or its warped copy, and how output uv maps onto it and onto the sensor. */
@@ -569,6 +587,10 @@ export class DevelopEngine {
   private detailWarps: { key: string; gen: number; tex: GPUTexture }[] = []
   /** Detail stages run one at a time. */
   private detailChain: Promise<unknown> = Promise.resolve()
+  /** Lens Blur (Part 31): its stage, its last results (two, of different levels) and the photo's measured noise. */
+  private lensBlurStage: LensBlurStage | null = null
+  private lensBlurCache: { key: string; gen: number; level: number; tex: GPUTexture }[] = []
+  private lensNoise: { key: string; gen: number; noise: NoiseModel }[] = []
   /** The noise profile the last Detail run used (for the Noise Reduction section). */
   lastProfile: ProfileChoice | null = null
   /** The radius the last capture sharpening used (for the Sharpening section). */
@@ -1092,26 +1114,43 @@ export class DevelopEngine {
    * retouches their result. That needs the full-size result, so with spots the callers ask for level 0
    * (`detailLevelFor`). The tone mask is measured on the scene without Detail and without spots (see below).
    */
-  private async detailSource(g: GeometrySettings, whole: boolean, lens: LensSettings | undefined, run: DetailRun | null, spots?: Spot[], wait = true): Promise<Source> {
-    if (!run || whole) return this.source(g, whole, lens, spots, wait)
+  private async detailSource(g: GeometrySettings, whole: boolean, lens: LensSettings | undefined, run: DetailRun | null, spots?: Spot[], wait = true, lb: LensBlurDraw | null = null): Promise<Source> {
+    if ((!run && !lb) || whole) return this.source(g, whole, lens, spots, wait)
     const lw = (await this.lensCorrection(lens)).warp
     const r = withLens(this.geometry(g, false), lw, lensWarpKey(lw))
     const lease = this.lease()
     let got: { tex: GPUTexture; key: string; release: () => void } | null = null
     try {
-      const detailed = await this.detailed(run)
-      got = spots?.length && run.level === 0 ? await this.retouch.texture(() => detailed, spots, wait) : { tex: detailed, key: '', release: () => {} }
+      let level: number
+      let mip = 0
+      let baseKey: string
+      if (run) {
+        const detailed = await this.detailed(run)
+        got = spots?.length && run.level === 0 ? await this.retouch.texture(() => detailed, spots, wait) : { tex: detailed, key: '', release: () => {} }
+        level = run.level
+        baseKey = got.key ? `${run.key}|rt:${got.key}` : run.key
+      } else {
+        // Lens Blur without Detail (Part 31): the scene at the drawing's level, or its retouched copy at full size.
+        got = spots?.length ? await this.retouch.texture(() => this.scene!, spots, wait) : { tex: this.scene!, key: '', release: () => {} }
+        level = spots?.length ? 0 : Math.min(lb!.level, this.scene!.mipLevelCount - 1)
+        mip = level
+        baseKey = got.key ? `scene|rt:${got.key}` : 'scene'
+      }
+      let tex = got.tex
+      if (lb) {
+        tex = await this.lensBlurred(got.tex, mip, level, baseKey, lb)
+        baseKey = `${baseKey}|lb:${lb.key}`
+      }
       const g2 = got
       const release = () => {
         g2.release()
         lease()
       }
-      const baseKey = got.key ? `${run.key}|rt:${got.key}` : run.key
       // The tone mask: measured on the scene without Detail (and without spots: a second retouched copy would cost a
       // second Remove run; the mask is a wide blur, so the spots hardly change it), so Detail never shifts tone.
       const plain = () => this.source(g, whole, lens)
-      if (r.exact) return { tex: got.tex, texMap: r.uvToSensor, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: false, level: run.level, plain, release }
-      const wd = await this.warpedDetail(r, run.level, got.tex, baseKey)
+      if (r.exact) return { tex, texMap: r.uvToSensor, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: false, level, plain, release }
+      const wd = await this.warpedDetail(r, level, tex, baseKey)
       // The warp at this level has its own size; the shown image keeps the full output size (uv maps are size-free).
       return { tex: wd.tex, texMap: IDENTITY_MAP, rawMap: r.uvToSensor, w: r.size[0], h: r.size[1], frame: false, lens: r.lens, level: Math.log2(r.size[0] / wd.w), plain, release }
     } catch (e) {
@@ -1119,6 +1158,125 @@ export class DevelopEngine {
       lease()
       throw e
     }
+  }
+
+  /**
+   * Lens Blur for a drawing at `level` (Part 31), or null when the edit has none (or its depth map can't be read): what
+   * the stage needs, and a key for its result.
+   */
+  private lensBlurFor(u: DisplayUniforms, wb: Vec3, level: number): LensBlurDraw | null {
+    const l = u.lensBlur
+    if (!l || !lensBlurActive(l.s)) return null
+    const s = l.s
+    const r = s.depth.raster
+    const px = decodeDepth(r)
+    if (!px) return null
+    let plate: LensBlurDraw['plate']
+    if (s.aiFill && s.plate) {
+      const p = s.plate
+      const rgb = decodePatchBytes(p)
+      const region = decodeDepth(p.region)
+      if (rgb && region) plate = { rgb, region, w: p.width, h: p.height, invGain: 1 / p.gain, id: p.data.length + ':' + p.data.slice(0, 64) + p.data.slice(-64) }
+    }
+    const keep = s.keepSharp ? l.masks?.find((m) => m.id === s.keepSharp!.maskId) ?? null : null
+    const lv = Math.min(level, (this.scene?.mipLevelCount ?? 1) - 1)
+    const key = JSON.stringify([
+      s.amount, s.front, s.focus.depth, s.boost, s.noise, this.idOf(px), plate?.id ?? 0,
+      keep ? [keep.components, keep.invert, keep.feather, keep.refine, wb, u.exposureGain] : 0,
+      s.boost ? u.exposureGain : 0, !!u.lensBlurDepth, lv,
+    ])
+    return { key, level: lv, s, depth: { px, w: r.width, h: r.height }, plate, keep, maskParams: l.maskParams, wb, exposure: u.exposureGain, depthView: !!u.lensBlurDepth }
+  }
+
+  private readonly objIds = new WeakMap<object, number>()
+  private nextObjId = 1
+  private idOf(o: object): number {
+    let id = this.objIds.get(o)
+    if (!id) this.objIds.set(o, (id = this.nextObjId++))
+    return id
+  }
+
+  /** The photo's noise at a working image (Part 31), measured once per image. */
+  private async noiseOf(base: GPUTexture, mip: number, key: string): Promise<NoiseModel> {
+    const hit = this.lensNoise.find((n) => n.key === key && n.gen === this.sceneGen)
+    if (hit) return hit.noise
+    const noise = await this.lensBlurStage!.measureNoise(base, mip)
+    this.lensNoise = [{ key, gen: this.sceneGen, noise }, ...this.lensNoise.filter((n) => n.gen === this.sceneGen).slice(0, 3)]
+    return noise
+  }
+
+  /** Keep sharp's mask at the working size (sensor frame), drawn by the mask stage in tiles (Part 31). */
+  private keepSharpTexture(base: GPUTexture, mip: number, w: number, h: number, lb: LensBlurDraw): GPUTexture | undefined {
+    const mask = lb.keep
+    const s = this.sensor
+    if (!mask || !s) return undefined
+    const map: ShownMap = { rawMap: IDENTITY, w, h, sensor: [s.width, s.height] }
+    const rect = { x: 0, y: 0, w, h }
+    const prepared = prepareMasks([mask], map, rect, lb.maskParams, mask.id)
+    if (!prepared.masks.length) return undefined
+    // Only the mask's own alpha is wanted (the overlay's plane), none of its adjustments.
+    prepared.masks = prepared.masks.map((m) => ({ ...m, values: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0] }))
+    prepared.spatial = false
+    prepared.toneLocal = false
+    const draw: MaskDraw = { prepared, tex: base, texMap: IDENTITY, lod: mip, fix: this.wbFix(lb.wb), exposure: lb.exposure, rect }
+    const stage = this.lensBlurStage!
+    const keep = stage.keepTexture(w, h)
+    const T = DevelopEngine.MIX_TILE
+    for (let y0 = 0; y0 < h; y0 += T) {
+      for (let x0 = 0; x0 < w; x0 += T) {
+        const region = { x0, y0, x1: Math.min(w, x0 + T), y1: Math.min(h, y0 + T) }
+        const temps: { destroy(): void }[] = []
+        const enc = this.device.createCommandEncoder()
+        const planes = this.maskStage.encode(enc, draw, region, temps as (GPUBuffer | GPUTexture)[])
+        stage.encodeKeep(enc, planes, planeStride(prepared), region, keep, temps)
+        this.device.queue.submit([enc.finish()])
+        for (const t of temps) t.destroy()
+      }
+    }
+    return keep
+  }
+
+  /** `base` (at mip `mip`, the drawing's `level`) through Lens Blur, from the cache when the same was made last. */
+  private lensBlurred(base: GPUTexture, mip: number, level: number, baseKey: string, lb: LensBlurDraw): Promise<GPUTexture> {
+    const key = `${baseKey}|${lb.key}`
+    const job = this.detailChain.then(async () => {
+      const hit = this.lensBlurCache.find((d) => d.key === key && d.gen === this.sceneGen)
+      if (hit) return hit.tex
+      this.checkAlive()
+      this.lensBlurStage ??= new LensBlurStage(this.device)
+      const w = Math.max(1, base.width >> mip)
+      const h = Math.max(1, base.height >> mip)
+      const plan = lensBlurPlan(lb.s, Math.max(w, h), depthHistogram(lb.depth.px))
+      const noise = lb.s.noise.keep && !lb.depthView ? await this.noiseOf(base, mip, `${baseKey}|${mip}`) : null
+      const keep = lb.depthView ? undefined : this.keepSharpTexture(base, mip, w, h, lb)
+      let plate: { rgba: Uint8Array; w: number; h: number; invGain: number } | undefined
+      if (lb.plate) {
+        const p = lb.plate
+        const rgba = new Uint8Array(p.w * p.h * 4)
+        for (let i = 0; i < p.w * p.h; i++) {
+          rgba[4 * i] = p.rgb[3 * i]
+          rgba[4 * i + 1] = p.rgb[3 * i + 1]
+          rgba[4 * i + 2] = p.rgb[3 * i + 2]
+          rgba[4 * i + 3] = p.region[i]
+        }
+        plate = { rgba, w: p.w, h: p.h, invGain: p.invGain }
+      }
+      let tex: GPUTexture
+      try {
+        tex = await this.lensBlurStage.run(
+          { base, mip, plan, depth: lb.depth, plate, keep, noise, seed: lb.s.noise.seed, boostThreshold: BOOST_THRESHOLD / Math.max(1e-6, lb.exposure), depthView: lb.depthView },
+          (enc, t) => this.encodeMips(enc, t),
+        )
+      } finally {
+        keep?.destroy()
+      }
+      const keepOld = this.lensBlurCache.filter((d) => d.gen === this.sceneGen && d.level !== level).slice(0, 1)
+      for (const d of this.lensBlurCache) if (!keepOld.includes(d)) this.retireTex(d.tex)
+      this.lensBlurCache = [{ key, gen: this.sceneGen, level, tex }, ...keepOld]
+      return tex
+    })
+    this.detailChain = job.catch(() => {})
+    return job
   }
 
   /**
@@ -1278,6 +1436,10 @@ export class DevelopEngine {
     for (const d of this.detailWarps) this.retireTex(d.tex)
     this.detailCache = []
     this.detailWarps = []
+    // Lens Blur's results (Part 31) are made from the scene or its detailed copy.
+    for (const d of this.lensBlurCache) this.retireTex(d.tex)
+    this.lensBlurCache = []
+    this.lensNoise = []
   }
 
   /** Stage A. Resolves with the GPU time in ms. */
@@ -1708,7 +1870,7 @@ export class DevelopEngine {
       throw new Error(`The export is too large for this graphics card: ${o.width}×${o.height} at ${o.bits} bits needs ${mb(outBytes)} MB in one piece, and the card allows ${mb(maxBytes)} MB. Choose a smaller size${o.bits === 16 ? ' or 8 bits' : ''}.`)
     }
     // Exports develop the full-size photo, so the Detail stage runs at full size (Remove then works on its result).
-    const src = await this.detailSource(u.geometry, false, u.lens, await this.detailFor(u, 0), u.spots)
+    const src = await this.detailSource(u.geometry, false, u.lens, await this.detailFor(u, 0), u.spots, true, this.lensBlurFor(u, wb, 0))
     const maskSrc = await this.toneSource(u, src, wb)
     const { w: iw, h: ih } = src
     const pipes = (this.exportPipes ??= this.createExportPipes())
@@ -2256,8 +2418,9 @@ export class DevelopEngine {
     this.lastRender = [u, wb, view, indicators]
     // The Detail stage runs at the level the view is drawn at (darktable's preview at the roi scale; full size with
     // spots). The canvas never waits for spots being worked on: it shows what is ready and is drawn again (`onRetouch`).
-    const run = u.detail && !view.frame ? await this.detailFor(u, this.detailLevelFor(u, this.layout(view, cw, ch, this.geometry(u.geometry).size).lod)) : null
-    const src = await this.detailSource(u.geometry, !!view.frame, u.lens, run, u.spots, false)
+    const lvl = this.detailLevelFor(u, this.layout(view, cw, ch, this.geometry(u.geometry).size).lod)
+    const run = u.detail && !view.frame ? await this.detailFor(u, lvl) : null
+    const src = await this.detailSource(u.geometry, !!view.frame, u.lens, run, u.spots, false, view.frame ? null : this.lensBlurFor(u, wb, lvl))
     const maskSrc = await this.toneSource(u, src, wb)
     const l = this.layout(view, cw, ch, [src.w, src.h])
     this.shown = { w: src.w, h: src.h, rawMap: src.rawMap, lens: src.lens }
@@ -2282,8 +2445,9 @@ export class DevelopEngine {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
     const [gw, gh] = this.geometry(u.geometry).size
-    const run = u.detail ? await this.detailFor(u, this.detailLevelFor(u, Math.log2(Math.max(gw, gh) / Math.min(maxSize, Math.max(gw, gh))))) : null
-    const src = await this.detailSource(u.geometry, false, u.lens, run, u.spots)
+    const lvl = this.detailLevelFor(u, Math.log2(Math.max(gw, gh) / Math.min(maxSize, Math.max(gw, gh))))
+    const run = u.detail ? await this.detailFor(u, lvl) : null
+    const src = await this.detailSource(u.geometry, false, u.lens, run, u.spots, true, this.lensBlurFor(u, wb, lvl))
     const maskSrc = await this.toneSource(u, src, wb)
     const { w: iw, h: ih } = src
     const scale = Math.min(1, maxSize / Math.max(iw, ih))
@@ -2580,8 +2744,9 @@ export class DevelopEngine {
     // With spots, what is drawn now (the retouched photo as far as it is ready), as the canvas shows it; with Detail,
     // at the level the canvas uses.
     const s = Math.min(1, Math.max(1e-4, scale))
-    const run = u.detail ? await this.detailFor({ ...u, detailMask: false }, this.detailLevelFor(u, Math.log2(1 / s))) : null
-    const src = await this.detailSource(u.geometry, false, u.lens, run, u.spots, false)
+    const lvl = this.detailLevelFor(u, Math.log2(1 / s))
+    const run = u.detail ? await this.detailFor({ ...u, detailMask: false }, lvl) : null
+    const src = await this.detailSource(u.geometry, false, u.lens, run, u.spots, false, this.lensBlurFor(u, wb, lvl))
     const maskSrc = await this.toneSource(u, src, wb)
     const w = src.w * s
     const h = src.h * s
@@ -2628,8 +2793,9 @@ export class DevelopEngine {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
     const s = Math.min(1, Math.max(1e-4, scale))
-    const run = u.detail ? await this.detailFor({ ...u, detailMask: false }, this.detailLevelFor(u, Math.log2(1 / s))) : null
-    const src = await this.detailSource(u.geometry, false, u.lens, run, u.spots, false)
+    const lvl = this.detailLevelFor(u, Math.log2(1 / s))
+    const run = u.detail ? await this.detailFor({ ...u, detailMask: false }, lvl) : null
+    const src = await this.detailSource(u.geometry, false, u.lens, run, u.spots, false, this.lensBlurFor(u, wb, lvl))
     const maskSrc = await this.toneSource(u, src, wb)
     const size = 3
     // Point Color samples the colours as they reach it: after the bands, without its own points or a Visualize view.
@@ -2653,8 +2819,9 @@ export class DevelopEngine {
     if (!this.scene) throw new Error('No photo processed')
     const s = Math.min(1, Math.max(1e-4, scale))
     const plainU: DisplayUniforms = { ...u, masks: undefined, effects: undefined, mixerVisualize: 0 }
-    const run = u.detail ? await this.detailFor({ ...plainU, detailMask: false }, this.detailLevelFor(u, Math.log2(1 / s))) : null
-    const src = await this.detailSource(u.geometry, false, u.lens, run, u.spots, false)
+    const lvl = this.detailLevelFor(u, Math.log2(1 / s))
+    const run = u.detail ? await this.detailFor({ ...plainU, detailMask: false }, lvl) : null
+    const src = await this.detailSource(u.geometry, false, u.lens, run, u.spots, false, this.lensBlurFor(u, wb, lvl))
     const size = 3
     this.writeView(plainU, wb, src, { x: size / 2 - cu * src.w * s, y: size / 2 - cv * src.h * s, w: src.w * s, h: src.h * s }, Math.max(0, Math.log2(1 / s)), NO_INDICATORS, 0, 'srgb')
     const pixels = await this.readMixer(src.tex, size, size, 6)
@@ -2688,8 +2855,9 @@ export class DevelopEngine {
     this.checkAlive()
     if (!this.scene) throw new Error('No photo processed')
     const [gw, gh] = this.geometry(u.geometry).size
-    const run = u.detail ? await this.detailFor(u, this.detailLevelFor(u, Math.log2(Math.max(gw, gh) / Math.min(maxSize, Math.max(gw, gh))))) : null
-    const src = await this.detailSource(u.geometry, false, u.lens, run, u.spots)
+    const lvl = this.detailLevelFor(u, Math.log2(Math.max(gw, gh) / Math.min(maxSize, Math.max(gw, gh))))
+    const run = u.detail ? await this.detailFor(u, lvl) : null
+    const src = await this.detailSource(u.geometry, false, u.lens, run, u.spots, true, this.lensBlurFor(u, wb, lvl))
     const maskSrc = await this.toneSource(u, src, wb)
     const scale = Math.min(1, maxSize / Math.max(src.w, src.h))
     const w = Math.max(1, Math.round(src.w * scale))
@@ -2736,8 +2904,9 @@ export class DevelopEngine {
     const bins = device.createBuffer({ size: STATS_WORDS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST })
     const read = device.createBuffer({ size: STATS_WORDS * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ })
     const [gw, gh] = this.geometry(u.geometry).size
-    const run = u.detail ? await this.detailFor({ ...u, detailMask: false }, this.detailLevelFor(u, Math.log2(Math.max(gw, gh) / Math.min(maxSize, Math.max(gw, gh))))) : null
-    const src = await this.detailSource(u.geometry, false, u.lens, run, u.spots)
+    const lvl = this.detailLevelFor(u, Math.log2(Math.max(gw, gh) / Math.min(maxSize, Math.max(gw, gh))))
+    const run = u.detail ? await this.detailFor({ ...u, detailMask: false }, lvl) : null
+    const src = await this.detailSource(u.geometry, false, u.lens, run, u.spots, true, this.lensBlurFor(u, wb, lvl))
     const maskSrc = await this.toneSource(u, src, wb)
     const enc = device.createCommandEncoder()
     const { w: iw, h: ih } = src
@@ -3158,6 +3327,7 @@ export class DevelopEngine {
     for (const m of this.maskCache) m.tex.destroy()
     this.dropDetail()
     this.detailStage?.destroy()
+    this.lensBlurStage?.destroy()
     this.noMask?.destroy()
     this.curveTex?.tex.destroy()
     this.noCurve?.destroy()
