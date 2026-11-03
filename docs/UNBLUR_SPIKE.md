@@ -15,7 +15,8 @@ Owner's choices this tests: camera shake including rotation; automatic with a st
 | Largest tensor | 58.7 MB at 256²; **224 MiB at 512²** (over 128 MiB) | 33.5 MB at 256² ⟨512²⟩ | — |
 | RealBlur-J / -R (50 each) | **+6.3 / +5.2 dB** (34.25 / 40.83; published 33.88 / 41.23); 50/50 and 49/50 better | +0.0 / +0.4 dB; 3 of 100 images collapse (256² tiles) | +1.7 / −0.3 dB |
 | RSBlur (other camera) | **+2.2 dB** (13 pairs, 13 better) | **−8.3 dB** (24 of 24 worse) | −3.5 dB mean, 10 of 24 collapse |
-| Real shake at full resolution (scene097, 2 frames) | +4.0 / +1.7 dB at 24 MP density, +3.7 / +2.3 dB at 42 MP; downscale route about the same for ~10× fewer tiles | +0.2–0.3 dB direct; +0.9–1.6 dB via downscale | not run |
+| Real shake at full resolution (scene097, 2 frames) | +4.0 / +1.7 dB at 24 MP density, +3.7 / +2.3 dB at 42 MP; downscale route about the same for 7.5–10.5× fewer tiles | +0.2–0.3 dB direct; +0.9–1.6 dB via downscale | not run |
+| Large real-shake kernel ×3 / ×6 (synthetic) | direct +0.9 / +0.2 dB; **downscale route +5.7 / +6.0 dB** (detail of the downscaled image only) | ≈ 0 either way | not run |
 | Tiling | 32–64 px blended overlap removes measurable seams (hard cuts: ~5× step) | same; 256² tiles unstable | — |
 | Rotation (synthetic, 24 px at the corners) | **Weak**: corners +0.3 to +0.9 dB vs +3.9 to +5.4 dB for uniform blur of the same length; centre −1.6 dB | corners +1.7 to +3.4 vs +1.9 to +4.0 uniform | not run |
 | Speed, CPU | ≈ 8.8 s per 256² tile (native ORT, 4 threads) ⟨WASM⟩ | ≈ 0.5–1.2 s per 256² | ≈ 5 s per 773 × 680 image (native) |
@@ -109,12 +110,23 @@ Scene097 pair 00008 at 0.75 density, a central 1536² crop (input 26.69 dB / 0.8
 | MISC 256², 64 blended | 64 | 1.05 (1.56) | 36.54 dB, 0.32 | 29.51 |
 | MISC 512², 0 | 9 | **5.19 (6.23)** | 34.55 dB, 0.32 | 30.27 |
 | MISC 512², 64 blended | 16 | 0.96 (1.22) | 36.27 dB, 0.32 | 30.48 |
-| NAFNet 256², 0 / 32 / 64 | 36 / 49 / 64 | 1.94 / 1.04 / 0.98 | 17.9 / 17.3 / 16.9 dB, 1.0 (tiles failing) | 19.1 / 19.5 / 19.6 |
+| NAFNet 256², 0 / 32 / 64 | 36 / 49 / 64 | 1.94 / 1.04 / 0.98 | 17.9 / 17.3 / 16.9 dB, 1.0 (2 tiles go wild in every variant) | 19.1 / 19.5 / 19.6 |
 | NAFNet 512², 0 / 64 | 9 / 16 | 2.13 / 0.91 | 38.2 / 40.5 dB | 26.6 / 26.7 |
 
 So a 32–64 px linear blend removes measurable seams for both models; without it MISC's tile edges step about five times the local gradient. MISC's output still depends on tile placement (shifted grid 34–37 dB; up to 0.3–0.55 on single pixels), because each tile sees different context.
 
-### A real-shake kernel scaled up (synthetic) ⟨second run⟩
+### A real-shake kernel scaled up (synthetic)
+
+The brief's test: a large sharp image blurred with a real-shake kernel scaled up, tiled, and also run downscaled. Sharp image: scene097's sharp camera frame (CLN00008, mirrored, the dataset crop), at 0.75 density for ×3 and at full size for ×6, central 2041–2048² crop. Kernel: **estimated** from RealBlur-J test pair scene112 `blur_7` (the subset's lowest-SSIM pair) by regularised least squares in the gradient domain, linear light (`large.py estimate_kernel`; support 29 × 20 px at the test set's scale, threshold 1 % of the peak), then resized ×3 (support 89 × 62 px) and ×6 (178 × 125 px), applied in linear light, no noise added. Tiles 512² / 64 px overlap. PSNR / SSIM against the sharp crop (borders excluded; synthetic, so no alignment):
+
+| Kernel | Input | MISC direct (full density) | MISC downscale route (÷3 or ÷6, run, bicubic back) | NAFNet direct | NAFNet downscale route | Resize down/up only |
+|---|---|---|---|---|---|---|
+| ×3 (89 × 62 px) | 20.90 | 21.78 (+0.9) | **26.60 (+5.7)** | 20.85 | 20.69 | 20.90 |
+| ×6 (178 × 125 px) | 19.02 | 19.21 (+0.2) | **25.03 (+6.0)** | 19.01 | 18.97 | 19.02 |
+
+Fine detail (mean squared Laplacian): sharp 1.5e-3; MISC downscale route 2.3e-5 (×3) and 1.4e-6 (×6); input 1.3e-6 / 1.1e-7.
+
+What this shows: **at full density, blur this large is outside what MISC handles (+0.2–0.9 dB); shrinking the photo until the blur is back in its range lets it remove most of the smear (+5.7–6.0 dB), but the result has only the downscaled image's detail** (about 1.5 % of the sharp frame's fine-detail energy at ×3). It cannot show: real noise, saturation, depth, rotation, or whether a kernel estimated from one RealBlur pair is typical (the estimate itself is approximate: on a known 11 px line it gave a 9 × 13 px support here).
 
 ## 5. Speed and memory ⟨speed run⟩
 
