@@ -4,7 +4,24 @@ Research only (2026-11-03). Nothing in the app, `release-notes.json` or the vers
 
 Owner's choices this tests: camera shake including rotation; automatic with a strength slider (a blend with the original, so no model change is needed for it); MISC Filter first, NAFNet as the backup; public test sets only.
 
-<!-- SUMMARY -->
+## Summary
+
+| | MISC Filter | NAFNet-GoPro-width64 (own export) | opencv_zoo NAFNet (REDS, int8) |
+|---|---|---|---|
+| Licence (pinned) | MIT, `aca59a8` — **but** its FFT block, DO-Conv layer and conv wrappers are DeepRFT's code, whose licence is non-commercial (fact below) | MIT (+ Apache-2.0 BasicSR), `2b4af71` | MIT, opencv_zoo `48b10fa` |
+| ONNX export | **Yes, with three changes** (CUDA filter → PyTorch port; DO-Conv folded; FFT → ONNX `DFT`); matches PyTorch to ≤ 1.2e-6 | Yes, as is; matches to 6e-7 | Exists; **fails below ~384 px** inputs |
+| Operators on ORT Web WebGPU / WASM | All present in both (GridSample only at opset ≤ 19; DFT, GatherElements yes); whole-graph WebGPU result ⟨speed run⟩ | All present ⟨speed run⟩ | **Wrong output on WebGPU** (SwiftShader: mean \|Δ\| 142 vs WASM on a test card); 1,494 nodes left on the CPU |
+| Files | fp32 59.3 MB; fp16 41.5 MB **not usable** (non-finite values) | fp32 272 MB, fp16 137 MB | 91.7 MB |
+| Largest tensor | 58.7 MB at 256²; **224 MiB at 512²** (over 128 MiB) | 33.5 MB at 256² ⟨512²⟩ | — |
+| RealBlur-J / -R (50 each) | **+6.3 / +5.2 dB** (34.25 / 40.83; published 33.88 / 41.23); 50/50 and 49/50 better | +0.0 / +0.4 dB; 3 of 100 images collapse (256² tiles) | +1.7 / −0.3 dB |
+| RSBlur (other camera) | **+2.2 dB** (13 pairs, 13 better) | **−8.3 dB** (24 of 24 worse) | −3.5 dB mean, 10 of 24 collapse |
+| Real shake at full resolution (scene097, 2 frames) | +4.0 / +1.7 dB at 24 MP density, +3.7 / +2.3 dB at 42 MP; downscale route about the same for ~10× fewer tiles | +0.2–0.3 dB direct; +0.9–1.6 dB via downscale | not run |
+| Tiling | 32–64 px blended overlap removes measurable seams (hard cuts: ~5× step) | same; 256² tiles unstable | — |
+| Rotation (synthetic, 24 px at the corners) | **Weak**: corners +0.3 to +0.9 dB vs +3.9 to +5.4 dB for uniform blur of the same length; centre −1.6 dB | corners +1.7 to +3.4 vs +1.9 to +4.0 uniform | not run |
+| Speed, CPU | ≈ 8.8 s per 256² tile (native ORT, 4 threads) ⟨WASM⟩ | ≈ 0.5–1.2 s per 256² | ≈ 5 s per 773 × 680 image (native) |
+
+**Recommendation: ⟨recommendation⟩**
+
 
 ## 1. ONNX export and operators
 
