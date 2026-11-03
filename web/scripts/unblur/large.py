@@ -111,7 +111,7 @@ def cmd_fullres(a):
            "tile": a.tile, "overlap": a.overlap, "region": "central half of the frame", "scales": {}}
     base = 0.25
     b_base = resize(blur, base)
-    run.calls = 0
+    run.reset()
     t = time.time()
     out_base = tiling.tiled(b_base, run, a.tile, a.overlap)
     base_s, base_calls = time.time() - t, run.calls
@@ -124,7 +124,7 @@ def cmd_fullres(a):
         if s == base:
             out, secs, calls = centre_half(out_base), base_s, base_calls
         else:
-            run.calls = 0
+            run.reset()
             t = time.time()
             bm = centre_half(b, m)
             om = tiling.tiled(bm, run, a.tile, a.overlap)
@@ -132,7 +132,7 @@ def cmd_fullres(a):
             ox = (bm.shape[1] - bc.shape[1]) // 2
             out = om[oy:oy + bc.shape[0], ox:ox + bc.shape[1]]
             secs, calls = time.time() - t, run.calls
-        row["direct"] = {**tiling.realblur_metric(out, gc), "seconds": round(secs, 1), "tiles": calls}
+        row["direct"] = {**tiling.realblur_metric(out, gc), "seconds": round(secs, 1), "tiles": calls, "wildTiles": run.wild if s != base else None}
         if s != base:
             up = centre_half(resize(out_base, size=(W, H), kind="cubic"))
             row["downscaleRoute"] = tiling.realblur_metric(up, gc)
@@ -182,9 +182,11 @@ def cmd_seams(a):
     res = {"onnx": os.path.basename(a.onnx), "scale": a.scale, "crop": c, "tile": a.tile, "variants": {}}
     outs = {}
     for ov in [int(x) for x in a.overlaps.split(",")]:
+        run.reset()
         t = time.time()
         out, n, ys, xs = tiling.tiled(blur, run, a.tile, ov, return_count=True)
         secs = time.time() - t
+        wild = run.wild
         outs[ov] = out
         # The same with the tile grid shifted by half a tile (the image padded by reflection, then cropped back).
         sh = a.tile // 2
@@ -192,12 +194,12 @@ def cmd_seams(a):
         out2 = tiling.tiled(padded, run, a.tile, ov)[sh:, sh:]
         m = 8  # ignore the outermost pixels (reflection)
         diff = np.abs(np.clip(out, 0, 1) - np.clip(out2, 0, 1))[m:-m, m:-m]
-        row = {"tiles": n, "seconds": round(secs, 1), "seams": seam_stats(out, ys, xs, a.tile, ov),
+        row = {"tiles": n, "wildTiles": wild, "seconds": round(secs, 1), "seams": seam_stats(out, ys, xs, a.tile, ov),
                "inputSeams": seam_stats(blur, ys, xs, a.tile, ov),
                "shiftedGrid": {"psnr": psnr(out[m:-m, m:-m], np.clip(out2, 0, 1)[m:-m, m:-m]), "maxAbs": float(diff.max()), "p999": float(np.quantile(diff, 0.999))},
                "vsSharp": tiling.realblur_metric(out, sharp)}
         res["variants"][str(ov)] = row
-        print(f"tile {a.tile} overlap {ov}: {n} tiles {secs:.0f} s; seam step ratio {row['seams']['meanRatio']:.3f} (max {row['seams']['maxRatio']:.3f}; input {row['inputSeams']['meanRatio']:.3f}); "
+        print(f"tile {a.tile} overlap {ov}: {n} tiles ({wild} wild) {secs:.0f} s; seam step ratio {row['seams']['meanRatio']:.3f} (max {row['seams']['maxRatio']:.3f}; input {row['inputSeams']['meanRatio']:.3f}); "
               f"shifted grid PSNR {row['shiftedGrid']['psnr']:.2f} dB, max diff {row['shiftedGrid']['maxAbs']:.3f}; vs sharp {row['vsSharp']['psnr']:.2f}", flush=True)
         if a.save_dir:
             os.makedirs(a.save_dir, exist_ok=True)
@@ -270,22 +272,28 @@ def cmd_synthetic(a):
         y0, x0 = (h - c) // 2, (w - c) // 2
         sharp = sharp[y0:y0 + c, x0:x0 + c]
         blurred = blur_with(sharp, kf)
-        bd = kf.shape[0]
+        bd = kf.shape[0] // 2 + 8
+        run.reset()
         t = time.time()
         out = tiling.tiled(blurred, run, a.tile, a.overlap)
         secs = time.time() - t
+        wild_direct = run.wild
         small = resize(blurred, 1 / f)
+        run.reset()
         out_small = tiling.tiled(small, run, a.tile, a.overlap)
+        wild_small = run.wild
         up = resize(out_small, size=(c, c), kind="cubic")
         up_in = resize(small, size=(c, c), kind="cubic")
-        row = {"frameScale": s, "kernelPx": int(kf.shape[0]), "crop": c, "seconds": round(secs, 1),
+        ys_, xs_ = np.nonzero(kf > 0.01 * kf.max())
+        row = {"frameScale": s, "kernelArrayPx": int(kf.shape[0]), "kernelSupportPx": [int(ys_.max() - ys_.min() + 1), int(xs_.max() - xs_.min() + 1)],
+               "crop": c, "seconds": round(secs, 1), "wildTiles": {"direct": wild_direct, "downscaled": wild_small},
                "input": {"psnr": psnr(blurred, sharp, bd), "ssim": ssim(blurred, sharp, bd)},
                "direct": {"psnr": psnr(out, sharp, bd), "ssim": ssim(out, sharp, bd)},
                "downscaleRoute": {"psnr": psnr(up, sharp, bd), "ssim": ssim(up, sharp, bd)},
                "downUpInput": {"psnr": psnr(up_in, sharp, bd), "ssim": ssim(up_in, sharp, bd)},
                "hf": {"sharp": hf_energy(sharp), "input": hf_energy(blurred), "direct": hf_energy(out), "downscaleRoute": hf_energy(up)}}
         res["factors"][str(f)] = row
-        print(f"x{f}: kernel {row['kernelPx']} px on a {c} px crop; input {row['input']['psnr']:.2f}; direct {row['direct']['psnr']:.2f} ({secs:.0f} s); "
+        print(f"x{f}: kernel support {row['kernelSupportPx']} px on a {c} px crop; wild tiles {row['wildTiles']}; input {row['input']['psnr']:.2f}; direct {row['direct']['psnr']:.2f} ({secs:.0f} s); "
               f"downscale route {row['downscaleRoute']['psnr']:.2f} (down-up input {row['downUpInput']['psnr']:.2f}); HF {row['hf']}", flush=True)
         if a.save_dir:
             os.makedirs(a.save_dir, exist_ok=True)
@@ -340,7 +348,9 @@ def cmd_rotation(a):
         reg = regions(h, w)
         row = {"image": os.path.basename(p), "size": [h, w], "thetaDeg": math.degrees(theta), "rotation": {}, "uniform": {}}
         run_fn = (lambda im: tiling.paper_windows(im, run, a.tile)) if a.protocol == "paper" else (lambda im: tiling.tiled(im, run, a.tile, a.overlap))
+        run.reset()
         out_rot = run_fn(rot)
+        row["wildTilesRotation"] = run.wild
         for name, (y0, y1, x0, x1) in reg.items():
             # the blur length the region's centre gets from the rotation
             ry, rx = (y0 + y1) / 2 - h / 2, (x0 + x1) / 2 - w / 2

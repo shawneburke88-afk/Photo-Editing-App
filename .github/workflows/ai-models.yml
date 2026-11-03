@@ -1064,7 +1064,7 @@ jobs:
           for s in J R; do awk '{split($1,a,"/"); if(!(a[2] in seen)){seen[a[2]]=1; print $1, $2}}' "${RUNNER_TEMP}/MISCFilter/dataset/RealBlur/RealBlur_${s}_test_list.txt" > "$L/realblur_${s}.txt"; done
           awk 'NR%140==1 {print $1, $2}' "${RUNNER_TEMP}/RSBlur/datalist/RSBlur/RSBlur_real_test.txt" > "$L/rsblur.txt"
           cat "$L/realblur_J.txt" "$L/realblur_R.txt" > "$L/realblur_both.txt"
-          wc -l "$L"/*.txt; grep scene097 "$L/realblur_J.txt" | head -1 > "$L/kernel_pair.txt"; cat "$L/kernel_pair.txt"
+          wc -l "$L"/*.txt; grep scene112 "$L/realblur_J.txt" | head -1 > "$L/kernel_pair.txt"; cat "$L/kernel_pair.txt"
 
       - name: RealBlur test pairs (Hugging Face rimchang/RealBlur at afdb28d, streamed; only the subset kept)
         if: startsWith(matrix.part, 'qj') || startsWith(matrix.part, 'qr') || startsWith(matrix.part, 'synth')

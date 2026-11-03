@@ -24,11 +24,20 @@ class Runner:
         shp = self.s.get_inputs()[0].shape
         self.size = size or (shp[2] if isinstance(shp[2], int) else None)
         self.calls = 0
+        self.wild = 0  # tiles whose output leaves [0, 1] badly (over 1 % of values beyond -0.1 or 1.1)
+        self.worst = 0.0  # the largest share of such values in one tile
+
+    def reset(self):
+        self.calls, self.wild, self.worst = 0, 0, 0.0
 
     def __call__(self, tile):  # tile: H x W x 3 float32 in [0, 1]
         x = np.ascontiguousarray(tile.transpose(2, 0, 1)[None], dtype=np.float32)
         y = self.s.run(None, {self.inp: x})[0][0].transpose(1, 2, 0)
         self.calls += 1
+        out = float(np.mean((y < -0.1) | (y > 1.1) | ~np.isfinite(y)))
+        self.worst = max(self.worst, out)
+        if out > 0.01:
+            self.wild += 1
         return y
 
 

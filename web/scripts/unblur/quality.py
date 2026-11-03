@@ -53,7 +53,7 @@ def main():
         if not (os.path.exists(gt_p) and os.path.exists(bl_p)):
             continue
         gt, bl = load(gt_p), load(bl_p)
-        run.calls = 0
+        run.reset()
         t = time.time()
         if a.protocol == "paper":
             out = tiling.paper_windows(bl, run, a.tile)
@@ -64,10 +64,10 @@ def main():
         secs = time.time() - t
         m_out = tiling.realblur_metric(out, gt, clip_after=a.clip_after)
         m_in = tiling.realblur_metric(bl, gt, clip_after=a.clip_after)
-        row = {"pair": blur_rel, "size": list(bl.shape[:2]), "runs": run.calls, "seconds": round(secs, 2), "input": m_in, "output": m_out,
+        row = {"pair": blur_rel, "size": list(bl.shape[:2]), "runs": run.calls, "wildTiles": run.wild, "worstTileOutOfRange": round(run.worst, 4), "seconds": round(secs, 2), "input": m_in, "output": m_out,
                "nonFinite": int(np.sum(~np.isfinite(out)))}
         rows.append(row)
-        print(f"{a.name} {i + 1}/{len(pairs)} {blur_rel}: input {m_in['psnr']:.2f}/{m_in['ssim']:.4f} -> {m_out['psnr']:.2f}/{m_out['ssim']:.4f} ({secs:.1f} s, {run.calls} runs)", flush=True)
+        print(f"{a.name} {i + 1}/{len(pairs)} {blur_rel}: input {m_in['psnr']:.2f}/{m_in['ssim']:.4f} -> {m_out['psnr']:.2f}/{m_out['ssim']:.4f} ({secs:.1f} s, {run.calls} runs) wild {run.wild} worst {run.worst:.3f}", flush=True)
         if a.save_dir and len(rows) <= a.save:
             os.makedirs(a.save_dir, exist_ok=True)
             trio = np.concatenate([bl, np.clip(out, 0, 1), gt], axis=1)
@@ -77,7 +77,8 @@ def main():
            "n": len(rows), "listed": len(pairs), "mean": {"inputPsnr": mean("input", "psnr"), "inputSsim": mean("input", "ssim"),
                                                           "outputPsnr": mean("output", "psnr"), "outputSsim": mean("output", "ssim")},
            "secondsPerImage": float(np.mean([r["seconds"] for r in rows])) if rows else None,
-           "unaligned": sum(1 for r in rows if not r["output"]["aligned"] or not r["input"]["aligned"]), "rows": rows}
+           "unaligned": sum(1 for r in rows if not r["output"]["aligned"] or not r["input"]["aligned"]),
+           "imagesWithWildTiles": sum(1 for r in rows if r["wildTiles"]), "rows": rows}
     json.dump(res, open(a.out, "w"), indent=1)
     print("RESULT " + json.dumps({k: v for k, v in res.items() if k != "rows"}), flush=True)
 
