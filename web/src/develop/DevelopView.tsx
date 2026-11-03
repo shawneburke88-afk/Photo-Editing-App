@@ -814,7 +814,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           // View-only states: Sharpening's mask, the Colour Mixer's Visualize; Lens Blur's depth (Part 32), drawn as grey
           // through the photo kind's default tones, so it reads the same on every edit.
           const depthView = x.lbDepth && !x.before && lensBlurActive(shown.lensBlur)
-          const neutral = depthView ? { ...defaultsFor(inf.kind), geometry: shown.geometry, lens: shown.lens, lensBlur: shown.lensBlur } : null
+          const neutral = depthView ? { ...defaultsFor(inf.kind), detail: undefined, geometry: shown.geometry, lens: shown.lens, lensBlur: shown.lensBlur } : null
           const view = neutral ? { ...displayUniforms(neutral), lensBlurDepth: true } : x.before ? du : { ...du, ...(x.maskPreview ? { detailMask: true } : {}), ...(x.mixerVis && !x.bypass.colour ? { mixerVisualize: x.mixerVis } : {}) }
           const ms = await engine.render(view, neutral ? multipliers(neutral, inf) : x.before && !x.beforeSettings ? inf.asShotWb : multipliers(shown, inf), v, x.indicators)
           setTiming((t) => ({ ...t, frame: ms }))
