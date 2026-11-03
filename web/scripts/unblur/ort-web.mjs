@@ -12,7 +12,8 @@
 //   node ort-web.mjs node --model a.onnx [--threads 4] [--runs 2] [--dims ...] [--out results.json]
 //       The same with onnxruntime-web's WebAssembly build in Node (resolved from the current directory's node_modules).
 //
-// Inputs are deterministic noise: uniform in [0, 1), or [-1.1, 1.1) for an input named "grid".
+// Inputs: an image-like test card in [0, 1] (--input pattern, the default, for a 3-channel image input) or deterministic
+// noise (--input noise: uniform in [0, 1), or [-1.1, 1.1) for an input named "grid").
 
 import { createServer } from 'node:http'
 import { execFileSync } from 'node:child_process'
@@ -59,13 +60,23 @@ function treeRss(root) {
 
 // ---- the page's code (also used in Node): deterministic inputs, sessions, runs, comparison.
 const RUNNER = String.raw`
+function pattern(shape) {
+  // An image-like test card in [0, 1]: smooth gradients, stripes at several frequencies and hard edges.
+  const [, C, H, W] = shape
+  const a = new Float32Array(C * H * W)
+  for (let c = 0; c < C; c++) for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    let v = 0.45 + 0.2 * Math.sin(x / 9 + c) * Math.cos(y / 13) + 0.1 * Math.sin((x + 2 * y) / 3.1) + ((((x >> 5) + (y >> 5)) & 1) ? 0.12 : -0.12)
+    a[(c * H + y) * W + x] = Math.min(1, Math.max(0, v + 0.05 * c))
+  }
+  return a
+}
 function noise(n, seed, lo, hi) {
   const a = new Float32Array(n)
   let s = seed >>> 0
   for (let i = 0; i < n; i++) { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; a[i] = lo + (hi - lo) * (s / 4294967296) }
   return a
 }
-async function runAll(ort, buf, { providers, runs, dims, verbose, threads }) {
+async function runAll(ort, buf, { providers, runs, dims, verbose, threads, input }) {
   const res = []
   let ref = null
   for (const provider of providers) {
@@ -80,7 +91,8 @@ async function runAll(ort, buf, { providers, runs, dims, verbose, threads }) {
         const shape = dims[name] || (meta[i] && meta[i].shape)
         if (!shape || shape.some((d) => typeof d !== 'number')) throw new Error('no fixed shape for input ' + name + ': pass --dims')
         const n = shape.reduce((a, b) => a * b, 1)
-        feeds[name] = new ort.Tensor('float32', name === 'grid' ? noise(n, 7 + i, -1.1, 1.1) : noise(n, 1 + i, 0, 1), shape)
+        const data = name === 'grid' ? noise(n, 7 + i, -1.1, 1.1) : (input === 'pattern' && shape.length === 4 && shape[1] === 3 ? pattern(shape) : noise(n, 1 + i, 0, 1))
+        feeds[name] = new ort.Tensor('float32', data, shape)
         r.inputs = { ...(r.inputs || {}), [name]: shape }
       })
       r.runMs = []
@@ -124,6 +136,7 @@ async function browser() {
   const runs = Number(arg('--runs', '2'))
   const dims = parseDims(arg('--dims'))
   const verbose = flag('--verbose')
+  const input = arg('--input', 'pattern')
   const page = `<!doctype html><meta charset="utf-8"><script type="module">
 import * as ort from '/ort/ort.webgpu.min.mjs'
 ort.env.wasm.wasmPaths = '/ort/'
@@ -179,14 +192,25 @@ window.ready = true
     let peak = 0
     const timer = setInterval(() => { peak = Math.max(peak, treeRss(process.pid)) }, 100)
     const t = Date.now()
-    const r = await p.evaluate(([url, o]) => window.go(url, o), [`/m/${i}`, { providers, runs, dims, verbose, threads }])
+    const r = await p.evaluate(([url, o]) => window.go(url, o), [`/m/${i}`, { providers, runs, dims, verbose, threads, input }])
     clearInterval(timer)
     const mine = logs.slice(start)
-    const placement = mine.filter((l) => /placed on|not assigned|Number of nodes|^\s*\[?[A-Za-z]+ \(|CPUExecutionProvider|fallback|Fallback|VerifyEachNode/.test(l)).slice(0, 400)
+    const placement = mine.filter((l) => /placed on|not assigned|Number of nodes|CPUExecutionProvider|fallback|Fallback|VerifyEachNode/.test(l))
+    // Nodes the WebGPU session left on the CPU, by operator ("Node(s) placed on [CPUExecutionProvider]" then "  Op (name)").
+    const cpu = {}
+    const cpuNames = []
+    let inCpu = false, sessions = 0
+    for (const l of placement) {
+      if (/Node placements/.test(l)) sessions++
+      if (/placed on \[/.test(l)) { inCpu = sessions >= 2 && /CPUExecutionProvider/.test(l) && /Node\(s\)/.test(l); continue }
+      const mm = inCpu && l.match(/VerifyEachNodeIsAssignedToAnEp\]\s+(\S+) \((.*)\)\s*$/)
+      if (mm) { cpu[mm[1]] = (cpu[mm[1]] || 0) + 1; if (cpuNames.length < 80) cpuNames.push(mm[1] + ' ' + mm[2]) }
+    }
     const errors = mine.filter((l) => /error|Error|ERROR|pageerror/.test(l) && !/logSeverity/.test(l)).slice(0, 20)
-    const row = { model: basename(models[i]), bytes: statSync(models[i]).size, results: r, peakRss: peak, wallMs: Date.now() - t, placement, errors }
+    const summary = placement.filter((l) => /placed on/.test(l)).map((l) => l.replace(/^.*VerifyEachNodeIsAssignedToAnEp\]\s*/, ''))
+    const row = { model: basename(models[i]), bytes: statSync(models[i]).size, input, results: r, peakRss: peak, wallMs: Date.now() - t, placementSummary: summary, webgpuCpuNodesByOp: cpu, webgpuCpuNodeNames: cpuNames, errors }
     results.push(row)
-    console.log(JSON.stringify({ ...row, placement: placement.slice(0, 60) }))
+    console.log(JSON.stringify(row))
   }
   await b.close()
   server.close()
@@ -205,7 +229,7 @@ async function node() {
   let peak = 0
   const timer = setInterval(() => { peak = Math.max(peak, process.memoryUsage().rss) }, 100)
   const runAll = new Function('performance', RUNNER + '; return runAll')(performance)
-  const r = await runAll(ort, readFileSync(model).buffer, { providers: ['wasm'], runs, dims, verbose: false, threads })
+  const r = await runAll(ort, readFileSync(model).buffer, { providers: ['wasm'], runs, dims, verbose: false, threads, input: arg('--input', 'pattern') })
   clearInterval(timer)
   peak = Math.max(peak, process.memoryUsage().rss)
   const row = { model: basename(model), node: process.version, threads, results: r, peakRss: peak }
