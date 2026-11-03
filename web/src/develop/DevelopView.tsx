@@ -66,6 +66,10 @@ import { MixerTatLayer, PointPickLayer } from './MixerTatLayer'
 import { CHANNEL_NAMES, BAND_NAMES, MAX_POINTS, newPoint, withColourMixer, withPoints, type ColourMixerSettings, type MixerChannel } from '../engine/develop/colour-mixer'
 import { applyEyes, eyeShown, hiddenNames, NO_GROUP_EYES, wbHidden, type SectionGroup, type SectionId } from './sectionEyes'
 import { EffectsPanel } from './EffectsPanel'
+import { LensBlurPanel } from './LensBlurPanel'
+import { aiFillReady, useLensFill } from './useLensFill'
+import { focusDepthAt, lensBlurActive, lensBlurForOtherPhoto, newLensBlur, newNoiseSeed, PLATE_LONG, withLensBlur, type LensBlurDepth } from '../engine/develop/lens-blur'
+import { decodeDepth } from '../engine/develop/depth-map'
 import { effectsGroupOn, withEffects } from '../engine/develop/effects'
 import { SectionEyeContext, type SectionEyes } from './sectionEyeContext'
 import { CurveAuto } from './CurveAuto'
@@ -95,7 +99,7 @@ import { PhotoNumbers, photoSummary, settingsChange } from '../diagnostics/anon'
 import { adapterName, looksIntegrated } from '../diagnostics/pcinfo'
 import { MasksPanel } from './MasksPanel'
 import { MASK_BRUSH_SIZE, OVERLAY_COLOURS } from './maskUi'
-import { presetMasks, withMasksList, type LocalMask } from '../engine/develop/masks'
+import { existingDepth, presetMasks, withMasksList, type LocalMask } from '../engine/develop/masks'
 import { hasAcrSidecar } from '../sidecar/acr'
 import type { MaskOverlayDraw } from '../engine/develop/indicators'
 import { useZoom } from './useZoom'
@@ -157,6 +161,7 @@ interface Bypass {
   detail: boolean
   masks: boolean
   effects: boolean
+  lensBlur: boolean
 }
 
 /** Settings without their spots (the field left out, as in edits that never had any). */
@@ -212,6 +217,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   const [autoBusy, setAutoBusy] = useState(false)
   const [picking, setPicking] = useState(false)
   const [wbPick, setWbPick] = useState(false)
+  /** Lens Blur (Part 31): picking its focus on the photo; its depth view (a view only). */
+  const [lbPick, setLbPick] = useState(false)
+  const [lbDepth, setLbDepth] = useState(false)
   const [loupe, setLoupe] = useState<{ x: number; y: number; image: ImageData } | null>(null)
   const [savedTargets, setSavedTargets] = useState<AutoTarget[]>([])
   const [refTarget, setRefTarget] = useState<AutoTarget | null>(null)
@@ -722,8 +730,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     [clipSettings, overlay, rawClipSettings, rawOverlay, curveDragClip, clipWhileDragging, proof.draw, maskOverlayDraw],
   )
   const maskView = useRef<{ draft: LocalMask[] | null; hidden: ReadonlySet<string>; active: boolean }>({ draft: null, hidden: new Set(), active: false })
-  const latest = useRef({ settings, info, view, before, beforeSettings, indicators, hover, draft, bypass, sectionsOff, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost, maskView: maskView.current })
-  latest.current = { settings, info, view, before, beforeSettings, indicators, hover, draft, bypass, sectionsOff, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost, maskView: maskView.current }
+  const latest = useRef({ settings, info, view, before, beforeSettings, indicators, hover, draft, bypass, sectionsOff, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost, maskView: maskView.current, lbDepth })
+  latest.current = { settings, info, view, before, beforeSettings, indicators, hover, draft, bypass, sectionsOff, guiding, curveDraft, curveView, removing, maskPreview, mixerDraft, mixerVis, gradingDraft, gradingBoost, maskView: maskView.current, lbDepth }
   /** The settings drawn: Before shows the defaults (or the snapshot set as Before); a preset or snapshot hovered, the crop being edited and switched-off groups apply on top. */
   const shownOf = (x: typeof latest.current, inf: SensorInfo): DevelopSettings => {
     // Before is the snapshot set as Before, exactly as it was saved (its process version too), …
@@ -803,9 +811,12 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         const v: ViewState = (x.draft || x.guiding) && !x.before ? { zoom: 'fit', center: [0.5, 0.5], frame: true } : x.view
         try {
           const du = displayUniforms(shown)
-          // View-only states: Sharpening's mask, the Colour Mixer's Visualize.
-          const view = x.before ? du : { ...du, ...(x.maskPreview ? { detailMask: true } : {}), ...(x.mixerVis && !x.bypass.colour ? { mixerVisualize: x.mixerVis } : {}) }
-          const ms = await engine.render(view, x.before && !x.beforeSettings ? inf.asShotWb : multipliers(shown, inf), v, x.indicators)
+          // View-only states: Sharpening's mask, the Colour Mixer's Visualize; Lens Blur's depth (Part 31), drawn as grey
+          // through the photo kind's default tones, so it reads the same on every edit.
+          const depthView = x.lbDepth && !x.before && lensBlurActive(shown.lensBlur)
+          const neutral = depthView ? { ...defaultsFor(inf.kind), geometry: shown.geometry, lens: shown.lens, lensBlur: shown.lensBlur } : null
+          const view = neutral ? { ...displayUniforms(neutral), lensBlurDepth: true } : x.before ? du : { ...du, ...(x.maskPreview ? { detailMask: true } : {}), ...(x.mixerVis && !x.bypass.colour ? { mixerVisualize: x.mixerVis } : {}) }
+          const ms = await engine.render(view, neutral ? multipliers(neutral, inf) : x.before && !x.beforeSettings ? inf.asShotWb : multipliers(shown, inf), v, x.indicators)
           setTiming((t) => ({ ...t, frame: ms }))
           setNoiseProfile((p) => (p === engine.lastProfile ? p : engine.lastProfile))
           setSharpenRadius((r) => (r === engine.lastRadius ? r : engine.lastRadius))
@@ -838,7 +849,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   useEffect(() => {
     if (status.kind === 'ready') requestRender()
-  }, [status.kind, settings, view, before, beforeSettings, indicators, hover, draft, bypass, sectionsOff, guiding, removing, requestRender, lensDb, curveDraft, maskPreview, noiseDb, mixerDraft, mixerVis, gradingDraft, gradingBoost])
+  }, [status.kind, settings, view, before, beforeSettings, indicators, hover, draft, bypass, sectionsOff, guiding, removing, requestRender, lensDb, curveDraft, maskPreview, noiseDb, mixerDraft, mixerVis, gradingDraft, gradingBoost, lbDepth])
   // Another curve graph shown: its histogram is measured again.
   useEffect(() => {
     if (status.kind === 'ready') scheduleStats()
@@ -952,19 +963,88 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   /**
    * The AI Depth range (PHASE3.md Part 24): the photo rendered as shot for the depth model (the edit's tones and colours;
    * no crop, angle, perspective, flips, lens correction, masks or effects (Part 25: Texture, Clarity, Dehaze, vignette,
-   * grain, Glow); the camera's orientation), and its uv → sensor map.
+   * grain, Glow) or Lens Blur (Part 31); the camera's orientation), and its uv → sensor map.
    */
   const renderAsShot = async (long: (w: number, h: number) => number) => {
     const engine = engineRef.current
     const x = latest.current
     const inf = x.info
     if (!engine || !inf) return null
-    const s: DevelopSettings = withMasksList({ ...x.settings, geometry: DEFAULT_GEOMETRY, lens: { ...x.settings.lens, enabled: false }, detail: undefined, effects: undefined }, undefined)
+    const s: DevelopSettings = withMasksList({ ...x.settings, geometry: DEFAULT_GEOMETRY, lens: { ...x.settings.lens, enabled: false }, detail: undefined, effects: undefined, lensBlur: undefined }, undefined)
     const g = engine.geometry(DEFAULT_GEOMETRY)
     const img = await gpuGate.foreground(() => engine.renderImage(displayUniforms(s), multipliers(s, inf), long(g.size[0], g.size[1])))
     return { rgba: img.data, width: img.width, height: img.height, uvToSensor: g.uvToSensor, sensor: sensorSize() }
   }
   const depth = useDepth((input) => renderAsShot((w, h) => renderSize(w, h, input)))
+  /** Who asked for the depth model (its download dialog says what it is for). */
+  const [depthFor, setDepthFor] = useState<'mask' | 'lensBlur'>('mask')
+  /** Lens Blur's AI fill (Part 31): AI Remove's model on the original photo. */
+  const lensFill = useLensFill()
+  /** The AI fill for the photo shown, as one history step (nothing changes when it is declined, cancelled or fails). */
+  const makeLensFill = async () => {
+    const h0 = historyRef.current
+    const lb0 = h0 ? current(h0).lensBlur : undefined
+    if (!lb0?.depth) return
+    const r = lb0.depth.raster
+    const plate = await lensFill.make(async () => {
+      const engine = engineRef.current
+      const px = decodeDepth(r)
+      if (!engine || !px) return null
+      const s = sensorSize()
+      const level = Math.max(0, Math.ceil(Math.log2(Math.max(s[0], s[1]) / PLATE_LONG)))
+      const img = await gpuGate.foreground(() => engine.detailImage(null, level))
+      return { rgba: img.rgba, w: img.width, h: img.height, depth: px, dw: r.width, dh: r.height }
+    }, newNoiseSeed())
+    const h = historyRef.current
+    const now = h ? current(h) : null
+    if (!plate || !now?.lensBlur) return
+    change('Lens Blur: AI fill', withLensBlur(now, { ...now.lensBlur, plate, aiFill: true }), false, true)
+  }
+  /**
+   * Lens Blur on (Part 31): the photo's depth (Lens Blur's own, a Depth range's, or computed once), the focus at the
+   * photo's centre, then the focus picker on. With AI Remove's model already on this device and a GPU to run it, the AI
+   * fill is drawn too (its own history step when it is done).
+   */
+  const applyLensBlur = async () => {
+    const h0 = historyRef.current
+    if (!h0 || status.kind !== 'ready') return
+    const cur = current(h0)
+    let d: LensBlurDepth | null = cur.lensBlur?.depth ?? null
+    if (!d) {
+      const e = existingDepth(cur.masks)
+      if (e?.raster) d = { model: e.model, modelVersion: e.modelVersion, ...(e.runtime ? { runtime: e.runtime } : {}), raster: e.raster }
+    }
+    if (!d) {
+      setDepthFor('lensBlur')
+      const got = await depth.obtain().finally(() => setDepthFor('mask'))
+      if (!got?.raster) return
+      d = { model: got.model, modelVersion: got.modelVersion, ...(got.runtime ? { runtime: got.runtime } : {}), raster: got.raster }
+    }
+    const px = decodeDepth(d.raster)
+    if (!px) return
+    const h = historyRef.current
+    const now = h ? current(h) : cur
+    // Settings that arrived without a depth (pasted, a preset) keep their focus point, measured on this photo's depth.
+    const next = now.lensBlur ? { ...now.lensBlur, depth: d, focus: { ...now.lensBlur.focus, depth: focusDepthAt(px, d.raster.width, d.raster.height, now.lensBlur.focus.pt[0], now.lensBlur.focus.pt[1]) } } : newLensBlur({ pt: [0.5, 0.5], depth: focusDepthAt(px, d.raster.width, d.raster.height, 0.5, 0.5) }, d)
+    change(now.lensBlur ? 'Lens Blur: depth' : 'Lens Blur', withLensBlur(now, next), false, true)
+    setLbPick(true)
+    if (!now.lensBlur && (await aiFillReady())) void makeLensFill()
+  }
+  /** A click on the photo while picking Lens Blur's focus: the focus moves to the distance there. */
+  const pickLensFocus = (uv: [number, number]) => {
+    const engine = engineRef.current
+    const h = historyRef.current
+    const lb = h ? current(h).lensBlur : undefined
+    const map = engine?.shownSnapshot()
+    if (!h || !lb?.depth || !map) return
+    const px = decodeDepth(lb.depth.raster)
+    if (!px) return
+    const [sx, sy] = displayToSensorAt(map, uv[0], uv[1])
+    const su = Math.min(1, Math.max(0, sx / map.sensor[0]))
+    const sv = Math.min(1, Math.max(0, sy / map.sensor[1]))
+    const d = focusDepthAt(px, lb.depth.raster.width, lb.depth.raster.height, su, sv)
+    change('Lens Blur: focus', withLensBlur(current(h), { ...lb, focus: { pt: [Math.round(su * 1e6) / 1e6, Math.round(sv * 1e6) / 1e6], depth: d } }), false, true)
+  }
   /**
    * Object select (PHASE3.md Part 27): the photo rendered as shot, as for the depth map, with its long side at the
    * encoder's 1.5 × (not larger than the photo).
@@ -1393,6 +1473,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       { id: 'detail', name: 'Detail', off: bypass.detail && detailOn(settings.detail) },
       { id: 'masks', name: 'Masks', off: bypass.masks && !!settings.masks?.length },
       { id: 'effects', name: 'Effects', off: bypass.effects && effectsGroupOn(settings.effects) },
+      { id: 'lensBlur', name: 'Lens Blur', off: bypass.lensBlur && lensBlurActive(settings.lensBlur) },
     ],
     sectionsOff,
   ).concat(bypass.masks ? [] : (settings.masks ?? []).filter((x) => masking.hidden.has(x.id)).map((x) => `mask ${x.name}`))
@@ -1835,7 +1916,9 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   async function savePreset(clip: Clipboard, name: string) {
     // Presets may hold gradients and range masks, not brush strokes (Part 23; owner's decision 7).
-    const data: PresetData = { keys: clip.keys, settings: withMasksList(clip.settings, presetMasks(clip.settings.masks)), rerunAuto: clip.rerunAuto && !!clip.settings.auto, sourceKind: clip.sourceKind }
+    // Presets carry neither depth maps nor AI mattes or fills (they belong to one photo: Parts 24, 27 and 31).
+    const lbPreset = clip.settings.lensBlur ? lensBlurForOtherPhoto(clip.settings.lensBlur) : undefined
+    const data: PresetData = { keys: clip.keys, settings: withLensBlur(withMasksList(clip.settings, presetMasks(clip.settings.masks)), lbPreset), rerunAuto: clip.rerunAuto && !!clip.settings.auto, sourceKind: clip.sourceKind }
     await catalog.savePreset(name, JSON.stringify(data))
     presetsChanged.emit()
   }
@@ -2046,7 +2129,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   // While the Colour Mixer's targeted adjustment tool or Point Color's picker is on, Develop listens to 'mixer'.
   const mixerTool = !!mixerTarget || pointPick
   // Groups start closed (ToolStack): a tool started with its shortcut opens its group, so its controls are in view.
-  const toolGroup: GroupId | null = removing ? 'remove' : masking.active ? 'masks' : curveTarget ? 'curve' : mixerTool ? 'colour' : wbPick ? 'basic' : guiding ? 'crop' : null
+  const toolGroup: GroupId | null = removing ? 'remove' : masking.active ? 'masks' : curveTarget ? 'curve' : mixerTool ? 'colour' : wbPick ? 'basic' : lbPick ? 'lensBlur' : guiding ? 'crop' : null
   useEffect(() => {
     if (toolGroup) setReveal({ id: toolGroup, n: Date.now(), ifClosed: true })
   }, [toolGroup])
@@ -2242,6 +2325,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'develop.cancel':
         setPicking(false)
         setWbPick(false)
+        setLbPick(false)
         setLoupe(null)
         setView((v) => ({ ...v, zoom: 'fit' }))
         break
@@ -2326,7 +2410,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
 
   function onPointerDown(e: React.PointerEvent) {
     // The crop tool and Guided Upright have their own overlays; clicks there don't zoom or pan.
-    if (status.kind !== 'ready' || wbPick || draft || guiding || (removing && !before) || (masking.active && !before && !bypass.masks)) return
+    if (status.kind !== 'ready' || wbPick || lbPick || draft || guiding || (removing && !before) || (masking.active && !before && !bypass.masks)) return
     ;(e.target as Element).setPointerCapture(e.pointerId)
     drag.current = { x: e.clientX, y: e.clientY, center: view.center, moved: false }
   }
@@ -2355,6 +2439,11 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     if (wbPick) {
       const uv = imageUv(e)
       if (uv) void pickWhiteBalance(uv)
+      return
+    }
+    if (lbPick) {
+      const uv = imageUv(e)
+      if (uv && uv[0] >= 0 && uv[0] <= 1 && uv[1] >= 0 && uv[1] <= 1) pickLensFocus(uv)
       return
     }
     const d = drag.current
@@ -2550,7 +2639,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
           />
         )}
         <div
-          className={`dstage ${draft ? 'cropping' : guiding ? 'guiding' : removing ? 'removing' : masking.active ? 'masking' : view.zoom === 'fit' ? 'fit' : 'zoomed'} ${wbPick ? 'wb-picking' : ''}`}
+          className={`dstage ${draft ? 'cropping' : guiding ? 'guiding' : removing ? 'removing' : masking.active ? 'masking' : view.zoom === 'fit' ? 'fit' : 'zoomed'} ${wbPick || lbPick ? 'wb-picking' : ''}`}
           ref={stageRef}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -2778,6 +2867,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
             </div>
           )}
           {wbPick && <div className="dbadge pick">Click something that should be neutral grey or white · Esc to cancel</div>}
+          {lbPick && !wbPick && <div className="dbadge pick">Click where the photo should be sharp · Esc when done</div>}
           {wbPick && loupe && <WbLoupe x={loupe.x} y={loupe.y} image={loupe.image} zoom={LOUPE_ZOOM} />}
           {picking && <div className="dbadge pick">Click a photo in the filmstrip to match its look · Esc to cancel</div>}
           {gpuNotice && <div className="dbadge gpu-notice" role="status">{gpuNotice}</div>}
@@ -3130,6 +3220,38 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
                 />
               ),
             },
+            {
+              id: 'lensBlur',
+              label: 'Lens Blur',
+              title: 'Lens Blur',
+              icon: GROUP_ICONS.lensBlur,
+              bypass: lensBlurActive(settings.lensBlur) || bypass.lensBlur
+                ? { off: bypass.lensBlur, onToggle: () => setBypass((b) => ({ ...b, lensBlur: !b.lensBlur })), title: bypass.lensBlur ? 'Show the lens blur again' : 'Show the photo without its lens blur (nothing is changed)' }
+                : undefined,
+              content: (
+                <LensBlurPanel
+                  lb={settings.lensBlur}
+                  masks={settings.masks}
+                  disabled={status.kind !== 'ready'}
+                  showHint={hintsPref === 1}
+                  picking={lbPick}
+                  onPick={setLbPick}
+                  depthView={lbDepth}
+                  onDepthView={setLbDepth}
+                  onApply={() => void applyLensBlur()}
+                  onChange={(label, lb) => {
+                    if (!lb) {
+                      setLbPick(false)
+                      setLbDepth(false)
+                    }
+                    change(label, withLensBlur(settings, lb))
+                  }}
+                  status={depthFor === 'lensBlur' ? depth.status : null}
+                  error={depthFor === 'lensBlur' ? depth.error : null}
+                  fill={{ busy: lensFill.busy, error: lensFill.error, onMake: () => void makeLensFill(), onCancel: lensFill.cancel }}
+                />
+              ),
+            },
           ]}
         />
         </SectionEyeContext.Provider>
@@ -3148,7 +3270,10 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
         <ModelDialog model={subjectSel.ask.model} files={subjectSel.ask.files} purpose={subjectSel.ask.slow ? (subjectSel.ask.large ? 'The Subject mask (on this computer it runs on the processor, because this graphics card’s AI runtime can’t hold the model: finding the subject takes longer)' : 'The Subject mask (on this computer it runs on the processor, without a suitable graphics card: finding the subject takes longer)') : 'The Subject mask'} onInstalled={(rec) => subjectSel.ask?.done(rec)} onClose={() => subjectSel.ask?.done(null)} />
       )}
       {depth.ask && (
-        <ModelDialog model={depth.ask.model} file={depth.ask.file} purpose="The Depth range mask" onInstalled={(rec) => depth.ask?.done(rec)} onClose={() => depth.ask?.done(null)} />
+        <ModelDialog model={depth.ask.model} file={depth.ask.file} purpose={depthFor === 'lensBlur' ? 'Lens Blur' : 'The Depth range mask'} onInstalled={(rec) => depth.ask?.done(rec)} onClose={() => depth.ask?.done(null)} />
+      )}
+      {lensFill.ask && (
+        <ModelDialog model={lensFill.ask.model} files={lensFill.ask.files} purpose={lensFill.ask.slow ? 'Lens Blur’s fill behind edges (on this computer it runs on the processor: several minutes per photo)' : 'Lens Blur’s fill behind edges'} onInstalled={(rec) => lensFill.ask?.done(rec)} onClose={() => lensFill.ask?.done(null)} />
       )}
       {pasting && (
         <PasteDialog

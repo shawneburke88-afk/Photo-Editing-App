@@ -67,11 +67,26 @@ export interface SavedHistory {
 type RasterLike = { raster?: { data: string } }
 
 /**
- * Calls `fn` on each Depth range shape's raster and each AI Remove spot's patch (Part 26) in a step's settings,
+ * Calls `fn` on each Depth range shape's raster, each AI Remove spot's patch (Part 26) and Lens Blur's depth map and AI
+ * fill (Part 31) in a step's settings,
  * replacing its data with what `fn` returns.
  */
 function mapRasters(s: DevelopSettings, fn: (data: string) => string): DevelopSettings {
   if (s.spots?.some((sp) => sp.ai)) s = { ...s, spots: s.spots.map((sp) => (sp.ai && typeof sp.ai.data === 'string' ? { ...sp, ai: { ...sp.ai, data: fn(sp.ai.data) } } : sp)) }
+  // Lens Blur (Part 31): its depth map, and its AI fill with its region.
+  const lb = s.lensBlur
+  if (lb && (lb.depth || lb.plate)) {
+    const d = lb.depth
+    const p = lb.plate
+    s = {
+      ...s,
+      lensBlur: {
+        ...lb,
+        ...(d && typeof d.raster?.data === 'string' ? { depth: { ...d, raster: { ...d.raster, data: fn(d.raster.data) } } } : {}),
+        ...(p && typeof p.data === 'string' ? { plate: { ...p, data: fn(p.data), ...(typeof p.region?.data === 'string' ? { region: { ...p.region, data: fn(p.region.data) } } : {}) } } : {}),
+      },
+    }
+  }
   if (!s.masks?.some((m) => m.components.some((c) => (c.shape as RasterLike).raster))) return s
   return {
     ...s,

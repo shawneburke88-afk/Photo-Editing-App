@@ -1436,8 +1436,9 @@ export class DevelopEngine {
     for (const d of this.detailWarps) this.retireTex(d.tex)
     this.detailCache = []
     this.detailWarps = []
-    // Lens Blur's results (Part 31) are made from the scene or its detailed copy.
-    for (const d of this.lensBlurCache) this.retireTex(d.tex)
+    // Lens Blur's results (Part 31) are made from the scene or its detailed copy. (Optional: tests build engines
+    // without the fields.)
+    for (const d of this.lensBlurCache ?? []) this.retireTex(d.tex)
     this.lensBlurCache = []
     this.lensNoise = []
   }

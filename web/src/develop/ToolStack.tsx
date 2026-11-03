@@ -11,7 +11,7 @@ import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, typ
 import { openGroups } from './panelState'
 import { eyeIcon } from './tools'
 
-export type GroupId = 'crop' | 'remove' | 'basic' | 'curve' | 'colour' | 'grading' | 'detail' | 'masks' | 'effects'
+export type GroupId = 'crop' | 'remove' | 'basic' | 'curve' | 'colour' | 'grading' | 'detail' | 'masks' | 'effects' | 'lensBlur'
 
 export interface ToolGroup {
   id: GroupId

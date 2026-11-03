@@ -11,8 +11,10 @@ import { CURVE_NORMS, DEFAULT_TONE_CURVE, isLinear, REGION_KEYS, REGION_NAMES, w
 import { describeSpots, spotsForOtherPhoto } from '../engine/develop/spots'
 import { bandsOf, describeMixer, describePoints, withColourMixer, withPoints } from '../engine/develop/colour-mixer'
 import { describeGrading, withColourGrading } from '../engine/develop/colour-grading'
-import { appendMasks, describeMasks, withMasksList } from '../engine/develop/masks'
+import { appendMasks, describeMasks, existingDepth, withMasksList } from '../engine/develop/masks'
 import { describeGlow, describeGrain, describePresenceFx, describeVignette, newGrainSeed, withEffects, type EffectsSettings } from '../engine/develop/effects'
+import { describeLensBlur, focusDepthAt, lensBlurForOtherPhoto, withLensBlur, type LensBlurSettings } from '../engine/develop/lens-blur'
+import { decodeDepth } from '../engine/develop/depth-map'
 
 export type PasteKey =
   | 'whiteBalance'
@@ -27,12 +29,13 @@ export type PasteKey =
   | 'spots'
   | 'masks'
   | 'vignette' | 'grain' | 'glow'
+  | 'lensBlur'
   | 'process' | 'baseExposure' | 'toneMapper' | 'highlightReconstruction' | 'demosaic'
 
 export interface PasteItem {
   key: PasteKey
   label: string
-  group: 'White balance' | 'Tone' | 'Presence' | 'Tone Curve' | 'Colour' | 'Detail' | 'Effects' | 'Crop' | 'Lens' | 'Remove' | 'Masks' | 'Advanced'
+  group: 'White balance' | 'Tone' | 'Presence' | 'Tone Curve' | 'Colour' | 'Detail' | 'Effects' | 'Lens Blur' | 'Crop' | 'Lens' | 'Remove' | 'Masks' | 'Advanced'
   /**
    * Only pasted between photos of the same kind (RAW to RAW, JPEG to JPEG): a RAW's +0.7 EV base exposure or its
    * camera white balance would be wrong on a JPEG, which is already rendered.
@@ -340,6 +343,18 @@ export const PASTE_ITEMS: PasteItem[] = [
     show: (s) => describeMasks(s.masks),
     changed: (a, b) => JSON.stringify(a.masks ?? []) !== JSON.stringify(b.masks ?? []),
   },
+  // Lens Blur (Part 31): unticked by default, never auto-synced; the depth, the AI fill and Keep sharp stay with their photo.
+  {
+    key: 'lensBlur',
+    label: 'Lens Blur',
+    group: 'Lens Blur',
+    copy: (to, from) => pasteLensBlur(to, from),
+    show: (s) => describeLensBlur(s.lensBlur),
+    changed: (a, b) => {
+      const strip = (lb: LensBlurSettings | undefined) => (lb ? JSON.stringify({ ...lensBlurForOtherPhoto(lb, () => 0), noise: { keep: lb.noise.keep }, focus: { pt: lb.focus.pt } }) : null)
+      return strip(a.lensBlur) !== strip(b.lensBlur)
+    },
+  },
   {
     key: 'process',
     label: 'Process version',
@@ -384,6 +399,32 @@ export const PASTE_ITEMS: PasteItem[] = [
   },
 ]
 
+/**
+ * Lens Blur pasted (Part 31): its settings travel; the depth and the AI fill belong to their photo and Keep sharp names one
+ * of its masks, so they stay behind. The target keeps its own depth (Lens Blur's, else a Depth range's) with the focus
+ * point measured on it; without one, Lens Blur waits for "Compute it". Each photo keeps its own noise pattern.
+ */
+function pasteLensBlur(to: DevelopSettings, from: DevelopSettings): DevelopSettings {
+  if (!from.lensBlur) return withLensBlur(to, undefined)
+  const own = to.lensBlur
+  const moved: LensBlurSettings = lensBlurForOtherPhoto(from.lensBlur)
+  if (own) moved.noise = { ...moved.noise, seed: own.noise.seed }
+  let depth = own?.depth
+  if (!depth) {
+    const e = existingDepth(to.masks)
+    if (e?.raster) depth = { model: e.model, modelVersion: e.modelVersion, ...(e.runtime ? { runtime: e.runtime } : {}), raster: e.raster }
+  }
+  if (depth) {
+    const px = decodeDepth(depth.raster)
+    moved.depth = depth
+    if (px) moved.focus = { ...moved.focus, depth: focusDepthAt(px, depth.raster.width, depth.raster.height, moved.focus.pt[0], moved.focus.pt[1]) }
+  }
+  if (own?.plate) moved.plate = own.plate
+  else moved.aiFill = false
+  if (own?.keepSharp) moved.keepSharp = own.keepSharp
+  return withLensBlur(to, moved)
+}
+
 export const PASTE_GROUPS = [...new Set(PASTE_ITEMS.map((i) => i.group))]
 
 /**
@@ -394,10 +435,10 @@ export const PASTE_GROUPS = [...new Set(PASTE_ITEMS.map((i) => i.group))]
  * doesn't turn them off on new photos. So are the spots (Part 11): they belong to one photo. And the masks (Part 23; owner's
  * decision 7).
  */
-export const DEFAULT_PASTE_KEYS: PasteKey[] = PASTE_ITEMS.filter((i) => i.group !== 'Advanced' && i.group !== 'Crop' && i.group !== 'Lens' && i.group !== 'Detail' && i.group !== 'Remove' && i.group !== 'Masks').map((i) => i.key)
+export const DEFAULT_PASTE_KEYS: PasteKey[] = PASTE_ITEMS.filter((i) => i.group !== 'Advanced' && i.group !== 'Crop' && i.group !== 'Lens' && i.group !== 'Detail' && i.group !== 'Remove' && i.group !== 'Masks' && i.group !== 'Lens Blur').map((i) => i.key)
 
-/** Items Auto Sync never sends (they belong to one photo): Remove spots (Part 11) and masks (Part 23). */
-export const NOT_AUTO_SYNCED: PasteKey[] = ['spots', 'masks']
+/** Items Auto Sync never sends (they belong to one photo): Remove spots (Part 11), masks (Part 23) and Lens Blur (Part 31). */
+export const NOT_AUTO_SYNCED: PasteKey[] = ['spots', 'masks', 'lensBlur']
 
 /** What a copy carries. */
 export interface Clipboard {
