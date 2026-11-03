@@ -1199,17 +1199,20 @@ jobs:
             --models "$O/misc_j_256_fp32.onnx,$O/nafnet_gopro64_256_fp32.onnx" --out "$R/browser_webgpu.json" || echo "::warning::browser webgpu failed"
           timeout 1800 node "$H" browser --ort "$ORT" --chrome "${CHROME}" --providers wasm,webgpu --threads 4 --runs 1 --verbose --dims "lq=1x3x384x384" --models "$Z" --out "$R/browser_webgpu_zoo.json" || true
 
-      - name: Graph structure without weights (to reproduce the operator checks elsewhere)
+      - name: Graph structure without the convolution weights (to reproduce the operator checks elsewhere)
         if: matrix.part == 'speed'
         run: |
           "$P" -I -c '
           import onnx, gzip, base64, sys
           for f in sys.argv[1:]:
               m = onnx.load(f)
-              shapes = [(t.name, list(t.dims), t.data_type) for t in m.graph.initializer]
+              conv_w = {n.input[i] for n in m.graph.node if n.op_type in ("Conv", "ConvTranspose") for i in (1, 2) if len(n.input) > i}
+              stripped = [(t.name, list(t.dims), t.data_type) for t in m.graph.initializer if t.name in conv_w]
+              keep = [t for t in m.graph.initializer if t.name not in conv_w]
               del m.graph.initializer[:]
-              b = base64.b64encode(gzip.compress(m.SerializeToString() + b"\nLBSHAPES" + repr(shapes).encode(), 9)).decode()
-              print("BEGIN-GRAPH", f.split("/")[-1], len(b))
+              m.graph.initializer.extend(keep)
+              b = base64.b64encode(gzip.compress(m.SerializeToString() + b"\nLBSHAPES" + repr(stripped).encode(), 9)).decode()
+              print("BEGIN-GRAPH", f.split("/")[-1], len(b), "stripped", len(stripped), "kept", len(keep))
               for i in range(0, len(b), 4000): print("G", b[i:i + 4000])
               print("END-GRAPH")
           ' "${RUNNER_TEMP}/onnx/misc_j_256_fp32.onnx"
