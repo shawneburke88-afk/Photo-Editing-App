@@ -1038,3 +1038,30 @@ jobs:
           "$P" -I web/scripts/unblur/fetch.py list-zip --repo rimchang/RSBlur --rev 27e3fe1620efc6e2613d753e88271dff47043bc1 --archive RSBlur.zip --head 30 || true
           "$P" -I web/scripts/unblur/fetch.py list-tar --rev afdb28d4aeb7739bc326b181ded390d4e2ac21a3 --archive RealBlur_Ori_sample.tar.gz --head 80 --depth 3 || true
           "$P" -I web/scripts/unblur/fetch.py list-tar --rev afdb28d4aeb7739bc326b181ded390d4e2ac21a3 --archive RealBlur.tar.gz --head 30 --depth 1 || true
+
+      - name: The authors' code at pinned commits and the checkpoints
+        if: ${{ !startsWith(inputs.unblur, 'probe') }}
+        run: |
+          set -e
+          clone() { git init --quiet "$3"; git -C "$3" fetch --quiet --depth 1 "https://github.com/$1.git" "$2"; git -C "$3" checkout --quiet FETCH_HEAD; test "$(git -C "$3" rev-parse HEAD)" = "$2"; echo "$1 at $2"; }
+          clone ChengxuLiu/MISCFilter aca59a8884cdf91f894dd0e7ca9f2527e4c9fd74 "${RUNNER_TEMP}/MISCFilter"
+          clone megvii-research/NAFNet 2b4af71ebe098a92a75910c233a3965a3e93ede4 "${RUNNER_TEMP}/NAFNet"
+          sha256sum "${RUNNER_TEMP}/MISCFilter/LICENSE" "${RUNNER_TEMP}/NAFNet/LICENSE"
+          P="${RUNNER_TEMP}/venv/bin/python"
+          "$P" -I web/scripts/unblur/fetch.py weights --out "${RUNNER_TEMP}/w" --which misc,nafnet
+          (cd "${RUNNER_TEMP}/w/misc" && unzip -q checkpoints.zip && sha256sum checkpoints/*.pth)
+          "$P" -I web/scripts/unblur/fetch.py zoo --out "${RUNNER_TEMP}/w/zoo"
+
+      - name: Export and check (dev)
+        if: startsWith(inputs.unblur, 'dev')
+        run: |
+          P="${RUNNER_TEMP}/venv/bin/python"
+          F=web/scripts/fixtures/ai-masks
+          "$P" -c "from PIL import Image; Image.open('$F/rocket.jpg').convert('RGB').save('${RUNNER_TEMP}/rocket.png')"
+          imgs="$F/astronaut.png,${RUNNER_TEMP}/rocket.png"
+          "$P" -I web/scripts/unblur/export.py misc --repo "${RUNNER_TEMP}/MISCFilter" --weights "${RUNNER_TEMP}/w/misc/checkpoints/RealBlur_J.pth" \
+            --name misc_realblur_j --out "${RUNNER_TEMP}/onnx" --sizes 256,512 --profile-sizes 256,512 --images "$imgs" || echo "::error::misc export failed"
+          "$P" -I web/scripts/unblur/export.py nafnet --repo "${RUNNER_TEMP}/NAFNet" --weights "${RUNNER_TEMP}/w/nafnet/NAFNet-GoPro-width64.pth" \
+            --name nafnet_gopro64 --out "${RUNNER_TEMP}/onnx" --sizes 256 --profile-sizes 256 --images "$imgs" || echo "::error::nafnet export failed"
+          ls -la "${RUNNER_TEMP}/onnx"
+
