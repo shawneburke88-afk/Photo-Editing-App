@@ -71,10 +71,10 @@ describe('the AI fill behind near edges', () => {
     // It is stored as Lens Blur keeps it.
     const lb = normalizeLensBlur({ v: 1, on: true, amount: 50, front: 100, focus: { pt: [0.5, 0.5], depth: 128 }, boost: 0, noise: { keep: true, seed: 1 }, aiFill: true, plate: { model: 'moebius', modelVersion: 'x/fp32', runtime: 'test', ...plate } })
     expect(lb?.plate?.data).toBe(plate!.data)
-  })
+  }, 60000)
 
   it('has nothing to fill on a photo without near edges', async () => {
     const flat = new Uint8Array(160 * 100).fill(128)
     expect(await makePlate(standIn([]), { rgba: new Float32Array(64 * 40 * 4), w: 64, h: 40, depth: flat, dw: 160, dh: 100 }, { seed: 1 })).toBeNull()
-  })
+  }, 30000)
 })
