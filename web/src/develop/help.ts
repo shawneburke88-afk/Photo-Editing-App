@@ -923,7 +923,6 @@ export const LENS_BLUR_TIPS = {
   noise: 'Adds back the photo’s own noise where the blur smoothed it away, so the blurred parts don’t look smoother than the sharp ones.',
   keepSharp: 'Keeps one of this photo’s masks sharp: the mask’s part of the photo is laid over the result after the blur. A blurred foreground in front of it still covers it.',
   aiFill: 'Uses the AI Remove model on this computer to draw what is likely hidden behind near edges in the original photo, so the edge of a blurred foreground shows a believable background. Off, that background is extended from its own nearby colours.',
-  aiFillMake: 'Draws the hidden background behind near edges with the AI Remove model (once for this photo; it is kept with the edit). It can take a while.',
   aiFillAgain: 'Draws the hidden background again, with a new seed.',
   depth: 'Shows the depth Lens Blur uses instead of the photo: white is near, black is far. A view only.',
   reset: 'Removes Lens Blur from this photo, with its depth and AI fill.',
