@@ -7,7 +7,8 @@
     "Moebius (AI Remove) is delivered from Hugging Face (\"delivery\": \"huggingface\", owner's decision 2026-10-21): at about 1.24 GB it is too big for GitHub Pages' 1 GB site limit, so the deploy skips it and the app downloads the three files itself, after the user agrees, from the commit-pinned /resolve/ URLs, checking each file's size and SHA-256. Pinned by the owner's decision, not by `models.mjs pin` (which leaves it alone). docs/PHASE3.md Part 26.",
     "Schema 2 (docs/PHASE3.md Part 27): a model may be several graphs (\"part\"), each graph's weights in its own file beside it (\"data\": true, ONNX external data), served from the site under their own file names (models/<id>/<revision 7>/<file name>). SAM 2.1 Hiera Tiny (Object select) is pinned by the owner's decision from the checked run in MASKS_PREP.md (GitHub Actions run 39653265084: every file's size and SHA-256 matched its Git LFS pointer); `models.mjs pin` leaves it alone (\"pinnedBy\": \"owner\").",
     "LightBench's own conversions (docs/PHASE3.md Part 29): the Sky model's authors publish PyTorch weights only, so the \"AI models\" workflow's efficientvit-export task exports them to ONNX on GitHub's runner from the pinned checkpoint (\"convertedFrom\"), checks the export against the authors' PyTorch model and publishes it, with its licence and a SOURCE note, as an asset of a GitHub Release of this repository (\"host\": \"github-release\", the release's \"tag\", and the commit the tag points at as \"revision\"). A release is never overwritten: a new export gets a new tag. The deploy fetches the asset from the release and checks its size and SHA-256 like the others; `models.mjs pin` leaves it alone.",
-    "People and faces (docs/PHASE3.md Part 28): RF-DETR-Seg Nano is delivered from Hugging Face by the app (\"delivery\": \"huggingface\", owner's decision 2026-10-21); YuNet (from GitHub, opencv/opencv_zoo, a Git LFS file: the deploy fetches it from media.githubusercontent.com at the pinned commit) and MediaPipe Selfie Multiclass (the community ONNX conversion) are served from LightBench's own site. All three are pinned by the owner's decision from the checked run in MASKS_PREP.md (GitHub Actions run 39653265084: each file's size and SHA-256 matched its Git LFS pointer)."
+    "People and faces (docs/PHASE3.md Part 28): RF-DETR-Seg Nano is delivered from Hugging Face by the app (\"delivery\": \"huggingface\", owner's decision 2026-10-21); YuNet (from GitHub, opencv/opencv_zoo, a Git LFS file: the deploy fetches it from media.githubusercontent.com at the pinned commit) and MediaPipe Selfie Multiclass (the community ONNX conversion) are served from LightBench's own site. All three are pinned by the owner's decision from the checked run in MASKS_PREP.md (GitHub Actions run 39653265084: each file's size and SHA-256 matched its Git LFS pointer).",
+    "Subject (docs/PHASE3.md Part 30): BiRefNet_lite as onnx-community converted it can't run in a browser with ONNX Runtime Web 1.30.0 (too many buffers per WebGPU kernel; up to 4.4 GiB of activations on the processor, over WebAssembly's 4 GiB). The \"AI models\" workflow's birefnet-patch task downloads the pinned onnx-community file (\"convertedFrom.weights\", checked by size and SHA-256), rearranges its graph without changing its weights (web/scripts/subject/birefnet_patch.py), checks it against the original on the CPU, and against the fp32 original (\"convertedFrom.reference\"), runs the app's own Subject code on it, and publishes it with its licence and a SOURCE note as a GitHub Release of this repository (\"host\": \"github-release\"), never overwriting one. The deploy fetches it from the release like the Sky model."
   ],
   "models": [
     {
@@ -254,6 +255,56 @@
       },
       "files": [
         { "variant": "fp32", "part": "model", "path": "selfie_multiclass_256x256.onnx", "bytes": 16454497, "sha256": "13961350bb2099688eb96182ffe26f24eb12c77b1df278a2ec95bbdc923136e1" }
+      ]
+    },
+    {
+      "id": "birefnet-lite",
+      "name": "BiRefNet_lite",
+      "task": "subject",
+      "delivery": "site",
+      "summary": "Finds the main subject of a photo (the person, animal or thing the photo is about), for the Subject mask: it gives each pixel how much it belongs to the subject, so hair, fur and fine edges stay soft.",
+      "licence": {
+        "id": "MIT",
+        "url": "https://github.com/ZhengPeng7/BiRefNet/blob/f7079632d681ecf12161fcea8905682934e59e51/LICENSE",
+        "file": "notices/birefnet.LICENSE.txt",
+        "statement": "The authors’ code repository (ZhengPeng7/BiRefNet, commit f707963) is under the MIT License (“Copyright (c) 2024 ZhengPeng”), the weights’ Hugging Face page (ZhengPeng7/BiRefNet_lite) is tagged “mit”, and so is the ONNX conversion’s (onnx-community/BiRefNet_lite-ONNX, commit de15b22).",
+        "notes": "The file LightBench downloads is LightBench’s own copy of onnx-community’s conversion, its graph arranged so that it runs in a browser with the weights unchanged, checked against the original by LightBench’s “AI models” workflow and published with this licence and a note of where it came from as a release of LightBench’s own repository on GitHub."
+      },
+      "credit": "Peng Zheng, Dehong Gao, Deng-Ping Fan, Li Liu, Jorma Laaksonen, Wanli Ouyang and Nicu Sebe: “Bilateral Reference for High-Resolution Dichotomous Image Segmentation” (CAAI Artificial Intelligence Research, 2024; arXiv:2401.03407). Code and weights: github.com/ZhengPeng7/BiRefNet. ONNX conversion: onnx-community on Hugging Face. Arranged for browsers: LightBench.",
+      "trainingData": "The authors give two different lists, and they disagree. The model table in the authors’ code repository on GitHub says this model learnt from DIS5K, DUTS, HRSOD, UHRSD, HRS10K, P3M-10k and TR-humans: published sets of photos in which people outlined the main subject by hand (TR-humans is made of computer-generated people). The model’s Hugging Face page says it learnt from DIS5K’s training photos only. Either way DIS5K is among them, and DIS5K’s terms allow non-commercial research and education only. Of the others, DUTS says “all rights reserved” without terms for other uses, HRSOD gives no terms, UHRSD and HRS10K come with MIT-licensed code without saying whether that covers the photos, P3M-10k is released under the MIT licence for research, and TR-humans under Apache-2.0. The part of the model that first reads the photo (a Swin Transformer) started from Microsoft’s weights trained on ImageNet-22K and ImageNet-1K, whose terms allow non-commercial research and education only. All these sets are named publicly. The model’s own licence is MIT.",
+      "source": {
+        "host": "github-release",
+        "repo": "shawneburke88-afk/Photo-Editing-App",
+        "tag": "models-birefnet-lite-1",
+        "revision": "07fe93213f515544350abad7e41f80b652e1ac76"
+      },
+      "convertedFrom": {
+        "weights": {
+          "repo": "onnx-community/BiRefNet_lite-ONNX",
+          "revision": "de15b22ba131738a16dff04aab8bdf8dc32e3ac1",
+          "path": "onnx/model_fp16.onnx",
+          "bytes": 114538221,
+          "sha256": "d39b897ceb16ae654c1731f3dba0cf9b368d9cae74b5a57459b455cc8bfec402"
+        },
+        "reference": {
+          "repo": "onnx-community/BiRefNet_lite-ONNX",
+          "revision": "de15b22ba131738a16dff04aab8bdf8dc32e3ac1",
+          "path": "onnx/model.onnx",
+          "bytes": 224005088,
+          "sha256": "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333"
+        }
+      },
+      "input": {
+        "size": 1024,
+        "mean": [0.485, 0.456, 0.406],
+        "std": [0.229, 0.224, 0.225]
+      },
+      "gpu": {
+        "maxStorageBufferBindingSize": 251658240,
+        "maxBufferSize": 251658240
+      },
+      "files": [
+        { "variant": "fp16", "part": "model", "path": "birefnet_lite_fp16.onnx", "bytes": 115109386, "sha256": "6c0b2871c1007a2e09fcec52401ad13eddadaec2bf731c0b153c992ddb7675cb" }
       ]
     }
   ]

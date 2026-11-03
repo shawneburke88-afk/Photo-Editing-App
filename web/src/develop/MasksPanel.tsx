@@ -13,6 +13,7 @@ import type { ObjectSelect } from './useObjectSelect'
 import type { People } from './usePeople'
 import type { PeoplePick } from './useMasking'
 import type { SkySelect } from './useSky'
+import type { SubjectSelect } from './useSubject'
 import { OVERLAY_MODES } from '../engine/develop/indicators'
 import { HELP, MASK_HELP, PEOPLE_PART_HELP, RANGE_NOTE, type ControlHelp } from './help'
 import { DEFAULT_MASK_BRUSH, MASK_BRUSH_SIZE, OVERLAY_COLOURS } from './maskUi'
@@ -37,6 +38,8 @@ interface Props {
   people: People
   /** The Sky mask's model and its messages (Part 29). */
   sky: SkySelect
+  /** The Subject mask's model and its messages (Part 30). */
+  subject: SubjectSelect
 }
 
 const NEW_KINDS: { kind: ShapeKind; action: string; short: string }[] = [
@@ -46,7 +49,7 @@ const NEW_KINDS: { kind: ShapeKind; action: string; short: string }[] = [
   { kind: 'colour', action: 'develop.maskColour', short: 'Colour' },
   { kind: 'luminance', action: 'develop.maskLuminance', short: 'Luminance' },
 ]
-/** The AI row (Part 27): masks an AI model makes on this computer (People and Sky have their own buttons below; subject joins later). */
+/** The AI row (Part 27): masks an AI model makes on this computer (People, Sky and Subject have their own buttons below). */
 const AI_KINDS: { kind: ShapeKind; action: string; short: string }[] = [
   { kind: 'ai', action: 'develop.maskObject', short: 'Object' },
   { kind: 'depth', action: 'develop.maskDepth', short: 'Depth' },
@@ -78,18 +81,23 @@ function localHelp(k: LocalKey): ControlHelp {
   return { ...h, hint: `${h.hint}, in the mask`, what: `${h.what} Here it acts only where the mask is, on top of Basic’s ${where} (the two add up).` }
 }
 
-/** The "Part to combine" choice for a Sky part (an AI part, `what: 'sky'`; Part 29). */
+/** The "Part to combine" choices for a Sky or Subject part (AI parts, `what: 'sky'` or `'subject'`; Parts 29 and 30). */
 const SKY_PART = 'sky'
+const SUBJECT_PART = 'subject'
+type WholePart = typeof SKY_PART | typeof SUBJECT_PART
+const isWholePart = (k: unknown): k is WholePart => k === SKY_PART || k === SUBJECT_PART
 
-export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, depth, object, people, sky }: Props) {
+export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, depth, object, people, sky, subject }: Props) {
   const [renaming, setRenaming] = useState<string | null>(null)
-  const [addKind, setAddKind] = useState<ShapeKind | typeof SKY_PART | null>(null)
+  const [addKind, setAddKind] = useState<ShapeKind | WholePart | null>(null)
   const mask = masks.find((x) => x.id === m.sel.mask) ?? null
   const comp = mask?.components.find((c) => c.id === m.sel.comp) ?? null
   const family = mask ? maskFamily(mask) : null
   const kindsFor = family === 'range' ? RANGE_KINDS : family === 'shape' ? SHAPE_KINDS : [...SHAPE_KINDS, ...RANGE_KINDS]
-  const skyAdd = addKind === SKY_PART && kindsFor.includes('ai')
-  const chosenAdd = addKind && addKind !== SKY_PART && kindsFor.includes(addKind) ? addKind : kindsFor[0]
+  const wholeAdd: WholePart | null = isWholePart(addKind) && kindsFor.includes('ai') ? addKind : null
+  const skyAdd = wholeAdd === SKY_PART
+  const wholeBusy = wholeAdd === SKY_PART ? m.skyBusy : wholeAdd === SUBJECT_PART ? m.subjectBusy : false
+  const chosenAdd = addKind && !isWholePart(addKind) && kindsFor.includes(addKind) ? addKind : kindsFor[0]
   const ov = m.overlay
 
   return (
@@ -152,6 +160,15 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, d
           >
             Sky
           </button>
+          <button
+            className={`button small touch ${m.subjectBusy ? 'on' : ''}`}
+            disabled={disabled || masks.length >= MAX_MASKS || m.subjectBusy}
+            aria-busy={m.subjectBusy || undefined}
+            onClick={() => void m.newSubject()}
+            title={`New subject mask (AI): ${MASK_HELP.subjectNew.what}`}
+          >
+            Subject
+          </button>
         </div>
         <p className="muted small mask-range-note">{RANGE_NOTE}</p>
         {people.status && <p className="small crop-note" role="status" aria-busy="true">{people.status}</p>}
@@ -205,10 +222,18 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, d
             <button className="linklike" onClick={() => sky.setError(null)} title="Hide this message">Dismiss</button>
           </p>
         )}
+        {(subject.status || m.subjectBusy) && <p className="small crop-note" role="status" aria-busy="true">{subject.status ?? 'Getting the Subject mask ready…'}</p>}
+        {subject.error && (
+          <p className="small masks-warn" role="alert">
+            {subject.error}{' '}
+            <button className="linklike" onClick={() => window.dispatchEvent(new CustomEvent('lightbench:settings', { detail: 'ai' }))} title="Open Settings → AI models">AI models…</button>{' '}
+            <button className="linklike" onClick={() => subject.setError(null)} title="Hide this message">Dismiss</button>
+          </p>
+        )}
         {masks.some(needsAi) && (
           <p className="small masks-note" role="note">
             Some AI selections came from another photo or a preset, so they aren’t shown here yet.{' '}
-            <button className="linklike" disabled={disabled || m.objectBusy || m.skyBusy} onClick={() => void m.computeMissingAi()} title={MASK_HELP.objectCompute.what}>Compute for this photo</button>
+            <button className="linklike" disabled={disabled || m.objectBusy || m.skyBusy || m.subjectBusy} onClick={() => void m.computeMissingAi()} title={MASK_HELP.objectCompute.what}>Compute for this photo</button>
           </p>
         )}
         {m.creating && m.creating.kind !== 'ai' && (
@@ -283,12 +308,13 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, d
         )}
         {mask && (
           <div className="mask-add" role="group" aria-label={`Add to ${mask.name}`}>
-            <select aria-label="Part to combine" title="The kind of part to combine with this mask" value={skyAdd ? SKY_PART : chosenAdd} onChange={(e) => setAddKind(e.target.value as ShapeKind | typeof SKY_PART)} disabled={disabled}>
+            <select aria-label="Part to combine" title="The kind of part to combine with this mask" value={wholeAdd ?? chosenAdd} onChange={(e) => setAddKind(e.target.value as ShapeKind | WholePart)} disabled={disabled}>
               {kindsFor.map((k) => <option key={k} value={k}>{KIND_LABELS[k]}{k === 'depth' || k === 'ai' ? ' (AI)' : ''}</option>)}
               {kindsFor.includes('ai') && <option value={SKY_PART}>Sky (AI)</option>}
+              {kindsFor.includes('ai') && <option value={SUBJECT_PART}>Subject (AI)</option>}
             </select>
             {(['add', 'subtract', 'intersect'] as MaskOp[]).map((op) => (
-              <button key={op} className="button small touch" disabled={disabled || (skyAdd && m.skyBusy)} onClick={() => (skyAdd ? void m.newSky(op) : m.addPart(chosenAdd, op))} title={skyAdd ? `${OP_NAME[op]} the sky ${op === 'add' ? 'to' : op === 'subtract' ? 'from' : 'with'} ${mask.name}: ${MASK_HELP.skyPart.what}` : `${OP_NAME[op]} ${chosenAdd === 'ai' ? 'an object selection' : `a ${KIND_LABELS[chosenAdd].toLowerCase()}`} ${op === 'add' ? 'to' : op === 'subtract' ? 'from' : 'with'} ${mask.name}`}>
+              <button key={op} className="button small touch" disabled={disabled || wholeBusy} onClick={() => (wholeAdd ? void (skyAdd ? m.newSky(op) : m.newSubject(op)) : m.addPart(chosenAdd, op))} title={wholeAdd ? `${OP_NAME[op]} the ${wholeAdd} ${op === 'add' ? 'to' : op === 'subtract' ? 'from' : 'with'} ${mask.name}: ${(skyAdd ? MASK_HELP.skyPart : MASK_HELP.subjectPart).what}` : `${OP_NAME[op]} ${chosenAdd === 'ai' ? 'an object selection' : `a ${KIND_LABELS[chosenAdd].toLowerCase()}`} ${op === 'add' ? 'to' : op === 'subtract' ? 'from' : 'with'} ${mask.name}`}>
                 {OP_SIGN[op]} {OP_NAME[op]}
               </button>
             ))}
@@ -318,6 +344,7 @@ export function MasksPanel({ masks, m, disabled, showHint, acr, lightroomNote, d
       {(m.creating?.kind === 'brush' || comp?.shape.kind === 'brush') && <BrushControls m={m} disabled={disabled} showHint={showHint} dabsLeft={m.dabsLeft()} />}
       {mask && comp && <ShapeControls m={m} mask={mask} comp={comp} disabled={disabled} showHint={showHint} />}
       {mask && comp && comp.shape.kind === 'ai' && (comp.shape as AiShape).what === 'sky' && <SkyControls m={m} mask={mask} comp={comp} disabled={disabled} />}
+      {mask && comp && comp.shape.kind === 'ai' && (comp.shape as AiShape).what === 'subject' && <SubjectControls m={m} mask={mask} comp={comp} disabled={disabled} />}
       {mask && (
         <section className="mask-settings" aria-label={`${mask.name} settings`}>
           <div className="crop-tools">
@@ -467,7 +494,7 @@ function ShapeControls({ m, mask, comp, disabled, showHint }: { m: Masking; mask
     const n = (s as BrushShape).strokes.length
     return <p className="muted small">{n} {n === 1 ? 'stroke' : 'strokes'}. Paint to add, Alt-drag or Erase to take away.</p>
   }
-  if (s.kind === 'ai' && (s as AiShape).what === 'sky') return null
+  if (s.kind === 'ai' && ((s as AiShape).what === 'sky' || (s as AiShape).what === 'subject')) return null
   if (s.kind === 'ai' && isPeoplePart((s as AiShape).what)) {
     const a = s as AiShape
     return (
@@ -581,6 +608,25 @@ function SkyControls({ m, mask, comp, disabled }: { m: Masking; mask: LocalMask;
         {mask.components.length === 1 && (
           <button className={`button small touch ${mask.invert ? 'on' : ''}`} disabled={disabled} aria-pressed={mask.invert} onClick={m.invertMask} title={MASK_HELP.skyInvert.what}>
             Everything except the sky
+          </button>
+        )}
+      </div>
+    </section>
+  )
+}
+
+/** A Subject part (Part 30): where it came from, finding it again, and "everything except the subject" (the mask's Invert). */
+function SubjectControls({ m, mask, comp, disabled }: { m: Masking; mask: LocalMask; comp: MaskComponent; disabled: boolean }) {
+  const a = comp.shape as AiShape
+  return (
+    <section aria-label="Subject">
+      {!a.raster && <p className="small masks-warn">The subject isn’t found for this photo yet: this part isn’t shown.</p>}
+      <p className="muted small">The subject, found on this computer by {a.model}{a.modelVersion ? ` ${a.modelVersion}` : ''}. {mask.components.length === 1 ? ' To change everything except the subject, use the button below or the mask’s Invert.' : ' To leave the subject out instead, click Invert on this part.'}</p>
+      <div className="crop-tools">
+        <button className="button small touch" disabled={disabled || m.subjectBusy} onClick={() => void m.recomputeAi(comp.id)} title={MASK_HELP.subjectRecompute.what}>Find the subject again</button>
+        {mask.components.length === 1 && (
+          <button className={`button small touch ${mask.invert ? 'on' : ''}`} disabled={disabled} aria-pressed={mask.invert} onClick={m.invertMask} title={MASK_HELP.subjectInvert.what}>
+            Everything except the subject
           </button>
         )}
       </div>

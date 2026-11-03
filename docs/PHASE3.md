@@ -3914,3 +3914,150 @@ Test photos: `astronaut.png` (Part 27's), **`rocket.jpg`** (SpaceX's DSCOVR laun
 ### Files
 
 New: `web/src/ai/sky.ts`, `skySelect.ts`, `src/develop/useSky.ts`, `web/scripts/sky-check.mjs`, `web/scripts/sky/export_efficientvit.py`, `commons_photo.py`, `web/scripts/fixtures/ai-masks/rocket.jpg`, `web/models/notices/efficientvit.LICENSE.txt`; tests `src/ai/sky.test.ts`, `sky-manifest.test.ts`, `src/engine/develop/sky-mask.test.ts`. Changed: `.github/workflows/ai-models.yml`, `web/models/manifest.json`, `web/scripts/models.mjs` (+ test), `src/ai/manifest.ts`, `models.ts`, `ModelDialog.tsx`, `AiModelsSettings.tsx`, `src/develop/MasksPanel.tsx`, `useMasking.ts`, `DevelopView.tsx`, `help.ts`, `src/engine/develop/masks.ts`, the fixtures' `SOURCE.md`, two of part 1's tests (a later build's AI part is now "subject"), THIRD_PARTY_NOTICES.md, USABILITY.md.
+
+## Part 30: AI masks, part 4: Subject
+
+**What it does.** A **Subject** button in the Masks group's AI row finds the photo's main subject (the person, animal or thing the photo is about) and makes it a mask ("Subject 1") in one history step. The model is **BiRefNet_lite** (Zheng et al.; MIT), in **LightBench's own patched copy** of onnx-community's ONNX conversion: the same weights, the graph rearranged so that ONNX Runtime Web 1.30.0 can run it in a browser at all. It is published as a GitHub Release of this repository and served from LightBench's site like the Sky model. The matte is the model's own probability per pixel, so hair and fur keep soft edges; like every AI mask (Part 27) it is kept in the edit and the .xmp (at most 1024 px on its long side) and draws everywhere without the model. Old edits are unchanged (below). Built on Parts 27–29; Copy/Paste mask settings and presets are a parallel build (Part 31), so this part adds no paste or preset handling of its own.
+
+### Owner's decisions and how they are built
+
+| Decision | Built as |
+|---|---|
+| Subject: BiRefNet_lite, **patched by LightBench** (`DECISIONS_2026-10-21.md`) | `web/scripts/subject/birefnet_patch.py` (MASKS_PREP_2.md's `fix_models.py birefnet-fix`, ported, plus two rewrites found necessary here, below), run on GitHub's runner by the "AI models" workflow's new **`birefnet-patch`** task. |
+| Hosting: **GitHub Release assets** of this repository, served by the site | Manifest entry `birefnet-lite`, task `subject`, `"source": { "host": "github-release", "tag": "models-birefnet-lite-1", "revision": "07fe932…" }`, `convertedFrom.weights` = the onnx-community fp16 file it was patched from (`de15b22…`, 114,538,221 bytes, SHA-256 `d39b897c…`) and `convertedFrom.reference` = the fp32 file it was also checked against (224,005,088 bytes, `56000243…`); `convertedFrom.code` is now optional (`parseManifest` wants code or a reference). The deploy's `models.mjs fetch` gets the asset from the release, checks size and SHA-256, and serves it at `models/birefnet-lite/07fe932/birefnet_lite_fp16.onnx` with `LICENSE.txt` beside it (checked here: the deploy's own fetch of the release asset passed). |
+| A plain-words note giving **both training-data lists** | The manifest's `trainingData`, shown in the download dialog and Settings → AI models: the authors give two lists that disagree (GitHub's model table: DIS5K, DUTS, HRSOD, UHRSD, HRS10K, P3M-10k, TR-humans; the Hugging Face card: DIS5K's training set only); either way DIS5K is in it and its terms allow non-commercial research and education only; the others' terms in a sentence; the Swin backbone's ImageNet-22K/1K start (`config.py` at `f707963`: `swin_tiny_patch4_window7_224_22kto1k_finetune.pth`). |
+| AI parts behave as shapes; mattes at most 1024 px | `kind: 'ai'`, `what: 'subject'` (`AI_WHATS`, label "Subject"); no prompt (the whole photo's subject, like Sky); `AI_RASTER_LONG`. |
+| Paste and presets: no special handling (the parallel build changes them for every AI part) | None added. Today's shared rules apply unchanged: a pasted Subject part waits for **Compute for this photo** (handled with Sky's whole-photo path), and presets keep it waiting as they keep Sky parts. Not tested here, so that this branch's tests don't conflict with Part 31's. |
+| No notes in the UI; a tooltip on every new control; the legal notices kept | Tooltips: the Subject button, Find the subject again, Everything except the subject, the "Part to combine" buttons for Subject (AI). No app comparisons (checked in the e2e). THIRD_PARTY_NOTICES.md has the model's row and an MIT section; the release carries `LICENSE.txt` and `SOURCE.md`. |
+
+### Why the patch had to grow (found here)
+
+MASKS_PREP_2.md's patch fixed WebGPU's per-kernel buffer count (Splits of up to 32 outputs, Concats of up to 32 inputs) and the Convs over 128 MiB. Running the files here showed two more problems, both from the emulated **deformable convolutions** (GatherND ×4 → Transpose → Reshape → Mul → `Sum` → Mul → Reshape → Transpose → Reshape → a k × k stride-k Conv):
+
+1. **Memory.** At 1024² the largest block (`decoder_block1 aspp_deforms.2`, 7 × 7 at 256²) makes five 784 MiB tensors (fp32) at once: ONNX Runtime's CPU peak is **4.39 GiB** of activations (its own count; 6.6 GB of process memory without the arena). The original fp32 model fails in ONNX Runtime Web's WebAssembly runtime with `std::bad_alloc` (4 GB heap; tried here in Node). So there could be no CPU fallback — and on WebGPU too, because:
+2. **`Sum` has no WebGPU kernel**, so ONNX Runtime places it on the CPU, copying its four 784 MiB inputs into that same 4 GB heap (MASKS_PREP_2.md's one browser run of the earlier patch ended in WebAssembly's `Aborted()`, consistent with this; not proven).
+
+The patch now, all exact rearrangements:
+
+| Rewrite | Where | fp16 file (published) |
+|---|---|---|
+| **Deformable blocks per channel chunk** (new): each block whose sampled tensor is over 64 MiB runs per chunk of channels (widths multiples of 8): slice the sampled input, gather, weight, add, modulate, lay out, convolve with that slice of the Conv's weights, and add the partial results in order. The big tensor never exists whole; ONNX Runtime's depth-first execution order runs one chunk's chain at a time. | blocks found by walking back from each k × k stride-k Conv through tensors of its input's size to the GatherNDs and their common source; checked op by op (only layout, gather, multiply, add, cast), channel axes checked from the profiled shapes | 3 blocks: `aspp_deforms.2` of decoder block 1 (392 MiB → 8 × 8 channels, 49 MiB each), `aspp_deforms.1` of block 1 (72 MiB → 56 + 8), `aspp_deforms.2` of block 2 (98 MiB → 40 + 24) |
+| **`Sum` → a chain of `Add`** (new): ((a + b) + c) + d, as the CPU's Sum adds | every Sum | 17 |
+| Split with more than 7 outputs → one Slice each; Concat with more than 7 inputs → a tree (ported) | | 59 Splits, 4 Concats |
+| Conv with input or output over 128 MiB → channel chunks, widths multiples of 8 (ORT's WebGPU Conv is wrong at 6, 9 or 15 input channels) (ported) | | 4 Convs |
+
+Shapes now come from **one profiled CPU run** (ONNX Runtime's profiler records every node's input and output shapes) instead of MASKS_PREP_2's batched probing. The fp32 patch made here locally is byte-identical to the runner's (SHA-256 `97c2a893…`); MASKS_PREP_2's earlier files (`fd56db3a…`, `4125e34a…`) differ, as expected (no deformable chunks, no Sum rewrite).
+
+### The run ("AI models" → `birefnet-patch`, publish ticked)
+
+**[Run 40618916189](https://github.com/shawneburke88-afk/Photo-Editing-App/actions/runs/40618916189)** at `07fe932`: every check passed and the release was published (10 minutes in all). Log extract: `scratchpad/amsub/action-logs/run-40618916189.md`; the full structured report is the release's `patch.json` (kept in `scratchpad/amsub/release1/`).
+
+- Downloaded `onnx/model_fp16.onnx` and `onnx/model.onnx` from Hugging Face at `de15b22`, sizes and SHA-256 checked; the BiRefNet `LICENSE` at `f707963` checked byte for byte against `web/models/notices/birefnet.LICENSE.txt`.
+- **Release [`models-birefnet-lite-1`](https://github.com/shawneburke88-afk/Photo-Editing-App/releases/tag/models-birefnet-lite-1)**, tag at `07fe93213f515544350abad7e41f80b652e1ac76`: `birefnet_lite_fp16.onnx` **115,109,386 bytes, SHA-256 `6c0b2871c1007a2e09fcec52401ad13eddadaec2bf731c0b153c992ddb7675cb`**; `LICENSE.txt` 1,066 (`92a7089e…`); `SOURCE.md` 4,859 (`92221746…`); `patch.json` 27,306 (`18fee4e6…`). The publish job checked the artifact's SHA-256, that neither release nor tag existed, and the bytes as downloaded by the public URL afterwards. The assets were downloaded again here and match.
+
+Two more runs (`subject-check`: the deploy's own `models.mjs fetch` of the pinned asset from the release, then the app's code on it):
+
+| Run | Result |
+|---|---|
+| [40633154518](https://github.com/shawneburke88-afk/Photo-Editing-App/actions/runs/40633154518) (`23ef29a`) | The fetch from the release passed (size and SHA-256); astronaut and rocket gave exactly run 1's results; **failed** on the third photo: Wikimedia Commons' search now returned a different CC0 photo ("Sunset sky silhouette", 1280 × 960, no subject: coverage 0.0000), and `subject-check.mjs` compared it with run 1's Python reference for the trees photo. A bug in the check, not the model: the reference is now matched by the photo's SHA-256 (recorded by `verify` from now on), or by name for the committed photos only. |
+| [40634294612](https://github.com/shawneburke88-afk/Photo-Editing-App/actions/runs/40634294612) (`1537042`) | **Passed**: the release asset fetched and checked; astronaut 0.4155 (Python 0.4148), rocket 0.1245 (0.1244), the sunset photo 0.0000; runs 19.1–24.3 s; every output finite; the stored mattes decode to themselves. |
+
+Patched against original on the CPU (ONNX Runtime 1.31.0 in Python; BiRefNet's preprocessing: bilinear 1024², ImageNet mean and std):
+
+| Photo | fp16 patched vs fp16 original: mask IoU, largest prob. difference | fp16 patched vs **fp32 original**: IoU, mean prob. difference | fp32 patched vs fp32 original: IoU, largest prob. difference |
+|---|---|---|---|
+| astronaut.png | 0.999998, 0.00089 | 0.99996, 1.5e-5 | 1.0, 2.7e-6 |
+| rocket.png | 0.99993, 0.0015 | 0.99927, 1.0e-4 | 1.0, 9.6e-6 |
+| trees.png (Part 29's CC0 Commons photo) | 0.99995, 0.0010 | 0.99940, 9.0e-5 | 1.0, 5.6e-6 |
+| random input | 1.0, 1e-6 | 1.0, 4e-7 | 1.0, < 1e-6 |
+
+(fp16 differences come from fp16 arithmetic rounding the chunks' partial sums; the thresholds were set before the run: fp32 IoU ≥ 0.9999 and every probability within 0.001; fp16 IoU ≥ 0.995 and mean difference ≤ 0.002; fp16 against fp32 IoU ≥ 0.95 and mean ≤ 0.02.)
+
+### The GPU limit gate (largest tensors, measured)
+
+`birefnet_patch.py tensors` profiles one CPU run at 1024²:
+
+| File | Largest tensor | Peak activations (ORT's count) | Over 128 MiB |
+|---|---|---|---|
+| onnx-community fp16, original | 822 MB (a CPU fp32 copy of the deformable gather) | **4.64 GB** | 59 tensors (Cast, Mul, Reshape, Transpose, GatherND, Sum, Conv, Concat, Resize) |
+| **Patched fp16 (published)** | in the graph's own types: **251,658,240 B (240 MiB)**, `/decoder/Concat_29` [1, 120, 1024, 1024] fp16; then Resize_7 (192 MiB fp16) and `dec_att/Concat_1` (160 MiB). On the CPU, ORT computes Resize and some Convs in fp32 copies (largest 402,653,184 B) | **1.70 GB** | Concat 2, Resize 1 (and 3 CPU-only fp32 casts) |
+| Patched fp32 (not published) | 503,316,480 B (Concat_29) | 1.88 GB | Concat 3, Resize 1 |
+
+So **the patch does not keep every tensor under 128 MiB** (the brief's assumption): the deformable and Conv tensors are under it, but three Concat/Resize outputs stay over it. Those ops handle ORT's segmented bindings correctly in MASKS_PREP_2's sweep, and its lavapipe runs of the earlier patch at 128 MiB were right, but rather than rely on that, part 1's gate applies: the manifest's `gpu` need is **251,658,240** bytes (binding and buffer size), and `models.ts subjectPlan` runs **fp16 on WebGPU only where the GPU has `shader-f16` and binds at least that**; otherwise on the processor (`SUBJECT_WASM_FALLBACK`, on), with the reason in the status line, the dialog and Diagnostics (`gate: "binding"`). An fp32 file, if ever published, would run on WebGPU without `shader-f16` at twice the need (tested in unit tests; none is published).
+
+### Variants: fp16 only
+
+| | Site's models with the runtime | Notes |
+|---|---|---|
+| Before (main 0.6.18) | 445.1 MB | (the brief's estimate was about 465 MB) |
+| **+ fp16 only (built)** | **560.2 MB** (+115.1 MB) | + AI Denoise's planned 58 MB: about 618 MB of 1 GB |
+| + fp16 and fp32 | 784.8 MB (+339.7 MB) | + AI Denoise: about 843 MB |
+
+fp16 is good enough on the processor: against the fp32 original, IoU ≥ 0.9993 and mean probability difference ≤ 1e-4 on the three photos (Python); in the app's own code with the app's WebAssembly runtime the fp16 and fp32 patched mattes agree at IoU 0.9998 / 0.9991 / 0.9986; and fp16 is barely slower there (19–25 s against 18 s per run, below). So the GPUs without `shader-f16` (or below the binding gate) use the fp16 file on the processor; **fp32 is not published** (it was patched and checked in the same run, for the record; `97c2a893…`, 224,589,113 bytes).
+
+### Speed and memory
+
+| Where | Model run | Notes |
+|---|---|---|
+| GitHub runner, the app's WebAssembly runtime (Node), 4 threads, fp16 | **19.1–25.5 s** per run (session 4.6–5.7 s; three runs) | fp32: 17.8–18.0 s (session 3.3 s). Process memory 3.2–3.5 GB (fp16), 4.5 GB (fp32), within WebAssembly's 4 GB heap. |
+| GitHub runner, ONNX Runtime CPU in Python, 4 threads | fp16 9.5–10 s, fp32 8.3–9.3 s (patched); the originals about the same | |
+| **A browser tab**, headless Chromium on this (shared, loaded) machine, the app's runtime worker on the processor, the real published file | **34–51 s** per run; 90 s from Download to the history step (download, check, load, render, run, matte); "Find the subject again" 107 s (the graph is released after each processor run and loaded again) | e2e *real*, below |
+| A real GPU (WebGPU, fp16) | **unmeasured** | No GPU here; SwiftShader has no `shader-f16`. |
+
+The processor path is slower than the owner's 15 s rule for a heavy model's fallback (Part 27); it is **on**, as AI Remove's (minutes) is, because the subject is found once per photo with a status line saying it takes longer. **Owner question 1.** On the processor the graph is released after the run (`subjectSelect.ts`): its run holds about 2 GB of the worker's 4 GB WebAssembly memory, shared with the other models.
+
+### The pipeline (`ai/subject.ts`, `ai/subjectSelect.ts`, `develop/useSubject.ts`)
+
+| Step | Detail |
+|---|---|
+| Photo | Develop's rendering as shot (Parts 24 and 27), 1.5 × 1024 on its long side (never more than the photo). |
+| Input | BiRefNet's own: stretched to 1024 × 1024 (aspect not kept), RGB / 255, ImageNet mean and std (`input_image` [1, 3, 1024, 1024]). The app resizes by area (`depth.ts toTensor`), BiRefNet's code bilinearly: the app's mean probability is within 0.0007 of Python's on all three photos. |
+| Output | `output_image` [1, 1, 1024, 1024] logits → sigmoid (BiRefNet's own), no threshold or ramp: the soft edges stay. Non-finite values: "invalid numbers", nothing changed. |
+| Matte | Each sensor-frame texel mapped to the rendering, the probability read bilinearly (half-pixel centres), 8 bits, at most 1024 px, Part 24's encoding. |
+| Kept per photo | One result per photo while it is open: a second Subject mask, Subtract the subject, or Compute for this photo with several waiting parts reuse it; **Find the subject again** runs the model again (one step). |
+| Diagnostics | `ai-mask` entries with `what: "subject"`: step, provider, variant, gate, model/matte/render/load/total times, matte size and characters, model, GPU name; no pixels. |
+
+**Size in the edit** (real model, app code, run 40618916189): astronaut 512 × 512: 10,360 characters; rocket 640 × 427: 74,324 (its lattice towers are half-selected: 17 % of the matte's texels are between 0 and 255); trees 768 × 1024: 128,624. The soft probabilities compress less well than SAM's ramp (Part 27's 68 kB at 1024²); within the 1 MB per matte and 8 MB per edit caps. Rounding to 8 bits zeroes probabilities below 0.002.
+
+### Using it
+
+| Behaviour | Detail |
+|---|---|
+| The AI row | **Object**, **Depth**, **People**, **Sky**, **Subject**. Tooltip: what it does, soft edges, that the model runs on this computer and is asked for once. No keyboard shortcut (as Sky). |
+| First use | The download dialog: "Download BiRefNet_lite?", once, from LightBench's own site, SHA-256, kept on the device, removable; **115.1 MB** (fp16) plus the runtime's 26.8 MB if not there yet; **Licence: MIT** with the note that the file is LightBench's own copy of onnx-community's conversion, arranged to run in a browser, the weights unchanged; **Training data, in plain words** (above); About this model. On the processor the purpose line says so, and why (no suitable graphics card, or the card's AI runtime can't hold the model). Not now: no request, no mask, no step. |
+| A click | "Finding the subject…" (or "…on the processor (…)"), then **Subject 1**: one history step "New mask: Subject 1". |
+| The part | "The subject, found on this computer by birefnet-lite 07fe932/fp16." **Find the subject again** (one step); **Everything except the subject** when it is the mask's only part (the mask's Invert, one step "Subject 1: invert"). |
+| As a part | Part to combine → **Subject (AI)** → + Add / − Subtract / ∩ Intersect (tooltips say what each does with the subject). |
+| Settings → AI models | "BiRefNet_lite (Subject mask)": status, Download…, Remove, About this model (licence, training data, credit, the file with its size and SHA-256, "LightBench's own copy of onnx/model_fp16.onnx (onnx-community/BiRefNet_lite-ONNX at de15b22, SHA-256 …), the same weights arranged to run in a browser, published as the release models-birefnet-lite-1 …"). |
+
+`useMasking.ts`: Sky's new-mask and find-again code became one path for whole-photo AI parts (`newWhole`, `recomputeWhole`), used by Sky and Subject; Sky's behaviour and history labels are unchanged (Part 29's e2e not re-run: **unverified** beyond the shared unit tests and identity).
+
+### Checks
+
+- **End to end** (headless Chromium, SwiftShader WebGPU, `?gpu=readback`; `scratchpad/amsub/e2e-subject.mjs`; the TEST stand-in `make_subject_standin.py`: the real input and output names and shapes, a soft-edged disc in the middle of the square, served through a test manifest with a fake commit and a 64 MiB GPU need):
+  - *main* (32 of 32; the page's checks report `shader-f16`): opening Develop fetches nothing; Settings → AI models lists "BiRefNet_lite (Subject mask)", Not downloaded; About this model: MIT, both lists and that they disagree, DIS5K non-commercial, LightBench's own copy of the pinned file, the release; no app comparisons there or in the Masks panel; the Subject button's tooltip; the dialog (once, site, fp16, runtime, MIT, both lists, DIS5K's terms; no "processor"; no request while open); Not now: no request, mask or step; Download fetched exactly the runtime and the one file, kept with its record; **one** step "New mask: Subject 1"; the edit holds `what: "subject"`, `birefnet-lite`, `feedfac/fp16`, "onnxruntime-web 1.30.0 webgpu", no prompt, a 640 × 427 matte; the matte is soft (255 at the centre, 0 in the corners, 12,378 texels between); the console and the Diagnostics entry; White on Black 255 / 0; Undo removes it in one step, Redo restores it; the part's text and two buttons with tooltips; Exposure +1.5: subject +69.7, corners 0.00; Everything except the subject: one step, then background +39.6, subject 0.00; Part to combine offers Subject (AI) with Sky and Object, no ranges; Subtract the subject reused the photo's subject (no second run); Find the subject again: one step, a second run; R1.xmp holds the part and matte.
+  - *gate* (4 of 4; `shader-f16` but a 16 MiB binding limit): the dialog says the processor; made on the processor with the fp16 file (`… wasm`, `feedfac/fp16`); the status line named the card's limit; Diagnostics `gate: "binding"`.
+  - *cpu* (3 of 3; SwiftShader as it is, no `shader-f16`): the dialog offers fp16 on the processor; made with "onnxruntime-web 1.30.0 wasm".
+  - *real* (3 of 3; **the published file**, served from what the deploy's own `models.mjs fetch` downloaded from the release; no `shader-f16`, so the runtime worker's WebAssembly in the tab): Subject 1 made (run 34 s; 90 s from Download), `07fe932/fp16`, coverage 0.128 against Node's 0.125, IoU 0.959 with the matte the same code made in Node from the JPEG's own pixels (the app's input is Develop's rendering); Find the subject again ran a second time in the same tab (the graph reloaded after its release).
+- **Old edits unchanged** (`scratchpad/amsub/identity.mjs`: Part 28's harness plus a **People edit** (case 22: Person 1 with All people: hair subtracted) and a **Subject edit** (case 23, inverted; main draws it as a later build's AI part, as Part 29 checked Sky); each case in its own browser; full-size and 1024 px export SHA-256, 512 px thumbnail, histogram, canvas at fit and 100 %, output size). After the container restart the lost runs were re-run one case per command: the branch against **main 0.6.18 (`65d6488`) itself**, served from an archive of its `web/`: the JPEG defaults (4), the JPEG with masks (radial + brush + luminance, 15), the NEF with masks + tone curve + spots (16), the Depth range edit (18), the Object select edits (19 and 21, the real part 1 matte), the Sky edit (20), the People edit (22) and the Subject edit (23): **63 of 63 identical**; and against the hashes recorded earlier (`amp/id-main-*.json` of `01adf8a`, `fx/id-main.json`): **70 of 70 identical**. Subject adds no rendering code: its parts draw through Part 27's case 7.
+- **Unit tests**: new `ai/subject.test.ts` (6: the stretched input and normalisation, the render size, the sigmoid without threshold, bilinear sampling, the sensor frame through a quarter turn, non-finite outputs), `ai/subject-manifest.test.ts` (6: the pins, licence and both training lists, the release URL and served path, malformed `convertedFrom`, the gate with fp16, the fp32 option), `engine/develop/subject-mask.test.ts` (3: names and the shape family, the sidecar round trip keeping the soft matte, waiting without a matte), `scripts/models.test.mjs` (+1: the release, the served path, the site's 560 MB; the two site-size checks updated); `ai-mask.test.ts` and `manifest2.test.ts` now use another unknown `what`/task ("landscape") for a later build's part, as Part 29 did.
+- `npx vitest run` in three parts on the shared machine: **1444 tests in 152 files, all passing** (35 files / 286 tests for `src/ai`, `scripts`, `src/develop`; 61 / 673 for `src/engine`; 56 / 485 for the rest; main 0.6.18 has 1428 in 149, so 16 new). `npx tsc -b`, `npx oxlint` (exactly the two accepted warnings), `npm run build` pass; `actionlint` passes on the workflow.
+- `birefnet_patch.py` locally (fp32 from BiRefNet's own GitHub release v1, byte-identical to onnx-community's `model.onnx`): the same counts as on the runner, the same output bytes; `subject-check.mjs` locally on it: passed.
+
+### Limitations and unverified
+
+- **A real GPU.** The patched graph has run on the CPU (ORT 1.31.0 Python, ORT Web 1.30.0 WebAssembly in Node and in a Chromium tab). It has **not run on WebGPU** here: SwiftShader has no `shader-f16`, and an attempt to run the fp32 patch on SwiftShader's WebGPU outside the app crashed the page before the session was created (memory on this shared machine; not investigated further, the container restarted). Its WebGPU correctness rests on the rewrites being of kinds MASKS_PREP_2 checked on lavapipe (Split → Slice, Concat trees, 8-aligned Conv chunks) plus Add, GatherND, Mul, Transpose and Reshape on chunks under 64 MiB; speed and GPU memory on real GPUs are **unverified**. Peak GPU memory is likely around the CPU's 1.7 GB of activations.
+- **Which adapters pass the gate** (shader-f16 and a 240 MiB binding) is unknown; those that don't run on the processor.
+- **The processor path's time** (20–50 s) is over the 15 s rule (owner question 1); its memory in a real browser on a low-memory device is unmeasured beyond this machine (the tab ran twice).
+- **Quality by eye**: coverage and agreement numbers on three photos; the overlays are in run 40618916189's `subject-check` artifact, which can't be downloaded here. BiRefNet half-selects thin structures (the rocket's lattice towers), which shows as large soft areas.
+- **Training-data terms** are summarised from AI_MASKS.md §2.2, not legal advice; which of the authors' two lists is right is unknown.
+- **Paste and presets** of Subject parts follow the shared AI rules as they are on this branch; Part 31 changes them, so they were not tested here.
+
+### Owner questions
+
+1. **The CPU fallback** takes 20–25 s per photo on GitHub's 4-core runner (34–51 s in a tab here), over the 15 s rule. Built **on** (one run per photo, said plainly, as AI Remove). Keep, or turn it off so the Subject mask needs WebGPU with fp16 and a 240 MiB binding?
+2. **fp16 only** (560 MB of the site; 785 MB with fp32 too). Confirm.
+
+### Files
+
+New: `web/src/ai/subject.ts`, `subjectSelect.ts`, `src/develop/useSubject.ts`, `web/scripts/subject/birefnet_patch.py`, `web/scripts/subject-check.mjs`, `web/models/notices/birefnet.LICENSE.txt`; tests `src/ai/subject.test.ts`, `subject-manifest.test.ts`, `src/engine/develop/subject-mask.test.ts`. Changed: `.github/workflows/ai-models.yml` (`birefnet-patch`, `subject-check`, jobs `subject` and `subject-publish`), `web/models/manifest.json`, `src/ai/manifest.ts` (task `subject`, optional `convertedFrom.code`, `reference`), `models.ts` (`subjectPlan`), `ModelDialog.tsx`, `AiModelsSettings.tsx`, `src/develop/MasksPanel.tsx`, `useMasking.ts`, `DevelopView.tsx`, `help.ts`, `src/engine/develop/masks.ts`, `web/scripts/models.test.mjs`, two tests' unknown `what`/task, THIRD_PARTY_NOTICES.md, docs/USABILITY.md. Not changed: release notes and the version.

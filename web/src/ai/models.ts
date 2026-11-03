@@ -18,6 +18,8 @@ export const skyModel = (): ModelEntry | null => AI?.models.find((m) => m.task =
 export const detectModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'detect') ?? null
 export const faceModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'face') ?? null
 export const parseModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'parse') ?? null
+/** The Subject mask (Part 30). */
+export const subjectModel = (): ModelEntry | null => AI?.models.find((m) => m.task === 'subject') ?? null
 
 /**
  * The CPU fallback (ONNX Runtime's WebAssembly provider, up to 4 threads) where there is no WebGPU. On: a random-weight
@@ -170,6 +172,56 @@ export function skyPlan(gpu: GpuProbe, largest: number): SkyPlan {
   return { provider: null, why: 'The Sky mask needs WebGPU, which this browser or computer doesn’t offer (Chrome or Edge on Windows, macOS or Android have it). The other masks work as before.' }
 }
 
+// ---- Subject (BiRefNet_lite, LightBench's patched copy; PHASE3.md Part 30)
+
+/**
+ * The Subject mask on the processor (ONNX Runtime's WebAssembly provider, up to 4 threads) where the GPU can't run it:
+ * on. The patched graph's CPU run peaks at about 1.9 GB of activations, within WebAssembly's 4 GB (the published graph
+ * peaked at 4.4 GiB and failed there: std::bad_alloc), and it runs once per photo; its time on GitHub's runner with the
+ * app's own WebAssembly runtime is in PHASE3.md Part 30 ("Speed"). Slower than the 15 s rule's heavy models, but a single
+ * run per photo with a status line saying so, as AI Remove's fallback.
+ */
+export const SUBJECT_WASM_FALLBACK = true
+
+export interface SubjectPlan {
+  provider: Provider | null
+  variant: Variant | null
+  gpu: GpuProbe
+  why: string | null
+  slow?: boolean
+  /** On the processor although there is WebGPU with fp16: the GPU binds less than the graph's largest tensor. */
+  large?: boolean
+}
+
+/**
+ * Where the Subject mask runs here and which file it needs: the one place that decides. The fp16 file on WebGPU where
+ * the GPU has `shader-f16` and binds the graph's largest tensor in one storage buffer (the manifest's `gpu` need,
+ * measured by the "AI models" workflow: part 1's binding-limit gate, as SAM_FP32_MIN_BINDING's note explains); an fp32
+ * file, if one is published, on WebGPU without `shader-f16` where the GPU binds twice that; else on the processor
+ * (fp32 if published: the reference precision; else fp16, which ONNX Runtime's CPU kernels compute in fp32) when
+ * SUBJECT_WASM_FALLBACK; else not here, said plainly.
+ */
+export function subjectPlan(m: ModelEntry, gpu: GpuProbe): SubjectPlan {
+  const binding = gpu.maxStorageBufferBindingSize ?? 0
+  const buffer = gpu.maxBufferSize ?? binding
+  const need = m.gpu?.maxStorageBufferBindingSize ?? 0
+  const fits = (k: number) => Math.min(binding, buffer) >= k * need
+  if (gpu.webgpu && gpu.f16 && variantPinned(m, 'fp16') && fits(1)) return { provider: 'webgpu', variant: 'fp16', gpu, why: null }
+  if (gpu.webgpu && variantPinned(m, 'fp32') && fits(2)) return { provider: 'webgpu', variant: 'fp32', gpu, why: null }
+  if (SUBJECT_WASM_FALLBACK) {
+    const variant: Variant | null = variantPinned(m, 'fp32') ? 'fp32' : variantPinned(m, 'fp16') ? 'fp16' : null
+    if (variant) return { provider: 'wasm', variant, gpu, why: null, slow: true, ...(gpu.webgpu && gpu.f16 ? { large: true } : {}) }
+  }
+  return {
+    provider: null,
+    variant: null,
+    gpu,
+    why: gpu.webgpu
+      ? 'The Subject mask needs a graphics card with half-precision (fp16) support and enough memory per buffer, and this one doesn’t offer them to the browser. The other masks work as before.'
+      : 'The Subject mask needs WebGPU, which this browser or computer doesn’t offer (Chrome or Edge on Windows, macOS or Android have it). The other masks work as before.',
+  }
+}
+
 /** Where a model can run here: 'webgpu', 'wasm' (the fallback, if on), or null with the reason. */
 export async function providerFor(m?: ModelEntry | null): Promise<{ provider: Provider | null; gpu: GpuProbe; why: string | null; slow?: boolean; variant?: Variant }> {
   const gpu = await probeGpu()
@@ -182,6 +234,10 @@ export async function providerFor(m?: ModelEntry | null): Promise<{ provider: Pr
     return { provider: p.detect, gpu, why: p.why, ...(p.slow ? { slow: true } : {}) }
   }
   if (m?.task === 'face' || m?.task === 'parse') return { provider: 'wasm', gpu, why: null }
+  if (m?.task === 'subject') {
+    const p = subjectPlan(m, gpu)
+    return { provider: p.provider, gpu, why: p.why, ...(p.slow ? { slow: true } : {}), ...(p.variant ? { variant: p.variant } : {}) }
+  }
   if (m?.task === 'inpaint') {
     if (gpu.webgpu) {
       const short = gpuShortfall(m, gpu)

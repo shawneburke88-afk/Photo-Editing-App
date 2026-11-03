@@ -106,7 +106,7 @@ describe('the matte in the edit and the sidecar', () => {
     expect(aiChars(list)).toBeLessThanOrEqual(MAX_AI_CHARS)
     expect(capMessage(list, { addAiChars: MAX_AI_CHARS })).toMatch(/AI selections/)
     // A newer build's AI selection (another "what") is kept and drawn: it is a matte like any other.
-    const later = normalizeMask(mask('s', [aiShape(true, 'subject')]))!
+    const later = normalizeMask(mask('s', [aiShape(true, 'landscape')]))!
     expect(hasUnknown(later)).toBe(false)
     expect(describeKinds(later)).toBe('AI selection (AI)')
   })

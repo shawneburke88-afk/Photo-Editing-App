@@ -16,6 +16,11 @@
 // the release's `tag` and the commit it points at as `revision`), with the licence and a note of where it came from. The
 // deploy fetches it from the release and checks its SHA-256, and the site serves it like the others.
 //
+// Subject (AI masks part 4, docs/PHASE3.md Part 30): likewise a release of LightBench's own repository, holding LightBench's
+// patched copy of onnx-community's BiRefNet_lite conversion (the same weights, its graph rearranged so that ONNX Runtime
+// Web can run it); `convertedFrom.weights` is the file it was patched from and `convertedFrom.reference` the fp32 file
+// the patch was also checked against.
+//
 // Schema 2 (AI masks, docs/PHASE3.md Part 27): a model may be made of several graphs (`part`), each with its weights in a
 // separate file beside it (`data`: ONNX external data, as the SAM 2.1 export has), served from the site as well as from
 // Hugging Face; `task` names what the app uses it for. Schema 1 manifests (one file per variant) still parse.
@@ -32,10 +37,10 @@ export type Variant = 'fp16' | 'fp32'
 /**
  * What the app uses a model for: the Depth range mask, AI Remove, Object select (AI masks part 1: a promptable
  * segmenter with an image encoder and a prompt decoder), and People (part 2, docs/PHASE3.md Part 28): finding people
- * ("detect": RF-DETR-Seg Nano), their faces ("face": YuNet) and their parts ("parse": MediaPipe Selfie Multiclass).
- * The later AI mask models (sky, subject) add their task here and a check below.
+ * ("detect": RF-DETR-Seg Nano), their faces ("face": YuNet) and their parts ("parse": MediaPipe Selfie Multiclass), the
+ * sky (part 3, "sky") and the subject (part 4, "subject": BiRefNet_lite, Part 30).
  */
-export const TASKS = ['depth', 'inpaint', 'segment', 'sky', 'detect', 'face', 'parse'] as const
+export const TASKS = ['depth', 'inpaint', 'segment', 'sky', 'detect', 'face', 'parse', 'subject'] as const
 export type Task = (typeof TASKS)[number]
 export type Delivery = 'site' | 'huggingface'
 /**
@@ -95,10 +100,24 @@ export interface SkyInput {
   std: [number, number, number]
 }
 
-/** What a conversion LightBench made itself was made from: the authors' weights file and code, pinned. */
+/** A file of a Hugging Face repository at a commit, with its size and SHA-256. */
+export interface PinnedFile {
+  repo: string
+  revision: string
+  path: string
+  bytes: number
+  sha256: string
+}
+
+/**
+ * What a conversion LightBench made itself was made from: the authors' weights file and code, pinned (Sky); or, for a
+ * patched ONNX file (Subject), the ONNX file it was patched from (`weights`) and the other precision's file it was also
+ * checked against (`reference`), with no code.
+ */
 export interface ConvertedFrom {
-  weights: { repo: string; revision: string; path: string; bytes: number; sha256: string }
-  code: { repo: string; revision: string }
+  weights: PinnedFile
+  code?: { repo: string; revision: string }
+  reference?: PinnedFile
 }
 
 /** What the manual update check compares (Settings → AI models; never automatic). */
@@ -127,7 +146,8 @@ export interface ModelEntry {
   convertedFrom?: ConvertedFrom
   /**
    * The depth model's (DepthInput), the segmenter's (SegmentInput) or the Sky model's (SkyInput) preprocessing; the
-   * People models ("detect", "parse") give theirs as a SegmentInput: a square input of `size`, (RGB / 255 − mean) / std.
+   * People models ("detect", "parse") and the Subject model give theirs as a SegmentInput: a square input of `size`,
+   * (RGB / 255 − mean) / std.
    */
   input?: DepthInput | SegmentInput | SkyInput
   /** Which checkpoint of the original weights the files are, and where that is stated. */
@@ -163,6 +183,8 @@ export const TASK_PARTS: Partial<Record<Task, readonly string[]>> = {
   detect: ['model'],
   face: ['model'],
   parse: ['model'],
+  // So is the Subject model (Part 30).
+  subject: ['model'],
 }
 
 /** The shared runtime (one for every model, as PHASE4_MODELS.md plans): ONNX Runtime Web's WebAssembly file. */
@@ -216,9 +238,11 @@ export function parseManifest(json: unknown): Manifest {
     const inp = m.input as Record<string, unknown> | undefined
     if (m.task === 'depth' && (!inp || !isNum(inp.shortSide) || !isNum(inp.multiple) || !isTriple(inp.mean) || !isTriple(inp.std))) fail(`${id}: input incomplete`)
     if (m.task === 'sky' && (!inp || ![inp.shortSide, inp.multiple, inp.maxLong, inp.stride, inp.classes, inp.skyClass, inp.bytesPerPixel].every((x) => isNum(x) && x >= 0) || (inp.shortSide as number) < 32 || (inp.maxLong as number) < (inp.shortSide as number) || (inp.skyClass as number) >= (inp.classes as number) || !isTriple(inp.mean) || !isTriple(inp.std))) fail(`${id}: input incomplete`)
-    const cf = m.convertedFrom as { weights?: Record<string, unknown>; code?: Record<string, unknown> } | undefined
-    if (cf !== undefined && (!cf.weights || !isStr(cf.weights.repo) || !REVISION_RE.test(String(cf.weights.revision)) || !isStr(cf.weights.path) || !isNum(cf.weights.bytes) || !SHA256_RE.test(String(cf.weights.sha256)) || !cf.code || !isStr(cf.code.repo) || !REVISION_RE.test(String(cf.code.revision)))) fail(`${id}: convertedFrom incomplete`)
-    if ((m.task === 'segment' || m.task === 'detect' || m.task === 'parse') && (!inp || !isNum(inp.size) || inp.size < 64 || inp.size > 4096 || !isTriple(inp.mean) || !isTriple(inp.std))) fail(`${id}: input incomplete`)
+    const cf = m.convertedFrom as { weights?: Record<string, unknown>; code?: Record<string, unknown>; reference?: Record<string, unknown> } | undefined
+    const pinnedFile = (f: Record<string, unknown> | undefined) => !!f && isStr(f.repo) && REVISION_RE.test(String(f.revision)) && isStr(f.path) && isNum(f.bytes) && SHA256_RE.test(String(f.sha256))
+    // The code is required for a conversion from PyTorch weights (Sky); a patched ONNX file (Subject) names its reference instead.
+    if (cf !== undefined && (!pinnedFile(cf.weights) || (cf.code === undefined && cf.reference === undefined) || (cf.code !== undefined && (!isStr(cf.code.repo) || !REVISION_RE.test(String(cf.code.revision)))) || (cf.reference !== undefined && !pinnedFile(cf.reference)))) fail(`${id}: convertedFrom incomplete`)
+    if ((m.task === 'segment' || m.task === 'detect' || m.task === 'parse' || m.task === 'subject') && (!inp || !isNum(inp.size) || inp.size < 64 || inp.size > 4096 || !isTriple(inp.mean) || !isTriple(inp.std))) fail(`${id}: input incomplete`)
     const up = (m.updates as { upstream?: Record<string, unknown> } | undefined)?.upstream
     if (m.updates !== undefined && (!up || !isStr(up.repo) || !REVISION_RE.test(String(up.revision)) || !isStr(up.path) || !isNum(up.bytes) || !SHA256_RE.test(String(up.sha256)))) fail(`${id}: updates incomplete`)
     const gpu = m.gpu as Record<string, unknown> | undefined
