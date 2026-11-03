@@ -3359,7 +3359,7 @@ export class DevelopEngine {
 
 // Diagnostics (PHASE3.md, "Diagnostics"): with a trace set, these report their duration and the engine's GPU memory
 // when they end (or fail). Without one, they are called straight through.
-for (const name of ['process', 'render', 'renderImage', 'renderStats', 'renderCurveInput', 'renderLoupe', 'renderOutput', 'sampleScene', 'detailed'] as const) {
+for (const name of ['process', 'render', 'renderImage', 'renderStats', 'renderCurveInput', 'renderLoupe', 'renderOutput', 'sampleScene', 'detailed', 'lensBlurred'] as const) {
   const proto = DevelopEngine.prototype as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>
   const work = proto[name]
   proto[name] = function (this: DevelopEngine, ...a: unknown[]) {
