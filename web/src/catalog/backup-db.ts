@@ -11,7 +11,7 @@ export interface CatalogSummary {
   collections: number
   keywords: number
   edits: number
-  /** Develop, metadata and import presets. */
+  /** Develop, metadata, import and mask presets. */
   presets: number
   roots: { id: number; name: string }[]
 }
@@ -29,7 +29,7 @@ export function summarize(d: Database): CatalogSummary {
     collections: count(d, 'collections', "WHERE kind <> 'quick'"),
     keywords: count(d, 'keywords'),
     edits: count(d, 'edits'),
-    presets: count(d, 'presets') + count(d, 'metadata_presets') + count(d, 'import_presets'),
+    presets: count(d, 'presets') + count(d, 'metadata_presets') + count(d, 'import_presets') + count(d, 'mask_presets'),
     roots: count(d, 'roots') ? (d.selectObjects('SELECT id, name FROM roots ORDER BY id') as unknown as { id: number; name: string }[]) : [],
   }
 }

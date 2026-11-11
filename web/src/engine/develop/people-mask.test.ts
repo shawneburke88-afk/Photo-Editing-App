@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { readXmp, writeXmp, type SidecarData } from '../../sidecar/xmp'
 import { DEFAULT_SETTINGS, normalizeSettings } from './settings'
 import { encodeDepth } from './depth-map'
-import { appendMasks, defaultName, describeKinds, MAX_AI_BOXES, needsAi, newMask, normalizeShape, partLabel, peopleWho, photoBoundAi, presetMasks, type AiShape, type LocalMask } from './masks'
+import { appendMasks, defaultName, describeKinds, MAX_AI_BOXES, newMask, normalizeShape, partLabel, peopleWho, presetMasks, type AiShape, type LocalMask } from './masks'
 import { KIND_CODE, prepareMasks } from './mask-render'
 import { processParams } from './process'
 
@@ -62,16 +62,10 @@ describe('People parts', () => {
     expect(p.masks[0].components[0].raster?.px.every((x) => x === 255)).toBe(true)
   })
 
-  it('paste carries every People part, waiting; presets keep only "All people" parts (one person is one photo’s)', () => {
-    const pasted = appendMasks(undefined, [mask('People 1', [one('hair'), all('face')])])!
-    expect(needsAi(pasted[0])).toBe(true)
-    expect(pasted[0].components.map((c) => (c.shape as AiShape).prompt)).toEqual([one('hair').prompt, all('face').prompt])
-    expect(photoBoundAi(one('person'))).toBe(true)
-    expect(photoBoundAi(all('person'))).toBe(false)
-    const p = presetMasks([mask('People 1', [one('person')]), mask('People 2', [all('hair'), all('face')]), mask('People 3', [all('person'), one('face')])])!
-    expect(p.map((m) => m.name)).toEqual(['People 2'])
-    expect(needsAi(p[0])).toBe(true)
-    expect(p[0].components[0].shape).not.toHaveProperty('raster')
-    expect((p[0].components[0].shape as AiShape).prompt).toEqual(all('hair').prompt)
+  it('paste and presets leave every People part out (owner, 2026-10-28; Part 31), one person’s or everyone’s', () => {
+    expect(appendMasks(undefined, [mask('People 1', [one('hair'), all('face')])])).toBeUndefined()
+    expect(presetMasks([mask('People 1', [one('person')]), mask('People 2', [all('hair'), all('face')]), mask('People 3', [all('person'), one('face')])])).toBeUndefined()
+    const own = [mask('People 1', [all('person')])]
+    expect(appendMasks(own, [mask('People 2', [all('face')])])).toBe(own)
   })
 })

@@ -100,6 +100,7 @@ import { adapterName, looksIntegrated } from '../diagnostics/pcinfo'
 import { MasksPanel } from './MasksPanel'
 import { MASK_BRUSH_SIZE, OVERLAY_COLOURS } from './maskUi'
 import { existingDepth, presetMasks, withMasksList, type LocalMask } from '../engine/develop/masks'
+import { maskClipboard } from './maskSettings'
 import { hasAcrSidecar } from '../sidecar/acr'
 import type { MaskOverlayDraw } from '../engine/develop/indicators'
 import { useZoom } from './useZoom'
@@ -1921,7 +1922,7 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
   }
 
   async function savePreset(clip: Clipboard, name: string) {
-    // Presets may hold gradients and range masks, not brush strokes (Part 23; owner's decision 7).
+    // Presets may hold gradients and range masks, not brush strokes (Part 23; owner's decision 7), nor AI parts (Part 31).
     // Presets carry neither depth maps nor AI mattes or fills (they belong to one photo: Parts 24, 27 and 32).
     const lbPreset = clip.settings.lensBlur ? lensBlurForOtherPhoto(clip.settings.lensBlur) : undefined
     const data: PresetData = { keys: clip.keys, settings: withLensBlur(withMasksList(clip.settings, presetMasks(clip.settings.masks)), lbPreset), rerunAuto: clip.rerunAuto && !!clip.settings.auto, sourceKind: clip.sourceKind }
@@ -2215,6 +2216,12 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
     masking.newOf(kind)
     return true
   }
+  /** Copy / Paste mask settings (Part 31): on the selected mask; nothing to do without one (or without a copy). */
+  const maskValuesKey = (cmd: string) => {
+    if (status.kind !== 'ready') return false
+    if (cmd === 'develop.maskCopySettings') return masking.copySettings()
+    return masking.applyValues('Paste mask settings', maskClipboard.get()?.values)
+  }
   useShortcuts(['mask'], !pasting && !draft && !guiding && masking.active, (cmd) => {
     const b = masking.brush
     switch (cmd) {
@@ -2235,6 +2242,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'develop.maskDepth':
       case 'develop.maskObject':
       case 'develop.maskPeople': maskNew(cmd); break
+      case 'develop.maskCopySettings':
+      case 'develop.maskPasteSettings': return maskValuesKey(cmd)
       case 'mask.overlay': masking.setOverlay({ ...masking.overlay, on: !masking.overlay.on }); break
       case 'mask.overlayColour': masking.nextOverlayColour(); break
       case 'mask.overlayMode': masking.nextOverlayMode(); break
@@ -2270,6 +2279,8 @@ export function DevelopView({ ids, id, selected: initialSelection, onNavigate, o
       case 'develop.maskDepth':
       case 'develop.maskObject':
       case 'develop.maskPeople': maskNew(cmd); break
+      case 'develop.maskCopySettings':
+      case 'develop.maskPasteSettings': return maskValuesKey(cmd)
       case 'develop.grid': onLibrary(); break
       case 'develop.curveTarget': toggleCurveTarget(); break
       case 'develop.curveReset': changeCurve('Reset tone curve', undefined, true); break

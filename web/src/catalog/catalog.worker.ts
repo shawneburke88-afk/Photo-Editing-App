@@ -362,6 +362,11 @@ export function migrate(d: Database) {
       // Deleted when done, or with the photo. A new table only, so nothing else in the catalog changes.
       d.exec(IMPORT_PENDING_TABLE)
     }
+    if (version < 18) {
+      // Mask presets (docs/PHASE3.md Part 31): a mask's slider values (JSON of develop/maskSettings.ts MaskPresetData)
+      // under a unique name, like metadata and import presets. A new table only, so nothing else in the catalog changes.
+      d.exec(MASK_PRESETS_TABLE)
+    }
     d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     d.exec('COMMIT')
   } catch (err) {
@@ -967,8 +972,17 @@ function markMetadataRead(photoId: number) {
   conn().exec({ sql: 'UPDATE photos SET metadata_read = 1 WHERE id = ?', bind: [photoId] })
 }
 
-/** Presets stored as JSON under a unique name (metadata and import presets). */
-type PresetTable = 'metadata_presets' | 'import_presets'
+/** Presets stored as JSON under a unique name (metadata, import and mask presets). */
+type PresetTable = 'metadata_presets' | 'import_presets' | 'mask_presets'
+
+export const MASK_PRESETS_TABLE = `
+  CREATE TABLE IF NOT EXISTS mask_presets (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    preset TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+`
 
 function listNamedPresets(table: PresetTable): { id: number; name: string; preset: string }[] {
   return conn().selectObjects(`SELECT id, name, preset FROM ${table} ORDER BY name COLLATE NOCASE`) as unknown as { id: number; name: string; preset: string }[]
@@ -985,6 +999,15 @@ function saveNamedPreset(table: PresetTable, name: string, preset: string): numb
   }
   conn().exec({ sql: `INSERT INTO ${table} (name, preset, created_at) VALUES (?, ?, ?)`, bind: [n, preset, Math.floor(Date.now() / 1000)] })
   return Number(conn().selectValue('SELECT last_insert_rowid()'))
+}
+
+/** Renames a preset; refused when another one has that name (ignoring case). */
+function renameNamedPreset(table: PresetTable, id: number, name: string) {
+  const n = name.trim()
+  if (!n) throw new Error('Give the preset a name.')
+  const other = conn().selectValue(`SELECT id FROM ${table} WHERE name = ? AND id <> ?`, [n, id])
+  if (other !== undefined) throw new Error(`Another preset is already called “${n}”.`)
+  conn().exec({ sql: `UPDATE ${table} SET name = ? WHERE id = ?`, bind: [n, id] })
 }
 
 function deleteNamedPreset(table: PresetTable, id: number) {
@@ -1827,6 +1850,10 @@ export const handlers = {
   listImportPresets: () => listNamedPresets('import_presets'),
   saveImportPreset: (name: string, preset: string) => saveNamedPreset('import_presets', name, preset),
   deleteImportPreset: (id: number) => deleteNamedPreset('import_presets', id),
+  listMaskPresets: () => listNamedPresets('mask_presets'),
+  saveMaskPreset: (name: string, preset: string) => saveNamedPreset('mask_presets', name, preset),
+  renameMaskPreset: (id: number, name: string) => renameNamedPreset('mask_presets', id, name),
+  deleteMaskPreset: (id: number) => deleteNamedPreset('mask_presets', id),
   listCollections,
   countSmart,
   createCollection,
