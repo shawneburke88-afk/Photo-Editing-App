@@ -116,6 +116,8 @@ for st in "${STAGES[@]}"; do
     cameras)
       say "## Other cameras (raw.pixls.us)"
       PY $D/fetch.py pixls --out "$R/px" ${PIXLS_FILES:-"Nikon/D5200/NIKON_D5200_14_bit_compressed.NEF" "Nikon/D5200/_DSC7535.NEF"} 2>&1 | tee -a "$S"
+      PY $D/fetch.py pixls-find --out "$R/px" "Nikon/D5100/" "Nikon/D5300/" "Nikon/D7100/" "Nikon/D7200/" "Nikon/D750/" "Nikon/D3300/" "Nikon/Z 6/" "Canon/EOS 80D/" "Canon/EOS 6D/" "Canon/EOS R6/" \
+        "Canon/EOS M50/" "Sony/ILCE-6000/" "Sony/ILCE-7M3/" "Sony/ILCE-7C/" "Panasonic/DC-G9/" "Olympus/E-M10MarkII/" "Olympus/E-M5/" "Pentax/K-5/" "Pentax/K-3/" "Fujifilm/X100/" "Fujifilm/X-A1/" 2>&1 | tee -a "$S" || true
       args=(); for p in "$R"/px/*; do n=$(basename "$p"); args+=("${n%.*}=$p"); done
       PY $D/quality.py single --model "$M" --out "$RES/cameras" --synth-stops "${SYNTH:-4,6}" --hot 2000 --strength --cache "${args[@]}" 2>&1 | tee -a "$S"
       ;;

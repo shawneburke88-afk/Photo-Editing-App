@@ -188,6 +188,24 @@ def cmd_pixls(a):
         download(f"{PIXLS}/data/{urllib.parse.quote(path)}", os.path.join(a.out, os.path.basename(path)))
 
 
+def cmd_pixls_find(a):
+    """List raw.pixls.us camera folders and download files whose name matches --match (at most --max)."""
+    rx = re.compile(a.match)
+    got = 0
+    for d in a.dirs:
+        try:
+            page = get(f"{PIXLS}/data/{urllib.parse.quote(d)}").decode("utf-8", "replace")
+        except Exception as e:  # noqa: BLE001
+            print(f"/data/{d}: failed {e!r}")
+            continue
+        names = [urllib.parse.unquote(n) for n in re.findall(r'href="([^"?/][^"]*)"', page) if not n.endswith("/")]
+        print(f"/data/{d}: {names}", flush=True)
+        for n in names:
+            if rx.search(n) and got < a.max:
+                download(f"{PIXLS}/data/{urllib.parse.quote(d + n)}", os.path.join(a.out, (d.strip("/").replace("/", "_") + "_" + n).replace(" ", "_")))
+                got += 1
+
+
 def cmd_dtmodel(a):
     import zipfile
 
@@ -220,7 +238,12 @@ if __name__ == "__main__":
     s = sub.add_parser("pixls")
     s.add_argument("--out", required=True)
     s.add_argument("paths", nargs="+")
+    s = sub.add_parser("pixls-find")
+    s.add_argument("--out", required=True)
+    s.add_argument("--match", default=r"(?i)iso[ _-]?(16|32|64|128|256|512)00|high.?iso")
+    s.add_argument("--max", type=int, default=4)
+    s.add_argument("dirs", nargs="+")
     s = sub.add_parser("dtmodel")
     s.add_argument("--out", required=True)
     a = ap.parse_args()
-    {"probe": cmd_probe, "weights": cmd_weights, "dataverse": cmd_dataverse, "pixls": cmd_pixls, "dtmodel": cmd_dtmodel}[a.cmd](a)
+    {"probe": cmd_probe, "weights": cmd_weights, "dataverse": cmd_dataverse, "pixls": cmd_pixls, "pixls-find": cmd_pixls_find, "dtmodel": cmd_dtmodel}[a.cmd](a)
