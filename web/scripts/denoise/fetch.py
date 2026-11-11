@@ -4,7 +4,7 @@ where they came from (URL, size, SHA-256). Nothing downloaded here is committed.
   probe      what the sources offer, without big downloads: the authors' Google Drive folder of weights, the RawNIND
              record on the UCLouvain Dataverse (licence and terms, verbatim; the file list), raw.pixls.us listings
   weights    the RawNIND Bayer checkpoint from the authors' Google Drive folder
-  dataverse  named files of the RawNIND dataset (by exact file name)
+  dataverse  files of the RawNIND dataset, each given as NAME=REGEX (the first match by name)
   pixls      files from raw.pixls.us/data/<path>
   dtmodel    darktable-ai's rawdenoise-nind.dtmodel (release-5.6.0), SHA-256 checked, unzipped
 
@@ -165,17 +165,22 @@ def cmd_weights(a):
 
 
 def cmd_dataverse(a):
+    """Each argument is NAME=REGEX: the first file (sorted by name) whose name matches is saved as NAME + its extension."""
     d = dataverse_meta()
-    files = d["latestVersion"]["files"]
-    by = {f["dataFile"]["filename"]: f for f in files}
-    for name in a.names:
-        if name not in by:
-            cand = [n for n in by if name.lower() in n.lower()][:10]
-            sys.exit(f"{name} is not in the dataset; similar: {cand}")
-        df = by[name]["dataFile"]
-        p = download(f"{DATAVERSE}/api/access/datafile/{df['id']}", os.path.join(a.out, name))
+    files = sorted(d["latestVersion"]["files"], key=lambda f: f["dataFile"]["filename"])
+    for spec in a.names:
+        name, rx = spec.split("=", 1)
+        hits = [f for f in files if re.search(rx, f["dataFile"]["filename"])]
+        if not hits:
+            sys.exit(f"{rx} matches nothing in the dataset")
+        df = hits[0]["dataFile"]
+        ext = df["filename"].rsplit(".", 1)[-1]
+        dst = os.path.join(a.out, f"{name}.{ext}")
+        if os.path.exists(dst):
+            continue
+        p = download(f"{DATAVERSE}/api/access/datafile/{df['id']}", dst)
         cs = df.get("checksum") or {}
-        print(f"  dataverse id {df['id']}, {cs.get('type')} {cs.get('value')}, md5 here {hashlib.md5(open(p, 'rb').read()).hexdigest()}")
+        print(f"  = {df['filename']} (dataverse file id {df['id']}, {len(hits)} match(es), {cs.get('type')} {cs.get('value')}, md5 here {hashlib.md5(open(p, 'rb').read()).hexdigest()})", flush=True)
 
 
 def cmd_pixls(a):
