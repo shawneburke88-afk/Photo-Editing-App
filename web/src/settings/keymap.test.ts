@@ -284,6 +284,20 @@ describe('shortcut sets', () => {
     expect(ACTION_BY_ID.get('mask.newSame')!.label).toBe('New mask of the selected kind')
   })
 
+  it('has Copy and Paste mask settings in Develop and while masking, with no keys until the user gives them some (Part 31)', () => {
+    for (const id of ['develop.maskCopySettings', 'develop.maskPasteSettings']) {
+      const a = ACTION_BY_ID.get(id)!
+      expect(a.contexts).toEqual(['develop', 'mask'])
+      expect(a.label).toMatch(/mask settings/)
+      expect(a.label).not.toMatch(/Lightroom|Adobe|darktable/)
+      for (const set of [LB, LR]) expect(resolveKeymap(set).get(id)).toEqual([])
+    }
+    // A key the user gives one works in both places.
+    const map = resolveKeymap(assignKey(LB, 'develop.maskPasteSettings', parseChord('Ctrl+Alt+V')!))
+    expect(matchAction(map, key('v', { ctrlKey: true, altKey: true, code: 'KeyV' }), ['global', 'develop'])).toBe('develop.maskPasteSettings')
+    expect(matchAction(map, key('v', { ctrlKey: true, altKey: true, code: 'KeyV' }), ['global', 'mask'])).toBe('develop.maskPasteSettings')
+  })
+
   it('gives the Remove brush its own keys: Q, [ and ] for the size, Shift+[ and Shift+] for the feather, H, Delete, Esc', () => {
     const REMOVE: Context[] = ['global', 'remove']
     for (const set of [LB, LR]) {

@@ -210,7 +210,7 @@ export function usePeople(o: Options) {
   }
 
   /**
-   * A stored People part made for the photo shown (pasted, from a preset, or computed again): "All people" from
+   * A stored People part made for the photo shown (waiting for its matte, or computed again): "All people" from
    * everyone found here, one person from whoever stands where that person's box was. Null: declined or failed.
    */
   async function compute(s: AiShape, step: string): Promise<PeopleResult | null> {
