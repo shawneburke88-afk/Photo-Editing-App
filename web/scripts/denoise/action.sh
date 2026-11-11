@@ -85,7 +85,7 @@ for st in "${STAGES[@]}"; do
     pairs)
       say "## RawNIND pairs: white balance in front of the model, routes A and B"
       fetch_pairs
-      PY $D/quality.py pairs --model "$M" --out "$RES/pairs" --wb none,d65,shot \
+      PY $D/quality.py pairs --model "$M" --out "$RES/pairs" --wb none,d65,shot --ref-b \
         "7D_ISO3200=$(f 7d_iso3200),$(f 7d_gt)" "7D_ISO12800=$(f 7d_iso12800),$(f 7d_gt)" \
         "6D_ISO6400=$(f 6d_iso6400),$(f 6d_gt)" "6D_ISO51200=$(f 6d_iso51200),$(f 6d_gt)" \
         "C500D_ISO3200=$(f c500d_iso3200),$(f c500d_gt)" \

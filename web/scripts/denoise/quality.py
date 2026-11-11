@@ -54,8 +54,8 @@ def align(gt, noisy, max_shift=8):
 
     # coarse search on the downsampled green is too coarse for 2-pixel steps; use full-resolution green on a centre window
     H, W = gt.shape
-    cy, cx = (H // 4) * 2, (W // 4) * 2
-    win = 1024
+    win = min(1024, ((min(H, W) // 2 - 2 * max_shift) // 16) * 16)
+    cy, cx = ((H - win) // 4) * 2, ((W - win) // 4) * 2
     a = gt[cy:cy + win, cx:cx + win]
     best = (1e30, 0, 0)
     ga = 0.5 * (a[0::2, 1::2] + a[1::2, 0::2])
@@ -199,6 +199,18 @@ def cmd_pairs(a):
     results = []
     for spec in a.pairs:
         name, noisy_path, gt_path = spec.split("=")[0], *spec.split("=")[1].split(",")
+        try:
+            one_pair(a, sess, name, noisy_path, gt_path, results)
+        except Exception as e:  # noqa: BLE001
+            import traceback
+
+            log(f"   {name}: failed: {e!r}")
+            traceback.print_exc()
+    summarise_pairs(a, results)
+
+
+def one_pair(a, sess, name, noisy_path, gt_path, results):
+    if True:
         t0 = time.time()
         rn, rg = L.load_raw(noisy_path), L.load_raw(gt_path)
         log(f"== {name}: noisy {os.path.basename(noisy_path)[:60]} {exif(noisy_path)}; clean {os.path.basename(gt_path)[:60]} {exif(gt_path)}")
@@ -206,7 +218,7 @@ def cmd_pairs(a):
         nn, ng = L.normalise(rn), L.normalise(rg)
         if nn.shape != ng.shape or rn["cfa"] != rg["cfa"]:
             log("   shapes differ; skipped")
-            continue
+            return
         cfa = rn["cfa"]
         y0, x0 = L.rggb_origin(cfa)
         wb = rg["wb_shot"]
@@ -234,6 +246,12 @@ def cmd_pairs(a):
         def al(arr):  # crop a working-region array of the noisy frame like align() did
             return arr[oy + dy:oy + dy + work_gt.shape[0], ox + dx:ox + dx + work_gt.shape[1]]
 
+        # A second reference that does not favour RCD: the clean frame through the model (route B).
+        gt_rgb = None
+        if a.ref_b:
+            tg = L.tiled(sess, ng, cfa)
+            gt_rgb = (tg["rgb"]["raw"] * L.global_gain(tg["rgb"]["raw"], tg["work"], "site"))[oy:oy + work_gt.shape[0], ox:ox + work_gt.shape[1]]
+            del tg
         crops = pick_crops(work_gt, a.crops, a.size)
         for ci, (cy, cx) in enumerate(crops):
             gt_rec = develop_bayer(work_gt, L.RGGB, wb, M, cy, cx, a.size)
@@ -258,6 +276,19 @@ def cmd_pairs(a):
                 sc, d_b = score(b_rec, gt_rec, exposure)
                 row[f"B_{wbn}"] = sc
                 disp[wbn] = (d_a, d_b)
+            if gt_rgb is not None:
+                m = 16
+                yy0, xx0 = max(0, cy - m), max(0, cx - m)
+                gtb = L.lb_linear_stage(gt_rgb[yy0:cy + a.size + m, xx0:cx + a.size + m], wb, M)[cy - yy0:cy - yy0 + a.size, cx - xx0:cx - xx0 + a.size]
+                first = a.wb.split(",")[0]
+                rgb_al = al(outs[first][0])
+                a_rec = develop_bayer(L.remosaic(rgb_al), L.RGGB, wb, M, cy, cx, a.size)
+                b_rec = L.lb_linear_stage(rgb_al[yy0:cy + a.size + m, xx0:cx + a.size + m], wb, M)[cy - yy0:cy - yy0 + a.size, cx - xx0:cx - xx0 + a.size]
+                ra, _ = score(a_rec, gtb, exposure)
+                rb, _ = score(b_rec, gtb, exposure)
+                rg, _ = score(gt_rec, gtb, exposure)
+                row["refB"] = {"A": ra, "B": rb, "clean_rcd_vs_clean_model": rg}
+                log(f"   crop {ci}: against the clean frame through the model instead (route B on the clean frame): A_{first} MS-SSIM {ra['msssim']:.4f} PSNR {ra['psnr']:.2f}; B_{first} MS-SSIM {rb['msssim']:.4f} PSNR {rb['psnr']:.2f}; (clean RCD vs clean model: {rg['msssim']:.4f}, {rg['psnr']:.2f} dB)")
             results.append(row)
             log(f"   crop {ci} at {cy},{cx}: MS-SSIM noisy {row['noisy']['msssim']:.4f} | " + " | ".join(
                 f"{k} {row[k]['msssim']:.4f} (PSNR {row[k]['psnr']:.2f}, R/G {100 * row[k]['rg_err']:+.1f} %, B/G {100 * row[k]['bg_err']:+.1f} %, chromaHF {row[k]['chroma_hf'] / row[k]['chroma_hf_gt']:.2f}x, lumaHF {row[k]['luma_hf'] / row[k]['luma_hf_gt']:.2f}x)"
@@ -273,9 +304,16 @@ def cmd_pairs(a):
                 labs.insert(3, "B with daylight WB in")
             panel(imgs, labs, os.path.join(a.out, f"{name}_crop{ci}.jpg"))
         log(f"   ({time.time() - t0:.0f} s)")
+
+
+def summarise_pairs(a, results):
     json.dump(results, open(os.path.join(a.out, "pairs.json"), "w"), indent=1)
     # summary table: means over crops per pair, and overall
-    keys = [k for k in results[0] if k not in ("pair", "crop", "at")] if results else []
+    keys = [k for k in results[0] if k not in ("pair", "crop", "at", "refB")] if results else []
+    if results and "refB" in results[0]:
+        log("\nAgainst the clean frame through the model (route B on the clean frame), mean over all crops: " +
+            f"A MS-SSIM {np.mean([r['refB']['A']['msssim'] for r in results]):.4f} PSNR {np.mean([r['refB']['A']['psnr'] for r in results]):.2f}; " +
+            f"B MS-SSIM {np.mean([r['refB']['B']['msssim'] for r in results]):.4f} PSNR {np.mean([r['refB']['B']['psnr'] for r in results]):.2f}")
     log("\nMS-SSIM (mean over crops), per pair:")
     log("pair | " + " | ".join(keys))
     by = {}
@@ -584,6 +622,7 @@ if __name__ == "__main__":
     s.add_argument("--crops", type=int, default=3)
     s.add_argument("--size", type=int, default=1024)
     s.add_argument("--panel", type=int, default=256)
+    s.add_argument("--ref-b", action="store_true")
     s.add_argument("pairs", nargs="+", help="name=noisy,clean")
     s = sub.add_parser("tiling")
     s.add_argument("--model", required=True)
