@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import dn_lib as L  # noqa: E402
 
 LOG = []
+B64_LEFT = int(os.environ.get("DN_B64", "0"))
 
 
 def log(*a):
@@ -161,6 +162,16 @@ def panel(imgs, labels, path, zoom_box=None):
         d.text((x + 2, 1), lab, fill=(230, 230, 230))
         x += im.shape[1] + 4
     canvas.save(path, quality=93)
+    # A few panels also go into the log as base64 JPEG (DN_B64 = how many), so they can be looked at without the artifact.
+    global B64_LEFT
+    if B64_LEFT > 0:
+        import base64
+        import io
+
+        B64_LEFT -= 1
+        buf = io.BytesIO()
+        canvas.save(buf, format="JPEG", quality=85)
+        print(f"B64JPEG {os.path.basename(path)} {base64.b64encode(buf.getvalue()).decode()}", flush=True)
 
 
 def u8(disp):

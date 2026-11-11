@@ -13,6 +13,7 @@ T="${RUNNER_TEMP}"
 RES="$T/res"
 mkdir -p "$RES"
 S="$RES/summary.txt"
+export DN_B64="${DN_B64:-6}"
 say() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$S"; }
 PY() { "$P" -I "$@" 2> >(grep -v -i "warning\|warn(" >&2); }
 
@@ -125,4 +126,5 @@ for st in "${STAGES[@]}"; do
       say "unknown stage $st"; exit 1 ;;
   esac
 done
+grep -v "^B64JPEG " "$S" > "$S.tmp" && mv "$S.tmp" "$S"
 ls -la "$RES" "$RES"/* | head -80
