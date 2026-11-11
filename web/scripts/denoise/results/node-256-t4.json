@@ -1,0 +1,39 @@
+{
+ "model": "rawnind_bayer_256.onnx",
+ "node": "v22.23.4",
+ "threads": 4,
+ "results": [
+  {
+   "provider": "wasm",
+   "createMs": 327,
+   "input": {
+    "name": "input",
+    "shape": [
+     1,
+     4,
+     256,
+     256
+    ],
+    "type": "float32"
+   },
+   "runMs": [
+    508,
+    463,
+    475
+   ],
+   "tilesMs": 13599,
+   "tiles": 35,
+   "outDims": [
+    1,
+    3,
+    512,
+    512
+   ],
+   "outMin": -45479.87890625,
+   "outMax": 1240888.75,
+   "nonFinite": 0,
+   "outMean": 43814.623872135155
+  }
+ ],
+ "peakRss": 319524864
+}

@@ -1,0 +1,170 @@
+{
+ "info": {
+  "isolated": true,
+  "cores": 4,
+  "ua": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+  "gpu": {
+   "vendor": "google",
+   "architecture": "swiftshader",
+   "device": "",
+   "description": "",
+   "f16": false,
+   "maxStorageBufferBindingSize": 1073741824,
+   "maxBufferSize": 1073741824
+  }
+ },
+ "results": [
+  {
+   "model": "rawnind_bayer_256.onnx",
+   "bytes": 31053428,
+   "results": [
+    {
+     "provider": "wasm",
+     "createMs": 766,
+     "input": {
+      "name": "input",
+      "shape": [
+       1,
+       4,
+       256,
+       256
+      ],
+      "type": "float32"
+     },
+     "runMs": [
+      554
+     ],
+     "outDims": [
+      1,
+      3,
+      512,
+      512
+     ],
+     "outMin": -45479.87890625,
+     "outMax": 1240888.75,
+     "nonFinite": 0,
+     "outMean": 43814.623872135155
+    },
+    {
+     "provider": "webgpu",
+     "createMs": 476,
+     "input": {
+      "name": "input",
+      "shape": [
+       1,
+       4,
+       256,
+       256
+      ],
+      "type": "float32"
+     },
+     "runMs": [
+      22290
+     ],
+     "outDims": [
+      1,
+      3,
+      512,
+      512
+     ],
+     "outMin": -45479.98828125,
+     "outMax": 1240889.375,
+     "nonFinite": 0,
+     "outMean": 43814.624274372596,
+     "vsFirst": {
+      "maxAbs": 1,
+      "meanAbs": 0.01262999195963251,
+      "refAbsMax": 1240888.75,
+      "maxRel": 8.058740157004405e-7,
+      "meanRel": 1.0178182338773327e-8
+     }
+    }
+   ],
+   "peakRss": 1026150400,
+   "wallMs": 24236,
+   "placementSummary": [
+    "All nodes placed on [CPUExecutionProvider]. Number of nodes: 32",
+    "All nodes placed on [WebGpuExecutionProvider]. Number of nodes: 34"
+   ],
+   "webgpuCpuNodesByOp": {},
+   "webgpuCpuNodeNames": [],
+   "errors": []
+  },
+  {
+   "model": "rawnind_bayer_dyn.onnx",
+   "bytes": 31053430,
+   "results": [
+    {
+     "provider": "wasm",
+     "createMs": 89,
+     "input": {
+      "name": "input",
+      "shape": [
+       1,
+       4,
+       256,
+       256
+      ],
+      "type": "float32"
+     },
+     "runMs": [
+      430
+     ],
+     "outDims": [
+      1,
+      3,
+      512,
+      512
+     ],
+     "outMin": -45479.87890625,
+     "outMax": 1240888.75,
+     "nonFinite": 0,
+     "outMean": 43814.623872135155
+    },
+    {
+     "provider": "webgpu",
+     "createMs": 298,
+     "input": {
+      "name": "input",
+      "shape": [
+       1,
+       4,
+       256,
+       256
+      ],
+      "type": "float32"
+     },
+     "runMs": [
+      24628
+     ],
+     "outDims": [
+      1,
+      3,
+      512,
+      512
+     ],
+     "outMin": -45479.98828125,
+     "outMax": 1240889.375,
+     "nonFinite": 0,
+     "outMean": 43814.624274372596,
+     "vsFirst": {
+      "maxAbs": 1,
+      "meanAbs": 0.01262999195963251,
+      "refAbsMax": 1240888.75,
+      "maxRel": 8.058740157004405e-7,
+      "meanRel": 1.0178182338773327e-8
+     }
+    }
+   ],
+   "peakRss": 1186557952,
+   "wallMs": 25607,
+   "placementSummary": [
+    "All nodes placed on [CPUExecutionProvider]. Number of nodes: 32",
+    "All nodes placed on [WebGpuExecutionProvider]. Number of nodes: 34"
+   ],
+   "webgpuCpuNodesByOp": {},
+   "webgpuCpuNodeNames": [],
+   "errors": []
+  }
+ ]
+}

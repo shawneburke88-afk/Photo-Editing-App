@@ -377,8 +377,10 @@ def cmd_tiling(a):
                 rec = L.lb_linear_stage(small, wb, M, "clip")
                 ims.append(rec)
             ex = L.auto_exposure(ims[0])
-            panel([L.to_display(i, ex) for i in ims] + [u8(np.clip(0.5 + 8 * (ims[1][..., 1:2] / np.maximum(ims[0][..., 1:2], 1e-6) - 1), 0, 1).repeat(3, axis=2))],
-                  ["one global gain", "darktable per-tile gain", "ratio (grey = equal, +/-6 % = white/black)"], os.path.join(a.out, "tiling_gain_frame.jpg"))
+            ratio = ims[1][..., 1:2] / np.maximum(ims[0][..., 1:2], 1e-6)
+            ratio = ratio / np.median(ratio)
+            panel([L.to_display(i, ex) for i in ims] + [u8(np.clip(0.5 + 5 * (ratio - 1), 0, 1).repeat(3, axis=2))],
+                  ["one global gain", "darktable per-tile gain", "ratio / its median (grey = equal, +/-10 % = white/black)"], os.path.join(a.out, "tiling_gain_frame.jpg"))
     open(os.path.join(a.out, "tiling.txt"), "w").write("\n".join(LOG))
 
 

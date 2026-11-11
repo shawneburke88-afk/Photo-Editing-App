@@ -1,0 +1,94 @@
+{
+ "info": {
+  "isolated": true,
+  "cores": 4,
+  "ua": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+  "gpu": {
+   "vendor": "google",
+   "architecture": "swiftshader",
+   "device": "",
+   "description": "",
+   "f16": false,
+   "maxStorageBufferBindingSize": 1073741824,
+   "maxBufferSize": 1073741824
+  }
+ },
+ "results": [
+  {
+   "model": "rawnind_bayer_dyn.onnx",
+   "bytes": 31053430,
+   "results": [
+    {
+     "provider": "wasm",
+     "createMs": 993,
+     "input": {
+      "name": "input",
+      "shape": [
+       1,
+       4,
+       384,
+       384
+      ],
+      "type": "float32"
+     },
+     "runMs": [
+      1853
+     ],
+     "outDims": [
+      1,
+      3,
+      768,
+      768
+     ],
+     "outMin": -45479.87890625,
+     "outMax": 1240888.75,
+     "nonFinite": 0,
+     "outMean": 30938.199739928616
+    },
+    {
+     "provider": "webgpu",
+     "createMs": 692,
+     "input": {
+      "name": "input",
+      "shape": [
+       1,
+       4,
+       384,
+       384
+      ],
+      "type": "float32"
+     },
+     "runMs": [
+      80524
+     ],
+     "outDims": [
+      1,
+      3,
+      768,
+      768
+     ],
+     "outMin": -45479.98828125,
+     "outMax": 1240889.375,
+     "nonFinite": 0,
+     "outMean": 30938.200076117413,
+     "vsFirst": {
+      "maxAbs": 1,
+      "meanAbs": 0.00877054266661785,
+      "refAbsMax": 1240888.75,
+      "maxRel": 8.058740157004405e-7,
+      "meanRel": 7.067952438619377e-9
+     }
+    }
+   ],
+   "peakRss": 1160941568,
+   "wallMs": 84300,
+   "placementSummary": [
+    "All nodes placed on [CPUExecutionProvider]. Number of nodes: 32",
+    "All nodes placed on [WebGpuExecutionProvider]. Number of nodes: 34"
+   ],
+   "webgpuCpuNodesByOp": {},
+   "webgpuCpuNodeNames": [],
+   "errors": []
+  }
+ ]
+}
