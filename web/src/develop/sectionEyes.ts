@@ -21,6 +21,7 @@ import { WHEEL_KEYS, withColourGrading, type WheelKey } from '../engine/develop/
 import { DEFAULT_DETAIL, withDetail } from '../engine/detail/settings'
 import { withMasksList } from '../engine/develop/masks'
 import { grainActive, glowActive, vignetteActive, withEffects, type EffectsSettings } from '../engine/develop/effects'
+import { withLensBlur } from '../engine/develop/lens-blur'
 
 /** The groups that have section eyes (Remove keeps its single eye). */
 export type SectionGroup = 'crop' | 'basic' | 'curve' | 'colour' | 'grading' | 'detail' | 'effects'
@@ -279,8 +280,10 @@ export interface GroupEyes {
   masks: boolean
   /** The Effects group's eye (Part 25): the photo without its Vignette, Grain and Glow. */
   effects: boolean
+  /** The Lens Blur group's eye (Part 32): the photo without its lens blur. */
+  lensBlur: boolean
 }
-export const NO_GROUP_EYES: GroupEyes = { crop: false, remove: false, basic: false, curve: false, colour: false, grading: false, detail: false, masks: false, effects: false }
+export const NO_GROUP_EYES: GroupEyes = { crop: false, remove: false, basic: false, curve: false, colour: false, grading: false, detail: false, masks: false, effects: false, lensBlur: false }
 
 /**
  * The Basic group's settings at their defaults (its eye): white balance, tone and presence (Texture, Clarity and Dehaze
@@ -313,6 +316,7 @@ export function applyEyes(s: DevelopSettings, groups: GroupEyes, hidden: Readonl
   if (groups.masks && out.masks) out = withMasksList(out, undefined)
   if (groups.detail && out.detail) out = { ...out, detail: undefined }
   if (groups.effects) out = withoutFx(out, ['vignette', 'grain', 'glow'])
+  if (groups.lensBlur && out.lensBlur) out = withLensBlur(out, undefined)
   if (groups.crop) out = { ...out, geometry: DEFAULT_GEOMETRY, lens: LEGACY_LENS }
   return out
 }
@@ -347,11 +351,11 @@ export function eyeTitle(id: SectionId, off: boolean, groupOff: boolean): string
  * The "Hidden: …" badge's names, in the stack's order: a hidden group by its own name, otherwise its hidden sections
  * (e.g. "White balance, Red curve").
  */
-export function hiddenNames(groups: { id: SectionGroup | 'remove' | 'masks'; name: string; off: boolean }[], hidden: ReadonlySet<SectionId>): string[] {
+export function hiddenNames(groups: { id: SectionGroup | 'remove' | 'masks' | 'lensBlur'; name: string; off: boolean }[], hidden: ReadonlySet<SectionId>): string[] {
   const out: string[] = []
   for (const g of groups) {
     if (g.off) out.push(g.name)
-    else if (g.id !== 'remove' && g.id !== 'masks') for (const d of sectionsOf(g.id)) if (hidden.has(d.id)) out.push(d.label)
+    else if (g.id !== 'remove' && g.id !== 'masks' && g.id !== 'lensBlur') for (const d of sectionsOf(g.id)) if (hidden.has(d.id)) out.push(d.label)
   }
   return out
 }

@@ -236,6 +236,32 @@ export const HELP: Record<string, ControlHelp> = {
     right: 'Stronger glow.',
     engine: 'LightBench (scene-linear; darktable’s bloom and soften are display-referred)',
   },
+  // Lens Blur (PHASE3.md Part 32).
+  lensBlurAmount: {
+    hint: 'How shallow the depth of field is',
+    what: 'How strongly the parts of the photo nearer or farther than the focus are blurred: the farther from the focus, the more. To keep more of the photo sharp, lower it.',
+    left: 'Less blur: more of the photo looks sharp.',
+    right: 'More blur: only the parts at the focus distance stay sharp.',
+    pitfalls: 'The depth comes from an estimate made on this computer; glass, reflections, thin branches and fine hair can be placed at the wrong distance.',
+  },
+  lensBlurFocus: {
+    hint: 'The distance that stays sharp',
+    what: 'The distance that stays in focus, on this photo’s own scale: 0 is its nearest part, 100 its farthest. Pick focus sets it from a point you click on the photo.',
+    left: 'Focus nearer.',
+    right: 'Focus farther.',
+  },
+  lensBlurFront: {
+    hint: 'Blur of what is nearer than the focus',
+    what: 'How much of the blur the parts nearer than the focus get. At 100 % they blur as much as a real lens would blur them; lower values keep the foreground sharper.',
+    left: 'The foreground stays sharp.',
+    right: 'The foreground blurs fully.',
+  },
+  lensBlurBoost: {
+    hint: 'Brighter out-of-focus lights',
+    what: 'Makes the brightest lights in the blurred parts brighter before they are blurred, so they spread into bright discs, as lights brighter than the camera could record do through a real lens. Nothing in focus is changed.',
+    left: 'No boost.',
+    right: 'Brighter blurred lights.',
+  },
   glowRange: {
     hint: 'Which tones glow',
     what: 'The threshold the glow starts at: only the brightest tones at low values, darker tones too at high values.',
@@ -888,3 +914,16 @@ export const PEOPLE_PART_HELP: Record<'person' | 'face' | 'hair' | 'bodySkin' | 
 
 /** What the panel says about range masks (owner's decision 12: no patent talk in the interface). */
 export const RANGE_NOTE = 'Range masks apply to the whole photo: a luminance, colour or depth range can’t be combined with a brush, gradient or object selection. Make it a separate mask; masks stack.'
+
+/** Tooltips of Lens Blur's buttons and boxes (PHASE3.md Part 32). */
+export const LENS_BLUR_TIPS = {
+  apply: 'Blurs the photo by distance from the focus, like a lens at a wide aperture. The first time on a photo it estimates the photo’s depth on this computer (once; the depth is kept with the edit).',
+  on: 'Lens Blur on or off. Off keeps its settings and the depth.',
+  pick: 'Click on the photo where it should be sharp: the focus moves to the distance there.',
+  noise: 'Adds back the photo’s own noise where the blur smoothed it away, so the blurred parts don’t look smoother than the sharp ones.',
+  keepSharp: 'Keeps one of this photo’s masks sharp: the mask’s part of the photo is laid over the result after the blur. A blurred foreground in front of it still covers it.',
+  aiFill: 'Uses the AI Remove model on this computer to draw what is likely hidden behind near edges in the original photo, so the edge of a blurred foreground shows a believable background. Off, that background is extended from its own nearby colours.',
+  aiFillAgain: 'Draws the hidden background again, with a new seed.',
+  depth: 'Shows the depth Lens Blur uses instead of the photo: white is near, black is far. A view only.',
+  reset: 'Removes Lens Blur from this photo, with its depth and AI fill.',
+}

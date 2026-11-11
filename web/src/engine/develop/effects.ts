@@ -253,7 +253,8 @@ export function forCopy(fx: EffectsSettings | undefined, rand: () => number = Ma
 }
 
 /**
- * Develop settings or a history (JSON) with every grain's seed replaced (a virtual copy's own pattern). Text that isn't
+ * Develop settings or a history (JSON) with every grain's (and Lens Blur's noise) seed replaced (a virtual copy's own
+ * pattern). Text that isn't
  * JSON, or has no grain, is returned as it is.
  */
 export function reseedGrain(json: string, seed: number): string {
@@ -267,6 +268,12 @@ export function reseedGrain(json: string, seed: number): string {
     const fx = out.effects as { grain?: { seed?: unknown } } | undefined
     if (fx && typeof fx === 'object' && fx.grain && typeof fx.grain === 'object') {
       out.effects = { ...fx, grain: { ...fx.grain, seed } }
+      changed = true
+    }
+    // Lens Blur's noise (Part 32) has its own pattern too.
+    const lb = out.lensBlur as { noise?: { seed?: unknown } } | undefined
+    if (lb && typeof lb === 'object' && lb.noise && typeof lb.noise === 'object') {
+      out.lensBlur = { ...lb, noise: { ...lb.noise, seed } }
       changed = true
     }
     return out

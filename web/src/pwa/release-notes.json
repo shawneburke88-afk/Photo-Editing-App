@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.6.21",
+    "date": "2026-11-11",
+    "newFeatures": [
+      "Lens Blur: a new group after Effects blurs the photo by distance, like a lens at a wide aperture. Click the photo to choose what stays sharp, or use the Focus distance slider, then set Blur amount and how much the foreground blurs.",
+      "Lens Blur uses the photo's depth, estimated once on this computer (the same AI depth model as Depth range masks, downloaded only if you agree) and kept with the edit.",
+      "Lens Blur extras: Highlight boost makes bright lights in the blurred parts glow into discs; Keep noise adds the photo's own noise back so blurred areas don't look too smooth; Keep sharp keeps one of your masks sharp; Fill behind edges (AI) can use the AI Remove model to draw the background hidden behind blurred near edges.",
+      "Lens Blur can be copied with Copy/Paste settings (unticked by default): the settings travel, and each photo keeps its own depth."
+    ],
+    "bugFixes": []
+  },
+  {
     "version": "0.6.20",
     "date": "2026-11-03",
     "newFeatures": [
