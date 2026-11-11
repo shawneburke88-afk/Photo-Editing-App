@@ -59,6 +59,12 @@ name: AI models
 #                  tag is never overwritten (a new patch needs a new tag). The fp32 patch is checked, not published.
 #   subject-check  The Subject model the manifest pins, fetched from its GitHub Release by the deploy's own step, through
 #                  the app's own Subject code on the CPU (web/scripts/subject-check.mjs). Read-only.
+#   denoise-spike  Research only (docs/AI_DENOISE_SPIKE.md): can the RawNIND Bayer denoiser run in LightBench? Downloads
+#                  the authors' checkpoint (Google Drive), darktable-ai's ONNX build, RawNIND test pairs (UCLouvain
+#                  Dataverse) and public raws (raw.pixls.us), exports to ONNX, checks against PyTorch, and measures white
+#                  balance, tiling, the two output routes, speed and memory (web/scripts/denoise/). "denoise" picks the
+#                  stage. Results in the log, the summary and the run's "denoise-spike" artifact; read-only; commits and
+#                  publishes nothing.
 
 on:
   workflow_dispatch:
@@ -77,12 +83,18 @@ on:
           - sky-check
           - birefnet-patch
           - subject-check
+          - denoise-spike
         default: pin-and-check
         required: true
       publish:
         description: "efficientvit-export and birefnet-patch only: publish the checked file as a GitHub Release under the manifest's tag (never overwrites an existing release)"
         type: boolean
         default: false
+        required: false
+      denoise:
+        description: "denoise-spike only: the stage (web/scripts/denoise/action.sh): probe, export, wb, tiling, routes, cameras, speed"
+        type: string
+        default: "probe"
         required: false
       revision:
         description: "Optional, pin-and-check only: the 40-digit Hugging Face commit to pin (empty: the model repository's current main)"
@@ -101,7 +113,7 @@ concurrency:
 
 jobs:
   models:
-    if: inputs.task != 'efficientvit-export' && inputs.task != 'sky-check' && inputs.task != 'people-check' && inputs.task != 'birefnet-patch' && inputs.task != 'subject-check'
+    if: inputs.task != 'efficientvit-export' && inputs.task != 'sky-check' && inputs.task != 'people-check' && inputs.task != 'birefnet-patch' && inputs.task != 'subject-check' && inputs.task != 'denoise-spike'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -977,3 +989,56 @@ jobs:
             echo
             echo "Pin it in web/models/manifest.json: \"revision\": \"${commit}\", the file's \"bytes\": ${BYTES} and \"sha256\": \"${SHA256}\"."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---- AI Denoise feasibility spike (docs/AI_DENOISE_SPIKE.md): research only, read-only, publishes nothing.
+  denoise:
+    if: inputs.task == 'denoise-spike'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: read
+    env:
+      STAGE: ${{ inputs.denoise }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Python, PyTorch (CPU) and ONNX Runtime
+        run: |
+          echo "branch ${GITHUB_REF_NAME} at $(git rev-parse --short HEAD), stage '${STAGE}'"
+          nproc; free -g; df -h / || true; lscpu | grep -i "model name\|^CPU(s)" | cut -c1-200
+          python3 -m venv "${RUNNER_TEMP}/venv"
+          V="${RUNNER_TEMP}/venv/bin"
+          "$V/pip" install --quiet torch==2.9.1 --index-url https://download.pytorch.org/whl/cpu
+          "$V/pip" install --quiet onnx==1.19.1 onnxruntime==1.30.0 onnxconverter-common==1.16.0 gdown==5.2.0 \
+            numpy pillow scipy rawpy==0.28.0 pytorch-msssim==1.0.0 exifread==3.5.1
+          "$V/python" -c "import torch, onnx, onnxruntime, rawpy, numpy; print('torch', torch.__version__, 'onnx', onnx.__version__, 'onnxruntime', onnxruntime.__version__, 'rawpy', rawpy.__version__, 'LibRaw', rawpy.libraw_version, 'numpy', numpy.__version__)"
+          echo "P=${RUNNER_TEMP}/venv/bin/python" >> "$GITHUB_ENV"
+          mkdir -p "${RUNNER_TEMP}/res"
+
+      - name: The stage
+        run: bash web/scripts/denoise/action.sh "${STAGE}"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## AI Denoise spike: ${STAGE}"
+            echo
+            echo '```'
+            cat "${RUNNER_TEMP}/res/summary.txt" 2>/dev/null | head -c 60000 || echo "no summary"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: denoise-spike
+          path: ${{ runner.temp }}/res
+          if-no-files-found: ignore
+          retention-days: 30
