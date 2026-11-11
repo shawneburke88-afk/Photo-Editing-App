@@ -164,7 +164,7 @@ def panel(imgs, labels, path, zoom_box=None):
     canvas.save(path, quality=93)
     # A few panels also go into the log as base64 JPEG (DN_B64 = how many), so they can be looked at without the artifact.
     global B64_LEFT
-    if B64_LEFT > 0:
+    if B64_LEFT > 0 and any(k in os.path.basename(path) for k in ("_crop0", "clipped", "tiling", "strength")):
         import base64
         import io
 

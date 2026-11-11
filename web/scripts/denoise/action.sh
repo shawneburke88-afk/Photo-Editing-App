@@ -13,7 +13,7 @@ T="${RUNNER_TEMP}"
 RES="$T/res"
 mkdir -p "$RES"
 S="$RES/summary.txt"
-export DN_B64="${DN_B64:-6}"
+export DN_B64="${DN_B64:-16}"
 say() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$S"; }
 PY() { "$P" -I "$@" 2> >(grep -v -i "warning\|warn(" >&2); }
 
