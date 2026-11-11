@@ -1,0 +1,426 @@
+[02:47:57] ## Inputs
+495 files in the folder listing; 8 match /(DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4|DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1)/(saved_models/iter_[0-9]+\.pt$|args\.yaml$|train_cmd\.sh$|test_cmd\.sh$)/
+rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4/saved_models/iter_4350000.pt: Drive file id 1dFTLeljWi9wwojcZUsam8bE31JdYy3oM, 31059270 B, sha256 c1f7de3de24cb12f4803ee65e11cfb467e9a5b80c3cb7126746ef026106c15e0
+rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4/args.yaml: Drive file id 1jd-6jy1D_v6zaNpokG5ZJwRwKmvGiavw, 1569 B, sha256 0db5778012ecb0eb2c7dfd4ef96338fa79521b751ba936495782504d84bfe999
+rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4/test_cmd.sh: Drive file id 11FFkwfiU9FSDVL3CSkflJQJIXN7DqKTL, 205 B, sha256 30b74d57b857691bb6b81cebbbc6ccde782f5126decb13a2a298ba1f08578043
+rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4/train_cmd.sh: Drive file id 1U0Apl5JRg4CTr663kiFsIXXmN3RxTwgH, 365 B, sha256 a57a81a59beac2ac45681ed5e8509fe77cb0fe92f194d610d7f7207ad880e3b2
+rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1/saved_models/iter_1245000.pt: Drive file id 1tR0LKO-TsdeV_vcWdBNKqBWqBmNobJnF, 31059270 B, sha256 82e9799a2f73289d828df29065a043f1ccc6e1abd195a7b2af4263d51c5bf24d
+rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1/args.yaml: Drive file id 1dcQqfbIa2RriodiKBqMs8DTcGugTkZz8, 1704 B, sha256 042b77229e5d140004795188e8b74a8180c592da9231fab8d062bf18a7a908bf
+rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1/test_cmd.sh: Drive file id 1xxIXFPBYhH-4twJ2VqYCvD_3GmnMi_HC, 222 B, sha256 b0ae0047eb9c1356ac983d0fabdccd5e6289bd50ad296819b961676ad141a920
+rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1/train_cmd.sh: Drive file id 1b9Cv60Z-A8o4lR9IEgrfiu7tipcdeVj9, 443 B, sha256 0f020029863c78216d483d53541199969df318ebd44554a52863b91e8779c7f2
+rawdenoise-nind.dtmodel: 57700134 B, sha256 d71b5f1e727c85a359e6f74dca9e2016c9d8fc3e2f7ac3e9b347d80ceca969af, from https://github.com/darktable-org/darktable-ai/releases/download/release-5.6.0/rawdenoise-nind.dtmodel
+model_bayer.onnx: 31056425 B, sha256 da27509dab6a2915da67e988acd86cf71f9d5bbc8d1aa0ed32933578a887b901
+model_linear.onnx: 31053823 B, sha256 df957efadcc152c007d5d3b0917bdff9e41c0d4a0efe56584ef30b36393cd181
+[02:49:52] main checkpoint: /home/runner/work/_temp/w/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4/saved_models/iter_4350000.pt
+[02:49:52] variant trained without the authors' own pictures (by its name): /home/runner/work/_temp/w/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1/saved_models/iter_1245000.pt
+[02:49:52] --- /home/runner/work/_temp/w/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4/args.yaml
+arbitrary_proc_method: null
+arch: unet
+batch_size_clean: 1
+batch_size_noisy: 4
+bayer_only: true
+clean_dataset_yamlfpaths:
+- ../../datasets/extraraw/trougnouf/crops_metadata.yaml
+- ../../datasets/extraraw/raw-pixls/crops_metadata.yaml
+comment: 2024-02-21-bayer_ms-ssim_mgout_notrans_valeither
+config: null
+continue_training_from_last_model_if_exists: true
+crop_size: 256
+data_pairing: x_y
+debug_options:
+- minimize_threads
+device: null
+expname: DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4
+fallback_load_path: null
+funit: 32
+in_channels: 4
+init_lr: 0.0003
+init_step: 4260000
+load_path: ../../models/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-1/saved_models/iter_4260000.pt
+loss: msssim_loss
+lr_multiplier: 0.85
+match_gain: output
+metrics:
+- msssim_loss
+- mse
+noise_dataset_yamlfpaths:
+- /scratch/brummer/39509156/RawNIND/RawNIND_masks_and_alignments.yaml
+num_crops_per_image: 4
+patience: 100000
+preupsample: false
+reset_lr: false
+reset_optimizer_on_fallback_load_path: false
+save_dpath: ../../models/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4
+test_crop_size: 1024
+test_interval: 1500000
+test_reserve:
+- 7D-2
+- Vaxt-i-trad
+- Pen-pile
+- MuseeL-vases-A7C
+- D60-1
+- MuseeL-Saint-Pierre-C500D
+- TitusToys
+- boardgames_top
+- Laura_Lemons_platformer
+- MuseeL-bluebirds-A7C
+tot_steps: 6000000
+transfer_function: None
+transfer_function_valtest: None
+val_crop_size: 1024
+val_interval: 15000
+warmup_nsteps: 0
+[02:49:52] 
+[02:49:52] --- /home/runner/work/_temp/w/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1/args.yaml
+arbitrary_proc_method: null
+arch: unet
+batch_size_clean: 1
+batch_size_noisy: 4
+bayer_only: true
+clean_dataset_yamlfpaths:
+- ../../datasets/extraraw/raw-pixls/crops_metadata.yaml
+comment: 2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef
+config: null
+continue_training_from_last_model_if_exists: true
+crop_size: 256
+data_pairing: x_y
+debug_options:
+- minimize_threads
+device: null
+expname: DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1
+fallback_load_path: null
+funit: 32
+in_channels: 4
+init_lr: 0.0003
+init_step: 120000
+load_path: ../../models/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_/saved_models/iter_120000.pt
+loss: msssim_loss
+lr_multiplier: 0.85
+match_gain: output
+metrics:
+- msssim_loss
+- mse
+noise_dataset_yamlfpaths:
+- /scratch/brummer/39509156/RawNIND/RawNIND_masks_and_alignments.yaml
+num_crops_per_image: 4
+patience: 100000
+preupsample: false
+reset_lr: false
+reset_optimizer_on_fallback_load_path: false
+save_dpath: ../../models/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1
+test_crop_size: 1024
+test_interval: 1500000
+test_reserve:
+- 7D-2
+- Vaxt-i-trad
+- Pen-pile
+- MuseeL-vases-A7C
+- D60-1
+- MuseeL-Saint-Pierre-C500D
+- TitusToys
+- boardgames_top
+- Laura_Lemons_platformer
+- MuseeL-bluebirds-A7C
+- LucieB_bw_drawing1
+- LucieB_bw_drawing2
+- LucieB_board
+- LucieB_painted_wallpaper
+- LucieB_painted_plants
+- LucieB_groceries
+tot_steps: 6000000
+transfer_function: None
+transfer_function_valtest: None
+val_crop_size: 1024
+val_interval: 15000
+warmup_nsteps: 0
+[02:49:52] 
+[02:49:52] --- /home/runner/work/_temp/w/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4/train_cmd.sh
+python train_denoiser_bayer2prgb.py --loss msssim_loss --match_gain output --comment 2024-02-21-bayer_ms-ssim_mgout_notrans_valeither --transfer_function None --transfer_function_valtest None --continue_training_from_last_model_if_exists --debug_options minimize_threads --noise_dataset_yamlfpaths /scratch/brummer/39509156/RawNIND/RawNIND_masks_and_alignments.yaml[02:49:52] 
+[02:49:52] --- /home/runner/work/_temp/w/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1/train_cmd.sh
+python train_denoiser_bayer2prgb.py --loss msssim_loss --comment 2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef --transfer_function None --transfer_function_valtest None --continue_training_from_last_model_if_exists --debug_options minimize_threads --noise_dataset_yamlfpaths /scratch/brummer/39509156/RawNIND/RawNIND_masks_and_alignments.yaml --clean_dataset_yamlfpaths ../../datasets/extraraw/raw-pixls/crops_metadata.yaml[02:49:52] 
+m100_board_iso6400.cr2: 42507086 B, sha256 949d8473863db8165602ecf1253f70a9025363baedccdd3994740364baff37f5, from https://dataverse.uclouvain.be/api/access/datafile/29921
+  = Bayer_UNK_TEST_LucieB_board_ISO6400_sha1=469fa354eab99934d85b309e4dc7d0c669a35e68.cr2 (dataverse file id 29921, 1 match(es), MD5 6b20c18611688992bf2eea02637bcdcd, md5 here 6b20c18611688992bf2eea02637bcdcd)
+m100_board_gt.cr2: 32748316 B, sha256 9d8c0eb0068f1e56d0cf23dfb15d18aa3ffee94a7992aabe0cc00afad35f4ca6, from https://dataverse.uclouvain.be/api/access/datafile/30098
+  = Bayer_UNK_TEST_LucieB_board_GT_ISO100_sha1=3300aa5ce5517dfbe1b2fc7c7e1a0a0cf40b8972.cr2 (dataverse file id 30098, 1 match(es), MD5 4c6f5615deb7cead9be40cc3d2c838fd, md5 here 4c6f5615deb7cead9be40cc3d2c838fd)
+test tiles (4, 4, 512, 512) [0.01800886169075966, 0.07417032122612, 0.06634866446256638, 0.0653500035405159] [0.15842343866825104, 0.4193233251571655, 0.33100801706314087, 0.29312869906425476]
+[02:50:01] ## Export (PyTorch 2.9.1+cpu, ONNX Runtime 1.30.0)
+checkpoint iter_4350000.pt: 46 tensors, funit 32, 7760748 values; missing [], unexpected []
+rawnind_bayer_512.onnx: real tile 0 @512: vs PyTorch max |Δ| 0.1016 (output max 1.184e+05; relative 8.58e-07; PSNR 144.5 dB)
+rawnind_bayer_512.onnx: real tile 1 @512: vs PyTorch max |Δ| 0.2344 (output max 3.052e+05; relative 7.68e-07; PSNR 141.2 dB)
+rawnind_bayer_512.onnx: real tile 2 @512: vs PyTorch max |Δ| 0.25 (output max 2.902e+05; relative 8.62e-07; PSNR 140.9 dB)
+rawnind_bayer_512.onnx: real tile 3 @512: vs PyTorch max |Δ| 0.2188 (output max 2.555e+05; relative 8.56e-07; PSNR 141.2 dB)
+rawnind_bayer_512.onnx: noise 0 @512: vs PyTorch max |Δ| 0.2344 (output max 1.746e+05; relative 1.34e-06; PSNR 134.0 dB)
+rawnind_bayer_512.onnx: 31053428 B, sha256 833e25f866cb5478793eb0eb075fd2b5615698118887774c423e98b67f936092, opset 17, ops {'Conv': 19, 'LeakyRelu': 18, 'MaxPool': 4, 'ConvTranspose': 4, 'Concat': 4, 'DepthToSpace': 1}
+rawnind_bayer_256.onnx: real tile 0 @256: vs PyTorch max |Δ| 0.03906 (output max 2.642e+04; relative 1.48e-06; PSNR 137.6 dB)
+rawnind_bayer_256.onnx: real tile 1 @256: vs PyTorch max |Δ| 0.2344 (output max 2.186e+05; relative 1.07e-06; PSNR 139.1 dB)
+rawnind_bayer_256.onnx: real tile 2 @256: vs PyTorch max |Δ| 0.3125 (output max 2.308e+05; relative 1.35e-06; PSNR 135.7 dB)
+rawnind_bayer_256.onnx: real tile 3 @256: vs PyTorch max |Δ| 0.25 (output max 1.784e+05; relative 1.4e-06; PSNR 136.6 dB)
+rawnind_bayer_256.onnx: noise 0 @256: vs PyTorch max |Δ| 0.2344 (output max 1.692e+05; relative 1.39e-06; PSNR 133.7 dB)
+rawnind_bayer_256.onnx: 31053428 B, sha256 0c6dbf9bcc3e83092aa6892a3fd8b4ea6b124074439fed745d494bce5d0f1e85, opset 17, ops {'Conv': 19, 'LeakyRelu': 18, 'MaxPool': 4, 'ConvTranspose': 4, 'Concat': 4, 'DepthToSpace': 1}
+rawnind_bayer_dyn.onnx: real tile 0 @512: vs PyTorch max |Δ| 0.1016 (output max 1.184e+05; relative 8.58e-07; PSNR 144.5 dB)
+rawnind_bayer_dyn.onnx: real tile 1 @512: vs PyTorch max |Δ| 0.2344 (output max 3.052e+05; relative 7.68e-07; PSNR 141.2 dB)
+rawnind_bayer_dyn.onnx: real tile 2 @512: vs PyTorch max |Δ| 0.25 (output max 2.902e+05; relative 8.62e-07; PSNR 140.9 dB)
+rawnind_bayer_dyn.onnx: real tile 3 @512: vs PyTorch max |Δ| 0.2188 (output max 2.555e+05; relative 8.56e-07; PSNR 141.2 dB)
+rawnind_bayer_dyn.onnx: noise 0 @512: vs PyTorch max |Δ| 0.2344 (output max 1.746e+05; relative 1.34e-06; PSNR 134.0 dB)
+rawnind_bayer_dyn.onnx: real tile 0 @256: vs PyTorch max |Δ| 0.03906 (output max 2.642e+04; relative 1.48e-06; PSNR 137.6 dB)
+rawnind_bayer_dyn.onnx: real tile 1 @256: vs PyTorch max |Δ| 0.2344 (output max 2.186e+05; relative 1.07e-06; PSNR 139.1 dB)
+rawnind_bayer_dyn.onnx: real tile 2 @256: vs PyTorch max |Δ| 0.3125 (output max 2.308e+05; relative 1.35e-06; PSNR 135.7 dB)
+rawnind_bayer_dyn.onnx: real tile 3 @256: vs PyTorch max |Δ| 0.25 (output max 1.784e+05; relative 1.4e-06; PSNR 136.6 dB)
+rawnind_bayer_dyn.onnx: noise 0 @256: vs PyTorch max |Δ| 0.2344 (output max 1.692e+05; relative 1.39e-06; PSNR 133.7 dB)
+rawnind_bayer_dyn.onnx: real tile 0 @384: vs PyTorch max |Δ| 0.07812 (output max 7.977e+04; relative 9.79e-07; PSNR 145.6 dB)
+rawnind_bayer_dyn.onnx: real tile 1 @384: vs PyTorch max |Δ| 0.2969 (output max 2.282e+05; relative 1.3e-06; PSNR 138.8 dB)
+rawnind_bayer_dyn.onnx: real tile 2 @384: vs PyTorch max |Δ| 0.2422 (output max 2.902e+05; relative 8.35e-07; PSNR 139.1 dB)
+rawnind_bayer_dyn.onnx: real tile 3 @384: vs PyTorch max |Δ| 0.2188 (output max 1.797e+05; relative 1.22e-06; PSNR 137.6 dB)
+rawnind_bayer_dyn.onnx: noise 0 @384: vs PyTorch max |Δ| 0.3125 (output max 1.766e+05; relative 1.77e-06; PSNR 134.1 dB)
+rawnind_bayer_dyn.onnx: 31053430 B, sha256 0ea083ff26cacf29b33a62a88995dadb01838d40e3a024532ef274e829e653e8, opset 17, ops {'Conv': 19, 'LeakyRelu': 18, 'MaxPool': 4, 'ConvTranspose': 4, 'Concat': 4, 'DepthToSpace': 1}
+  torch.onnx.export(net, x, path, opset_version=a.opset, input_names=["input"], output_names=["output"], do_constant_folding=True, dynamo=False, **kw)
+checkpoint iter_1245000.pt: 46 tensors, funit 32, 7760748 values; missing [], unexpected []
+rawnind_bayer_noown_512.onnx: real tile 0 @512: vs PyTorch max |Δ| 2.48e-05 (output max 34.48; relative 7.19e-07; PSNR 143.9 dB)
+rawnind_bayer_noown_512.onnx: real tile 1 @512: vs PyTorch max |Δ| 5.341e-05 (output max 74.68; relative 7.15e-07; PSNR 142.4 dB)
+rawnind_bayer_noown_512.onnx: real tile 2 @512: vs PyTorch max |Δ| 6.866e-05 (output max 75.66; relative 9.08e-07; PSNR 140.9 dB)
+rawnind_bayer_noown_512.onnx: real tile 3 @512: vs PyTorch max |Δ| 4.959e-05 (output max 68.95; relative 7.19e-07; PSNR 142.1 dB)
+rawnind_bayer_noown_512.onnx: noise 0 @512: vs PyTorch max |Δ| 0.000103 (output max 104.7; relative 9.84e-07; PSNR 135.9 dB)
+rawnind_bayer_noown_512.onnx: 31053428 B, sha256 85b712c550bcb3a0bd8f97821db6e5df4f6fc69c0787ddcd75d3af99c61462fb, opset 17, ops {'Conv': 19, 'LeakyRelu': 18, 'MaxPool': 4, 'ConvTranspose': 4, 'Concat': 4, 'DepthToSpace': 1}
+  torch.onnx.export(net, x, path, opset_version=a.opset, input_names=["input"], output_names=["output"], do_constant_folding=True, dynamo=False, **kw)
+[02:50:39] ## Against darktable-ai's model_bayer.onnx
+rawnind_bayer_512.onnx: opset 17, producer pytorch 2.9.1, 46 initializers
+model_bayer.onnx: opset 20, producer pytorch 2.6.0, 46 initializers
+weights: same shapes; 46 of 46 tensors bit-identical; largest |Δ| 0; 7760748 values
+outputs, real tile 0 @512: max |Δ| 0 (output max 1.184e+05; relative 0; PSNR inf dB)
+outputs, real tile 1 @512: max |Δ| 0 (output max 3.052e+05; relative 0; PSNR inf dB)
+outputs, real tile 2 @512: max |Δ| 0 (output max 2.902e+05; relative 0; PSNR inf dB)
+outputs, real tile 3 @512: max |Δ| 0 (output max 2.555e+05; relative 0; PSNR inf dB)
+outputs, noise 0 @512: max |Δ| 0 (output max 1.746e+05; relative 0; PSNR inf dB)
+[02:50:45] ## The variant without the authors' own pictures against the main checkpoint (different weights expected)
+rawnind_bayer_noown_512.onnx: opset 17, producer pytorch 2.9.1, 46 initializers
+rawnind_bayer_512.onnx: opset 17, producer pytorch 2.9.1, 46 initializers
+weights: same shapes; 0 of 46 tensors bit-identical; largest |Δ| 6.53; 7760748 values
+outputs, real tile 0 @512: max |Δ| 1.184e+05 (output max 1.184e+05; relative 1; PSNR 13.4 dB)
+outputs, real tile 1 @512: max |Δ| 3.052e+05 (output max 3.052e+05; relative 1; PSNR 10.9 dB)
+outputs, real tile 2 @512: max |Δ| 2.902e+05 (output max 2.902e+05; relative 1; PSNR 9.8 dB)
+outputs, real tile 3 @512: max |Δ| 2.556e+05 (output max 2.555e+05; relative 1; PSNR 10.5 dB)
+outputs, noise 0 @512: max |Δ| 1.746e+05 (output max 1.746e+05; relative 1; PSNR 3.7 dB)
+[02:50:52] ## fp16
+checkpoint iter_4350000.pt: 46 tensors, funit 32, 7760748 values; missing [], unexpected []
+largest |activation| per layer (PyTorch fp32), over 9 inputs; fp16's largest finite value is 65504:
+  convs1.0                     11.132 
+  convs1.1                     11.132 
+  convs1.2                      94.22 
+  convs1.3                     31.921 
+  maxpool                      2096.7 
+  convs2.0                        107 
+  convs2.1                        107 
+  convs2.2                     542.85 
+  convs2.3                      418.5 
+  convs3.0                     1204.8 
+  convs3.1                     807.68 
+  convs3.2                     2124.1 
+  convs3.3                      990.8 
+  convs4.0                     2706.8 
+  convs4.1                     1341.3 
+  convs4.2                     2577.9 
+  convs4.3                     2096.7 
+  bottom.0                     3257.8 
+  bottom.1                     1150.3 
+  bottom.2                     6797.8 
+  bottom.3                     3275.7 
+  up1                          1241.4 
+  tconvs1.0                    7659.7 
+  tconvs1.1                    7659.7 
+  tconvs1.2                    9776.7 
+  tconvs1.3                    9776.7 
+  up2                          1938.4 
+  tconvs2.0                    9283.4 
+  tconvs2.1                    9283.4 
+  tconvs2.2                     20631 
+  tconvs2.3                     20631 
+  up3                           10768 
+  tconvs3.0                     45431 
+  tconvs3.1                     45431 
+  tconvs3.2                1.3728e+05   > 65504
+  tconvs3.3                1.2001e+05   > 65504
+  up4                      1.4137e+05   > 65504
+  tconvs4.0                4.8309e+05   > 65504
+  tconvs4.1                4.8309e+05   > 65504
+  tconvs4.2                 3.887e+06   > 65504
+  tconvs4.3                2.2636e+06   > 65504
+  output_module.0          4.8952e+06   > 65504
+  output_module.1          4.8952e+06   > 65504
+ONNX Runtime on the CPU with the fp16 file (its CPU kernels compute Conv in fp32 between casts, so this does not show a GPU's overflow):
+rawnind_bayer_512_fp16.onnx: 15535394 B
+  real tile 0: fp16 finite; vs fp32 max relative 0.000292, PSNR 89.2 dB
+  real tile 1: fp16 finite; vs fp32 max relative 0.000322, PSNR 86.8 dB
+  real tile 2: fp16 finite; vs fp32 max relative 0.000352, PSNR 85.9 dB
+  real tile 3: fp16 finite; vs fp32 max relative 0.000276, PSNR 86.5 dB
+  noise 0: fp16 finite; vs fp32 max relative 0.000499, PSNR 78.8 dB
+  real tile 0 x4: fp16 finite; vs fp32 max relative 0.000299, PSNR 89.0 dB
+  real tile 0 x16: fp16 finite; vs fp32 max relative 0.0003, PSNR 89.0 dB
+  real tile 1 x4: fp16 finite; vs fp32 max relative 0.000322, PSNR 86.8 dB
+  real tile 1 x16: fp16 finite; vs fp32 max relative 0.000325, PSNR 86.8 dB
+[02:51:16] ## Largest tensors
+rawnind_bayer_512.onnx @ 1024 packed (2048 x 2048 sensor pixels): largest tensors (fp32): 256.0 MiB /Concat_3_output_0 [1, 64, 1024, 1024]; 128.0 MiB /up4/ConvTranspose_output_0 [1, 32, 1024, 1024]; 128.0 MiB /tconvs4/tconvs4.3/LeakyRelu_output_0 [1, 32, 1024, 1024]; 128.0 MiB /tconvs4/tconvs4.2/Conv_output_0 [1, 32, 1024, 1024]. Sum of all activations 2844 MiB, weights 29.6 MiB. 128 MiB limit: EXCEEDED
+rawnind_bayer_512.onnx @ 768 packed (1536 x 1536 sensor pixels): largest tensors (fp32): 144.0 MiB /Concat_3_output_0 [1, 64, 768, 768]; 72.0 MiB /up4/ConvTranspose_output_0 [1, 32, 768, 768]; 72.0 MiB /tconvs4/tconvs4.3/LeakyRelu_output_0 [1, 32, 768, 768]; 72.0 MiB /tconvs4/tconvs4.2/Conv_output_0 [1, 32, 768, 768]. Sum of all activations 1600 MiB, weights 29.6 MiB. 128 MiB limit: EXCEEDED
+rawnind_bayer_512.onnx @ 640 packed (1280 x 1280 sensor pixels): largest tensors (fp32): 100.0 MiB /Concat_3_output_0 [1, 64, 640, 640]; 50.0 MiB /up4/ConvTranspose_output_0 [1, 32, 640, 640]; 50.0 MiB /tconvs4/tconvs4.3/LeakyRelu_output_0 [1, 32, 640, 640]; 50.0 MiB /tconvs4/tconvs4.2/Conv_output_0 [1, 32, 640, 640]. Sum of all activations 1111 MiB, weights 29.6 MiB. 128 MiB limit: OK
+rawnind_bayer_512.onnx @ 512 packed (1024 x 1024 sensor pixels): largest tensors (fp32): 64.0 MiB /Concat_3_output_0 [1, 64, 512, 512]; 32.0 MiB /up4/ConvTranspose_output_0 [1, 32, 512, 512]; 32.0 MiB /tconvs4/tconvs4.3/LeakyRelu_output_0 [1, 32, 512, 512]; 32.0 MiB /tconvs4/tconvs4.2/Conv_output_0 [1, 32, 512, 512]. Sum of all activations 711 MiB, weights 29.6 MiB. 128 MiB limit: OK
+rawnind_bayer_512.onnx @ 384 packed (768 x 768 sensor pixels): largest tensors (fp32): 36.0 MiB /Concat_3_output_0 [1, 64, 384, 384]; 18.0 MiB /up4/ConvTranspose_output_0 [1, 32, 384, 384]; 18.0 MiB /tconvs4/tconvs4.3/LeakyRelu_output_0 [1, 32, 384, 384]; 18.0 MiB /tconvs4/tconvs4.2/Conv_output_0 [1, 32, 384, 384]. Sum of all activations 400 MiB, weights 29.6 MiB. 128 MiB limit: OK
+rawnind_bayer_512.onnx @ 256 packed (512 x 512 sensor pixels): largest tensors (fp32): 16.0 MiB /Concat_3_output_0 [1, 64, 256, 256]; 8.0 MiB /up4/ConvTranspose_output_0 [1, 32, 256, 256]; 8.0 MiB /tconvs4/tconvs4.3/LeakyRelu_output_0 [1, 32, 256, 256]; 8.0 MiB /tconvs4/tconvs4.2/Conv_output_0 [1, 32, 256, 256]. Sum of all activations 178 MiB, weights 29.6 MiB. 128 MiB limit: OK
+[02:51:16] ## Tiling on 24 MP raws
+m100_board_iso25600.cr2: 49993911 B, sha256 4ed847ebbb0620365640a3c25bc74ad1295c00c7dd83e3adc31aca3335fe5742, from https://dataverse.uclouvain.be/api/access/datafile/30943
+  = Bayer_UNK_TEST_LucieB_board_ISO25600_sha1=34714a832479e2a80bdd6153c8252a342e657743.cr2 (dataverse file id 30943, 1 match(es), MD5 0e2c788cbddfa11342cee3f87763f03a, md5 here 0e2c788cbddfa11342cee3f87763f03a)
+a7c_titus_iso6400.arw: 49288704 B, sha256 d7bc230b2628a89fea652b7ad6e02a1b26fd6719332e54a40a79d7d2bd74c830, from https://dataverse.uclouvain.be/api/access/datafile/30136
+  = Bayer_TEST_TitusToys_ISO6400_sha1=bedd147574be163498fb95292674c6c4122682c2.arw (dataverse file id 30136, 1 match(es), MD5 5037e5557072fac65b85cf5d37975199, md5 here 5037e5557072fac65b85cf5d37975199)
+a7c_board_iso64000.arw: 49407488 B, sha256 a9f0fefecff4d62eb5db6d80eb094c0a173f6d5b48ff2a7894e30fa384a7d697, from https://dataverse.uclouvain.be/api/access/datafile/30252
+  = Bayer_TEST_boardgames_top_ISO64000_sha1=7c421d49c4d2ffa0c023007c7c3f2e7cae8575d1.arw (dataverse file id 30252, 1 match(es), MD5 dc0b79b4d14539e03de7c08ba70b8ed1, md5 here dc0b79b4d14539e03de7c08ba70b8ed1)
+== tiling: m100_board_iso6400.cr2 {'model': 'Canon EOS M100', 'iso': '6400', 'exposure': '1/40', 'f': '8'}; 6024 x 4020 (24.2 MP)
+   untiled run of the whole photo: 15 s, peak RSS 7.8 GB
+-- tile 512 packed, overlap 32: 5 x 7 = 35 tiles, 23.6 s (0.67 s per tile, onnxruntime CPU); all finite: True; largest |output| 9.626e+05
+   model scale: global gain (site) 9.9154e-07; darktable's formula on the whole photo 1.0228e-06 (= 1.0316 x the site gain)
+   per-tile gain relative to the one global (site) gain: site min 0.9941 max 1.0036 sd 0.0025; least squares min 0.9969 max 1.0065; darktable per tile min 1.0135 max 1.0416 sd 0.0072
+   darktable per-tile gain: brightness step between neighbouring tiles: mean 0.58 %, max 1.59 % (9 of 58 tile borders over 1 %, 0 over 2 %)
+   site per-tile gain: brightness step between neighbouring tiles: mean 0.19 %, max 0.67 % (0 of 58 tile borders over 1 %, 0 over 2 %)
+   global: re-mosaiced mean / source mean 1.0000
+   dt_tile: re-mosaiced mean / source mean 1.0318
+   site_tile: re-mosaiced mean / source mean 0.9998
+   global vs untiled: mean |Δ| 0.064 % of the mean level (in the seam bands 0.176 %, elsewhere 0.029 %); 99.9th percentile 1.85 %; PSNR vs untiled (peak = white) 77.1 dB
+   dt_tile vs untiled: mean |Δ| 3.179 % of the mean level (in the seam bands 3.610 %, elsewhere 3.044 %); 99.9th percentile 12.06 %; PSNR vs untiled (peak = white) 51.2 dB
+   site_tile vs untiled: mean |Δ| 0.229 % of the mean level (in the seam bands 0.280 %, elsewhere 0.213 %); 99.9th percentile 1.90 %; PSNR vs untiled (peak = white) 72.7 dB
+   global: 128-px block mean (green) vs untiled: sd 0.146 %, largest 1.60 %
+   dt_tile: 128-px block mean (green) vs untiled: sd 0.732 %, largest 4.29 %
+   site_tile: 128-px block mean (green) vs untiled: sd 0.286 %, largest 1.98 %
+-- tile 256 packed, overlap 32: 11 x 16 = 176 tiles, 30.1 s (0.17 s per tile, onnxruntime CPU); all finite: True; largest |output| 9.947e+05
+   model scale: global gain (site) 9.9152e-07; darktable's formula on the whole photo 1.0228e-06 (= 1.0316 x the site gain)
+   per-tile gain relative to the one global (site) gain: site min 0.9798 max 1.0060 sd 0.0042; least squares min 0.9687 max 1.0113; darktable per tile min 0.9846 max 1.0472 sd 0.0111
+   darktable per-tile gain: brightness step between neighbouring tiles: mean 0.68 %, max 4.39 % (82 of 325 tile borders over 1 %, 16 over 2 %)
+   site per-tile gain: brightness step between neighbouring tiles: mean 0.21 %, max 1.70 % (8 of 325 tile borders over 1 %, 0 over 2 %)
+   8 tiles with input mean under 0.01: darktable gain / global min 1.0068 max 1.0226; site min 0.9798 max 0.9983
+   global: re-mosaiced mean / source mean 1.0000
+   dt_tile: re-mosaiced mean / source mean 1.0319
+   site_tile: re-mosaiced mean / source mean 0.9997
+   global vs untiled: mean |Δ| 0.118 % of the mean level (in the seam bands 0.181 %, elsewhere 0.045 %); 99.9th percentile 1.87 %; PSNR vs untiled (peak = white) 75.6 dB
+   dt_tile vs untiled: mean |Δ| 3.206 % of the mean level (in the seam bands 3.284 %, elsewhere 3.116 %); 99.9th percentile 13.10 %; PSNR vs untiled (peak = white) 50.9 dB
+   site_tile vs untiled: mean |Δ| 0.274 % of the mean level (in the seam bands 0.296 %, elsewhere 0.248 %); 99.9th percentile 1.99 %; PSNR vs untiled (peak = white) 71.6 dB
+   global: 128-px block mean (green) vs untiled: sd 0.174 %, largest 1.98 %
+   dt_tile: 128-px block mean (green) vs untiled: sd 1.068 %, largest 4.72 %
+   site_tile: 128-px block mean (green) vs untiled: sd 0.420 %, largest 3.18 %
+-- tile 256 packed, overlap 16: 9 x 14 = 126 tiles, 21.5 s (0.17 s per tile, onnxruntime CPU); all finite: True; largest |output| 9.627e+05
+   model scale: global gain (site) 9.9151e-07; darktable's formula on the whole photo 1.0228e-06 (= 1.0316 x the site gain)
+   per-tile gain relative to the one global (site) gain: site min 0.9774 max 1.0047 sd 0.0043; least squares min 0.9659 max 1.0092; darktable per tile min 0.9877 max 1.0453 sd 0.0109
+   darktable per-tile gain: brightness step between neighbouring tiles: mean 0.73 %, max 4.08 % (61 of 229 tile borders over 1 %, 17 over 2 %)
+   site per-tile gain: brightness step between neighbouring tiles: mean 0.23 %, max 1.90 % (7 of 229 tile borders over 1 %, 0 over 2 %)
+   7 tiles with input mean under 0.01: darktable gain / global min 1.0051 max 1.0416; site min 0.9774 max 1.0042
+   global: re-mosaiced mean / source mean 1.0000
+   dt_tile: re-mosaiced mean / source mean 1.0319
+   site_tile: re-mosaiced mean / source mean 0.9996
+   global vs untiled: mean |Δ| 0.166 % of the mean level (in the seam bands 0.367 %, elsewhere 0.099 %); 99.9th percentile 1.97 %; PSNR vs untiled (peak = white) 73.5 dB
+   dt_tile vs untiled: mean |Δ| 3.203 % of the mean level (in the seam bands 3.343 %, elsewhere 3.157 %); 99.9th percentile 12.68 %; PSNR vs untiled (peak = white) 51.0 dB
+   site_tile vs untiled: mean |Δ| 0.311 % of the mean level (in the seam bands 0.441 %, elsewhere 0.268 %); 99.9th percentile 2.17 %; PSNR vs untiled (peak = white) 70.5 dB
+   global: 128-px block mean (green) vs untiled: sd 0.187 %, largest 2.25 %
+   dt_tile: 128-px block mean (green) vs untiled: sd 1.038 %, largest 5.00 %
+   site_tile: 128-px block mean (green) vs untiled: sd 0.397 %, largest 2.59 %
+== tiling: a7c_titus_iso6400.arw {'model': 'ILCE-7C', 'iso': '6400', 'exposure': '1/10', 'f': '11'}; 6024 x 4024 (24.2 MP)
+   untiled run of the whole photo: 15 s, peak RSS 7.8 GB
+-- tile 512 packed, overlap 32: 5 x 7 = 35 tiles, 23.5 s (0.67 s per tile, onnxruntime CPU); all finite: True; largest |output| 1.88e+05
+   model scale: global gain (site) 9.9078e-07; darktable's formula on the whole photo 1.1126e-06 (= 1.1229 x the site gain)
+   per-tile gain relative to the one global (site) gain: site min 0.9860 max 1.0020 sd 0.0041; least squares min 0.9894 max 1.0078; darktable per tile min 0.9906 max 1.1723 sd 0.0533
+   darktable per-tile gain: brightness step between neighbouring tiles: mean 3.89 %, max 13.30 % (39 of 58 tile borders over 1 %, 32 over 2 %)
+   site per-tile gain: brightness step between neighbouring tiles: mean 0.27 %, max 1.24 % (3 of 58 tile borders over 1 %, 0 over 2 %)
+   6 tiles with input mean under 0.01: darktable gain / global min 0.9906 max 1.1268; site min 0.9860 max 0.9959
+   global: re-mosaiced mean / source mean 1.0000
+   dt_tile: re-mosaiced mean / source mean 1.1253
+   site_tile: re-mosaiced mean / source mean 0.9999
+   global vs untiled: mean |Δ| 0.048 % of the mean level (in the seam bands 0.100 %, elsewhere 0.032 %); 99.9th percentile 4.47 %; PSNR vs untiled (peak = white) 80.2 dB
+   dt_tile vs untiled: mean |Δ| 12.384 % of the mean level (in the seam bands 12.690 %, elsewhere 12.289 %); 99.9th percentile 55.37 %; PSNR vs untiled (peak = white) 45.7 dB
+   site_tile vs untiled: mean |Δ| 0.178 % of the mean level (in the seam bands 0.192 %, elsewhere 0.174 %); 99.9th percentile 4.34 %; PSNR vs untiled (peak = white) 78.8 dB
+   global: 128-px block mean (green) vs untiled: sd 0.043 %, largest 0.51 %
+   dt_tile: 128-px block mean (green) vs untiled: sd 4.955 %, largest 17.23 %
+   site_tile: 128-px block mean (green) vs untiled: sd 0.381 %, largest 1.60 %
+== tiling: a7c_board_iso64000.arw {'model': 'ILCE-7C', 'iso': '64000', 'exposure': '1/15', 'f': '11'}; 6024 x 4024 (24.2 MP)
+-- tile 512 packed, overlap 32: 5 x 7 = 35 tiles, 23.4 s (0.67 s per tile, onnxruntime CPU); all finite: True; largest |output| 6.763e+05
+   model scale: global gain (site) 9.791e-07; darktable's formula on the whole photo 1.1031e-06 (= 1.1266 x the site gain)
+   per-tile gain relative to the one global (site) gain: site min 0.9887 max 1.0063 sd 0.0041; least squares min 0.9940 max 1.0344; darktable per tile min 1.0844 max 1.1475 sd 0.0149
+   darktable per-tile gain: brightness step between neighbouring tiles: mean 0.97 %, max 3.46 % (25 of 58 tile borders over 1 %, 7 over 2 %)
+   site per-tile gain: brightness step between neighbouring tiles: mean 0.36 %, max 1.71 % (1 of 58 tile borders over 1 %, 0 over 2 %)
+   global: re-mosaiced mean / source mean 1.0000
+   dt_tile: re-mosaiced mean / source mean 1.1270
+   site_tile: re-mosaiced mean / source mean 1.0002
+== tiling: m100_board_iso6400.cr2 {'model': 'Canon EOS M100', 'iso': '6400', 'exposure': '1/40', 'f': '8'}; 6024 x 4020 (24.2 MP)
+   untiled run of the whole photo: 15 s, peak RSS 7.8 GB
+-- tile 512 packed, overlap 32: 5 x 7 = 35 tiles, 23.6 s (0.67 s per tile, onnxruntime CPU); all finite: True; largest |output| 1.286e+06
+   model scale: global gain (site) 9.795e-07; darktable's formula on the whole photo 1.0137e-06 (= 1.0349 x the site gain)
+   per-tile gain relative to the one global (site) gain: site min 0.9766 max 1.0163 sd 0.0102; least squares min 0.9907 max 1.0177; darktable per tile min 0.9363 max 0.9809 sd 0.0111
+   darktable per-tile gain: brightness step between neighbouring tiles: mean 0.89 %, max 2.73 % (25 of 58 tile borders over 1 %, 4 over 2 %)
+   site per-tile gain: brightness step between neighbouring tiles: mean 0.73 %, max 3.05 % (13 of 58 tile borders over 1 %, 4 over 2 %)
+   global: re-mosaiced mean / source mean 1.0000
+   dt_tile: re-mosaiced mean / source mean 0.9612
+   site_tile: re-mosaiced mean / source mean 1.0019
+   global vs untiled: mean |Δ| 0.085 % of the mean level (in the seam bands 0.227 %, elsewhere 0.041 %); 99.9th percentile 3.51 %; PSNR vs untiled (peak = white) 72.9 dB
+   dt_tile vs untiled: mean |Δ| 3.887 % of the mean level (in the seam bands 4.315 %, elsewhere 3.753 %); 99.9th percentile 12.52 %; PSNR vs untiled (peak = white) 50.4 dB
+   site_tile vs untiled: mean |Δ| 0.760 % of the mean level (in the seam bands 0.848 %, elsewhere 0.733 %); 99.9th percentile 4.54 %; PSNR vs untiled (peak = white) 62.7 dB
+   global: 128-px block mean (green) vs untiled: sd 0.224 %, largest 2.69 %
+   dt_tile: 128-px block mean (green) vs untiled: sd 1.113 %, largest 7.27 %
+   site_tile: 128-px block mean (green) vs untiled: sd 1.013 %, largest 3.41 %
+[02:54:55] ## Other cameras (raw.pixls.us)
+NIKON_D5200_14_bit_compressed.NEF: 28138326 B, sha256 6c49ca47d189f9d6766f94be7c9d7d779ce45c79c0c6e48a0eba7d92f320fe0e, from https://raw.pixls.us/data/Nikon/D5200/NIKON_D5200_14_bit_compressed.NEF
+_DSC7535.NEF: 34564844 B, sha256 daf6c47d846ac9d96df26c75ae01eadad03c9056b27da08b035204b5de1756d6, from https://raw.pixls.us/data/Nikon/D5200/_DSC7535.NEF
+/data/Nikon/D5100/: ['00.nikon.12b-lossy-raw.nef', '01.nikonhackers.12b-lossless-raw.nef', '02.nikonhackers.12b-uncompressed-raw.nef']
+/data/Nikon/D5300/: failed <HTTPError 404: 'Not Found'>
+/data/Nikon/D7100/: ['JCR_4305.NEF', 'JCR_4306.NEF', 'JCR_4308.NEF', 'JCR_4309.NEF']
+/data/Nikon/D7200/: ['DSC_0977.NEF', 'DSC_0978.NEF', 'DSC_0979.NEF', 'DSC_0982.NEF']
+/data/Nikon/D750/: ['compressed_12_bit.NEF', 'compressed_14_bit.NEF', 'lossless_compressed_12_bit.NEF', 'lossless_compressed_14_bit.NEF']
+/data/Nikon/D3300/: ['DSC_0028.NEF']
+/data/Nikon/Z 6/: ['DSC_0750.NEF', 'DSC_0751.NEF', 'DSC_0752.NEF', 'DSC_0753.NEF', 'DSC_0754.NEF', 'DSC_0755.NEF', 'DSC_0756.NEF', 'DSC_0757.NEF']
+/data/Canon/EOS 80D/: ['IMG_0096.CR2', 'IMG_0097.CR2', 'IMG_0098.CR2']
+/data/Canon/EOS 6D/: ['EOS_6D_RAW.CR2', 'EOS_6D_mRAW.CR2', 'EOS_6D_sRAW.CR2', 'IMG_0001.CR2']
+/data/Canon/EOS R6/: ['Canon_EOS_R6_CRAW_ISO_100_crop_nodual.CR3', 'Canon_EOS_R6_CRAW_ISO_100_nocrop_nodual.CR3', 'Canon_EOS_R6_RAW_ISO_100_crop_nodual.CR3', 'Canon_EOS_R6_RAW_ISO_100_nocrop_nodual.CR3']
+/data/Canon/EOS M50/: ['./Canon-EOS_M50_-CRAW_(1:1).CR3', 'Canon_EOS_M50_CRAW_ISO_100_nocrop_nodual.CR3', 'Canon_EOS_M50_RAW_ISO_100_nocrop_nodual.CR3']
+/data/Sony/ILCE-6000/: ['DSC01542.ARW']
+/data/Sony/ILCE-7M3/: ['UNCOMPRESSED_14bit.ARW', '_DSC0009.ARW', '_DSC0010.ARW']
+/data/Sony/ILCE-7C/: ['DSC00018.ARW', 'DSC00107[1].ARW']
+/data/Panasonic/DC-G9/: ['P1000475.RW2', 'P1000476.RW2', 'P1000951.RW2', 'PANA2370_1x1.RW2', 'PANA2371_16x9.RW2', 'PANA2372_3x2.RW2', 'PANA2373_4x3.RW2']
+/data/Olympus/E-M10MarkII/: failed <HTTPError 404: 'Not Found'>
+/data/Olympus/E-M5/: ['P2082705.ORF']
+/data/Pentax/K-5/: ['_MAR0543.DNG', '_MAR0544.PEF']
+/data/Pentax/K-3/: ['IMGP6916.DNG', 'IMGP6917.PEF']
+/data/Fujifilm/X100/: failed <HTTPError 404: 'Not Found'>
+/data/Fujifilm/X-A1/: ['DSCF2482.RAF']
+== NIKON_D5200_14_bit_compressed: NIKON_D5200_14_bit_compressed.NEF {'model': 'NIKON D5200', 'iso': '200', 'exposure': '1/160', 'f': '11'}; 6036 x 4020 (24.3 MP), cfa [0, 1, 1, 2], black [0.0, 0.0, 0.0, 0.0], white 16383.0, wb as shot [2.473, 1.0, 1.586]
+-- real: 35 tiles in 24 s; finite True; source mean 0.1020, clipped sites (>= 0.987) 0.000 %, below black 0.00 %; per-tile gains / global: site 0.997..1.007, darktable 1.103..1.178
+   hot-pixel candidates (photosite far above its 8 same-colour neighbours): source 25, after the model (re-mosaiced) 0
+   crop 0 at 1498,2506 (clipped 0.0 %): noise estimate (display) noisy 0.0068 -> A 0.0047, B 0.0039; chroma HF noisy 0.0242 -> A 0.0176, B 0.0279; luma HF noisy 0.0302 -> A 0.0264, B 0.0248; mean colour shift vs noisy (R/G, B/G): A +0.4 %, +0.4 %; B +0.6 %, +0.8 %; brightness A/noisy 1.000, B/noisy 0.999
+   crop 1 at 1498,3206 (clipped 0.0 %): noise estimate (display) noisy 0.0102 -> A 0.0071, B 0.0060; chroma HF noisy 0.0331 -> A 0.0239, B 0.0368; luma HF noisy 0.0395 -> A 0.0350, B 0.0328; mean colour shift vs noisy (R/G, B/G): A +0.9 %, +0.8 %; B +1.5 %, +1.8 %; brightness A/noisy 0.997, B/noisy 0.996
+   strength (route A, mosaic blend), crop 0: noise estimate 0 % 0.0068, 50 % 0.0053, 100 % 0.0047; chroma HF 0.0242, 0.0174, 0.0176
+   cache size for this photo (24.3 MP): A 16-bit mosaic 48.5 MB (deflate level 6: 37.7 MB); B 16-bit RGB 145.6 MB (deflate: 109.3 MB); the source mosaic deflates to 35.8 MB
+-- synthetic +4 stops: 35 tiles in 24 s; finite True; source mean 0.1020, clipped sites (>= 0.987) 0.008 %, below black 0.00 %; per-tile gains / global: site 0.996..1.010, darktable 1.100..1.177
+   clipped source sites: 2000; model value there: mean 0.204, 1st percentile 0.087, 100.0 % fall below the clip level 0.987 (LightBench's highlight step would no longer see them as clipped)
+   hot-pixel candidates (photosite far above its 8 same-colour neighbours): source 2044, after the model (re-mosaiced) 0
+   crop 0 at 1498,2506 (clipped 0.0 %): noise estimate (display) noisy 0.0132 -> A 0.0045, B 0.0038; chroma HF noisy 0.0469 -> A 0.0161, B 0.0261; luma HF noisy 0.0342 -> A 0.0256, B 0.0242; mean colour shift vs noisy (R/G, B/G): A +0.7 %, +1.1 %; B +0.9 %, +1.4 %; brightness A/noisy 0.999, B/noisy 0.998; vs the original: MS-SSIM noisy 0.9523, A 0.9705, B 0.9659; PSNR noisy 29.86, A 30.77, B 29.74
+   crop 1 at 1498,3206 (clipped 0.0 %): noise estimate (display) noisy 0.0199 -> A 0.0065, B 0.0056; chroma HF noisy 0.0730 -> A 0.0220, B 0.0342; luma HF noisy 0.0467 -> A 0.0335, B 0.0315; mean colour shift vs noisy (R/G, B/G): A +1.9 %, +2.6 %; B +2.5 %, +3.2 %; brightness A/noisy 0.998, B/noisy 0.997; vs the original: MS-SSIM noisy 0.9200, A 0.9519, B 0.9459; PSNR noisy 25.71, A 28.12, B 27.21
+-- synthetic +6 stops: 35 tiles in 24 s; finite True; source mean 0.1022, clipped sites (>= 0.987) 0.008 %, below black 0.00 %; per-tile gains / global: site 0.992..1.015, darktable 1.094..1.171
+   clipped source sites: 2000; model value there: mean 0.161, 1st percentile 0.058, 100.0 % fall below the clip level 0.987 (LightBench's highlight step would no longer see them as clipped)
+   hot-pixel candidates (photosite far above its 8 same-colour neighbours): source 2331, after the model (re-mosaiced) 0
+   crop 0 at 1498,2506 (clipped 0.0 %): noise estimate (display) noisy 0.0239 -> A 0.0038, B 0.0033; chroma HF noisy 0.0925 -> A 0.0125, B 0.0215; luma HF noisy 0.0496 -> A 0.0230, B 0.0218; mean colour shift vs noisy (R/G, B/G): A +1.4 %, +2.1 %; B +1.6 %, +2.1 %; brightness A/noisy 0.999, B/noisy 0.998; vs the original: MS-SSIM noisy 0.8422, A 0.9481, B 0.9441; PSNR noisy 23.06, A 28.35, B 27.83
+   crop 1 at 2696,4610 (clipped 0.0 %): noise estimate (display) noisy 0.0444 -> A 0.0030, B 0.0027; chroma HF noisy 0.1772 -> A 0.0130, B 0.0177; luma HF noisy 0.0810 -> A 0.0175, B 0.0165; mean colour shift vs noisy (R/G, B/G): A +2.9 %, +0.8 %; B +3.4 %, +1.0 %; brightness A/noisy 1.007, B/noisy 1.008; vs the original: MS-SSIM noisy 0.6274, A 0.8630, B 0.8604; PSNR noisy 17.37, A 25.84, B 25.66
+== _DSC7535: _DSC7535.NEF {'model': 'NIKON D5200', 'iso': '280', 'exposure': '1/60', 'f': '8'}; 6036 x 4020 (24.3 MP), cfa [0, 1, 1, 2], black [0.0, 0.0, 0.0, 0.0], white 16383.0, wb as shot [2.438, 1.0, 1.699]
+-- real: 35 tiles in 24 s; finite True; source mean 0.1137, clipped sites (>= 0.987) 2.717 %, below black 0.00 %; per-tile gains / global: site 0.991..1.007, darktable 1.075..1.183
+   clipped source sites: 659299; model value there: mean 0.988, 1st percentile 0.755, 29.7 % fall below the clip level 0.987 (LightBench's highlight step would no longer see them as clipped)
+   bright unclipped sites (0.8..clip): 157662; 4.52 % become >= clip after the model
+   hot-pixel candidates (photosite far above its 8 same-colour neighbours): source 2395, after the model (re-mosaiced) 1
+   crop 0 at 1498,2506 (clipped 0.0 %): noise estimate (display) noisy 0.0105 -> A 0.0061, B 0.0049; chroma HF noisy 0.0325 -> A 0.0194, B 0.0311; luma HF noisy 0.0369 -> A 0.0295, B 0.0272; mean colour shift vs noisy (R/G, B/G): A +0.7 %, -0.0 %; B +1.2 %, +1.0 %; brightness A/noisy 1.005, B/noisy 1.004
+   crop 1 at 298,400 (clipped 0.5 %): noise estimate (display) noisy 0.0102 -> A 0.0057, B 0.0053; chroma HF noisy 0.0664 -> A 0.0415, B 0.0591; luma HF noisy 0.0507 -> A 0.0423, B 0.0407; mean colour shift vs noisy (R/G, B/G): A +2.6 %, -0.4 %; B +3.9 %, +5.1 %; brightness A/noisy 0.993, B/noisy 0.996
+   crop 2 at 0,3072 (clipped 35.2 %): noise estimate (display) noisy 0.0069 -> A 0.0056, B 0.0049; chroma HF noisy 0.0360 -> A 0.0253, B 0.0403; luma HF noisy 0.0354 -> A 0.0267, B 0.0260; mean colour shift vs noisy (R/G, B/G): A +4.6 %, +6.4 %; B +5.4 %, +9.4 %; brightness A/noisy 0.978, B/noisy 0.980
+   strength (route A, mosaic blend), crop 0: noise estimate 0 % 0.0105, 50 % 0.0075, 100 % 0.0061; chroma HF 0.0325, 0.0222, 0.0194
+   cache size for this photo (24.3 MP): A 16-bit mosaic 48.5 MB (deflate level 6: 40.0 MB); B 16-bit RGB 145.6 MB (deflate: 117.2 MB); the source mosaic deflates to 37.9 MB
+-- synthetic +4 stops: 35 tiles in 24 s; finite True; source mean 0.1135, clipped sites (>= 0.987) 1.905 %, below black 0.00 %; per-tile gains / global: site 0.981..1.007, darktable 1.075..1.180
+   clipped source sites: 462156; model value there: mean 0.975, 1st percentile 0.716, 44.6 % fall below the clip level 0.987 (LightBench's highlight step would no longer see them as clipped)
+   bright unclipped sites (0.8..clip): 357059; 27.46 % become >= clip after the model
+   hot-pixel candidates (photosite far above its 8 same-colour neighbours): source 4041, after the model (re-mosaiced) 1
+   crop 0 at 1498,2506 (clipped 0.0 %): noise estimate (display) noisy 0.0142 -> A 0.0058, B 0.0047; chroma HF noisy 0.0451 -> A 0.0197, B 0.0310; luma HF noisy 0.0392 -> A 0.0292, B 0.0270; mean colour shift vs noisy (R/G, B/G): A +0.8 %, +0.5 %; B +1.3 %, +1.4 %; brightness A/noisy 1.005, B/noisy 1.005; vs the original: MS-SSIM noisy 0.9615, A 0.9575, B 0.9500; PSNR noisy 31.97, A 29.68, B 28.85
+   crop 1 at 298,400 (clipped 0.4 %): noise estimate (display) noisy 0.0206 -> A 0.0054, B 0.0050; chroma HF noisy 0.0856 -> A 0.0406, B 0.0580; luma HF noisy 0.0558 -> A 0.0419, B 0.0403; mean colour shift vs noisy (R/G, B/G): A +2.4 %, -0.8 %; B +3.7 %, +4.5 %; brightness A/noisy 0.995, B/noisy 0.998; vs the original: MS-SSIM noisy 0.9092, A 0.9373, B 0.9345; PSNR noisy 27.34, A 25.03, B 24.61
+   crop 2 at 0,3072 (clipped 24.4 %): noise estimate (display) noisy 0.0152 -> A 0.0082, B 0.0080; chroma HF noisy 0.0425 -> A 0.0303, B 0.0470; luma HF noisy 0.0372 -> A 0.0275, B 0.0273; mean colour shift vs noisy (R/G, B/G): A +0.5 %, +0.2 %; B +1.6 %, +3.2 %; brightness A/noisy 0.996, B/noisy 0.998; vs the original: MS-SSIM noisy 0.9539, A 0.9343, B 0.9297; PSNR noisy 30.73, A 27.98, B 27.24
+-- synthetic +6 stops: 35 tiles in 24 s; finite True; source mean 0.1134, clipped sites (>= 0.987) 1.682 %, below black 0.00 %; per-tile gains / global: site 0.975..1.012, darktable 1.076..1.174
+   clipped source sites: 408238; model value there: mean 0.965, 1st percentile 0.695, 57.1 % fall below the clip level 0.987 (LightBench's highlight step would no longer see them as clipped)
+   bright unclipped sites (0.8..clip): 411287; 21.49 % become >= clip after the model
+   hot-pixel candidates (photosite far above its 8 same-colour neighbours): source 3800, after the model (re-mosaiced) 0
+   crop 0 at 1498,2506 (clipped 0.0 %): noise estimate (display) noisy 0.0219 -> A 0.0048, B 0.0040; chroma HF noisy 0.0816 -> A 0.0162, B 0.0266; luma HF noisy 0.0473 -> A 0.0271, B 0.0251; mean colour shift vs noisy (R/G, B/G): A +1.1 %, +1.1 %; B +1.7 %, +1.6 %; brightness A/noisy 1.009, B/noisy 1.008; vs the original: MS-SSIM noisy 0.8500, A 0.9306, B 0.9243; PSNR noisy 24.60, A 28.61, B 28.04
+   crop 1 at 1498,400 (clipped 0.0 %): noise estimate (display) noisy 0.0499 -> A 0.0046, B 0.0039; chroma HF noisy 0.1879 -> A 0.0177, B 0.0272; luma HF noisy 0.0923 -> A 0.0279, B 0.0264; mean colour shift vs noisy (R/G, B/G): A +0.5 %, -2.2 %; B +1.0 %, -1.7 %; brightness A/noisy 1.007, B/noisy 1.006; vs the original: MS-SSIM noisy 0.6923, A 0.8816, B 0.8782; PSNR noisy 17.28, A 24.36, B 24.16
+   crop 2 at 0,3072 (clipped 21.3 %): noise estimate (display) noisy 0.0172 -> A 0.0081, B 0.0081; chroma HF noisy 0.0474 -> A 0.0295, B 0.0440; luma HF noisy 0.0383 -> A 0.0267, B 0.0263; mean colour shift vs noisy (R/G, B/G): A +3.0 %, +3.6 %; B +3.3 %, +5.6 %; brightness A/noisy 0.988, B/noisy 0.989; vs the original: MS-SSIM noisy 0.9305, A 0.9154, B 0.9130; PSNR noisy 28.20, A 26.25, B 25.86

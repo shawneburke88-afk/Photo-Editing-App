@@ -1,0 +1,351 @@
+[02:30:59] ## Inputs
+495 files in the folder listing; 8 match /(DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4|DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1)/(saved_models/iter_[0-9]+\.pt$|args\.yaml$|train_cmd\.sh$|test_cmd\.sh$)/
+rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4/saved_models/iter_4350000.pt: Drive file id 1dFTLeljWi9wwojcZUsam8bE31JdYy3oM, 31059270 B, sha256 c1f7de3de24cb12f4803ee65e11cfb467e9a5b80c3cb7126746ef026106c15e0
+rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4/args.yaml: Drive file id 1jd-6jy1D_v6zaNpokG5ZJwRwKmvGiavw, 1569 B, sha256 0db5778012ecb0eb2c7dfd4ef96338fa79521b751ba936495782504d84bfe999
+rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4/test_cmd.sh: Drive file id 11FFkwfiU9FSDVL3CSkflJQJIXN7DqKTL, 205 B, sha256 30b74d57b857691bb6b81cebbbc6ccde782f5126decb13a2a298ba1f08578043
+rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4/train_cmd.sh: Drive file id 1U0Apl5JRg4CTr663kiFsIXXmN3RxTwgH, 365 B, sha256 a57a81a59beac2ac45681ed5e8509fe77cb0fe92f194d610d7f7207ad880e3b2
+rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1/saved_models/iter_1245000.pt: Drive file id 1tR0LKO-TsdeV_vcWdBNKqBWqBmNobJnF, 31059270 B, sha256 82e9799a2f73289d828df29065a043f1ccc6e1abd195a7b2af4263d51c5bf24d
+rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1/args.yaml: Drive file id 1dcQqfbIa2RriodiKBqMs8DTcGugTkZz8, 1704 B, sha256 042b77229e5d140004795188e8b74a8180c592da9231fab8d062bf18a7a908bf
+rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1/test_cmd.sh: Drive file id 1xxIXFPBYhH-4twJ2VqYCvD_3GmnMi_HC, 222 B, sha256 b0ae0047eb9c1356ac983d0fabdccd5e6289bd50ad296819b961676ad141a920
+rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1/train_cmd.sh: Drive file id 1b9Cv60Z-A8o4lR9IEgrfiu7tipcdeVj9, 443 B, sha256 0f020029863c78216d483d53541199969df318ebd44554a52863b91e8779c7f2
+rawdenoise-nind.dtmodel: 57700134 B, sha256 d71b5f1e727c85a359e6f74dca9e2016c9d8fc3e2f7ac3e9b347d80ceca969af, from https://github.com/darktable-org/darktable-ai/releases/download/release-5.6.0/rawdenoise-nind.dtmodel
+model_bayer.onnx: 31056425 B, sha256 da27509dab6a2915da67e988acd86cf71f9d5bbc8d1aa0ed32933578a887b901
+model_linear.onnx: 31053823 B, sha256 df957efadcc152c007d5d3b0917bdff9e41c0d4a0efe56584ef30b36393cd181
+[02:32:35] main checkpoint: /home/runner/work/_temp/w/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4/saved_models/iter_4350000.pt
+[02:32:35] variant trained without the authors' own pictures (by its name): /home/runner/work/_temp/w/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1/saved_models/iter_1245000.pt
+[02:32:35] --- /home/runner/work/_temp/w/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4/args.yaml
+arbitrary_proc_method: null
+arch: unet
+batch_size_clean: 1
+batch_size_noisy: 4
+bayer_only: true
+clean_dataset_yamlfpaths:
+- ../../datasets/extraraw/trougnouf/crops_metadata.yaml
+- ../../datasets/extraraw/raw-pixls/crops_metadata.yaml
+comment: 2024-02-21-bayer_ms-ssim_mgout_notrans_valeither
+config: null
+continue_training_from_last_model_if_exists: true
+crop_size: 256
+data_pairing: x_y
+debug_options:
+- minimize_threads
+device: null
+expname: DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4
+fallback_load_path: null
+funit: 32
+in_channels: 4
+init_lr: 0.0003
+init_step: 4260000
+load_path: ../../models/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-1/saved_models/iter_4260000.pt
+loss: msssim_loss
+lr_multiplier: 0.85
+match_gain: output
+metrics:
+- msssim_loss
+- mse
+noise_dataset_yamlfpaths:
+- /scratch/brummer/39509156/RawNIND/RawNIND_masks_and_alignments.yaml
+num_crops_per_image: 4
+patience: 100000
+preupsample: false
+reset_lr: false
+reset_optimizer_on_fallback_load_path: false
+save_dpath: ../../models/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4
+test_crop_size: 1024
+test_interval: 1500000
+test_reserve:
+- 7D-2
+- Vaxt-i-trad
+- Pen-pile
+- MuseeL-vases-A7C
+- D60-1
+- MuseeL-Saint-Pierre-C500D
+- TitusToys
+- boardgames_top
+- Laura_Lemons_platformer
+- MuseeL-bluebirds-A7C
+tot_steps: 6000000
+transfer_function: None
+transfer_function_valtest: None
+val_crop_size: 1024
+val_interval: 15000
+warmup_nsteps: 0
+[02:32:35] 
+[02:32:35] --- /home/runner/work/_temp/w/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1/args.yaml
+arbitrary_proc_method: null
+arch: unet
+batch_size_clean: 1
+batch_size_noisy: 4
+bayer_only: true
+clean_dataset_yamlfpaths:
+- ../../datasets/extraraw/raw-pixls/crops_metadata.yaml
+comment: 2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef
+config: null
+continue_training_from_last_model_if_exists: true
+crop_size: 256
+data_pairing: x_y
+debug_options:
+- minimize_threads
+device: null
+expname: DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1
+fallback_load_path: null
+funit: 32
+in_channels: 4
+init_lr: 0.0003
+init_step: 120000
+load_path: ../../models/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_/saved_models/iter_120000.pt
+loss: msssim_loss
+lr_multiplier: 0.85
+match_gain: output
+metrics:
+- msssim_loss
+- mse
+noise_dataset_yamlfpaths:
+- /scratch/brummer/39509156/RawNIND/RawNIND_masks_and_alignments.yaml
+num_crops_per_image: 4
+patience: 100000
+preupsample: false
+reset_lr: false
+reset_optimizer_on_fallback_load_path: false
+save_dpath: ../../models/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1
+test_crop_size: 1024
+test_interval: 1500000
+test_reserve:
+- 7D-2
+- Vaxt-i-trad
+- Pen-pile
+- MuseeL-vases-A7C
+- D60-1
+- MuseeL-Saint-Pierre-C500D
+- TitusToys
+- boardgames_top
+- Laura_Lemons_platformer
+- MuseeL-bluebirds-A7C
+- LucieB_bw_drawing1
+- LucieB_bw_drawing2
+- LucieB_board
+- LucieB_painted_wallpaper
+- LucieB_painted_plants
+- LucieB_groceries
+tot_steps: 6000000
+transfer_function: None
+transfer_function_valtest: None
+val_crop_size: 1024
+val_interval: 15000
+warmup_nsteps: 0
+[02:32:35] 
+[02:32:35] --- /home/runner/work/_temp/w/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-02-21-bayer_ms-ssim_mgout_notrans_valeither_-4/train_cmd.sh
+python train_denoiser_bayer2prgb.py --loss msssim_loss --match_gain output --comment 2024-02-21-bayer_ms-ssim_mgout_notrans_valeither --transfer_function None --transfer_function_valtest None --continue_training_from_last_model_if_exists --debug_options minimize_threads --noise_dataset_yamlfpaths /scratch/brummer/39509156/RawNIND/RawNIND_masks_and_alignments.yaml[02:32:35] 
+[02:32:35] --- /home/runner/work/_temp/w/rawnind_denoise/DenoiserTrainingBayerToProfiledRGB_4ch_2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef_-1/train_cmd.sh
+python train_denoiser_bayer2prgb.py --loss msssim_loss --comment 2024-11-22-bayer_ms-ssim_mgout_notrans_valeither_noowwnpics_mgdef --transfer_function None --transfer_function_valtest None --continue_training_from_last_model_if_exists --debug_options minimize_threads --noise_dataset_yamlfpaths /scratch/brummer/39509156/RawNIND/RawNIND_masks_and_alignments.yaml --clean_dataset_yamlfpaths ../../datasets/extraraw/raw-pixls/crops_metadata.yaml[02:32:35] 
+m100_board_iso6400.cr2: 42507086 B, sha256 949d8473863db8165602ecf1253f70a9025363baedccdd3994740364baff37f5, from https://dataverse.uclouvain.be/api/access/datafile/29921
+  = Bayer_UNK_TEST_LucieB_board_ISO6400_sha1=469fa354eab99934d85b309e4dc7d0c669a35e68.cr2 (dataverse file id 29921, 1 match(es), MD5 6b20c18611688992bf2eea02637bcdcd, md5 here 6b20c18611688992bf2eea02637bcdcd)
+m100_board_gt.cr2: 32748316 B, sha256 9d8c0eb0068f1e56d0cf23dfb15d18aa3ffee94a7992aabe0cc00afad35f4ca6, from https://dataverse.uclouvain.be/api/access/datafile/30098
+  = Bayer_UNK_TEST_LucieB_board_GT_ISO100_sha1=3300aa5ce5517dfbe1b2fc7c7e1a0a0cf40b8972.cr2 (dataverse file id 30098, 1 match(es), MD5 4c6f5615deb7cead9be40cc3d2c838fd, md5 here 4c6f5615deb7cead9be40cc3d2c838fd)
+test tiles (4, 4, 512, 512) [0.01800886169075966, 0.07417032122612, 0.06634866446256638, 0.0653500035405159] [0.15842343866825104, 0.4193233251571655, 0.33100801706314087, 0.29312869906425476]
+[0;93m2026-11-11 02:32:45.593894517 [W:onnxruntime:Default, device_discovery.cc:146 GetPciBusId] Skipping pci_bus_id for PCI path at "/sys/devices/LNXSYSTM:00/LNXSYBUS:00/ACPI0004:00/MSFT1000:00/5620e0c7-8062-4dce-aeb7-520c7ef76171" because filename "5620e0c7-8062-4dce-aeb7-520c7ef76171" did not match expected pattern of [0-9a-f]+:[0-9a-f]+:[0-9a-f]+[.][0-9a-f]+[m
+[02:32:45] ## Export (PyTorch 2.9.1+cpu, ONNX Runtime 1.30.0)
+checkpoint iter_4350000.pt: 46 tensors, funit 32, 7760748 values; missing [], unexpected []
+rawnind_bayer_512.onnx: real tile 0 @512: vs PyTorch max |Δ| 0.1016 (output max 1.184e+05; relative 8.58e-07; PSNR 144.5 dB)
+rawnind_bayer_512.onnx: real tile 1 @512: vs PyTorch max |Δ| 0.2344 (output max 3.052e+05; relative 7.68e-07; PSNR 141.2 dB)
+rawnind_bayer_512.onnx: real tile 2 @512: vs PyTorch max |Δ| 0.25 (output max 2.902e+05; relative 8.62e-07; PSNR 140.9 dB)
+rawnind_bayer_512.onnx: real tile 3 @512: vs PyTorch max |Δ| 0.2188 (output max 2.555e+05; relative 8.56e-07; PSNR 141.2 dB)
+rawnind_bayer_512.onnx: noise 0 @512: vs PyTorch max |Δ| 0.2344 (output max 1.746e+05; relative 1.34e-06; PSNR 134.0 dB)
+rawnind_bayer_512.onnx: 31053428 B, sha256 833e25f866cb5478793eb0eb075fd2b5615698118887774c423e98b67f936092, opset 17, ops {'Conv': 19, 'LeakyRelu': 18, 'MaxPool': 4, 'ConvTranspose': 4, 'Concat': 4, 'DepthToSpace': 1}
+rawnind_bayer_256.onnx: real tile 0 @256: vs PyTorch max |Δ| 0.03906 (output max 2.642e+04; relative 1.48e-06; PSNR 137.6 dB)
+rawnind_bayer_256.onnx: real tile 1 @256: vs PyTorch max |Δ| 0.2344 (output max 2.186e+05; relative 1.07e-06; PSNR 139.1 dB)
+rawnind_bayer_256.onnx: real tile 2 @256: vs PyTorch max |Δ| 0.3125 (output max 2.308e+05; relative 1.35e-06; PSNR 135.7 dB)
+rawnind_bayer_256.onnx: real tile 3 @256: vs PyTorch max |Δ| 0.25 (output max 1.784e+05; relative 1.4e-06; PSNR 136.6 dB)
+rawnind_bayer_256.onnx: noise 0 @256: vs PyTorch max |Δ| 0.2344 (output max 1.692e+05; relative 1.39e-06; PSNR 133.7 dB)
+rawnind_bayer_256.onnx: 31053428 B, sha256 0c6dbf9bcc3e83092aa6892a3fd8b4ea6b124074439fed745d494bce5d0f1e85, opset 17, ops {'Conv': 19, 'LeakyRelu': 18, 'MaxPool': 4, 'ConvTranspose': 4, 'Concat': 4, 'DepthToSpace': 1}
+rawnind_bayer_dyn.onnx: real tile 0 @512: vs PyTorch max |Δ| 0.1016 (output max 1.184e+05; relative 8.58e-07; PSNR 144.5 dB)
+rawnind_bayer_dyn.onnx: real tile 1 @512: vs PyTorch max |Δ| 0.2344 (output max 3.052e+05; relative 7.68e-07; PSNR 141.2 dB)
+rawnind_bayer_dyn.onnx: real tile 2 @512: vs PyTorch max |Δ| 0.25 (output max 2.902e+05; relative 8.62e-07; PSNR 140.9 dB)
+rawnind_bayer_dyn.onnx: real tile 3 @512: vs PyTorch max |Δ| 0.2188 (output max 2.555e+05; relative 8.56e-07; PSNR 141.2 dB)
+rawnind_bayer_dyn.onnx: noise 0 @512: vs PyTorch max |Δ| 0.2344 (output max 1.746e+05; relative 1.34e-06; PSNR 134.0 dB)
+rawnind_bayer_dyn.onnx: real tile 0 @256: vs PyTorch max |Δ| 0.03906 (output max 2.642e+04; relative 1.48e-06; PSNR 137.6 dB)
+rawnind_bayer_dyn.onnx: real tile 1 @256: vs PyTorch max |Δ| 0.2344 (output max 2.186e+05; relative 1.07e-06; PSNR 139.1 dB)
+rawnind_bayer_dyn.onnx: real tile 2 @256: vs PyTorch max |Δ| 0.3125 (output max 2.308e+05; relative 1.35e-06; PSNR 135.7 dB)
+rawnind_bayer_dyn.onnx: real tile 3 @256: vs PyTorch max |Δ| 0.25 (output max 1.784e+05; relative 1.4e-06; PSNR 136.6 dB)
+rawnind_bayer_dyn.onnx: noise 0 @256: vs PyTorch max |Δ| 0.2344 (output max 1.692e+05; relative 1.39e-06; PSNR 133.7 dB)
+rawnind_bayer_dyn.onnx: real tile 0 @384: vs PyTorch max |Δ| 0.07812 (output max 7.977e+04; relative 9.79e-07; PSNR 145.6 dB)
+rawnind_bayer_dyn.onnx: real tile 1 @384: vs PyTorch max |Δ| 0.2969 (output max 2.282e+05; relative 1.3e-06; PSNR 138.8 dB)
+rawnind_bayer_dyn.onnx: real tile 2 @384: vs PyTorch max |Δ| 0.2422 (output max 2.902e+05; relative 8.35e-07; PSNR 139.1 dB)
+rawnind_bayer_dyn.onnx: real tile 3 @384: vs PyTorch max |Δ| 0.2188 (output max 1.797e+05; relative 1.22e-06; PSNR 137.6 dB)
+rawnind_bayer_dyn.onnx: noise 0 @384: vs PyTorch max |Δ| 0.3125 (output max 1.766e+05; relative 1.77e-06; PSNR 134.1 dB)
+rawnind_bayer_dyn.onnx: 31053430 B, sha256 0ea083ff26cacf29b33a62a88995dadb01838d40e3a024532ef274e829e653e8, opset 17, ops {'Conv': 19, 'LeakyRelu': 18, 'MaxPool': 4, 'ConvTranspose': 4, 'Concat': 4, 'DepthToSpace': 1}
+  torch.onnx.export(net, x, path, opset_version=a.opset, input_names=["input"], output_names=["output"], do_constant_folding=True, dynamo=False, **kw)
+[0;93m2026-11-11 02:32:48.091661232 [W:onnxruntime:Default, device_discovery.cc:146 GetPciBusId] Skipping pci_bus_id for PCI path at "/sys/devices/LNXSYSTM:00/LNXSYBUS:00/ACPI0004:00/MSFT1000:00/5620e0c7-8062-4dce-aeb7-520c7ef76171" because filename "5620e0c7-8062-4dce-aeb7-520c7ef76171" did not match expected pattern of [0-9a-f]+:[0-9a-f]+:[0-9a-f]+[.][0-9a-f]+[m
+checkpoint iter_1245000.pt: 46 tensors, funit 32, 7760748 values; missing [], unexpected []
+rawnind_bayer_noown_512.onnx: real tile 0 @512: vs PyTorch max |Δ| 2.48e-05 (output max 34.48; relative 7.19e-07; PSNR 143.9 dB)
+rawnind_bayer_noown_512.onnx: real tile 1 @512: vs PyTorch max |Δ| 5.341e-05 (output max 74.68; relative 7.15e-07; PSNR 142.4 dB)
+rawnind_bayer_noown_512.onnx: real tile 2 @512: vs PyTorch max |Δ| 6.866e-05 (output max 75.66; relative 9.08e-07; PSNR 140.9 dB)
+rawnind_bayer_noown_512.onnx: real tile 3 @512: vs PyTorch max |Δ| 4.959e-05 (output max 68.95; relative 7.19e-07; PSNR 142.1 dB)
+rawnind_bayer_noown_512.onnx: noise 0 @512: vs PyTorch max |Δ| 0.000103 (output max 104.7; relative 9.84e-07; PSNR 135.9 dB)
+rawnind_bayer_noown_512.onnx: 31053428 B, sha256 85b712c550bcb3a0bd8f97821db6e5df4f6fc69c0787ddcd75d3af99c61462fb, opset 17, ops {'Conv': 19, 'LeakyRelu': 18, 'MaxPool': 4, 'ConvTranspose': 4, 'Concat': 4, 'DepthToSpace': 1}
+  torch.onnx.export(net, x, path, opset_version=a.opset, input_names=["input"], output_names=["output"], do_constant_folding=True, dynamo=False, **kw)
+[0;93m2026-11-11 02:33:15.338690128 [W:onnxruntime:Default, device_discovery.cc:146 GetPciBusId] Skipping pci_bus_id for PCI path at "/sys/devices/LNXSYSTM:00/LNXSYBUS:00/ACPI0004:00/MSFT1000:00/5620e0c7-8062-4dce-aeb7-520c7ef76171" because filename "5620e0c7-8062-4dce-aeb7-520c7ef76171" did not match expected pattern of [0-9a-f]+:[0-9a-f]+:[0-9a-f]+[.][0-9a-f]+[m
+[02:33:23] ## RawNIND pairs: white balance in front of the model, routes A and B
+7d_gt.cr2: 24368046 B, sha256 b2e03f2efb0084265d1017336439a7fa2e6c3eb52c6975df558f02e13907e34c, from https://dataverse.uclouvain.be/api/access/datafile/30549
+  = Bayer_TEST_7D-2_GT_ISO100_sha1=45803fc993c395c515b165a1f5d7417f4af4fe1e.cr2 (dataverse file id 30549, 1 match(es), MD5 3f8dbc8c05c3ecebc96f493c8bdd0ede, md5 here 3f8dbc8c05c3ecebc96f493c8bdd0ede)
+7d_iso3200.cr2: 29714823 B, sha256 7c70c0d289a0f8599af8ee7c08bd8cdf729f9e89167ccfa524a00afd3a4e82d0, from https://dataverse.uclouvain.be/api/access/datafile/29708
+  = Bayer_TEST_7D-2_ISO3200_sha1=f19f95be6be4bb004bc5d9fd5f4457da854e0e8f.cr2 (dataverse file id 29708, 1 match(es), MD5 0a4aa30960cfc705b19c82564b86f0d6, md5 here 0a4aa30960cfc705b19c82564b86f0d6)
+7d_iso12800.cr2: 34590482 B, sha256 bc3240e731944063f6f2a7c7cb8b6b1e9111aa826e93429b28ba0c0e6cd8bbe6, from https://dataverse.uclouvain.be/api/access/datafile/29717
+  = Bayer_TEST_7D-2_ISO12800_sha1=f378ff0b6b1eea30b0184671a4a223dd93b4f271.cr2 (dataverse file id 29717, 1 match(es), MD5 f40c3f89e1b930e074329a10530c023c, md5 here f40c3f89e1b930e074329a10530c023c)
+6d_gt.cr2: 23922581 B, sha256 5231c19eb6eb0fdf3a9f4f69d0862c17152c9b7754a52d1e6e0d64164c9ec016, from https://dataverse.uclouvain.be/api/access/datafile/30145
+  = Bayer_TEST_Vaxt-i-trad_GT_ISO100_sha1=ca77ec885c0198357c413895c343b965c1ebcafb.cr2 (dataverse file id 30145, 1 match(es), MD5 ee8e05c6c701956cf981551b0f0ddb98, md5 here ee8e05c6c701956cf981551b0f0ddb98)
+6d_iso6400.cr2: 29747507 B, sha256 fbc7094f4baf3c7a1a5d50f1574bb7eb46f1d9e66c344c54751d9e9f07d61922, from https://dataverse.uclouvain.be/api/access/datafile/30852
+  = Bayer_TEST_Vaxt-i-trad_ISO6400_sha1=0aa8469159ceaac0abd3a896a6b1807a22a5359e.cr2 (dataverse file id 30852, 1 match(es), MD5 7b5391db30d258c9929cea9707c4afc8, md5 here 7b5391db30d258c9929cea9707c4afc8)
+6d_iso51200.cr2: 38305613 B, sha256 ef55f2c946d0a77a219035f0ec8712a8a94118880ebfe2dde5619e98ff87ac42, from https://dataverse.uclouvain.be/api/access/datafile/29456
+  = Bayer_TEST_Vaxt-i-trad_ISO51200_sha1=8f05f5f4e6e8e39719b8c4daf5aeacbca79240ec.cr2 (dataverse file id 29456, 1 match(es), MD5 87a7bfdf5ccb46b15d7a33c4085f6204, md5 here 87a7bfdf5ccb46b15d7a33c4085f6204)
+c500d_gt.cr2: 20369667 B, sha256 bc8710ab9d9eb1362065045bf72b05655f887e19eb6d64fb3c77a466991640a7, from https://dataverse.uclouvain.be/api/access/datafile/30031
+  = Bayer_TEST_MuseeL-Saint-Pierre-C500D_GT_ISO100_sha1=f71bff2d267cefbf243971b98beb973daeee84db.cr2 (dataverse file id 30031, 1 match(es), MD5 c0a886ff301eb74cf62f6e4f8b2f264d, md5 here c0a886ff301eb74cf62f6e4f8b2f264d)
+c500d_iso3200.cr2: 23927690 B, sha256 65db845046dd635a58a27c62417eb79df6905f219d75cbbd4737e4487131b891, from https://dataverse.uclouvain.be/api/access/datafile/29518
+  = Bayer_TEST_MuseeL-Saint-Pierre-C500D_ISO3200_sha1=4b71ad313b4fb8d70ba3c5d8cf5a5b9839f8ed80.cr2 (dataverse file id 29518, 2 match(es), MD5 82125452c127cc6198b6a0f950f8428b, md5 here 82125452c127cc6198b6a0f950f8428b)
+a7c_titus_gt.arw: 49337856 B, sha256 2f9c3c630b2ce802477bb35fd7f26cb98b027b3c75afa92cb6ca4e0105ca1fda, from https://dataverse.uclouvain.be/api/access/datafile/31179
+  = Bayer_TEST_TitusToys_GT_ISO50_sha1=85c54ed5174f0ca97385984e6301a1fab08cbdbe.arw (dataverse file id 31179, 2 match(es), MD5 9ea308c6b00dfbe505cb03cb3be2ee27, md5 here 9ea308c6b00dfbe505cb03cb3be2ee27)
+a7c_titus_iso6400.arw: 49288704 B, sha256 d7bc230b2628a89fea652b7ad6e02a1b26fd6719332e54a40a79d7d2bd74c830, from https://dataverse.uclouvain.be/api/access/datafile/30136
+  = Bayer_TEST_TitusToys_ISO6400_sha1=bedd147574be163498fb95292674c6c4122682c2.arw (dataverse file id 30136, 1 match(es), MD5 5037e5557072fac65b85cf5d37975199, md5 here 5037e5557072fac65b85cf5d37975199)
+a7c_titus_iso51200.arw: 49300992 B, sha256 af622f605de2d6d63a17709b0f1bcddbf7885fba9de6a0d915898be0f4344bd8, from https://dataverse.uclouvain.be/api/access/datafile/31181
+  = Bayer_TEST_TitusToys_ISO51200_sha1=f53dcfac22bc336c274c4dc4f3c8248db64f1adc.arw (dataverse file id 31181, 1 match(es), MD5 8659764fe46f787147848fdbaa49e40d, md5 here 8659764fe46f787147848fdbaa49e40d)
+a7c_board_gt.arw: 49178112 B, sha256 94707043fb2adf542069dd51b71192294a927a09c8bdac0975c43caa506b14b4, from https://dataverse.uclouvain.be/api/access/datafile/30896
+  = Bayer_TEST_boardgames_top_GT_ISO50_sha1=8c121e3c1038766ee9f96565376eb264cf15b509.arw (dataverse file id 30896, 2 match(es), MD5 1e9a18174c0480d65eb7fc92c303d37a, md5 here 1e9a18174c0480d65eb7fc92c303d37a)
+a7c_board_iso64000.arw: 49407488 B, sha256 a9f0fefecff4d62eb5db6d80eb094c0a173f6d5b48ff2a7894e30fa384a7d697, from https://dataverse.uclouvain.be/api/access/datafile/30252
+  = Bayer_TEST_boardgames_top_ISO64000_sha1=7c421d49c4d2ffa0c023007c7c3f2e7cae8575d1.arw (dataverse file id 30252, 1 match(es), MD5 dc0b79b4d14539e03de7c08ba70b8ed1, md5 here dc0b79b4d14539e03de7c08ba70b8ed1)
+gh1_gt.dng: 11275642 B, sha256 74e4f58df3681bb7d916aec937352b5b582c2bd638de906e49cc542b0a4f6884, from https://dataverse.uclouvain.be/api/access/datafile/29815
+  = Bayer_TEST_Pen-pile_GT_ISO100_sha1=dead5469f750d32cd50f8673f1ae3608bdb9a99d.dng (dataverse file id 29815, 1 match(es), MD5 3d198aead74703f02ef0ea4450d68b46, md5 here 3d198aead74703f02ef0ea4450d68b46)
+gh1_iso3200.dng: 15034648 B, sha256 255a78fb59cc0c61152ebc1336910ac606244af555cdfb789826675fd8693027, from https://dataverse.uclouvain.be/api/access/datafile/30458
+  = Bayer_TEST_Pen-pile_ISO3200_sha1=a3221270fde0f61f690b4b4619d74ec32dce6e31.dng (dataverse file id 30458, 1 match(es), MD5 1290b5e4fd4e8a38d09c3fee26759b70, md5 here 1290b5e4fd4e8a38d09c3fee26759b70)
+d60_gt.crw: 6389454 B, sha256 81bb81bd070eda6e47eef34deb7f995e9e3372c0b1960855cab32ff0fc376de0, from https://dataverse.uclouvain.be/api/access/datafile/29367
+  = Bayer_TEST_D60-1_GT_ISO100_sha1=8ed4d50624a199ed767b2c7167b172a1d5eb4031.crw (dataverse file id 29367, 1 match(es), MD5 a56cdb85f1dcc1b48ab9281b2291ede8, md5 here a56cdb85f1dcc1b48ab9281b2291ede8)
+d60_iso800.crw: 7694724 B, sha256 9e705f480f70a996e9f691d471711fef35670c0463df65eed41026c18849c406, from https://dataverse.uclouvain.be/api/access/datafile/29516
+  = Bayer_TEST_D60-1_ISO800_sha1=b650fb7af03f1b337bd0da2fa416ff0ce92300f3.crw (dataverse file id 29516, 1 match(es), MD5 154acab85d87c1303b8831f704945f76, md5 here 154acab85d87c1303b8831f704945f76)
+m100_board_iso25600.cr2: 49993911 B, sha256 4ed847ebbb0620365640a3c25bc74ad1295c00c7dd83e3adc31aca3335fe5742, from https://dataverse.uclouvain.be/api/access/datafile/30943
+  = Bayer_UNK_TEST_LucieB_board_ISO25600_sha1=34714a832479e2a80bdd6153c8252a342e657743.cr2 (dataverse file id 30943, 1 match(es), MD5 0e2c788cbddfa11342cee3f87763f03a, md5 here 0e2c788cbddfa11342cee3f87763f03a)
+m100_groceries_gt.cr2: 30780805 B, sha256 262a241a36f9ca90882085505a80e7957265d756f0ae2a8c6fcc1002431c76c6, from https://dataverse.uclouvain.be/api/access/datafile/31132
+  = Bayer_UNK_TEST_LucieB_groceries_GT_ISO100_sha1=9ed597d2ab9e40f3a81317271c31e7400a95552a.cr2 (dataverse file id 31132, 2 match(es), MD5 613598d68cd5fd39c29b5556be007962, md5 here 613598d68cd5fd39c29b5556be007962)
+m100_groceries_iso3200.cr2: 37948334 B, sha256 7ec7514870b034a2e67f421a54f2637d86b1d0c8e300a8ed5b79ee301613cb3e, from https://dataverse.uclouvain.be/api/access/datafile/29549
+  = Bayer_UNK_TEST_LucieB_groceries_ISO3200_sha1=36ea4b0a01d5dd95547cad7b386a48689a7c10fe.cr2 (dataverse file id 29549, 1 match(es), MD5 3a29d963e820836e80273368041a770f, md5 here 3a29d963e820836e80273368041a770f)
+m100_groceries_iso25600.cr2: 49202231 B, sha256 e302a163d3364f9c161b1dcbed95f8917ecba74c801f80d9644fa3118bfa379c, from https://dataverse.uclouvain.be/api/access/datafile/31041
+  = Bayer_UNK_TEST_LucieB_groceries_ISO25600_sha1=38b185d6e0a7a57349a6c221840fd217ebd12519.cr2 (dataverse file id 31041, 1 match(es), MD5 307653fefd32a064b16806062d957619, md5 here 307653fefd32a064b16806062d957619)
+m100_plants_gt.cr2: 33742610 B, sha256 6c5c9a68dafbc4d8357a835ea0d6ab3fd0654f5ab0688d2cffdf2dc522a884c1, from https://dataverse.uclouvain.be/api/access/datafile/30968
+  = Bayer_UNK_TEST_LucieB_painted_plants_GT_ISO100_sha1=52780251b69313b6f276be4a91d2250d7e55a45a.cr2 (dataverse file id 30968, 2 match(es), MD5 560d0e3a36333d98238610f1210f27e3, md5 here 560d0e3a36333d98238610f1210f27e3)
+m100_plants_iso6400.cr2: 42012172 B, sha256 5a577c6a89707fd35ba61a8282b61a2a08090a0bf7b80bdc7baa3c35cee32c18, from https://dataverse.uclouvain.be/api/access/datafile/29406
+  = Bayer_UNK_TEST_LucieB_painted_plants_ISO6400_sha1=f0df20fee800ed6d5f86a6675c8340a8a54ccb3a.cr2 (dataverse file id 29406, 1 match(es), MD5 eefc5780ec277beb627ce381ad636d60, md5 here eefc5780ec277beb627ce381ad636d60)
+== 7D_ISO3200: noisy 7d_iso3200.cr2 {'model': 'Canon EOS 7D', 'iso': '3200', 'exposure': '13/10', 'f': '4'}; clean 7d_gt.cr2 {'model': 'Canon EOS 7D', 'iso': '100', 'exposure': '30', 'f': '4'}
+   5202 x 3464 (18.0 MP), cfa [1, 2, 0, 1], black [2046.0, 2046.0, 2046.0, 2046.0], white 13584.0, wb as shot [2.51, 1.0, 1.52], wb D65 [2.335, 1.0, 1.343]
+   raw gain clean/noisy 0.734; noisy mean 0.0794, clipped (>= 0.987) 0.003 %
+   wb none: 24 tiles; global gain (site) 9.941e-07; per-tile site gain / global: min 0.9909 max 1.0050; darktable per-tile gain / global: min 1.1088 max 1.1200
+   wb d65: 24 tiles; global gain (site) 1.01e-06; per-tile site gain / global: min 0.9822 max 1.0026; darktable per-tile gain / global: min 0.9961 max 1.0269
+   wb shot: 24 tiles; global gain (site) 1.013e-06; per-tile site gain / global: min 0.9814 max 1.0015; darktable per-tile gain / global: min 0.9808 max 1.0067
+   alignment shift of the noisy frame (dy, dx): (0, 0)
+   crop 0 at 1218,2088: MS-SSIM noisy 0.8030 | A_none 0.9502 (PSNR 33.20, R/G +0.9 %, B/G +4.1 %, chromaHF 0.53x, lumaHF 0.70x) | B_none 0.9481 (PSNR 32.84, R/G +1.0 %, B/G +4.2 %, chromaHF 0.70x, lumaHF 0.69x) | A_d65 0.9384 (PSNR 32.15, R/G -1.2 %, B/G -3.3 %, chromaHF 0.67x, lumaHF 0.74x) | B_d65 0.9368 (PSNR 31.91, R/G -1.1 %, B/G -3.0 %, chromaHF 0.94x, lumaHF 0.75x) | A_shot 0.9314 (PSNR 31.65, R/G +0.6 %, B/G -1.9 %, chromaHF 0.73x, lumaHF 0.75x) | B_shot 0.9300 (PSNR 31.44, R/G +0.9 %, B/G -1.6 %, chromaHF 1.03x, lumaHF 0.77x) | noisy PSNR 26.50 chromaHF 3.02x lumaHF 1.78x
+   crop 1 at 242,3842: MS-SSIM noisy 0.8328 | A_none 0.9636 (PSNR 31.69, R/G -0.5 %, B/G +3.5 %, chromaHF 0.68x, lumaHF 0.97x) | B_none 0.9627 (PSNR 30.90, R/G +0.1 %, B/G +4.8 %, chromaHF 0.92x, lumaHF 0.93x) | A_d65 0.9505 (PSNR 30.37, R/G -2.9 %, B/G -2.3 %, chromaHF 1.02x, lumaHF 1.13x) | B_d65 0.9476 (PSNR 29.60, R/G -1.8 %, B/G -1.1 %, chromaHF 1.23x, lumaHF 1.11x) | A_shot 0.9451 (PSNR 29.92, R/G -1.5 %, B/G -1.5 %, chromaHF 1.12x, lumaHF 1.18x) | B_shot 0.9420 (PSNR 29.14, R/G -0.4 %, B/G -0.1 %, chromaHF 1.34x, lumaHF 1.17x) | noisy PSNR 26.30 chromaHF 1.95x lumaHF 1.42x
+   crop 2 at 242,334: MS-SSIM noisy 0.8191 | A_none 0.9620 (PSNR 32.68, R/G -1.5 %, B/G +1.2 %, chromaHF 0.73x, lumaHF 0.93x) | B_none 0.9603 (PSNR 32.13, R/G -1.4 %, B/G +2.5 %, chromaHF 0.91x, lumaHF 0.92x) | A_d65 0.9485 (PSNR 31.09, R/G -4.3 %, B/G -4.4 %, chromaHF 0.82x, lumaHF 0.96x) | B_d65 0.9468 (PSNR 31.04, R/G -3.4 %, B/G -2.6 %, chromaHF 1.06x, lumaHF 0.97x) | A_shot 0.9424 (PSNR 30.53, R/G -3.7 %, B/G -4.2 %, chromaHF 0.86x, lumaHF 0.99x) | B_shot 0.9408 (PSNR 30.53, R/G -2.6 %, B/G -2.0 %, chromaHF 1.14x, lumaHF 1.01x) | noisy PSNR 26.62 chromaHF 2.46x lumaHF 1.70x
+   (73 s)
+== 7D_ISO12800: noisy 7d_iso12800.cr2 {'model': 'Canon EOS 7D', 'iso': '12800', 'exposure': '3/10', 'f': '4'}; clean 7d_gt.cr2 {'model': 'Canon EOS 7D', 'iso': '100', 'exposure': '30', 'f': '4'}
+   5202 x 3464 (18.0 MP), cfa [1, 2, 0, 1], black [2068.0, 2066.0, 2068.0, 2067.0], white 13584.0, wb as shot [2.462, 1.0, 1.511], wb D65 [2.335, 1.0, 1.343]
+   raw gain clean/noisy 0.780; noisy mean 0.0748, clipped (>= 0.987) 0.002 %
+   wb none: 24 tiles; global gain (site) 9.839e-07; per-tile site gain / global: min 0.9880 max 1.0068; darktable per-tile gain / global: min 1.1078 max 1.1241
+   wb d65: 24 tiles; global gain (site) 1.011e-06; per-tile site gain / global: min 0.9766 max 1.0092; darktable per-tile gain / global: min 0.9974 max 1.0435
+   wb shot: 24 tiles; global gain (site) 1.018e-06; per-tile site gain / global: min 0.9707 max 1.0139; darktable per-tile gain / global: min 0.9793 max 1.0322
+   alignment shift of the noisy frame (dy, dx): (0, 0)
+   crop 0 at 1218,2088: MS-SSIM noisy 0.5333 | A_none 0.9227 (PSNR 30.99, R/G -1.4 %, B/G +1.8 %, chromaHF 0.48x, lumaHF 0.62x) | B_none 0.9212 (PSNR 30.81, R/G -1.3 %, B/G +1.9 %, chromaHF 0.63x, lumaHF 0.61x) | A_d65 0.9062 (PSNR 29.30, R/G -7.4 %, B/G -8.6 %, chromaHF 0.61x, lumaHF 0.65x) | B_d65 0.9049 (PSNR 29.18, R/G -7.3 %, B/G -8.3 %, chromaHF 0.84x, lumaHF 0.66x) | A_shot 0.8986 (PSNR 29.17, R/G -6.2 %, B/G -7.3 %, chromaHF 0.65x, lumaHF 0.66x) | B_shot 0.8975 (PSNR 29.05, R/G -6.1 %, B/G -7.0 %, chromaHF 0.90x, lumaHF 0.68x) | noisy PSNR 18.85 chromaHF 6.91x lumaHF 3.71x
+   crop 1 at 242,3842: MS-SSIM noisy 0.6250 | A_none 0.9495 (PSNR 30.09, R/G -0.6 %, B/G +1.9 %, chromaHF 0.58x, lumaHF 0.89x) | B_none 0.9494 (PSNR 29.70, R/G -0.1 %, B/G +2.9 %, chromaHF 0.81x, lumaHF 0.85x) | A_d65 0.9306 (PSNR 28.28, R/G -5.7 %, B/G -3.0 %, chromaHF 0.91x, lumaHF 1.07x) | B_d65 0.9284 (PSNR 27.89, R/G -4.9 %, B/G -2.2 %, chromaHF 1.12x, lumaHF 1.05x) | A_shot 0.9238 (PSNR 27.86, R/G -5.3 %, B/G -2.7 %, chromaHF 1.00x, lumaHF 1.11x) | B_shot 0.9214 (PSNR 27.44, R/G -4.4 %, B/G -2.0 %, chromaHF 1.22x, lumaHF 1.10x) | noisy PSNR 19.21 chromaHF 3.95x lumaHF 2.54x
+   crop 2 at 242,334: MS-SSIM noisy 0.5913 | A_none 0.9482 (PSNR 30.87, R/G -2.6 %, B/G +1.4 %, chromaHF 0.67x, lumaHF 0.93x) | B_none 0.9457 (PSNR 30.39, R/G -2.5 %, B/G +2.4 %, chromaHF 0.88x, lumaHF 0.92x) | A_d65 0.9274 (PSNR 28.08, R/G -8.8 %, B/G -5.0 %, chromaHF 0.80x, lumaHF 0.99x) | B_d65 0.9252 (PSNR 28.00, R/G -8.2 %, B/G -3.9 %, chromaHF 1.03x, lumaHF 0.99x) | A_shot 0.9190 (PSNR 27.44, R/G -9.2 %, B/G -5.6 %, chromaHF 0.85x, lumaHF 1.02x) | B_shot 0.9168 (PSNR 27.40, R/G -8.5 %, B/G -4.3 %, chromaHF 1.10x, lumaHF 1.02x) | noisy PSNR 19.12 chromaHF 5.51x lumaHF 3.52x
+   (72 s)
+== 6D_ISO6400: noisy 6d_iso6400.cr2 {'model': 'Canon EOS 6D', 'iso': '6400', 'exposure': '1/8', 'f': '4'}; clean 6d_gt.cr2 {'model': 'Canon EOS 6D', 'iso': '100', 'exposure': '8', 'f': '4'}
+   5496 x 3670 (20.2 MP), cfa [0, 1, 1, 2], black [2048.0, 2048.0, 2048.0, 2048.0], white 15490.0, wb as shot [2.032, 1.0, 1.628], wb D65 [2.22, 1.0, 1.422]
+   raw gain clean/noisy 0.980; noisy mean 0.0685, clipped (>= 0.987) 0.000 %
+   wb none: 35 tiles; global gain (site) 9.934e-07; per-tile site gain / global: min 0.9914 max 1.0092; darktable per-tile gain / global: min 1.0799 max 1.1417
+   wb d65: 35 tiles; global gain (site) 1.011e-06; per-tile site gain / global: min 0.9898 max 1.0050; darktable per-tile gain / global: min 0.9892 max 1.0288
+   wb shot: 35 tiles; global gain (site) 1.008e-06; per-tile site gain / global: min 0.9905 max 1.0049; darktable per-tile gain / global: min 0.9843 max 1.0271
+   alignment shift of the noisy frame (dy, dx): (-2, 0)
+   crop 0 at 1322,2236: MS-SSIM noisy 0.8322 | A_none 0.9718 (PSNR 36.21, R/G +4.1 %, B/G +3.5 %, chromaHF 0.45x, lumaHF 0.70x) | B_none 0.9704 (PSNR 35.95, R/G +4.1 %, B/G +3.6 %, chromaHF 0.60x, lumaHF 0.65x) | A_d65 0.9584 (PSNR 35.66, R/G +2.2 %, B/G -1.3 %, chromaHF 0.56x, lumaHF 0.68x) | B_d65 0.9572 (PSNR 35.48, R/G +2.1 %, B/G -1.5 %, chromaHF 0.68x, lumaHF 0.63x) | A_shot 0.9570 (PSNR 35.77, R/G +1.4 %, B/G -1.7 %, chromaHF 0.59x, lumaHF 0.68x) | B_shot 0.9557 (PSNR 35.58, R/G +1.3 %, B/G -1.8 %, chromaHF 0.72x, lumaHF 0.63x) | noisy PSNR 28.93 chromaHF 3.91x lumaHF 2.46x
+   crop 1 at 1322,4114: MS-SSIM noisy 0.8725 | A_none 0.9696 (PSNR 32.74, R/G +1.2 %, B/G -0.1 %, chromaHF 0.52x, lumaHF 0.73x) | B_none 0.9679 (PSNR 32.36, R/G +1.3 %, B/G +0.4 %, chromaHF 0.90x, lumaHF 0.69x) | A_d65 0.9541 (PSNR 30.45, R/G +5.5 %, B/G -2.5 %, chromaHF 1.03x, lumaHF 0.88x) | B_d65 0.9509 (PSNR 30.09, R/G +6.0 %, B/G -1.5 %, chromaHF 1.57x, lumaHF 0.85x) | A_shot 0.9513 (PSNR 30.31, R/G +4.8 %, B/G -3.3 %, chromaHF 1.09x, lumaHF 0.88x) | B_shot 0.9480 (PSNR 29.98, R/G +5.5 %, B/G -1.9 %, chromaHF 1.64x, lumaHF 0.86x) | noisy PSNR 26.55 chromaHF 3.54x lumaHF 1.54x
+   crop 2 at 264,356: MS-SSIM noisy 0.8375 | A_none 0.9747 (PSNR 33.35, R/G +0.5 %, B/G -0.1 %, chromaHF 0.55x, lumaHF 0.75x) | B_none 0.9729 (PSNR 32.81, R/G +0.6 %, B/G +0.4 %, chromaHF 0.94x, lumaHF 0.71x) | A_d65 0.9624 (PSNR 31.11, R/G +4.0 %, B/G -2.6 %, chromaHF 1.10x, lumaHF 0.91x) | B_d65 0.9592 (PSNR 30.63, R/G +4.7 %, B/G -1.4 %, chromaHF 1.70x, lumaHF 0.88x) | A_shot 0.9591 (PSNR 31.07, R/G +3.0 %, B/G -2.8 %, chromaHF 1.16x, lumaHF 0.91x) | B_shot 0.9557 (PSNR 30.59, R/G +3.8 %, B/G -1.1 %, chromaHF 1.76x, lumaHF 0.89x) | noisy PSNR 27.06 chromaHF 3.44x lumaHF 1.49x
+   (93 s)
+== 6D_ISO51200: noisy 6d_iso51200.cr2 {'model': 'Canon EOS 6D', 'iso': '51200', 'exposure': '1/60', 'f': '4'}; clean 6d_gt.cr2 {'model': 'Canon EOS 6D', 'iso': '100', 'exposure': '8', 'f': '4'}
+   5496 x 3670 (20.2 MP), cfa [0, 1, 1, 2], black [2047.0, 2047.0, 2051.0, 2051.0], white 15490.0, wb as shot [2.032, 1.0, 1.628], wb D65 [2.22, 1.0, 1.422]
+   raw gain clean/noisy 1.033; noisy mean 0.0650, clipped (>= 0.987) 0.002 %
+   wb none: 35 tiles; global gain (site) 9.847e-07; per-tile site gain / global: min 0.9878 max 1.0175; darktable per-tile gain / global: min 1.0814 max 1.1395
+   wb d65: 35 tiles; global gain (site) 1.021e-06; per-tile site gain / global: min 0.9832 max 1.0092; darktable per-tile gain / global: min 0.9809 max 1.0228
+   wb shot: 35 tiles; global gain (site) 1.022e-06; per-tile site gain / global: min 0.9843 max 1.0173; darktable per-tile gain / global: min 0.9741 max 1.0265
+   alignment shift of the noisy frame (dy, dx): (-2, 0)
+   crop 0 at 1322,2236: MS-SSIM noisy 0.4575 | A_none 0.9351 (PSNR 32.83, R/G +3.3 %, B/G +1.6 %, chromaHF 0.36x, lumaHF 0.56x) | B_none 0.9343 (PSNR 32.75, R/G +3.4 %, B/G +1.7 %, chromaHF 0.47x, lumaHF 0.53x) | A_d65 0.9110 (PSNR 31.50, R/G -0.5 %, B/G -2.2 %, chromaHF 0.40x, lumaHF 0.46x) | B_d65 0.9104 (PSNR 31.45, R/G -0.5 %, B/G -2.2 %, chromaHF 0.48x, lumaHF 0.43x) | A_shot 0.9043 (PSNR 29.57, R/G -3.0 %, B/G -2.6 %, chromaHF 0.40x, lumaHF 0.44x) | B_shot 0.9037 (PSNR 29.51, R/G -3.1 %, B/G -2.5 %, chromaHF 0.50x, lumaHF 0.42x) | noisy PSNR 19.18 chromaHF 11.25x lumaHF 7.55x
+   crop 1 at 1322,4114: MS-SSIM noisy 0.5036 | A_none 0.9218 (PSNR 28.90, R/G -0.6 %, B/G -3.4 %, chromaHF 0.43x, lumaHF 0.58x) | B_none 0.9207 (PSNR 28.82, R/G -0.4 %, B/G -3.0 %, chromaHF 0.70x, lumaHF 0.55x) | A_d65 0.8932 (PSNR 27.17, R/G -1.7 %, B/G -9.1 %, chromaHF 0.77x, lumaHF 0.60x) | B_d65 0.8918 (PSNR 27.11, R/G -1.6 %, B/G -8.6 %, chromaHF 1.04x, lumaHF 0.58x) | A_shot 0.8843 (PSNR 26.98, R/G -2.3 %, B/G -8.7 %, chromaHF 0.81x, lumaHF 0.59x) | B_shot 0.8828 (PSNR 26.91, R/G -2.3 %, B/G -8.4 %, chromaHF 1.08x, lumaHF 0.57x) | noisy PSNR 16.22 chromaHF 11.55x lumaHF 4.44x
+   crop 2 at 264,356: MS-SSIM noisy 0.4622 | A_none 0.9385 (PSNR 29.36, R/G -0.4 %, B/G -2.3 %, chromaHF 0.48x, lumaHF 0.61x) | B_none 0.9375 (PSNR 29.26, R/G -0.4 %, B/G -2.0 %, chromaHF 0.76x, lumaHF 0.57x) | A_d65 0.9128 (PSNR 27.81, R/G -1.1 %, B/G -5.3 %, chromaHF 0.95x, lumaHF 0.70x) | B_d65 0.9117 (PSNR 27.74, R/G -1.0 %, B/G -5.1 %, chromaHF 1.25x, lumaHF 0.68x) | A_shot 0.9005 (PSNR 26.67, R/G -5.9 %, B/G -4.5 %, chromaHF 1.02x, lumaHF 0.70x) | B_shot 0.8993 (PSNR 26.60, R/G -5.8 %, B/G -4.2 %, chromaHF 1.30x, lumaHF 0.68x) | noisy PSNR 16.75 chromaHF 11.01x lumaHF 4.20x
+   (93 s)
+== C500D_ISO3200: noisy c500d_iso3200.cr2 {'model': 'Canon EOS 500D', 'iso': '3200', 'exposure': '1/15', 'f': '9'}; clean c500d_gt.cr2 {'model': 'Canon EOS 500D', 'iso': '100', 'exposure': '2', 'f': '9'}
+   4770 x 3178 (15.2 MP), cfa [0, 1, 1, 2], black [1025.0, 1025.0, 1023.0, 1024.0], white 13433.0, wb as shot [1.707, 1.0, 1.626], wb D65 [2.379, 1.0, 1.256]
+   raw gain clean/noisy 1.024; noisy mean 0.0696, clipped (>= 0.987) 0.202 %
+   wb none: 24 tiles; global gain (site) 9.971e-07; per-tile site gain / global: min 0.9903 max 1.0083; darktable per-tile gain / global: min 1.0668 max 1.0912
+   wb d65: 24 tiles; global gain (site) 9.943e-07; per-tile site gain / global: min 0.9791 max 1.0108; darktable per-tile gain / global: min 0.9509 max 0.9900
+   wb shot: 24 tiles; global gain (site) 1.002e-06; per-tile site gain / global: min 0.9844 max 1.0098; darktable per-tile gain / global: min 0.9775 max 1.0015
+   alignment shift of the noisy frame (dy, dx): (-2, 2)
+   crop 0 at 1076,1872: MS-SSIM noisy 0.8346 | A_none 0.9649 (PSNR 35.12, R/G -0.4 %, B/G -0.9 %, chromaHF 0.61x, lumaHF 0.73x) | B_none 0.9626 (PSNR 34.58, R/G -0.3 %, B/G -0.8 %, chromaHF 0.86x, lumaHF 0.69x) | A_d65 0.9420 (PSNR 32.33, R/G +0.1 %, B/G -6.3 %, chromaHF 1.20x, lumaHF 0.85x) | B_d65 0.9395 (PSNR 31.81, R/G +0.3 %, B/G -7.2 %, chromaHF 1.66x, lumaHF 0.82x) | A_shot 0.9500 (PSNR 32.91, R/G -0.4 %, B/G -7.2 %, chromaHF 1.03x, lumaHF 0.81x) | B_shot 0.9462 (PSNR 32.41, R/G -0.1 %, B/G -7.2 %, chromaHF 1.38x, lumaHF 0.78x) | noisy PSNR 27.17 chromaHF 3.70x lumaHF 1.56x
+   crop 1 at 214,3444: MS-SSIM noisy 0.8311 | A_none 0.9655 (PSNR 31.67, R/G +1.5 %, B/G -2.4 %, chromaHF 0.75x, lumaHF 0.95x) | B_none 0.9624 (PSNR 30.78, R/G +2.2 %, B/G -2.1 %, chromaHF 1.04x, lumaHF 0.91x) | A_d65 0.9433 (PSNR 28.80, R/G -0.4 %, B/G -6.1 %, chromaHF 1.20x, lumaHF 1.10x) | B_d65 0.9393 (PSNR 28.06, R/G +0.5 %, B/G -6.4 %, chromaHF 1.64x, lumaHF 1.07x) | A_shot 0.9506 (PSNR 29.59, R/G +1.0 %, B/G -6.3 %, chromaHF 1.05x, lumaHF 1.04x) | B_shot 0.9466 (PSNR 28.86, R/G +1.9 %, B/G -5.6 %, chromaHF 1.44x, lumaHF 1.02x) | noisy PSNR 26.99 chromaHF 2.10x lumaHF 1.40x
+   crop 2 at 1076,1346: MS-SSIM noisy 0.7669 | A_none 0.9638 (PSNR 35.02, R/G -0.5 %, B/G -0.8 %, chromaHF 0.66x, lumaHF 0.76x) | B_none 0.9621 (PSNR 34.55, R/G -0.3 %, B/G -0.4 %, chromaHF 0.84x, lumaHF 0.72x) | A_d65 0.9454 (PSNR 32.44, R/G -0.0 %, B/G -5.7 %, chromaHF 1.04x, lumaHF 0.89x) | B_d65 0.9436 (PSNR 31.95, R/G +0.2 %, B/G -6.3 %, chromaHF 1.39x, lumaHF 0.87x) | A_shot 0.9517 (PSNR 32.96, R/G +0.2 %, B/G -6.3 %, chromaHF 0.93x, lumaHF 0.85x) | B_shot 0.9490 (PSNR 32.48, R/G +0.5 %, B/G -6.1 %, chromaHF 1.22x, lumaHF 0.82x) | noisy PSNR 25.90 chromaHF 3.57x lumaHF 1.87x
+   (70 s)
+== A7C_Titus_ISO6400: noisy a7c_titus_iso6400.arw {'model': 'ILCE-7C', 'iso': '6400', 'exposure': '1/10', 'f': '11'}; clean a7c_titus_gt.arw {'model': 'ILCE-7C', 'iso': '50', 'exposure': '13', 'f': '11'}
+   6024 x 4024 (24.2 MP), cfa [0, 1, 1, 2], black [512.0, 512.0, 512.0, 512.0], white 16383.0, wb as shot [1.996, 1.0, 2.328], wb D65 [2.672, 1.0, 1.347]
+   raw gain clean/noisy 2.050; noisy mean 0.0286, clipped (>= 0.987) 0.000 %
+   wb none: 35 tiles; global gain (site) 9.908e-07; per-tile site gain / global: min 0.9860 max 1.0020; darktable per-tile gain / global: min 0.9906 max 1.1723
+   wb d65: 35 tiles; global gain (site) 9.775e-07; per-tile site gain / global: min 0.9265 max 1.0250; darktable per-tile gain / global: min 0.8443 max 1.0467
+   wb shot: 35 tiles; global gain (site) 9.955e-07; per-tile site gain / global: min 0.9510 max 1.0119; darktable per-tile gain / global: min 0.8734 max 1.0319
+   alignment shift of the noisy frame (dy, dx): (0, 0)
+   crop 0 at 1500,2500: MS-SSIM noisy 0.8264 | A_none 0.9813 (PSNR 41.81, R/G +0.1 %, B/G -0.6 %, chromaHF 0.56x, lumaHF 0.65x) | B_none 0.9812 (PSNR 41.75, R/G +0.2 %, B/G -0.7 %, chromaHF 0.65x, lumaHF 0.63x) | A_d65 0.9749 (PSNR 40.22, R/G -1.1 %, B/G -2.4 %, chromaHF 0.65x, lumaHF 0.59x) | B_d65 0.9748 (PSNR 40.20, R/G -1.2 %, B/G -2.4 %, chromaHF 0.75x, lumaHF 0.57x) | A_shot 0.9739 (PSNR 39.71, R/G +1.3 %, B/G -1.3 %, chromaHF 0.64x, lumaHF 0.55x) | B_shot 0.9737 (PSNR 39.61, R/G +1.3 %, B/G -1.5 %, chromaHF 0.73x, lumaHF 0.53x) | noisy PSNR 29.90 chromaHF 8.72x lumaHF 4.38x
+   crop 1 at 300,3200: MS-SSIM noisy 0.7842 | A_none 0.9303 (PSNR 31.04, R/G -2.3 %, B/G -4.4 %, chromaHF 0.43x, lumaHF 0.63x) | B_none 0.9292 (PSNR 30.95, R/G -2.2 %, B/G -4.3 %, chromaHF 0.56x, lumaHF 0.62x) | A_d65 0.8623 (PSNR 26.73, R/G -10.8 %, B/G -8.3 %, chromaHF 0.81x, lumaHF 0.79x) | B_d65 0.8602 (PSNR 26.61, R/G -8.0 %, B/G -10.3 %, chromaHF 2.35x, lumaHF 1.06x) | A_shot 0.8909 (PSNR 28.91, R/G -3.2 %, B/G -10.8 %, chromaHF 0.85x, lumaHF 0.78x) | B_shot 0.8939 (PSNR 28.55, R/G -2.4 %, B/G -12.0 %, chromaHF 1.63x, lumaHF 0.91x) | noisy PSNR 23.24 chromaHF 4.00x lumaHF 2.08x
+   crop 2 at 1500,4600: MS-SSIM noisy 0.6611 | A_none 0.9360 (PSNR 32.57, R/G -2.1 %, B/G -5.6 %, chromaHF 0.52x, lumaHF 0.61x) | B_none 0.9369 (PSNR 32.55, R/G -2.1 %, B/G -5.6 %, chromaHF 0.63x, lumaHF 0.61x) | A_d65 0.8484 (PSNR 24.04, R/G -21.7 %, B/G -11.0 %, chromaHF 0.99x, lumaHF 1.04x) | B_d65 0.8611 (PSNR 24.74, R/G -18.0 %, B/G -12.8 %, chromaHF 2.95x, lumaHF 1.68x) | A_shot 0.8707 (PSNR 28.07, R/G -7.7 %, B/G -12.1 %, chromaHF 1.10x, lumaHF 1.12x) | B_shot 0.8911 (PSNR 28.08, R/G -5.8 %, B/G -15.3 %, chromaHF 2.40x, lumaHF 1.44x) | noisy PSNR 21.44 chromaHF 6.22x lumaHF 4.02x
+   (91 s)
+== A7C_Titus_ISO51200: noisy a7c_titus_iso51200.arw {'model': 'ILCE-7C', 'iso': '51200', 'exposure': '1/80', 'f': '11'}; clean a7c_titus_gt.arw {'model': 'ILCE-7C', 'iso': '50', 'exposure': '13', 'f': '11'}
+   6024 x 4024 (24.2 MP), cfa [0, 1, 1, 2], black [512.0, 512.0, 512.0, 512.0], white 16383.0, wb as shot [1.996, 1.0, 2.328], wb D65 [2.672, 1.0, 1.347]
+   raw gain clean/noisy 2.071; noisy mean 0.0283, clipped (>= 0.987) 0.000 %
+   wb none: 35 tiles; global gain (site) 9.809e-07; per-tile site gain / global: min 0.9641 max 1.0150; darktable per-tile gain / global: min 0.9968 max 1.1725
+   wb d65: 35 tiles; global gain (site) 9.674e-07; per-tile site gain / global: min 0.8784 max 1.0416; darktable per-tile gain / global: min 0.8098 max 1.0810
+   wb shot: 35 tiles; global gain (site) 9.885e-07; per-tile site gain / global: min 0.8906 max 1.0603; darktable per-tile gain / global: min 0.8339 max 1.0851
+   alignment shift of the noisy frame (dy, dx): (0, 0)
+   crop 0 at 1500,2500: MS-SSIM noisy 0.4124 | A_none 0.9574 (PSNR 37.91, R/G +0.3 %, B/G -1.5 %, chromaHF 0.51x, lumaHF 0.41x) | B_none 0.9572 (PSNR 37.88, R/G +0.4 %, B/G -1.6 %, chromaHF 0.56x, lumaHF 0.40x) | A_d65 0.9450 (PSNR 36.03, R/G -1.6 %, B/G -5.1 %, chromaHF 0.56x, lumaHF 0.34x) | B_d65 0.9448 (PSNR 36.01, R/G -1.6 %, B/G -5.1 %, chromaHF 0.67x, lumaHF 0.34x) | A_shot 0.9438 (PSNR 36.33, R/G -0.3 %, B/G -1.8 %, chromaHF 0.55x, lumaHF 0.37x) | B_shot 0.9436 (PSNR 36.31, R/G -0.3 %, B/G -1.7 %, chromaHF 0.68x, lumaHF 0.36x) | noisy PSNR 19.76 chromaHF 28.39x lumaHF 13.60x
+   crop 1 at 300,3200: MS-SSIM noisy 0.3841 | A_none 0.8227 (PSNR 27.19, R/G -4.6 %, B/G -11.7 %, chromaHF 0.32x, lumaHF 0.46x) | B_none 0.8214 (PSNR 27.19, R/G -4.6 %, B/G -11.6 %, chromaHF 0.42x, lumaHF 0.45x) | A_d65 0.6895 (PSNR 23.32, R/G -19.8 %, B/G -23.2 %, chromaHF 0.52x, lumaHF 0.47x) | B_d65 0.6908 (PSNR 23.39, R/G -18.0 %, B/G -25.7 %, chromaHF 1.66x, lumaHF 0.65x) | A_shot 0.6805 (PSNR 24.58, R/G -12.6 %, B/G -20.7 %, chromaHF 0.34x, lumaHF 0.28x) | B_shot 0.6898 (PSNR 24.53, R/G -12.4 %, B/G -22.8 %, chromaHF 0.75x, lumaHF 0.34x) | noisy PSNR 14.62 chromaHF 10.94x lumaHF 5.49x
+   crop 2 at 1500,4600: MS-SSIM noisy 0.2741 | A_none 0.8406 (PSNR 28.90, R/G -4.1 %, B/G -6.7 %, chromaHF 0.42x, lumaHF 0.47x) | B_none 0.8405 (PSNR 28.88, R/G -4.1 %, B/G -6.7 %, chromaHF 0.51x, lumaHF 0.47x) | A_d65 0.7206 (PSNR 22.01, R/G -27.7 %, B/G -20.6 %, chromaHF 0.70x, lumaHF 0.72x) | B_d65 0.7292 (PSNR 22.39, R/G -25.6 %, B/G -21.9 %, chromaHF 2.21x, lumaHF 1.15x) | A_shot 0.7253 (PSNR 23.87, R/G -20.3 %, B/G -20.3 %, chromaHF 0.49x, lumaHF 0.48x) | B_shot 0.7341 (PSNR 23.84, R/G -20.0 %, B/G -23.8 %, chromaHF 1.09x, lumaHF 0.57x) | noisy PSNR 13.76 chromaHF 15.21x lumaHF 10.23x
+   (93 s)
+== A7C_board_ISO64000: noisy a7c_board_iso64000.arw {'model': 'ILCE-7C', 'iso': '64000', 'exposure': '1/15', 'f': '11'}; clean a7c_board_gt.arw {'model': 'ILCE-7C', 'iso': '50', 'exposure': '30', 'f': '11'}
+   6024 x 4024 (24.2 MP), cfa [0, 1, 1, 2], black [512.0, 512.0, 512.0, 512.0], white 16383.0, wb as shot [1.902, 1.0, 2.52], wb D65 [2.672, 1.0, 1.347]
+   raw gain clean/noisy 0.775; noisy mean 0.0360, clipped (>= 0.987) 0.000 %
+   wb none: 35 tiles; global gain (site) 9.791e-07; per-tile site gain / global: min 0.9887 max 1.0063; darktable per-tile gain / global: min 1.0844 max 1.1475
+   wb d65: 35 tiles; global gain (site) 9.831e-07; per-tile site gain / global: min 0.9614 max 1.0123; darktable per-tile gain / global: min 0.9149 max 1.0147
+   wb shot: 35 tiles; global gain (site) 9.891e-07; per-tile site gain / global: min 0.9483 max 1.0179; darktable per-tile gain / global: min 0.9323 max 1.0186
+   alignment shift of the noisy frame (dy, dx): (0, 0)
+   crop 0 at 1500,2500: MS-SSIM noisy 0.2997 | A_none 0.9293 (PSNR 31.24, R/G -2.6 %, B/G -6.1 %, chromaHF 0.52x, lumaHF 0.76x) | B_none 0.9291 (PSNR 31.23, R/G -2.5 %, B/G -6.0 %, chromaHF 0.67x, lumaHF 0.74x) | A_d65 0.9093 (PSNR 28.93, R/G -3.5 %, B/G -14.5 %, chromaHF 0.78x, lumaHF 0.81x) | B_d65 0.9084 (PSNR 28.92, R/G -3.5 %, B/G -14.4 %, chromaHF 1.01x, lumaHF 0.80x) | A_shot 0.9100 (PSNR 28.17, R/G -5.5 %, B/G -14.7 %, chromaHF 0.68x, lumaHF 0.75x) | B_shot 0.9091 (PSNR 28.24, R/G -5.5 %, B/G -14.2 %, chromaHF 0.84x, lumaHF 0.74x) | noisy PSNR 15.16 chromaHF 15.99x lumaHF 7.97x
+   crop 1 at 1500,1800: MS-SSIM noisy 0.3086 | A_none 0.8880 (PSNR 29.58, R/G -3.9 %, B/G -9.1 %, chromaHF 0.36x, lumaHF 0.53x) | B_none 0.8876 (PSNR 29.58, R/G -3.9 %, B/G -9.1 %, chromaHF 0.48x, lumaHF 0.52x) | A_d65 0.8596 (PSNR 27.96, R/G -4.4 %, B/G -15.7 %, chromaHF 0.54x, lumaHF 0.54x) | B_d65 0.8589 (PSNR 27.82, R/G -4.5 %, B/G -16.4 %, chromaHF 0.78x, lumaHF 0.55x) | A_shot 0.8591 (PSNR 28.21, R/G -4.0 %, B/G -13.0 %, chromaHF 0.45x, lumaHF 0.49x) | B_shot 0.8580 (PSNR 28.18, R/G -4.1 %, B/G -12.9 %, chromaHF 0.58x, lumaHF 0.48x) | noisy PSNR 14.94 chromaHF 12.73x lumaHF 6.31x
+   crop 2 at 2700,400: MS-SSIM noisy 0.4174 | A_none 0.9518 (PSNR 31.11, R/G -1.8 %, B/G -2.8 %, chromaHF 0.43x, lumaHF 0.71x) | B_none 0.9515 (PSNR 31.04, R/G -1.7 %, B/G -2.8 %, chromaHF 0.63x, lumaHF 0.68x) | A_d65 0.9388 (PSNR 29.21, R/G -4.6 %, B/G -6.6 %, chromaHF 0.71x, lumaHF 0.74x) | B_d65 0.9388 (PSNR 29.23, R/G -4.6 %, B/G -6.9 %, chromaHF 0.99x, lumaHF 0.74x) | A_shot 0.9374 (PSNR 29.09, R/G -3.1 %, B/G -8.1 %, chromaHF 0.72x, lumaHF 0.71x) | B_shot 0.9364 (PSNR 28.99, R/G -3.1 %, B/G -8.4 %, chromaHF 0.91x, lumaHF 0.70x) | noisy PSNR 17.61 chromaHF 9.59x lumaHF 4.63x
+   (93 s)
+== GH1_ISO3200: noisy gh1_iso3200.dng {'model': 'DMC-GH1', 'iso': '3200', 'exposure': '1/100', 'f': '10'}; clean gh1_gt.dng {'model': 'DMC-GH1', 'iso': '100', 'exposure': '1/3', 'f': '10'}
+   4008 x 3004 (12.0 MP), cfa [1, 2, 0, 1], black [15.0, 15.0, 15.0, 15.0], white 3986.0, wb as shot [1.555, 1.0, 2.449], wb D65 [2.759, 1.0, 1.467]
+   raw gain clean/noisy 1.102; noisy mean 0.1250, clipped (>= 0.987) 0.000 %
+   wb none: 20 tiles; global gain (site) 9.929e-07; per-tile site gain / global: min 0.9979 max 1.0031; darktable per-tile gain / global: min 1.0987 max 1.1199
+   wb d65: 20 tiles; global gain (site) 9.761e-07; per-tile site gain / global: min 0.9995 max 1.0137; darktable per-tile gain / global: min 0.9669 max 0.9846
+   wb shot: 20 tiles; global gain (site) 1.005e-06; per-tile site gain / global: min 0.9908 max 1.0030; darktable per-tile gain / global: min 0.9866 max 1.0043
+   alignment shift of the noisy frame (dy, dx): (0, 2)
+   crop 0 at 988,1490: MS-SSIM noisy 0.6498 | A_none 0.9487 (PSNR 31.91, R/G +3.2 %, B/G +2.1 %, chromaHF 0.36x, lumaHF 0.69x) | B_none 0.9482 (PSNR 31.79, R/G +3.3 %, B/G +2.2 %, chromaHF 0.47x, lumaHF 0.68x) | A_d65 0.9297 (PSNR 29.53, R/G -0.5 %, B/G -2.6 %, chromaHF 0.54x, lumaHF 0.73x) | B_d65 0.9293 (PSNR 29.46, R/G +0.1 %, B/G -2.5 %, chromaHF 1.00x, lumaHF 0.78x) | A_shot 0.9390 (PSNR 30.88, R/G +3.9 %, B/G -0.1 %, chromaHF 0.57x, lumaHF 0.76x) | B_shot 0.9381 (PSNR 30.61, R/G +3.7 %, B/G -0.3 %, chromaHF 0.75x, lumaHF 0.81x) | noisy PSNR 21.94 chromaHF 6.03x lumaHF 4.45x
+   crop 1 at 196,2742: MS-SSIM noisy 0.7746 | A_none 0.9723 (PSNR 39.05, R/G +2.6 %, B/G +2.8 %, chromaHF 0.33x, lumaHF 0.49x) | B_none 0.9722 (PSNR 38.98, R/G +2.6 %, B/G +2.6 %, chromaHF 0.43x, lumaHF 0.48x) | A_d65 0.9634 (PSNR 38.31, R/G +1.5 %, B/G +2.7 %, chromaHF 0.43x, lumaHF 0.45x) | B_d65 0.9628 (PSNR 38.27, R/G +1.5 %, B/G +2.1 %, chromaHF 0.60x, lumaHF 0.44x) | A_shot 0.9637 (PSNR 36.84, R/G +5.7 %, B/G +3.2 %, chromaHF 0.36x, lumaHF 0.39x) | B_shot 0.9634 (PSNR 36.79, R/G +5.7 %, B/G +2.6 %, chromaHF 0.47x, lumaHF 0.38x) | noisy PSNR 28.83 chromaHF 5.22x lumaHF 2.98x
+   crop 2 at 196,1908: MS-SSIM noisy 0.7256 | A_none 0.9669 (PSNR 36.48, R/G +3.7 %, B/G +4.2 %, chromaHF 0.34x, lumaHF 0.57x) | B_none 0.9667 (PSNR 36.39, R/G +3.8 %, B/G +4.1 %, chromaHF 0.47x, lumaHF 0.56x) | A_d65 0.9556 (PSNR 34.82, R/G +1.8 %, B/G +2.2 %, chromaHF 0.52x, lumaHF 0.56x) | B_d65 0.9551 (PSNR 34.77, R/G +1.8 %, B/G +1.7 %, chromaHF 0.73x, lumaHF 0.57x) | A_shot 0.9572 (PSNR 34.48, R/G +5.4 %, B/G +3.5 %, chromaHF 0.62x, lumaHF 0.65x) | B_shot 0.9568 (PSNR 34.13, R/G +5.3 %, B/G +2.8 %, chromaHF 0.84x, lumaHF 0.71x) | noisy PSNR 26.60 chromaHF 5.42x lumaHF 3.36x
+   (62 s)
+== D60_ISO800: noisy d60_iso800.crw {'model': '?', 'iso': '?', 'exposure': '?', 'f': '?'}; clean d60_gt.crw {'model': '?', 'iso': '?', 'exposure': '?', 'f': '?'}
+   3088 x 2056 (6.3 MP), cfa [0, 1, 1, 2], black [129.0, 132.0, 129.0, 132.0], white 4000.0, wb as shot [2.266, 1.0, 1.326], wb D65 [3.057, 1.0, 1.093]
+   raw gain clean/noisy 0.987; noisy mean 0.1145, clipped (>= 0.987) 0.000 %
+   wb none: 12 tiles; global gain (site) 9.991e-07; per-tile site gain / global: min 0.9947 max 1.0023; darktable per-tile gain / global: min 1.0865 max 1.1021
+   wb d65: 12 tiles; global gain (site) 1.011e-06; per-tile site gain / global: min 0.9876 max 1.0007; darktable per-tile gain / global: min 0.9583 max 0.9965
+   wb shot: 12 tiles; global gain (site) 1.011e-06; per-tile site gain / global: min 0.9918 max 1.0010; darktable per-tile gain / global: min 0.9871 max 1.0066
+[0;93m2026-11-11 02:34:19.152532116 [W:onnxruntime:Default, device_discovery.cc:146 GetPciBusId] Skipping pci_bus_id for PCI path at "/sys/devices/LNXSYSTM:00/LNXSYBUS:00/ACPI0004:00/MSFT1000:00/5620e0c7-8062-4dce-aeb7-520c7ef76171" because filename "5620e0c7-8062-4dce-aeb7-520c7ef76171" did not match expected pattern of [0-9a-f]+:[0-9a-f]+:[0-9a-f]+[.][0-9a-f]+[m
+Traceback (most recent call last):
+  File "/home/runner/work/Photo-Editing-App/Photo-Editing-App/web/scripts/denoise/quality.py", line 597, in <module>
+    {"pairs": cmd_pairs, "tiling": cmd_tiling, "single": cmd_single}[a.cmd](a)
+  File "/home/runner/work/Photo-Editing-App/Photo-Editing-App/web/scripts/denoise/quality.py", line 218, in cmd_pairs
+    work_gt, work_n_al, shift = align(work_gt, work_n)
+                                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/Photo-Editing-App/Photo-Editing-App/web/scripts/denoise/quality.py", line 69, in align
+    B = gb[:h, :w].reshape(h // k, k, w // k, k).mean(axis=(1, 3))
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: cannot reshape array of size 261632 into shape (128,4,128,4)
+##[error]Process completed with exit code 1.
