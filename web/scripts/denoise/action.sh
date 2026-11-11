@@ -13,7 +13,7 @@ T="${RUNNER_TEMP}"
 RES="$T/res"
 mkdir -p "$RES"
 S="$RES/summary.txt"
-say() { echo "$@" | tee -a "$S"; }
+say() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$S"; }
 PY() { "$P" -I "$@" 2> >(grep -v -i "warning\|warn(" >&2); }
 
 if [[ "$STAGE" == probe* ]]; then
@@ -76,8 +76,8 @@ for st in "${STAGES[@]}"; do
       say "## The variant without the authors' own pictures against the main checkpoint (different weights expected)"
       PY $D/export.py compare --model "$M2" --other "$M" --tiles "$T/tiles.npy" 2>&1 | tee -a "$S"
       say "## fp16"
+      # (the all-fp16 PyTorch run and the rescale check need a CPU with AVX512-FP16: run locally, see the write-up)
       PY $D/export.py fp16 --weights "$CKPT" --model "$M" --out "$O" --tiles "$T/tiles.npy" --scale-inputs 2>&1 | tee -a "$S"
-      PY $D/export.py rescale --weights "$CKPT" --model "$M" --out "$O" --tiles "$T/tiles.npy" --scale-inputs 2>&1 | tee -a "$S"
       say "## Largest tensors"
       PY $D/export.py tensors "$M" --sizes 1024,768,640,512,384,256 2>&1 | tee -a "$S"
       ;;

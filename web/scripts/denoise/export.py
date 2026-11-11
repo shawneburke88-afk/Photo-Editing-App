@@ -234,10 +234,12 @@ def cmd_fp16(a):
     print("largest |activation| per layer (PyTorch fp32), over", len(xs), "inputs; fp16's largest finite value is 65504:")
     for k, v in mx.items():
         print(f"  {k:22s} {v:12.5g} {'  > 65504' if v > 65504 else ''}")
-    # Real half-precision arithmetic (PyTorch on the CPU, every tensor stored as fp16), layer by layer.
-    half = model_from(a.weights).half()
-    print("PyTorch with every tensor in fp16 (what a GPU with shader-f16 would store):")
-    for label, x in xs:
+    # Real half-precision arithmetic (PyTorch on the CPU, every tensor stored as fp16), layer by layer. Only with --half:
+    # it takes seconds on a CPU with AVX512-FP16 and very long without (GitHub's runners).
+    half = model_from(a.weights).half() if a.half else None
+    if a.half:
+        print("PyTorch with every tensor in fp16 (what a GPU with shader-f16 would store):")
+    for label, x in (xs if a.half else []):
         bad = {}
         hooks = []
         for name, mod in half.named_modules():
@@ -408,6 +410,7 @@ if __name__ == "__main__":
     s.add_argument("--size", type=int, default=512)
     s.add_argument("--tiles", default="")
     s.add_argument("--scale-inputs", action="store_true")
+    s.add_argument("--half", action="store_true")
     s = sub.add_parser("rescale")
     s.add_argument("--weights", required=True)
     s.add_argument("--model", default="")
